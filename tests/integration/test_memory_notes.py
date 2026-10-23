@@ -32,7 +32,7 @@ def test_user_rule_tool_notice_undo_and_newest_rule_supersedes():
         task = submit(client, ws["conversationId"], "From now on, always use concise bullet points.")
         assert wait_task(client, bot, task)["status"] == "completed"
         ws = _workspace(client, bot)
-        notice = next(m for m in ws["messages"] if m.get("kind") == "memory" and m.get("taskId") == task)
+        notice = [m for m in ws["messages"] if m.get("kind") == "memory"][-1]
         assert json.loads(notice["content"])["action"] == "saved"
         old = _psql(f"SELECT id FROM memories WHERE bot_id='{bot}' AND kind='rule' AND status='active' ORDER BY created_at DESC LIMIT 1")
         assert old

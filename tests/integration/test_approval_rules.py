@@ -24,6 +24,12 @@ def _until(fn, timeout=90):
     raise AssertionError("timed out waiting for approval state")
 
 
+def _task_status(client, bot, task_id):
+    status, tasks = client.call("GET", f"/api/bots/{bot}/tasks")
+    assert status == 200, tasks
+    return next(item for item in tasks if item["id"] == task_id)["status"]
+
+
 def _pending(client, bot, action):
     return _until(lambda: next((a for a in _workspace(client, bot)["approvals"] if a["action"] == action and a["status"] == "pending"), None))
 
@@ -56,7 +62,7 @@ def test_always_allow_browser_rule_is_used_then_revoke_restores_prompt():
         assert client.call("DELETE", f"/api/approval-rules/{rule['id']}")[0] == 200
         third = submit(client, ws["conversationId"], prompt)
         _pending(client, bot, "browser_open")
-        assert wait_task(client, bot, third)["status"] == "waiting_approval"
+        assert _task_status(client, bot, third) == "waiting_approval"
     finally:
         _cleanup(client, bot)
 
@@ -70,6 +76,6 @@ def test_never_list_and_cross_owner_approval_rule_access_are_refused():
         status, denied = client.call("POST", f"/api/approvals/{approval['id']}/decide", {"decision": "allow_always"})
         assert status == 400 and denied["error"] == "not_allowed_for_class"
         assert _psql(f"SELECT count(*) FROM approval_rules WHERE owner_id=(SELECT owner_id FROM bots WHERE id='{bot}') AND revoked_at IS NULL") == "0"
-        assert wait_task(client, bot, task)["status"] == "waiting_approval"
+        assert _task_status(client, bot, task) == "waiting_approval"
     finally:
         _cleanup(client, bot)

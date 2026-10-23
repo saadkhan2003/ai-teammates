@@ -75,16 +75,20 @@ def _steps(text: str, messages: list) -> list[Step]:
             ("final", "Forgot."),
         ]
     if stripped.startswith("Actually my favorite editor is Vim, not Helix"):
-        if not any(item.get("role") == "tool" for item in messages):
-            return [("tool", "search_memory", {"query": "favorite editor", "limit": 5})]
-        try:
-            raw = json.loads(_raw_tool(messages))
-            output = raw.get("output", raw)
-            matches = output.get("matches", []) if isinstance(output, dict) else []
-            memory_id = matches[0].get("id") if matches else ""
-        except (TypeError, ValueError, AttributeError):
-            memory_id = ""
-        return [("tool", "update_memory", {"id": str(memory_id), "content": "My favorite editor is Vim"}), ("final", "Got it.")]
+        memory_id = ""
+        if any(item.get("role") == "tool" for item in messages):
+            try:
+                raw = json.loads(_raw_tool(messages))
+                output = raw.get("output", raw)
+                matches = output.get("matches", []) if isinstance(output, dict) else []
+                memory_id = matches[0].get("id") if matches else ""
+            except (TypeError, ValueError, AttributeError):
+                memory_id = ""
+        return [
+            ("tool", "search_memory", {"query": "favorite editor", "limit": 5}),
+            ("tool", "update_memory", {"id": str(memory_id), "content": "My favorite editor is Vim"}),
+            ("final", "Got it."),
+        ]
     if stripped.lower().startswith("from now on, always use concise bullet points"):
         return [
             ("tool", "save_memory", {"content": "Always use concise bullet points", "kind": "rule"}),
