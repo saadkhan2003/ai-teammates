@@ -63,6 +63,15 @@ public sealed class Platform
 
     public async Task MigrateAndSeed(string ownerUser, string ownerPassword)
     {
+        // Several API instances can start at once against one database; the first takes the lock and the rest wait for it.
+        await using var lockConn = await Data.OpenConnectionAsync();
+        await lockConn.ExecuteAsync("SELECT pg_advisory_lock(840020)");
+        try { await MigrateAndSeedLocked(ownerUser, ownerPassword); }
+        finally { await lockConn.ExecuteAsync("SELECT pg_advisory_unlock(840020)"); }
+    }
+
+    private async Task MigrateAndSeedLocked(string ownerUser, string ownerPassword)
+    {
         var sql = await File.ReadAllTextAsync("/migrations/001_init.sql");
         await using var conn = await Data.OpenConnectionAsync();
         var applied = await conn.ExecuteScalarAsync<bool>("SELECT to_regclass('public.schema_migrations') IS NOT NULL");

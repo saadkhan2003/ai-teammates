@@ -80,6 +80,7 @@ builder.Services.AddSingleton(new DeviceGate(data));
 builder.Services.AddSingleton(loginBroker);
 builder.Services.AddSingleton(loginFlow);
 builder.Services.AddSingleton(runtime);
+builder.Services.AddSingleton(data);
 builder.Services.AddHostedService<Maintenance>();
 builder.Services.AddHostedService<PluginCatalogJob>();
 builder.Services.AddHostedService<TicketCleanupService>();
