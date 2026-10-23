@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import workspace
+from browser_flags import chrome_egress_flags
 
 S6_SCAN = "/command/s6-svscanctl"
 S6_SVC = "/command/s6-svc"
@@ -80,7 +81,7 @@ CHROME_FLAGS = (
     "--aggressive-cache-discard",
     "--disable-features=Translate,MediaRouter,BackForwardCache,InterestFeedContentSuggestions,OptimizationHints,AudioServiceOutOfProcess,IsolateOrigins,site-per-process,Crashpad,SpareRendererForSitePerProcess,CalculateNativeWinOcclusion",
     "--js-flags=--max-old-space-size=64",
-)
+) + chrome_egress_flags()
 
 
 def geometry() -> tuple[int, int]:

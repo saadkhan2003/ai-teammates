@@ -32,6 +32,8 @@ public static class PluginProbe
 {
     public static async Task<ProbeResult> RemoteTools(string url, CancellationToken ct)
     {
+        var policyBlock = McpNetworkPolicyGuard.Check(url);
+        if (policyBlock != null) return ProbeResult.Failed(policyBlock);
         var blocked = await SsrfGuard.ResolveAsync(url, ct);
         if (blocked.Blocked) return ProbeResult.Failed(blocked.Reason);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -147,6 +149,8 @@ public static class PluginProbe
 
     public static async Task<(bool Ok, string Detail)> Ping(string url, CancellationToken ct)
     {
+        var policyBlock = McpNetworkPolicyGuard.Check(url);
+        if (policyBlock != null) return (false, policyBlock);
         var blocked = await SsrfGuard.ResolveAsync(url, ct);
         if (blocked.Blocked) return (false, blocked.Reason);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);

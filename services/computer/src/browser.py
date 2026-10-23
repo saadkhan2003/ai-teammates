@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import workspace
+import box_contract
 from desktops import DesktopManager, cdp_port
 from pure import attention_reason, looks_like_phish, origin_of, redact, scrub_tree
 
@@ -424,6 +425,15 @@ async def run_command(bot_id: str, command: str, extra_env: dict[str, str] | Non
         "BOT_ID": workspace.safe_id(bot_id),
         "LANG": "C.UTF-8",
         "TERM": "xterm",
+        # Shell tools and Chrome share the same local policy enforcement point.
+        "HTTP_PROXY": f"http://127.0.0.1:{box_contract.EGRESS_PROXY}",
+        "HTTPS_PROXY": f"http://127.0.0.1:{box_contract.EGRESS_PROXY}",
+        "ALL_PROXY": f"http://127.0.0.1:{box_contract.EGRESS_PROXY}",
+        "http_proxy": f"http://127.0.0.1:{box_contract.EGRESS_PROXY}",
+        "https_proxy": f"http://127.0.0.1:{box_contract.EGRESS_PROXY}",
+        "all_proxy": f"http://127.0.0.1:{box_contract.EGRESS_PROXY}",
+        "NO_PROXY": "localhost,127.0.0.1,::1",
+        "no_proxy": "localhost,127.0.0.1,::1",
     }
     if extra_env:
         env.update(extra_env)
