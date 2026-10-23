@@ -38,7 +38,11 @@ public static class LibraryTime
 
 public static class LibraryRoutes
 {
-    private sealed record Row(Guid Id, Guid? ArtifactId, string Name, string Kind, string Ext, string Mime, long SizeBytes, string Source, string Direction, DateTimeOffset CreatedAt, DateTimeOffset? PinnedAt, string? ThumbKey);
+    private sealed record Row(Guid Id, Guid? ArtifactId, string Name, string Kind, string Ext, string Mime, long SizeBytes, string Source, string Direction, DateTime CreatedAtRaw, DateTime? PinnedAtRaw, string? ThumbKey)
+    {
+        public DateTimeOffset CreatedAt => new(DateTime.SpecifyKind(CreatedAtRaw, DateTimeKind.Utc));
+        public DateTimeOffset? PinnedAt => PinnedAtRaw is { } p ? new DateTimeOffset(DateTime.SpecifyKind(p, DateTimeKind.Utc)) : null;
+    }
     private sealed record Group(string Key, string Label, long Total, IReadOnlyList<object> Items, string? NextCursor);
     private static readonly (string Key, string Label)[] Groups = [("today", "Today"), ("week", "This week"), ("older", "Older")];
 
@@ -90,9 +94,9 @@ public static class LibraryRoutes
     {
         var cursorSql = cursor == null ? "" : " AND (created_at,id) < (@cursorAt,@cursorId)";
         var order = pinned ? "pinned_at DESC,created_at DESC,id DESC" : "created_at DESC,id DESC";
-        var sql = $"SELECT id,artifact_id,name,kind,ext,mime,size_bytes,source,direction,created_at,pinned_at,thumb_key FROM library_items WHERE bot_id=@bot AND deleted_at IS NULL AND {visibility} AND {where}{cursorSql} ORDER BY {order} LIMIT @limit";
+        var sql = $"SELECT id,artifact_id,name,kind,ext,mime,size_bytes,source,direction,created_at AS created_at_raw,pinned_at AS pinned_at_raw,thumb_key FROM library_items WHERE bot_id=@bot AND deleted_at IS NULL AND {visibility} AND {where}{cursorSql} ORDER BY {order} LIMIT @limit";
         return (await conn.QueryAsync<Row>(sql, new { bot, from, to, cursorAt = cursor?.At, cursorId = cursor?.Id, limit })).AsList();
     }
 
-    private static object ToItem(Row row) => new { id = row.Id, name = row.Name, kind = row.Kind, ext = row.Ext, mime = row.Mime, sizeBytes = row.SizeBytes, source = row.Source, direction = row.Direction, createdAt = row.CreatedAt, thumbUrl = row.Kind is "image" or "screenshots" && row.ArtifactId != null ? $"/api/artifacts/{row.Id}/download" : null, pinned = row.PinnedAt != null };
+    private static object ToItem(Row row) => new { id = row.Id, name = row.Name, kind = row.Kind, ext = row.Ext, mime = row.Mime, sizeBytes = row.SizeBytes, source = row.Source, direction = row.Direction, createdAt = row.CreatedAt, thumbUrl = row.Kind is "image" or "screenshots" && row.ArtifactId != null ? $"/api/artifacts/{row.ArtifactId}/download" : null, pinned = row.PinnedAt != null };
 }

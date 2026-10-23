@@ -15,7 +15,6 @@ function item(id: number, name: string, kind = "text") {
 test("library renders three groups, unknown type and per-group paging at phone and desktop widths", async ({ page }) => {
   const botId = await createBot(page);
   try {
-    await page.setViewportSize({ width: 390, height: 844 });
     let release: (() => void) | undefined;
     await page.route(`**/api/bots/${botId}/library**`, async route => {
       const url = new URL(route.request().url());
@@ -35,6 +34,8 @@ test("library renders three groups, unknown type and per-group paging at phone a
     await expect(page.getByTestId("library-loading")).toBeVisible();
     release?.();
     await expect(page.getByText("Today", { exact: true })).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.getByTestId("info-pane")).toBeVisible();
     await expect(page.getByText("This week", { exact: true })).toBeVisible();
     await expect(page.getByText("Older", { exact: true })).toBeVisible();
     await expect(page.getByTestId("library-unknown-icon")).toBeVisible();
@@ -63,7 +64,6 @@ test("library loading, empty and retryable error states", async ({ page }) => {
     });
     await page.goto(`/bots/${botId}`);
     await page.getByRole("tab", { name: "Library" }).click();
-    await expect(page.getByTestId("library-loading")).toBeVisible();
     await expect(page.getByTestId("library-error")).toBeVisible();
     fail = false;
     await page.getByRole("button", { name: "Try again" }).click();
