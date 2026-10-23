@@ -35,11 +35,31 @@ def _wait_health(timeout: float = 90) -> None:
     raise AssertionError(f"api did not become healthy {last}")
 
 
+def _state(name: str) -> str:
+    try:
+        return _docker("inspect", "-f", "{{.State.Status}}", name)
+    except subprocess.CalledProcessError:
+        return "missing"
+
+
+def _bring_up(client, name: str, timeout: float = 120) -> None:
+    """Other suites may have stopped or removed this computer. Ask the API for it and wait until it runs."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if _state(name) == "running":
+            return
+        status, body = client.call("POST", "/api/computer/restart", {})
+        if status == 200 and _state(name) == "running":
+            return
+        time.sleep(1)
+    raise AssertionError(f"computer {name} did not come up: {_state(name)}")
+
+
 def _ensure_running(name: str) -> None:
-    state = _docker("inspect", "-f", "{{.State.Status}}", name)
+    state = _state(name)
     if state == "paused":
         _docker("unpause", name)
-    elif state != "running":
+    elif state not in {"running", "missing"}:
         _docker("start", name)
 
 
@@ -53,6 +73,7 @@ def test_deleted_container_recovers_on_the_next_tool_call():
     computer_id = computer.get("computerId")
     assert computer_id, computer
     name = _container(computer_id)
+    _bring_up(client, name)
     try:
         _run(client, bot_id, computer_id, name)
     finally:

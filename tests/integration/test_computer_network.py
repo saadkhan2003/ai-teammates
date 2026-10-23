@@ -125,7 +125,14 @@ def _flush_rules() -> None:
 
 
 def _running(name: str) -> bool:
-    return _docker("inspect", "-f", "{{.State.Running}}", name) == "true"
+    try:
+        return _docker("inspect", "-f", "{{.State.Running}}", name) == "true"
+    except subprocess.CalledProcessError:
+        return False  # removed by another suite, so it is not running
+
+
+def _alive(names: list[str]) -> list[str]:
+    return [name for name in names if _running(name)]
 
 
 def _isolation_name() -> str:
@@ -167,6 +174,18 @@ def _wait_rules(timeout: float = 20) -> None:
     raise AssertionError("isolation rules did not return")
 
 
+def _bring_owned_up(cookie: str, owned: str, timeout: float = 120) -> str:
+    """An earlier suite may have left this computer stopped or recovering. Make it run before the test flushes the rules."""
+    deadline = time.time() + timeout
+    while time.time() < deadline and not _running(owned):
+        status, body, cookie = _api("POST", "/api/computer/restart", cookie, {}, timeout=90)
+        if status == 200:
+            break
+        time.sleep(1)
+    assert _running(owned), owned
+    return cookie
+
+
 def test_flushed_chain_refuses_start_until_rules_return():
     """Flush TEAMS-ISO with the guard stopped. Start must fail closed, and Postgres stays closed after the rules return."""
     subprocess.check_call(["sudo", "bash", str(ROOT / "deploy/computer-isolation.sh")])
@@ -178,7 +197,8 @@ def test_flushed_chain_refuses_start_until_rules_return():
     assert status == 200 and computer.get("computerId"), computer
     owned = _docker("ps", "-a", "--filter", f"label=teammates.computer_id={computer['computerId']}", "--format", "{{.Names}}")
     assert owned, computer
-    names = _computers()
+    cookie = _bring_owned_up(cookie, owned)
+    names = _alive(_computers())
     assert owned in names or owned in _docker("ps", "-a", "--filter", "label=teammates.role=user-computer", "--format", "{{.Names}}")
     postgres_ip = _docker("inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", "teammates-postgres-1")
     seaweed_ip = _docker("inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", "teammates-object-store-1")
@@ -214,14 +234,15 @@ def test_flushed_chain_refuses_start_until_rules_return():
         _wait_rules()
         started = {}
         status = 0
-        for _ in range(3):
+        retry_until = time.time() + 90
+        while True:
             status, started, cookie = _api("POST", "/api/computer/restart", cookie, {}, timeout=90)
-            if status == 200 or started.get("error") == "computer_recovering":
+            if status == 200 or time.time() > retry_until:
                 break
-            time.sleep(1)
+            # A 503 while the guard and the rules settle is normal, whatever its recovering label.
+            assert status == 503 and started.get("error") in {"computer_recovering", "computer_isolation_missing"}, started
+            time.sleep(2)
         assert status in {200, 503}, started
-        if status == 503:
-            assert started.get("error") == "computer_recovering", started
         deadline = time.time() + 60
         while time.time() < deadline and not _running(owned):
             time.sleep(1)

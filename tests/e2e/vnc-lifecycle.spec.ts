@@ -84,11 +84,19 @@ test("opening and closing the computer view does not pile up x11vnc sockets", as
   const computerResponse = await page.request.get("/api/computer");
   expect(computerResponse.ok()).toBeTruthy();
   const computer = (await computerResponse.json()) as { computerId?: string };
-  const names = capture(["docker", "ps", "--format", "{{.Names}}"]).split("\n").map((name) => name.trim()).filter(Boolean);
   const candidates = [computer.computerId, bot?.id]
     .filter((id): id is string => Boolean(id))
     .map((id) => `tm${id.replace(/-/g, "").toLowerCase()}`);
-  const container = candidates.find((name) => names.includes(name)) ?? names.find((name) => name.startsWith("tm"));
+  // Earlier specs may have stopped or recreated the computer. Ask for it and wait until it runs, so this spec does not depend on order.
+  let container: string | undefined;
+  const upDeadline = Date.now() + 120_000;
+  while (Date.now() < upDeadline) {
+    const names = capture(["docker", "ps", "--format", "{{.Names}}"]).split("\n").map((name) => name.trim()).filter(Boolean);
+    container = candidates.find((name) => names.includes(name));
+    if (container) break;
+    await page.request.post("/api/computer/restart", { data: {}, timeout: 90_000 }).catch(() => null);
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
   expect(container, `computer container from ${candidates.join(", ")}`).toBeTruthy();
 
   let preconditionRestart = false;
