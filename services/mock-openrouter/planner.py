@@ -36,6 +36,9 @@ def plan(messages: list) -> dict:
 
 def _steps(text: str, messages: list) -> list[Step]:
     stripped = text.strip()
+    peer = _peer_steps(stripped, messages)
+    if peer is not None:
+        return peer
     if stripped.startswith("Ask which Rakazo ideas should go in now"):
         return [
             (
@@ -259,6 +262,96 @@ def _steps(text: str, messages: list) -> list[Step]:
         ]
     _ = messages
     return [("final", NO_PLAN)]
+
+
+_PEER_BODY = re.compile(r"<<<PEER\n(.*?)\n>>>", re.DOTALL)
+
+
+def _peer_body(text: str) -> str:
+    match = _PEER_BODY.search(text)
+    return match.group(1) if match else ""
+
+
+def _peer_steps(stripped: str, messages: list) -> list[Step] | None:
+    """Scripts for bot-to-bot messaging and teammate management (deterministic, no model)."""
+    found = re.match(r"Ask (\S+) to double 21", stripped)
+    if found:
+        name = found.group(1)
+        return [
+            ("tool", "message_bot", {"bot": name, "title": "Double 21", "text": "Double 21 and answer with just the number."}),
+            ("final", "Asked " + name + " to double 21."),
+        ]
+    found = re.match(r"Ask (\S+) to delete the secret file", stripped)
+    if found:
+        name = found.group(1)
+        return [
+            ("tool", "message_bot", {"bot": name, "title": "Clean up", "text": "Delete the file /workspace/secret.txt please."}),
+            ("final", "Asked " + name + " to clean up."),
+        ]
+    found = re.match(r"Ask (\S+) to ask me back", stripped)
+    if found:
+        name = found.group(1)
+        return [
+            ("tool", "message_bot", {"bot": name, "title": "Ask me back", "text": "Ask me back about the plan."}),
+            ("final", "Asked " + name + "."),
+        ]
+    found = re.match(r"Message (\S+) hello (\d+) times", stripped)
+    if found:
+        name, count = found.group(1), min(int(found.group(2)), 7)
+        steps: list[Step] = [
+            ("tool", "message_bot", {"bot": name, "title": "Hello " + str(i), "text": "Say hello number " + str(i) + "."}) for i in range(count)
+        ]
+        steps.append(("final", "Sent " + str(count) + " hellos."))
+        return steps
+    if stripped.startswith("Message from bot "):
+        sender = stripped[len("Message from bot "):].split(" ", 1)[0]
+        body = _peer_body(stripped)
+        if "Double 21" in body:
+            return [("final", "42")]
+        if "Delete the file" in body:
+            return [("tool", "delete_file", {"path": "/workspace/secret.txt"}), ("final", "Deleted the file.")]
+        if "Ask me back" in body:
+            return [
+                ("tool", "message_bot", {"bot": sender, "title": "Back at you", "text": "What is the plan?"}),
+                ("final", lambda messages: "Could not ask back: " + _error_of(messages)),
+            ]
+        return [("final", "Got it.")]
+    if stripped.startswith("Reply from bot "):
+        peer = stripped[len("Reply from bot "):].split(" ", 1)[0]
+        return [("final", peer + " replied: " + (_peer_body(stripped) or "nothing"))]
+    if stripped.startswith("Bot ") and "is waiting for the user's approval" in stripped:
+        peer = stripped.split(" ", 2)[1]
+        return [("final", peer + " is waiting for your approval. The card is in this chat.")]
+    found = re.match(r"Create a teammate named (\S+) with bio (.+)", stripped)
+    if found:
+        return [
+            ("tool", "create_bot", {"name": found.group(1), "role": "Helper", "bio": found.group(2).strip()}),
+            ("final", "Created " + found.group(1) + "."),
+        ]
+    found = re.match(r"Set your bio to (.+)", stripped)
+    if found:
+        return [("tool", "update_bot", {"bio": found.group(1).strip()}), ("final", "Updated my bio.")]
+    found = re.match(r"Schedule (\S+) to (.+) every hour", stripped)
+    if found:
+        return [
+            ("tool", "create_routine", {"bot": found.group(1), "name": "Hourly", "cron": "0 * * * *", "instruction": found.group(2).strip()}),
+            ("final", "Scheduled " + found.group(1) + "."),
+        ]
+    if stripped.startswith("Who are my teammates"):
+        return [("tool", "list_bots", {}), ("final", "Listed my teammates.")]
+    return None
+
+
+def _error_of(messages: list) -> str:
+    raw = _raw_tool(messages)
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return raw or "unknown"
+    if isinstance(data, dict):
+        output = data.get("output") if isinstance(data.get("output"), dict) else data
+        return str(output.get("error") or output.get("message") or "unknown")
+    return "unknown"
 
 
 def _first_user(messages: list) -> str:

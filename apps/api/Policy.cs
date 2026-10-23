@@ -14,8 +14,13 @@ public static class ActionClasses
     public const string Delete = "delete";
     public const string CredentialUse = "credential_use";
     public const string ExternalPost = "external_post";
+    public const string BotMessage = "bot_message";
+    public const string BotManage = "bot_manage";
 
-    public static readonly string[] All = [Read, Write, SendMessage, Payment, Sign, Delete, CredentialUse, ExternalPost];
+    public static readonly string[] All = [Read, Write, SendMessage, Payment, Sign, Delete, CredentialUse, ExternalPost, BotMessage, BotManage];
+
+    /// <summary>Classes that a peer-origin task (a bot message, or a bot-created routine) may never run on an ALLOW.</summary>
+    public static readonly string[] PeerForcedAsk = [Payment, Sign, Delete, CredentialUse, ExternalPost, SendMessage, BotManage];
 
     public static readonly IReadOnlyDictionary<string, string> Defaults = new Dictionary<string, string>
     {
@@ -26,7 +31,9 @@ public static class ActionClasses
         [Sign] = PolicyEngine.Ask,
         [Delete] = PolicyEngine.Ask,
         [CredentialUse] = PolicyEngine.Ask,
-        [ExternalPost] = PolicyEngine.Ask
+        [ExternalPost] = PolicyEngine.Ask,
+        [BotMessage] = PolicyEngine.Ask,
+        [BotManage] = PolicyEngine.Ask
     };
 }
 
@@ -150,10 +157,24 @@ public static class ActionClassifier
         "write_file", "read_file", "edit_file", "delete_file", "shell", "setup_env",
         "type_secret", "browser.type_secret", "save_memory", "search_memory", "save_artifact",
         "request_secret", "request_login", "react_to_message", "send_message", "external_post", "sign",
-        "search_tools", "load_tool"
+        "search_tools", "load_tool",
+        "list_bots", "message_bot", "reply_to_bot", "thread_status", "create_bot", "update_bot", "list_routines", "create_routine"
     };
 
     public static bool IsBuiltIn(string tool) => BuiltInTools.Contains(tool);
+
+    /// <summary>update_bot with only a bio and no target bot edits the caller's own bio.</summary>
+    public static bool SelfBioOnly(JsonElement args)
+    {
+        if (args.ValueKind != JsonValueKind.Object) return false;
+        var bio = false;
+        foreach (var prop in args.EnumerateObject())
+        {
+            if (prop.Name == "bio") bio = prop.Value.ValueKind == JsonValueKind.String;
+            else if (prop.Value.ValueKind is not JsonValueKind.Null) return false;
+        }
+        return bio;
+    }
 
     public static string Classify(string tool, JsonElement args)
     {
@@ -165,6 +186,15 @@ public static class ActionClassifier
         if (tool is "transfer_funds" or "move_money" or "wire_transfer" or "send_payment") return ActionClasses.Payment;
         if (tool is "trade_security" or "place_order" or "buy_stock" or "sell_stock") return ActionClasses.Payment;
         if (tool is "sign" or "sign_document" || blob.Contains("\"sign\"") && blob.Contains("document")) return ActionClasses.Sign;
+        // Starting a conversation asks the user. Continuing a thread the user already approved does not.
+        if (tool == "reply_to_bot") return ActionClasses.Write;
+        if (tool == "message_bot")
+            return args.ValueKind == JsonValueKind.Object && args.TryGetProperty("thread_id", out var thread) && thread.ValueKind == JsonValueKind.String && Guid.TryParse(thread.GetString(), out _)
+                ? ActionClasses.Write
+                : ActionClasses.BotMessage;
+        if (tool is "create_bot" or "create_routine" or "update_routine") return ActionClasses.BotManage;
+        if (tool == "update_bot") return SelfBioOnly(args) ? ActionClasses.Write : ActionClasses.BotManage;
+        if (tool is "list_bots" or "thread_status" or "list_routines") return ActionClasses.Read;
         if (tool is "send_message" or "send_email" or "send_sms") return ActionClasses.SendMessage;
         if (tool is "external_post" or "publish" or "post_message") return ActionClasses.ExternalPost;
         if (tool is "delete_file" || blob.Contains("\"rm ") || blob.Contains(" rm ")) return ActionClasses.Delete;
@@ -328,7 +358,7 @@ public static class ModelAssist
 
 public static class PolicyGate
 {
-    public static PolicyDecision Evaluate(string tool, JsonElement args, ISet<string> seenDomains, UserPolicy policy, IEnumerable<DenyRule> extra, string? instruction, bool approved, ISet<string>? grantedHosts = null, PluginCallHint? plugin = null)
+    public static PolicyDecision Evaluate(string tool, JsonElement args, ISet<string> seenDomains, UserPolicy policy, IEnumerable<DenyRule> extra, string? instruction, bool approved, ISet<string>? grantedHosts = null, PluginCallHint? plugin = null, bool originIsPeer = false)
     {
         var risk = PluginRiskLabels.Apply(PluginRisk.ClassifyCall(tool, args, plugin), plugin?.RiskLabel);
         var summary = Summarize(tool, args, risk);
@@ -349,7 +379,8 @@ public static class PolicyGate
         var mode = policy.Mode(risk);
         if (mode == PolicyEngine.Deny)
             return new PolicyDecision(PolicyEngine.Deny, risk, summary, "denied_by_user_policy", false);
-        var granted = CredentialGrants.Covers(risk, args, grantedHosts);
+        if (originIsPeer && mode == PolicyEngine.Allow && ActionClasses.PeerForcedAsk.Contains(risk)) mode = PolicyEngine.Ask;
+        var granted = !originIsPeer && CredentialGrants.Covers(risk, args, grantedHosts);
         var formIsConsent = tool == "request_login" && !HasVaultRefs(args);
         if (!approved && !granted && !formIsConsent && (mode == PolicyEngine.Ask || legacy == PolicyEngine.Ask))
             return new PolicyDecision(PolicyEngine.Ask, risk, summary, summary, false);
@@ -387,8 +418,17 @@ public static class PolicyGate
             ActionClasses.Sign => $"Sign {target}".Trim(),
             ActionClasses.CredentialUse => $"Use a credential on {target}".Trim(),
             ActionClasses.Write => $"Write {target}".Trim(),
+            ActionClasses.BotMessage => $"Message teammate {Dlp.Redact(First(args, "bot", "thread_id"))}: {Dlp.Redact(First(args, "title", "text"))}".Trim(),
+            ActionClasses.BotManage => tool switch
+            {
+                "create_bot" => $"Create teammate {Dlp.Redact(First(args, "name"))}".Trim(),
+                "update_bot" => $"Update teammate {Dlp.Redact(First(args, "bot", "name"))}".Trim(),
+                "create_routine" => $"Create routine {Dlp.Redact(First(args, "name"))} for {Dlp.Redact(First(args, "bot"))}".Trim(),
+                _ => $"Change {Dlp.Redact(First(args, "name", "bot"))}".Trim()
+            },
             _ => $"Read {target}".Trim()
         };
+        if (risk is ActionClasses.BotMessage or ActionClasses.BotManage) return sentence.Length > 200 ? sentence[..200] : sentence;
         if (string.IsNullOrWhiteSpace(target)) sentence = $"{risk} via {tool}";
         else sentence = $"{sentence} ({tool})";
         return sentence;

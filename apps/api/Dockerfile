@@ -26,6 +26,7 @@ COPY db/011_devices.sql /migrations/011_devices.sql
 COPY db/012_reliability.sql /migrations/012_reliability.sql
 COPY db/013_feedback.sql /migrations/013_feedback.sql
 COPY db/014_avatar.sql /migrations/014_avatar.sql
+COPY db/015_bot_messaging.sql /migrations/015_bot_messaging.sql
 COPY db/016_chat_actions.sql /migrations/016_chat_actions.sql
 COPY db/017_primary.sql /migrations/017_primary.sql
 COPY db/018_bio.sql /migrations/018_bio.sql

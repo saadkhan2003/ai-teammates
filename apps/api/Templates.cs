@@ -106,6 +106,8 @@ public static class Templates
             await conn.ExecuteAsync("INSERT INTO conversations (id, bot_id, title) VALUES (@conversation, @cloneId, 'Desk')", new { conversation, cloneId }, tx);
             await conn.ExecuteAsync("INSERT INTO control_locks (bot_id, holder, epoch) VALUES (@cloneId, 'agent', 1)", new { cloneId }, tx);
             await conn.ExecuteAsync("INSERT INTO routines (bot_id, name, cron, timezone, instruction, enabled) SELECT @cloneId, name, cron, timezone, instruction, false FROM routines WHERE bot_id=@id", new { cloneId, id }, tx);
+            // Plugin config (which plugins are on for this bot) is copied. Credentials live with the owner's connection and are never copied.
+            await conn.ExecuteAsync("INSERT INTO plugin_bot_enable (plugin_id, bot_id, enabled) SELECT plugin_id, @cloneId, enabled FROM plugin_bot_enable WHERE bot_id=@id ON CONFLICT DO NOTHING", new { cloneId, id }, tx);
             await tx.CommitAsync(ct);
             await platform.Audit(user.Value.ToString(), "bot.cloned", cloneId, null, new { sourceBotId = id });
             return Results.Json(new { id = cloneId, name, conversationId = conversation });

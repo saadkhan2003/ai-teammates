@@ -303,6 +303,11 @@ public static class Beta
                 await conn.ExecuteAsync("UPDATE bots SET avatar=@avatar, updated_at=now() WHERE id=@id", new { id, avatar = avatar.GetString() ?? "" });
             if (avatarShape is not null) await conn.ExecuteAsync("UPDATE bots SET avatar_shape=@value, updated_at=now() WHERE id=@id", new { id, value = avatarShape });
             if (avatarColor is not null) await conn.ExecuteAsync("UPDATE bots SET avatar_color=@value, updated_at=now() WHERE id=@id", new { id, value = avatarColor });
+            if (body.TryGetProperty("peerMessaging", out var peerEl) && peerEl.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                await conn.ExecuteAsync("UPDATE bots SET peer_messaging=@on, updated_at=now() WHERE id=@id", new { id, on = peerEl.ValueKind == JsonValueKind.True });
+                await platform.Audit(user.ToString() ?? "", "bot.peer_messaging", id, null, new { enabled = peerEl.ValueKind == JsonValueKind.True });
+            }
             if (body.TryGetProperty("notifications", out var notes))
                 await conn.ExecuteAsync("UPDATE bots SET notifications_enabled=@on, updated_at=now() WHERE id=@id", new { id, on = notes.ValueKind != JsonValueKind.False });
             if (body.TryGetProperty("isPrimary", out var primaryEl) && primaryEl.ValueKind == JsonValueKind.True)
@@ -312,7 +317,7 @@ public static class Beta
                 await conn.ExecuteAsync("UPDATE bots SET is_primary=true, updated_at=now() WHERE id=@id", new { id }, tx);
                 await tx.CommitAsync();
             }
-            var row = await conn.QuerySingleAsync("SELECT id, name, role, instructions, status, model, avatar, avatar_shape, avatar_color, section, notifications_enabled, is_primary, bio FROM bots WHERE id=@id", new { id });
+            var row = await conn.QuerySingleAsync("SELECT id, name, role, instructions, status, model, avatar, avatar_shape, avatar_color, section, notifications_enabled, is_primary, bio, peer_messaging FROM bots WHERE id=@id", new { id });
             return Results.Json(Platform.ToDict(row));
         });
 

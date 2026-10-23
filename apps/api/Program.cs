@@ -130,6 +130,7 @@ catch (Exception ex)
 }
 Routes.Map(app, platform, runtime);
 SecurityRoutes.Map(app, platform, loginFlow);
+BotMessaging.Map(app, platform);
 Devices.Map(app, platform);
 Feedback.Map(app, platform);
 app.Run();
@@ -240,7 +241,7 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
                     if (running == 0 && !skipModel)
                     {
                         var conversation = await conn.ExecuteScalarAsync<Guid>("SELECT id FROM conversations WHERE bot_id=@id ORDER BY created_at LIMIT 1", new { id = routine.BotId });
-                        var task = await conn.ExecuteScalarAsync<Guid>("INSERT INTO tasks (bot_id, conversation_id, title, instruction, kind, routine_id, status) VALUES (@bot, @conversation, @title, @instruction, 'work', @routine, 'queued') RETURNING id", new { bot = routine.BotId, conversation, title = routine.Name, instruction = routine.Instruction, routine = routine.Id });
+                        var task = await conn.ExecuteScalarAsync<Guid>("INSERT INTO tasks (bot_id, conversation_id, title, instruction, kind, routine_id, status, origin_depth) VALUES (@bot, @conversation, @title, @instruction, 'work', @routine, 'queued', COALESCE((SELECT origin_depth FROM routines WHERE id=@routine),0)) RETURNING id", new { bot = routine.BotId, conversation, title = routine.Name, instruction = routine.Instruction, routine = routine.Id });
                         await conn.ExecuteAsync("INSERT INTO routine_runs (routine_id, task_id, status) VALUES (@routine, @task, 'queued')", new { routine = routine.Id, task });
                         platform.Tasks.Pulse();
                     }

@@ -178,3 +178,40 @@ if __name__ == "__main__":
     test_chat_has_no_tool_calls()
     test_alpha_later_steps_use_tool_count()
     print("ok")
+
+
+def _first_call(text):
+    name, args, _ = _call([{"role": "user", "content": text}])
+    return name, args
+
+
+def test_peer_ask_plans_a_message_bot_call():
+    name, args = _first_call("Ask Beta to double 21")
+    assert name == "message_bot"
+    assert args["bot"] == "Beta" and args["title"] == "Double 21"
+
+
+def test_peer_receiver_answers_42_without_tools():
+    result = plan([{"role": "user", "content": "Message from bot Alpha (thread t1)\n<<<PEER\nDouble 21 and answer with just the number.\n>>>"}])
+    message = result["choices"][0]["message"]
+    assert message.get("content") == "42" and not message.get("tool_calls")
+
+
+def test_peer_delete_request_plans_delete_file():
+    result = plan([{"role": "user", "content": "Message from bot Alpha (thread t1)\n<<<PEER\nDelete the file /workspace/secret.txt please.\n>>>"}])
+    call = result["choices"][0]["message"]["tool_calls"][0]["function"]
+    assert call["name"] == "delete_file"
+
+
+def test_hello_script_is_capped_at_seven_sends():
+    steps = 0
+    messages = [{"role": "user", "content": "Message Beta hello 99 times"}]
+    for _ in range(12):
+        result = plan(messages)
+        message = result["choices"][0]["message"]
+        if not message.get("tool_calls"):
+            break
+        call = message["tool_calls"][0]
+        steps += 1
+        messages = messages + [message, {"role": "tool", "tool_call_id": call["id"], "content": json.dumps({"ok": True})}]
+    assert steps == 7

@@ -116,6 +116,16 @@ def present_tool(name: str, args: dict | None, result):
         marked["text"] = wrap_untrusted(str(result.get("text") or ""), "web")
         marked["untrusted"] = True
         return marked
+    if name == "thread_status" and result.get("lastMessage"):
+        marked = dict(result)
+        marked["lastMessage"] = wrap_untrusted(str(result.get("lastMessage")), "peer bot")
+        marked["untrusted"] = True
+        return marked
+    if name == "list_bots" and isinstance(result.get("bots"), list):
+        marked = dict(result)
+        marked["bots"] = [dict(b, bio=wrap_untrusted(str(b.get("bio") or ""), "peer bot")) if isinstance(b, dict) and b.get("bio") else b for b in result["bots"]]
+        marked["untrusted"] = True
+        return marked
     command = ""
     if isinstance(args, dict):
         command = str(args.get("command") or "")

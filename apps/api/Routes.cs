@@ -12,7 +12,7 @@ namespace Teammates.Api;
 
 public static class Routes
 {
-    private static bool ValidAvatar(string shape, string color) =>
+    internal static bool ValidAvatar(string shape, string color) =>
         (shape.Length == 0 || System.Text.RegularExpressions.Regex.IsMatch(shape, @"^blob(1[0-5]|[1-9])$")) &&
         (color.Length == 0 || System.Text.RegularExpressions.Regex.IsMatch(color, @"^#[0-9a-fA-F]{6}$"));
 
@@ -103,7 +103,7 @@ public static class Routes
             await using var conn = await platform.Data.OpenConnectionAsync();
             var rows = await conn.QueryAsync(
                 """
-                SELECT b.id, b.name, b.role, b.instructions, b.status, b.created_at, b.section, b.avatar, b.avatar_shape, b.avatar_color, b.model, b.notifications_enabled, b.is_primary, b.bio,
+                SELECT b.id, b.name, b.role, b.instructions, b.status, b.created_at, b.section, b.avatar, b.avatar_shape, b.avatar_color, b.model, b.notifications_enabled, b.is_primary, b.bio, b.peer_messaging,
                        (EXISTS (SELECT 1 FROM approvals a WHERE a.bot_id=b.id AND a.status='pending')
                         OR EXISTS (SELECT 1 FROM tasks t WHERE t.bot_id=b.id AND t.status IN ('waiting_human','waiting_approval'))) AS attention
                 FROM bots b WHERE b.owner_id=@id ORDER BY b.created_at
@@ -181,7 +181,7 @@ public static class Routes
             if (user == null) return Results.Unauthorized();
             if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             await using var conn = await platform.Data.OpenConnectionAsync();
-            var bot = Platform.ToDict(await conn.QuerySingleAsync("SELECT id, name, role, instructions, status, model, avatar, avatar_shape, avatar_color, section, notifications_enabled, is_primary, bio FROM bots WHERE id=@id", new { id }));
+            var bot = Platform.ToDict(await conn.QuerySingleAsync("SELECT id, name, role, instructions, status, model, avatar, avatar_shape, avatar_color, section, notifications_enabled, is_primary, bio, peer_messaging FROM bots WHERE id=@id", new { id }));
             var conversationId = await conn.ExecuteScalarAsync<Guid>("SELECT id FROM conversations WHERE bot_id=@id ORDER BY created_at LIMIT 1", new { id });
             var tasks = (await conn.QueryAsync("SELECT id, title, instruction, status, kind, model_calls, waiting_reason, error, error_code, result::text AS result FROM tasks WHERE bot_id=@id ORDER BY created_at DESC LIMIT 50", new { id })).Select(Platform.ToDict);
             var messages = (await conn.QueryAsync("SELECT m.id, m.role, m.content, m.created_at, m.metadata::text AS metadata, m.reply_to_message_id, m.deleted_at, m.kind, COALESCE(m.task_id, (SELECT t.id FROM tasks t WHERE t.source_message_id=m.id ORDER BY t.created_at DESC LIMIT 1)) AS request_id, (SELECT t.status FROM tasks t WHERE t.id = COALESCE(m.task_id, (SELECT t2.id FROM tasks t2 WHERE t2.source_message_id=m.id ORDER BY t2.created_at DESC LIMIT 1))) AS task_status FROM messages m WHERE m.conversation_id=@conversation ORDER BY m.created_at LIMIT 200", new { conversation = conversationId })).Select(Platform.ToDict).ToList();
@@ -197,7 +197,8 @@ public static class Routes
                 message["deleted"] = message.TryGetValue("deletedAt", out var del) && del != null;
                 message["reactions"] = reactionRows.Where(row => row["messageId"]?.ToString() == idText).Select(row => new { id = row["id"], actorType = row["actorType"], actorId = row["actorId"], emoji = row["emoji"], createdAt = row["createdAt"] }).ToList();
             }
-            var approvals = (await conn.QueryAsync("SELECT id, action, target, reason, status, risk_class, summary FROM approvals WHERE bot_id=@id AND status='pending' ORDER BY created_at", new { id })).Select(Platform.ToDict);
+            var approvals = (await conn.QueryAsync("SELECT a.id, a.action, a.target, a.reason, a.status, a.risk_class, a.summary, th.id AS thread_id, th.title AS thread_title, th.initiator_name AS requested_by, ab.name AS bot_name, (a.bot_id<>@id) AS relayed FROM approvals a JOIN tasks t ON t.id=a.task_id JOIN bots ab ON ab.id=a.bot_id LEFT JOIN bot_threads th ON th.id=t.origin_thread_id WHERE a.status='pending' AND (a.bot_id=@id OR th.initiator_bot_id=@id) ORDER BY a.created_at", new { id })).Select(Platform.ToDict);
+            var botThreads = (await conn.QueryAsync("SELECT th.id, th.title, th.status, th.error_code, th.message_count, th.initiator_bot_id, th.peer_bot_id, th.initiator_name, th.peer_name, th.created_at, th.updated_at, (SELECT left(m.content, 600) FROM bot_thread_messages m WHERE m.thread_id=th.id AND m.kind='reply' ORDER BY m.seq DESC LIMIT 1) AS last_reply, (SELECT left(m.content, 600) FROM bot_thread_messages m WHERE m.thread_id=th.id AND m.kind='request' ORDER BY m.seq LIMIT 1) AS first_request FROM bot_threads th WHERE th.initiator_bot_id=@id OR th.peer_bot_id=@id ORDER BY th.created_at DESC LIMIT 50", new { id })).Select(Platform.ToDict);
             var pages = (await conn.QueryAsync("SELECT target_id, url, title FROM browser_pages WHERE bot_id=@id ORDER BY updated_at", new { id })).Select(Platform.ToDict);
             var holder = await conn.ExecuteScalarAsync<string>("SELECT holder FROM control_locks WHERE bot_id=@id", new { id }) ?? "agent";
             var connected = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM secrets WHERE owner_user_id=@owner AND provider='openrouter' AND name='default' AND revoked_at IS NULL", new { owner = user }) > 0;
@@ -209,7 +210,7 @@ public static class Routes
                     dict["fields"] = JsonSerializer.Deserialize<JsonElement>(fieldJson);
                 return dict;
             });
-            return Results.Json(new { bot, conversationId, tasks, messages, approvals, pages, holder, secretRequests, loginRequests, llmProvider = platform.LlmProvider, openrouterConnected = connected });
+            return Results.Json(new { bot, conversationId, tasks, messages, approvals, botThreads, pages, holder, secretRequests, loginRequests, llmProvider = platform.LlmProvider, openrouterConnected = connected });
         });
 
         app.MapPost("/api/conversations/{id:guid}/messages", async (HttpContext ctx, Guid id, JsonElement body) =>
@@ -389,6 +390,8 @@ public static class Routes
             {
                 return Results.BadRequest(new { error = "decision required" });
             }
+            try { await BotMessaging.OnApprovalDecided(platform, taskId.Value, decision != "deny"); }
+            catch (Exception) { /* thread note is best effort */ }
             return Results.Json(new { ok = true });
         });
 
@@ -1015,8 +1018,15 @@ public static class Routes
             var completed = await conn.QuerySingleOrDefaultAsync<(Guid? ConversationId, int Applied)>("UPDATE tasks SET status='completed', result=@result::jsonb, finished_at=now(), lease_owner=NULL, lease_until=NULL, updated_at=now() WHERE id=@id AND status='running' AND lease_epoch=@epoch RETURNING conversation_id, 1 AS applied", new { id, result = JsonSerializer.Serialize(new { text }), epoch });
             if (completed.Applied == 0) return Results.StatusCode(409);
             var conversation = completed.ConversationId;
-            if (conversation != null && !string.IsNullOrWhiteSpace(text))
+            var taskKind = await conn.ExecuteScalarAsync<string>("SELECT kind FROM tasks WHERE id=@id", new { id });
+            // A peer task's answer is the reply on the thread, not a chat message in the receiver's own chat.
+            if (conversation != null && !string.IsNullOrWhiteSpace(text) && taskKind != "peer")
                 await conn.ExecuteAsync("INSERT INTO messages (conversation_id, role, content, task_id) VALUES (@conversation, 'assistant', @text, @id)", new { conversation, text, id });
+            if (taskKind == "peer")
+            {
+                try { await BotMessaging.OnTaskComplete(platform, id, text); }
+                catch (Exception) { /* the reply is retried by the sweeper; completion itself must not fail */ }
+            }
             var owner = await conn.ExecuteScalarAsync<Guid?>("SELECT b.owner_id FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE t.id=@id", new { id });
             if (owner != null) await platform.Notify(owner.Value, "task.complete", "Task finished", text ?? "");
             await platform.Publish(new { type = "task", taskId = id, status = "completed" });
@@ -1033,6 +1043,11 @@ public static class Routes
             var epoch = body.TryGetProperty("epoch", out var epochEl) ? epochEl.GetInt32() : -1;
             var n = await conn.ExecuteAsync("UPDATE tasks SET status='failed', error=@error, error_code=@errorCode, finished_at=now(), lease_owner=NULL, updated_at=now() WHERE id=@id AND status='running' AND lease_epoch=@epoch", new { id, error, errorCode, epoch });
             if (n > 0) await Reliability.Event(platform, id, "error", new { error_code = errorCode, error });
+            if (n > 0)
+            {
+                try { await BotMessaging.OnTaskFailed(platform, id, errorCode); }
+                catch (Exception) { /* thread failure notice is best effort */ }
+            }
             return n == 0 ? Results.StatusCode(409) : Results.Json(new { ok = true });
         });
 

@@ -178,6 +178,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
 
     private async Task<object> Dispatch(Guid owner, Guid botId, Guid taskId, string tool, JsonElement args, CancellationToken ct)
     {
+        if (BotMessaging.IsTool(tool)) return await BotMessaging.Run(platform, owner, botId, taskId, tool, args, ct);
         var placement = await platform.PlacementForBot(botId, ct);
         var computer = placement.Computer;
         switch (tool)
@@ -303,9 +304,19 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         await using var conn = await platform.Data.OpenConnectionAsync();
         var id = await conn.ExecuteScalarAsync<Guid>(
             "INSERT INTO memories (bot_id, content, source, importance, embedding) VALUES (@bot, @content, @source, 0.6, @emb::vector) RETURNING id",
-            new { bot = botId, content, source = string.IsNullOrWhiteSpace(source) ? "agent" : source, emb = vector });
+            new { bot = botId, content, source = await MemoryProvenance(conn, taskId, source), emb = vector });
         await PostNotice(botId, taskId, "saved", content);
         return new { id, saved = true };
+    }
+
+    /// <summary>Where a remembered fact came from: the user's chat message or the peer thread message, else the agent itself.</summary>
+    private static async Task<string> MemoryProvenance(Npgsql.NpgsqlConnection conn, Guid taskId, string claimed)
+    {
+        var peer = await conn.ExecuteScalarAsync<Guid?>("SELECT id FROM bot_thread_messages WHERE delivered_task_id=@t ORDER BY seq LIMIT 1", new { t = taskId });
+        if (peer != null) return "message:" + peer.Value;
+        var message = await conn.ExecuteScalarAsync<Guid?>("SELECT source_message_id FROM tasks WHERE id=@t", new { t = taskId });
+        if (message != null) return "message:" + message.Value;
+        return string.IsNullOrWhiteSpace(claimed) ? "agent" : claimed;
     }
 
     private async Task<object> ForgetMemory(Guid botId, Guid taskId, string content)
@@ -606,7 +617,8 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         var grants = (await conn.QueryAsync<string>("SELECT domain FROM credential_domain_grants WHERE owner_id=@owner", new { owner })).ToHashSet(StringComparer.OrdinalIgnoreCase);
         PluginCallHint? hint = null;
         if (PluginIds.IsPluginTool(tool)) hint = await PluginCatalog.Hint(platform, botId, tool, ct);
-        var decision = PolicyGate.Evaluate(tool, args, seen, policy, rules, instruction, approved, grants, hint);
+        var peerOrigin = await conn.ExecuteScalarAsync<bool>("SELECT (t.origin_thread_id IS NOT NULL OR t.origin_depth > 0 OR t.kind IN ('peer','peer_reply','peer_notice')) FROM tasks t WHERE t.id=@id", new { id = taskId });
+        var decision = PolicyGate.Evaluate(tool, args, seen, policy, rules, instruction, approved, grants, hint, peerOrigin);
         if (decision.Decision != PolicyEngine.Deny && await TypeSecretOffDomain(conn, owner, tool, args))
             decision = decision with { Decision = PolicyEngine.Deny, Reason = "domain_not_allowed" };
         if (!policy.ModelAssist || ActionClassifier.IsBuiltIn(tool) || decision.HardDeny || decision.Decision == PolicyEngine.Deny)
@@ -704,6 +716,8 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         if (!await SetTask(taskId, "waiting_approval", tool, clearLease: true, epoch, ct))
             return false;
         await platform.Publish(new { type = "approval", taskId });
+        try { await BotMessaging.OnApprovalCreated(platform, taskId, summary); }
+        catch (Exception) { /* thread notices are best effort; the approval already exists */ }
         return true;
     }
 
