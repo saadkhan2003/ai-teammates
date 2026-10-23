@@ -699,7 +699,10 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         if (PluginIds.IsPluginTool(tool)) hint = await PluginCatalog.Hint(platform, botId, tool, ct);
         var peerOrigin = await conn.ExecuteScalarAsync<bool>("SELECT (t.origin_thread_id IS NOT NULL OR t.origin_depth > 0 OR t.kind IN ('peer','peer_reply','peer_notice')) FROM tasks t WHERE t.id=@id", new { id = taskId });
         var decision = PolicyGate.Evaluate(tool, args, seen, policy, rules, instruction, approved, grants, hint, peerOrigin);
-        if (decision.Decision != PolicyEngine.Deny && !decision.HardDeny && await _reviewer.ReviewAsync(tool, args, ct) == "ask")
+        // An explicit ALLOW for starting a peer conversation is the user's own answer; the reviewer must not re-ask it.
+        var userAllowedPeerMessage = tool == "message_bot" && decision.Decision == PolicyEngine.Allow
+            && policy.Mode(decision.RiskClass) == PolicyEngine.Allow && !peerOrigin;
+        if (decision.Decision != PolicyEngine.Deny && !decision.HardDeny && !userAllowedPeerMessage && await _reviewer.ReviewAsync(tool, args, ct) == "ask")
             decision = decision with { Decision = PolicyEngine.Ask, Reason = "review_required" };
         if (decision.Decision == PolicyEngine.Ask && !decision.HardDeny && ApprovalRules.MayOverrideReviewerAsk(policy.Mode(decision.RiskClass))
             && ApprovalRules.CommandShapeHash(tool, args) is { } shape)
