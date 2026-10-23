@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import { ComputerState, DisplayDots, type ComputerPhase } from "@/components/computer-preview-state";
 import { Eye, Maximize2, Minimize2, Minus, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -109,6 +110,8 @@ export function ComputerPane({
   onChanged,
   compact = false,
   caption,
+  avatar,
+  displays = 1,
   fullscreen: fullscreenProp = false,
   onExpand,
   onExitFullscreen,
@@ -123,6 +126,8 @@ export function ComputerPane({
   onChanged: () => void;
   compact?: boolean;
   caption?: string;
+  avatar?: ReactNode;
+  displays?: number;
   fullscreen?: boolean;
   onExpand?: () => void;
   onExitFullscreen?: () => void;
@@ -178,7 +183,10 @@ export function ComputerPane({
   const [vncState, setVncState] = useState<VncState>("disconnected");
   const [mode, setMode] = useState<DesktopMode>("view");
   const [error, setError] = useState<string | null>(null);
+  const [connectFailed, setConnectFailed] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState(true);
+  const [online, setOnline] = useState(true);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [keyboard, setKeyboard] = useState(false);
@@ -288,6 +296,7 @@ export function ComputerPane({
     clearReconnect();
     const gen = ++connectGen.current;
     setError(null);
+    setConnecting(true);
     try {
       await openView("view", `/api/bots/${botIdRef.current}/computer/view-token`, gen);
     } catch (caught) {
@@ -295,6 +304,8 @@ export function ComputerPane({
       liveRef.current = false;
       openingRef.current = false;
       setVncState("disconnected");
+      setConnecting(false);
+      setConnectFailed(true);
       setError(errorMessage(caught, "Could not open the desktop."));
       scheduleViewReconnect();
     } finally {
@@ -350,6 +361,27 @@ export function ComputerPane({
     // Reconnect when the bot changes. Cleanup closes the previous socket first.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [botId]);
+
+  useEffect(() => {
+    if (vncState === "connected") { setConnecting(false); setConnectFailed(false); }
+  }, [vncState]);
+
+  useEffect(() => {
+    const update = () => setOnline(navigator.onLine);
+    update();
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => { window.removeEventListener("online", update); window.removeEventListener("offline", update); };
+  }, []);
+
+  const phase: ComputerPhase = !online ? "offline" : vncState === "connected" ? "live" : error || connectFailed ? "error" : connecting ? "connecting" : "sleeping";
+
+  function retryConnect() {
+    wantViewRef.current = true;
+    reconnectAttempt.current = 0;
+    clearReconnect();
+    void startView();
+  }
 
   const paneOpened = useRef(false);
   useEffect(() => {
@@ -565,6 +597,7 @@ export function ComputerPane({
       if (event.pointerType === "mouse" || event.pointerType === "") {
         // noVNC inserts a capture element on pointerdown, so the later click is retargeted
         // and never reaches this frame. Expand from the pointerdown itself.
+        if ((event.target as HTMLElement | null)?.closest?.("[data-no-expand]")) return;
         if (compactRef.current && !fullscreenRef.current) expandRef.current?.();
         return;
       }
@@ -706,6 +739,7 @@ export function ComputerPane({
         <div
           ref={frameRef}
           data-testid="desktop-frame"
+          data-phase={phase}
           data-zoom={zoom.toFixed(2)}
           className={cn(
             "relative touch-none overflow-hidden bg-background",
@@ -722,7 +756,8 @@ export function ComputerPane({
           tabIndex={compact && !fullscreen ? 0 : undefined}
           aria-label={compact && !fullscreen ? `Open ${caption || "Teammate"}'s computer` : undefined}
           onKeyDown={compact && !fullscreen ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onExpand?.(); } } : undefined}
-          onClickCapture={() => {
+          onClickCapture={(event) => {
+            if ((event.target as HTMLElement).closest?.("[data-no-expand]")) return;
             if (compact && !fullscreen) onExpand?.();
           }}
         >
@@ -732,11 +767,10 @@ export function ComputerPane({
             style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%`, left: pan.x, top: pan.y }}
             aria-label="Bot desktop"
           />
-          {compact && !fullscreen && vncState !== "connected" ? (
-            <div data-testid="computer-asleep" className="absolute inset-0 grid place-items-center bg-neutral-950 px-4 text-center text-sm text-neutral-400">
-              <span>{caption || "Teammate"}&apos;s computer is resting.<br /><span className="text-xs text-neutral-500">It wakes up when a task needs it.</span></span>
-            </div>
+          {(compact && !fullscreen && phase !== "live") || (fullscreen && (phase === "error" || phase === "offline")) ? (
+            <ComputerState phase={phase} name={caption || "Teammate"} avatar={avatar} onRetry={retryConnect} />
           ) : null}
+          {compact && !fullscreen ? <DisplayDots count={displays} /> : null}
           {compact && !fullscreen && (mode === "control" || holder === "human") ? (
             <span data-testid="control-chip" className="absolute right-2 top-2 rounded-full bg-bot px-2.5 py-1 text-xs font-medium text-bot-foreground shadow">You&apos;re in control · bot paused</span>
           ) : null}
