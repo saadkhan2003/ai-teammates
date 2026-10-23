@@ -786,6 +786,31 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
     public Task<string> ControlAsync(ComputerId id, string path, string json, CancellationToken ct) =>
         ControlAsync(id, path, Encoding.UTF8.GetBytes(json), ct);
 
+    /// <summary>POST to a computer control endpoint and return a bounded binary response.</summary>
+    public async Task<byte[]> ControlDownloadAsync(ComputerId id, string path, string json, int maxBytes, CancellationToken ct)
+    {
+        if (maxBytes is < 1 or > 60 * 1024 * 1024) throw new ArgumentOutOfRangeException(nameof(maxBytes));
+        var row = await DemandAsync(id, ct);
+        await WakeAsync(row, ct);
+        var host = await HostOf(id, row, ct);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "http://" + host + ":7700" + (path.StartsWith('/') ? path : "/" + path));
+        request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        if ((int)response.StatusCode == 409) throw ComputeException.Conflict("computer control conflict");
+        if (!response.IsSuccessStatusCode) throw ComputeException.FailedPrecondition("computer control rejected the call");
+        await using var input = await response.Content.ReadAsStreamAsync(ct);
+        using var output = new MemoryStream();
+        var buffer = new byte[64 * 1024];
+        while (true)
+        {
+            var read = await input.ReadAsync(buffer, ct);
+            if (read == 0) break;
+            if (output.Length + read > maxBytes) throw ComputeException.FailedPrecondition("computer response too large");
+            output.Write(buffer, 0, read);
+        }
+        return output.ToArray();
+    }
+
     public async Task<string> ControlAsync(ComputerId id, string path, ReadOnlyMemory<byte> json, CancellationToken ct)
     {
         var row = await DemandAsync(id, ct);
@@ -806,6 +831,7 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
                 var text = await response.Content.ReadAsStringAsync(ct);
                 if (response.IsSuccessStatusCode) return text;
                 var status = (int)response.StatusCode;
+                if (status == 409) throw ComputeException.Conflict("computer control conflict");
                 if (status is 404 or 500 or 503 && DateTimeOffset.UtcNow < deadline)
                 {
                     await Task.Delay(300, ct);

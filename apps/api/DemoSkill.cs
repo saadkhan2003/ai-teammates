@@ -8,7 +8,7 @@ public static class DemoSkill
 {
     public const string Id = "learn-from-demonstration";
     public const string Label = "Learn from demonstration";
-    private static readonly Regex SafePath = new(@"^/workspace/recordings/[A-Za-z0-9._\- ]{1,100}\.webm$", RegexOptions.Compiled);
+    private static readonly Regex SafePath = new(@"^/workspace/(?:recordings|teach-sessions)/[A-Za-z0-9._\-/ ]{1,180}\.(?:webm|mp4)$", RegexOptions.Compiled);
 
     public static bool ValidRecording(string? path) => path != null && SafePath.IsMatch(path) && !path.Contains("..");
 
@@ -25,6 +25,6 @@ public static class DemoSkill
     public static string Metadata(string recording) => JsonSerializer.Serialize(new
     {
         skill = new { id = Id, label = Label },
-        attachments = new[] { new { path = recording, name = Path.GetFileName(recording), mime = "video/webm" } },
+        attachments = new[] { new { path = recording, name = Path.GetFileName(recording), mime = recording.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase) ? "video/mp4" : "video/webm" } },
     });
 }

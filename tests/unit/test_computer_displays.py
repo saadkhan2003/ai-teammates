@@ -87,6 +87,49 @@ def test_native_routes_require_auth_and_respect_human_control(runtime, monkeypat
     assert command.await_count == before
 
 
+def test_teach_routes_are_authenticated_and_only_use_the_fork_display(runtime, monkeypatch, tmp_path):
+    pytest.importorskip("fastapi")
+    pytest.importorskip("uvicorn")
+    from fastapi.testclient import TestClient
+    (tmp_path / "demo.mp4").write_bytes(b"fake-mp4")
+    spec = importlib.util.spec_from_file_location("computer_teach_server", ROOT / "services/computer/src/server.py")
+    server = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(server)
+    server.manager = runtime.manager
+    bot_id = "abcdefab-cdef-abcd-efab-cdefabcdefab"
+    (tmp_path / "bot").mkdir()
+    monkeypatch.setattr(server.workspace, "ensure", lambda _: 1234)
+    monkeypatch.setattr(server.workspace, "root_for", lambda _: tmp_path / "bot")
+    monkeypatch.setattr(server.workspace, "locate_under", lambda root, path: root / path.removeprefix("/workspace/"))
+    monkeypatch.setattr(server.workspace, "call_as", lambda _uid, call: call())
+    class FakeRecorder:
+        def start(self, display, *, private_window):
+            assert display == 2 and private_window
+            return {"id": "teach-test", "ffmpegPid": 44}
+        def stop(self, session_id=None):
+            return {"id": "teach-test", "videoPath": str(tmp_path / "demo.mp4"), "metadata": {"status": "finished"}}
+    server.teach_recorder = FakeRecorder()
+    from desktops import Desktop
+    runtime.manager.desktops[bot_id] = Desktop(bot_id, 1)
+    selected = []
+    async def select(bot, display):
+        selected.append((bot, display))
+        assert display == 2
+        return Desktop(bot, 2)
+    monkeypatch.setattr(runtime.manager, "select_display", select)
+    client = TestClient(server.app)
+    auth = {"Authorization": "Bearer unit-test-only"}
+    assert client.post(f"/desktops/{bot_id}/teach/start", json={"display": 2}).status_code == 401
+    response = client.post(f"/desktops/{bot_id}/teach/start", headers=auth, json={"display": 1})
+    assert response.status_code == 400
+    response = client.post(f"/desktops/{bot_id}/teach/start", headers=auth, json={"display": 2, "workspaceBotId": bot_id})
+    assert response.status_code == 200
+    assert selected == [(bot_id, 2)]
+    stopped = client.post(f"/desktops/{bot_id}/teach/stop", headers=auth, json={"sessionId": "teach-test", "workspaceBotId": bot_id})
+    assert stopped.status_code == 200 and stopped.content == b"fake-mp4"
+    assert (tmp_path / "bot" / "teach-sessions" / "teach-test.mp4").read_bytes() == b"fake-mp4"
+
+
 def test_holder_changes_cover_both_displays(runtime, monkeypatch):
     from desktops import Desktop
     primary = Desktop("bot-a", 1)

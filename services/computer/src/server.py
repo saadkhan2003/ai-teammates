@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import importlib.util
+import base64
 import os
 import time
 from contextlib import asynccontextmanager
@@ -10,16 +11,18 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Query
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 import workspace
 from browser import BrowserHub, run_command
 from desktops import DesktopManager, cdp_port, rw_port, view_port
 from fixtureserver import start as start_fixtures
 from pure import redact, scrub_tree
 from box_contract import MAX_WINDOWS, PATHS
+from recorder import Recorder, RecorderConflict
 
 manager = DesktopManager()
 hub: BrowserHub | None = None
+teach_recorder: Recorder | None = None
 
 
 def require_token(authorization: str = Header(default="")) -> None:
@@ -288,6 +291,70 @@ async def set_control(bot_id: str, body: dict, _: None = Depends(require_token))
     await selected_display(bot_id, int(body.get("display", 1)))
     await manager.set_holder(bot_id, str(body["holder"]), int(body["epoch"]))
     return manager.status(bot_id, int(body.get("display", 1)))
+
+
+@app.post("/desktops/{bot_id}/teach/start")
+async def teach_start(bot_id: str, body: dict, _: None = Depends(require_token)):
+    global teach_recorder
+    # Display 2 is the isolated fork window used for private demonstrations.
+    if body.get("display") != 2:
+        raise HTTPException(status_code=400, detail="Teach requires the private fork display")
+    workspace_bot_id = body.get("workspaceBotId")
+    if not isinstance(workspace_bot_id, str):
+        raise HTTPException(status_code=400, detail="invalid workspace bot")
+    try:
+        workspace.safe_id(workspace_bot_id)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail="invalid workspace bot") from exc
+    try:
+        desk = await manager.select_display(bot_id, 2)
+        if teach_recorder is None:
+            teach_recorder = Recorder(os.environ.get("TEACH_RECORDING_ROOT", "/data/state/teach-sessions"))
+        session = teach_recorder.start(desk.display, private_window=True)
+        return {"id": session["id"], "ffmpegPid": session["ffmpegPid"], "display": desk.display}
+    except RecorderConflict as exc:
+        raise HTTPException(status_code=409, detail="Teach is already active") from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="desktop not ready") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="private fork display unavailable") from exc
+
+
+@app.post("/desktops/{bot_id}/teach/stop")
+async def teach_stop(bot_id: str, body: dict, _: None = Depends(require_token)):
+    if teach_recorder is None:
+        raise HTTPException(status_code=404, detail="recording session not found")
+    session_id = body.get("sessionId")
+    if not isinstance(session_id, str) or not session_id or len(session_id) > 96:
+        raise HTTPException(status_code=400, detail="invalid session")
+    workspace_bot_id = body.get("workspaceBotId")
+    if not isinstance(workspace_bot_id, str):
+        raise HTTPException(status_code=400, detail="invalid workspace bot")
+    try:
+        workspace.safe_id(workspace_bot_id)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail="invalid workspace bot") from exc
+    try:
+        session = teach_recorder.stop(session_id)
+        video = Path(session["videoPath"])
+        if not video.is_file() or video.stat().st_size > 45 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="recording unavailable or too large")
+        safe_session = session["id"]
+        recording_path = f"/workspace/teach-sessions/{safe_session}.mp4"
+        uid = workspace.ensure(workspace_bot_id)
+        target = workspace.locate_under(workspace.root_for(workspace_bot_id), recording_path)
+        def attach_recording():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(video.read_bytes())
+        workspace.call_as(uid, attach_recording)
+        metadata = base64.b64encode(json.dumps(session["metadata"], separators=(",", ":")).encode()).decode("ascii")
+        return FileResponse(video, media_type="video/mp4", filename="demo.mp4",
+                            headers={"X-Teach-Session": session["id"], "X-Teach-Metadata": metadata,
+                                     "X-Teach-Path": recording_path})
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="recording session not found") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail="recording failed") from exc
 
 
 @app.post("/desktops/{bot_id}/vnc-tokens")
