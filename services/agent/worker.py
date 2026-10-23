@@ -66,6 +66,25 @@ def env_int(name: str, default: int) -> int:
         return default
 
 
+def _forced_exit_after_tool(task: dict) -> None:
+    """TEST ONLY: exit once after a durable tool result reaches the transcript."""
+    threshold = env_int("WORKER_FORCED_EXIT_AFTER_STEPS", 0)
+    once_file = os.environ.get("WORKER_FORCED_EXIT_ONCE_FILE", "").strip()
+    steps = int(task.get("_stepsUsed", 0))
+    if threshold <= 0 or steps < threshold or not once_file:
+        return
+    try:
+        parent = os.path.dirname(once_file)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        descriptor = os.open(once_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        return
+    else:
+        os.close(descriptor)
+        os._exit(137)
+
+
 DEFAULT_PARALLEL = 4
 MAX_PARALLEL_CAP = 8
 
@@ -395,6 +414,7 @@ class Worker:
                     if exc.response.status_code in LEASE_GONE:
                         return
                     raise
+                _forced_exit_after_tool(task)
                 if lost.is_set():
                     return
 
