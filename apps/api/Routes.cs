@@ -198,7 +198,7 @@ public static class Routes
             var conversationId = await conn.ExecuteScalarAsync<Guid>("SELECT id FROM conversations WHERE bot_id=@id ORDER BY created_at LIMIT 1", new { id });
             var tasks = (await conn.QueryAsync("SELECT id, title, instruction, status, kind, model_calls, waiting_reason, error, error_code, result::text AS result FROM tasks WHERE bot_id=@id ORDER BY created_at DESC LIMIT 50", new { id })).Select(Platform.ToDict);
             var (messages, messagesHasMore) = await LoadMessages(conn, conversationId, null, 200);
-            var approvals = (await conn.QueryAsync("SELECT a.id, a.action, a.target, a.reason, a.status, a.risk_class, a.summary, th.id AS thread_id, th.title AS thread_title, th.initiator_name AS requested_by, ab.name AS bot_name, (a.bot_id<>@id) AS relayed FROM approvals a JOIN tasks t ON t.id=a.task_id JOIN bots ab ON ab.id=a.bot_id LEFT JOIN bot_threads th ON th.id=t.origin_thread_id WHERE a.status='pending' AND (a.bot_id=@id OR th.initiator_bot_id=@id) ORDER BY a.created_at", new { id })).Select(Platform.ToDict);
+            var approvals = (await conn.QueryAsync("SELECT a.id, a.action, a.target, a.reason, a.status, a.risk_class, a.summary, th.id AS thread_id, th.title AS thread_title, th.initiator_name AS requested_by, ab.name AS bot_name, (a.bot_id<>@id) AS relayed FROM approvals a LEFT JOIN tasks t ON t.id=a.task_id JOIN bots ab ON ab.id=a.bot_id LEFT JOIN bot_threads th ON th.id=t.origin_thread_id WHERE a.status='pending' AND (a.bot_id=@id OR th.initiator_bot_id=@id) ORDER BY a.created_at", new { id })).Select(Platform.ToDict);
             var botThreads = (await conn.QueryAsync("SELECT th.id, th.title, th.status, th.error_code, th.message_count, th.initiator_bot_id, th.peer_bot_id, th.initiator_name, th.peer_name, th.created_at, th.updated_at, (SELECT left(m.content, 600) FROM bot_thread_messages m WHERE m.thread_id=th.id AND m.kind='reply' ORDER BY m.seq DESC LIMIT 1) AS last_reply, (SELECT left(m.content, 600) FROM bot_thread_messages m WHERE m.thread_id=th.id AND m.kind='request' ORDER BY m.seq LIMIT 1) AS first_request FROM bot_threads th WHERE th.initiator_bot_id=@id OR th.peer_bot_id=@id ORDER BY th.created_at DESC LIMIT 50", new { id })).Select(Platform.ToDict);
             var pages = (await conn.QueryAsync("SELECT target_id, url, title FROM browser_pages WHERE bot_id=@id ORDER BY updated_at", new { id })).Select(Platform.ToDict);
             var holder = await conn.ExecuteScalarAsync<string>("SELECT holder FROM control_locks WHERE bot_id=@id", new { id }) ?? "agent";
@@ -647,6 +647,15 @@ public static class Routes
             await using var conn = await platform.Data.OpenConnectionAsync();
             if (body.TryGetProperty("nextRunAt", out var next))
                 await conn.ExecuteAsync("UPDATE routines SET next_run_at=@next FROM bots b WHERE routines.id=@id AND routines.bot_id=b.id AND b.owner_id=@owner", new { id, owner = user, next = next.GetDateTimeOffset() });
+            if (body.TryGetProperty("enabled", out var enabledEl) && enabledEl.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                var enabled = enabledEl.GetBoolean();
+                var cron = await conn.QuerySingleOrDefaultAsync<string>("SELECT r.cron FROM routines r JOIN bots b ON b.id=r.bot_id WHERE r.id=@id AND b.owner_id=@owner", new { id, owner = user });
+                if (cron == null) return Results.NotFound();
+                var nextAt = enabled ? RoutineToggle.NextAfterEnable(cron, DateTimeOffset.UtcNow) : (DateTimeOffset?)null;
+                await conn.ExecuteAsync("UPDATE routines SET enabled=@enabled, next_run_at=@nextAt WHERE id=@id", new { id, enabled, nextAt });
+                return Results.Json(new { ok = true, enabled, nextRunAt = nextAt });
+            }
             return Results.Json(new { ok = true });
         });
 
@@ -697,6 +706,7 @@ public static class Routes
         PluginCatalog.Map(app, platform);
         Beta.Map(app, platform);
         Templates.Map(app, platform);
+        CodingItems.Map(app, platform);
         MapInternal(app, platform, runtime);
 
         app.Map("/vnc/websockify", async (HttpContext ctx) =>

@@ -144,6 +144,7 @@ export type Routine = {
   cron: string;
   instruction?: string;
   nextRunAt?: string;
+  enabled?: boolean;
   watchKind?: string;
   watchRef?: string;
 };

@@ -12,6 +12,8 @@ import { LoginCard } from "@/components/login-card";
 import { FilesPane } from "@/components/files-pane";
 import { MemoryPane } from "@/components/memory-pane";
 import { RoutinesPane } from "@/components/routines-pane";
+import { CodingSection } from "@/components/coding-section";
+import { RoutinesSection } from "@/components/routines-section";
 import { SkillsPane } from "@/components/skills-pane";
 import { StateMessage } from "@/components/state-message";
 import { TasksPane } from "@/components/tasks-pane";
@@ -497,6 +499,7 @@ export function Workspace({ botId }: { botId: string }) {
                   holder={workspace.holder}
                   compact={!computerExpanded}
                   caption={bot?.name || "Teammate"}
+                  avatar={<BotAvatar animated botId={bot?.id} shape={bot?.avatarShape} color={bot?.avatarColor} size={36} primary={bot?.isPrimary} />}
                   fullscreen={desktopFull}
                   recording={teach.recording}
                   autoControlKey={autoControlKey}
@@ -506,24 +509,14 @@ export function Workspace({ botId }: { botId: string }) {
                   onChanged={() => void loadWorkspace()}
                 />
               </div>
-              <section className="border-b border-border px-3 py-3">
-                <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Routines</h2>
-                {!routines.loaded ? <ListSkeleton label="Loading routines" rows={2} /> : null}
-                {routines.error ? <p className="mt-2 text-sm text-destructive">{routines.error}</p> : null}
-                {routines.loaded && !routines.error && routines.items.length === 0 ? (
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    Routines are recurring tasks this teammate runs on a schedule. Ask in chat to set one up.
-                  </p>
-                ) : null}
-                <ul className="mt-2 space-y-1">
-                  {routines.items.map((routine) => (
-                    <li key={routine.id} className="flex items-baseline justify-between gap-2 text-sm">
-                      <span className="truncate">{routine.name}</span>
-                      <span className="shrink-0 text-xs text-muted-foreground">{routine.cron}</span>
-                    </li>
-                  ))}
-                </ul>
-              </section>
+              <RoutinesSection
+                routines={routines.items}
+                loaded={routines.loaded}
+                error={routines.error}
+                onRetry={() => void loadAux(["routines"])}
+                onChanged={() => void loadAux(["routines"])}
+              />
+              <CodingSection botId={botId} />
               <section data-testid="channels" className="border-b border-border px-3 py-3">
                 <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Channels</h2>
                 <p className="mt-2 text-sm text-muted-foreground">No channels. Group chats will list them here.</p>

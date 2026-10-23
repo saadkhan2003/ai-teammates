@@ -137,6 +137,7 @@ export function normalizeRoutines(data: unknown) {
       cron: text(record.cron),
       instruction: text(record.instruction) || undefined,
       nextRunAt: text(record.nextRunAt ?? record.next_run_at) || undefined,
+      enabled: record.enabled !== false,
       watchKind: text(record.watchKind ?? record.watch_kind) || undefined,
       watchRef: text(record.watchRef ?? record.watch_ref) || undefined,
     };
