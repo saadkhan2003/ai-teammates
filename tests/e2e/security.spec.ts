@@ -70,7 +70,7 @@ async function waitTask(page: Page, botId: string, taskId: string, timeout = 180
 async function send(page: Page, text: string, asTask: boolean) {
   const composer = page.getByTestId("composer");
   await composer.fill(text);
-  await page.getByTestId(asTask ? "assign-task" : "send-chat").click();
+  await page.getByTestId("send-chat").click();
   if (asTask) await expect(composer).toHaveValue("");
 }
 

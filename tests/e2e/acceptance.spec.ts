@@ -169,7 +169,7 @@ async function openSecrets(page: Page) {
 async function send(page: Page, text: string, asTask: boolean) {
   const composer = page.getByTestId("composer");
   await composer.fill(text);
-  await page.getByTestId(asTask ? "assign-task" : "send-chat").click();
+  await page.getByTestId("send-chat").click();
   await expect(composer).toHaveValue("");
 }
 

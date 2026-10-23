@@ -4,8 +4,10 @@ import { FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } f
 import { Markdown } from "@/components/markdown";
 import { RefreshNotice } from "@/components/refresh-notice";
 import type { AgentEvent } from "@/lib/events";
-import { Notebook, Plus, X as XIcon, Quote } from "lucide-react";
+import { ArrowUp, Loader2, Notebook, Plus, X as XIcon, Quote } from "lucide-react";
 import { BotAvatar } from "@/components/bot-avatar";
+import { BotActionRow, BotThreadRow } from "@/components/bot-thread";
+import { parseBotRow, type BotThreadView } from "@/lib/bot-thread";
 import { MessageBody, MessageItem, plainTextOf } from "@/components/message-item";
 import { ShimmerText, workingStatus } from "@/components/shimmer-text";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -33,10 +35,12 @@ export function ChatPane({
   botId,
   avatar,
   taskTitle,
+  botThreads = [],
 }: {
   botId?: string;
   avatar?: { shape?: string; color?: string; primary?: boolean };
   taskTitle?: string;
+  botThreads?: BotThreadView[];
   conversationId?: string;
   messages: ChatMessage[];
   botName: string;
@@ -244,7 +248,7 @@ export function ChatPane({
       draftsRef.current.delete(conversationId);
       onSent();
     } catch (caught) {
-      const message = errorMessage(caught, asTask ? "Could not assign that work." : "Could not send that message.");
+      const message = errorMessage(caught, "Could not send that message.");
       const blocked = (caught instanceof ApiError && caught.status === 422) || message.toLowerCase().includes("data policy");
       setDlp(blocked);
       setError(message);
@@ -311,6 +315,9 @@ export function ChatPane({
                 </article>
               );
             }
+            const botRow = parseBotRow(message.kind, message.content);
+            if (botRow?.type === "bot_thread") return <BotThreadRow key={message.id} row={botRow} thread={botThreads.find(item => item.id === botRow.threadId)} createdAt={message.createdAt} onChanged={onSent} />;
+            if (botRow?.type === "bot_action") return <BotActionRow key={message.id} row={botRow} createdAt={message.createdAt} />;
             const mine = message.role === "user";
             return (
               <MessageItem
@@ -418,11 +425,8 @@ export function ChatPane({
             <input ref={fileRef} type="file" multiple hidden data-testid="composer-file" onChange={event => void attach(event.target.files)} />
             <div className="ml-auto flex items-center gap-2">
             {working && onStop ? <Button type="button" data-testid="stop-run" variant="destructive" disabled={stopping} onClick={() => void stop()}>{stopping ? "Stopping…" : "Stop"}</Button> : null}
-            <Button data-testid="send-chat" type="submit" variant="secondary" className="min-h-11 rounded-md bg-bot text-bot-foreground hover:bg-bot/90" disabled={sending || !conversationId}>
-              Send
-            </Button>
-            <Button data-testid="assign-task" className="min-h-11 rounded-md" disabled={sending || !conversationId} onClick={() => void send(true)}>
-              Assign work
+            <Button data-testid="send-chat" type="submit" size="icon" aria-label={sending ? "Sending" : "Send"} title="Send" className="h-9 w-9 shrink-0 rounded-full bg-bot text-bot-foreground hover:bg-bot/90 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" disabled={sending || !conversationId}>
+              {sending ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden /> : <ArrowUp className="h-4 w-4" aria-hidden />}
             </Button>
             </div>
           </div>

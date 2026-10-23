@@ -45,7 +45,7 @@ export function TasksPane({
     <div data-testid="task-list">
       {tasks.length === 0 ? (
         <p className="rounded-lg border border-line bg-paper px-4 py-3 text-sm text-muted-foreground">
-          No tasks yet. Assign work from Chat and the status will show up here.
+          No tasks yet. Send work from Chat and the status will show up here.
         </p>
       ) : (
         <ScrollArea className="h-[min(60dvh,640px)]">
