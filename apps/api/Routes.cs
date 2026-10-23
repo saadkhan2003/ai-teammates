@@ -1025,8 +1025,13 @@ public static class Routes
                     new { id, worker }, tx);
                 var feedback = (await conn.QueryAsync<(Guid MessageId, string Emoji, string Action)>(
                     """
-                    UPDATE bot_feedback SET consumed_at=now(), task_id=@task
-                    WHERE id IN (SELECT id FROM bot_feedback WHERE bot_id=@bot AND consumed_at IS NULL ORDER BY created_at FOR UPDATE)
+                    UPDATE bot_feedback SET task_id=@task
+                    WHERE id IN (
+                        SELECT f.id FROM bot_feedback f
+                        WHERE f.bot_id=@bot AND f.consumed_at IS NULL
+                          AND (f.task_id IS NULL OR f.task_id=@task
+                               OR NOT EXISTS (SELECT 1 FROM tasks o WHERE o.id=f.task_id AND o.status IN ('queued','running')))
+                        ORDER BY f.created_at FOR UPDATE)
                     RETURNING message_id, emoji, action
                     """,
                     new { task = id, bot = task.BotId }, tx)).Select(note => new { messageId = note.MessageId, emoji = note.Emoji, action = note.Action }).ToList();
@@ -1112,6 +1117,8 @@ public static class Routes
                     }, tx);
                 seq++;
             }
+            // Feedback is consumed only once the note is durable in the transcript, so a retry re-delivers it.
+            await conn.ExecuteAsync("UPDATE bot_feedback SET consumed_at=now() WHERE task_id=@id AND consumed_at IS NULL", new { id }, tx);
             await tx.CommitAsync();
             return Results.Json(new { ok = true });
         });
