@@ -81,9 +81,9 @@ def test_bots_have_separate_workspaces_and_delete_wipes():
     )
     assert home_read.returncode != 0, home_read.stdout
     procs = subprocess.run(["sudo", "docker", "exec", name, "ps", "-eo", "uid=,cmd="], capture_output=True, text=True)
-    openbox = next((line for line in procs.stdout.splitlines() if "openbox" in line and "grep" not in line), "")
+    openbox = next((line for line in procs.stdout.splitlines() if "xfwm4" in line and "grep" not in line), "")
     assert openbox, procs.stdout
-    openbox_uid = openbox.split()[0]
+    wm_uid = openbox.split()[0]
     owner = subprocess.run(
         ["sudo", "docker", "exec", name, "stat", "-c", "%u", f"/data/workspace/bots/{left.replace('-', '')}"],
         capture_output=True,
@@ -97,7 +97,7 @@ def test_bots_have_separate_workspaces_and_delete_wipes():
         capture_output=True,
         text=True,
     )
-    assert openbox_uid == desktop_owner.stdout.strip() and openbox_uid != "0", (openbox, desktop_owner.stdout)
+    assert wm_uid == desktop_owner.stdout.strip() and wm_uid != "0", (openbox, desktop_owner.stdout)
     assert owner.stdout.strip() == uid_line, (owner.stdout, shell)
     status, _ = client.call("DELETE", f"/api/bots/{right}")
     assert status == 204, status

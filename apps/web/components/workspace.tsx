@@ -49,7 +49,7 @@ const ComputerPane = dynamic(() => import("@/components/computer-pane").then((mo
   loading: () => (
     <div data-testid="computer-tab" data-vnc-state="disconnected" role="status" aria-busy="true" className="p-3">
       <span className="sr-only">Loading the desktop</span>
-      <Skeleton className="aspect-[4/3] w-full rounded-xl" />
+      <Skeleton className="aspect-[16/10] w-full rounded-xl" />
     </div>
   ),
 });

@@ -14,8 +14,8 @@ ARG S6_OVERLAY_X86_64_SHA256=e6befcc96a437a3831386ecfc51808c5d3e939dc5fe3c02ae92
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl xz-utils \
-        xvfb xauth x11-utils x11-xserver-utils openbox x11vnc \
-        tint2 feh pcmanfm \
+        xvfb xauth x11-utils x11-xserver-utils x11vnc \
+        xfwm4 picom plank thunar xfce4-terminal dbus-x11 dbus-user-session adwaita-icon-theme gnome-themes-extra feh \
         chromium chromium-sandbox \
         python3 python3-pip python3-venv python3-pytest \
         xdotool xterm procps \
@@ -56,40 +56,26 @@ COPY s6/s6-rc.d/ /etc/s6-overlay/s6-rc.d/
 COPY s6/user-bundles.d/ /etc/s6-overlay/user-bundles.d/
 COPY scripts/bots-init /etc/s6-overlay/scripts/bots-init
 COPY src/ /opt/desk/src/
-# One desktop, no iconify animation, no live resize redraw. Openbox stays the WM.
-RUN sed -i \
-        -e 's/<animateIconify>yes<\/animateIconify>/<animateIconify>no<\/animateIconify>/' \
-        -e 's/<number>4<\/number>/<number>1<\/number>/' \
-        -e 's/<drawContents>yes<\/drawContents>/<drawContents>no<\/drawContents>/' \
-        /etc/xdg/openbox/rc.xml
 COPY fixtures/ /opt/fixtures/www/
 COPY fixtures/mcp_echo.py /opt/fixtures/mcp_echo.py
 COPY sample-repo/ /opt/fixtures/sample-repo/
-COPY desktop/rc.xml /etc/xdg/openbox/rc.xml
 COPY desktop/wallpaper.svg /usr/share/backgrounds/teammates.svg
-COPY desktop/menu.xml /etc/xdg/openbox/menu.xml
-COPY desktop/top.tint2rc /opt/desk/tint2/top.tint2rc
-COPY desktop/dock.tint2rc /opt/desk/tint2/dock.tint2rc
 COPY desktop/start-panels /opt/desk/bin/start-panels
+COPY desktop/start-wm /opt/desk/bin/start-wm
+COPY desktop/icons/ /opt/desk/icons-src/
 COPY desktop/launch-browser /opt/desk/bin/launch-browser
 COPY desktop/launch-files /opt/desk/bin/launch-files
 COPY desktop/launch-terminal /opt/desk/bin/launch-terminal
 COPY desktop/chromium.desktop /opt/desk/applications/chromium.desktop
 COPY desktop/files.desktop /opt/desk/applications/files.desktop
 COPY desktop/terminal.desktop /opt/desk/applications/terminal.desktop
-RUN chmod +x /etc/s6-overlay/scripts/bots-init /opt/desk/bin/start-panels \
+RUN chmod +x /etc/s6-overlay/scripts/bots-init /opt/desk/bin/start-panels /opt/desk/bin/start-wm \
         /opt/desk/bin/launch-browser /opt/desk/bin/launch-files /opt/desk/bin/launch-terminal \
     && find /etc/s6-overlay/s6-rc.d -name run -exec chmod +x {} \; \
     && chmod 0755 /opt/desk/src \
     && mkdir -p /usr/share/backgrounds /opt/desk/icons \
     && rsvg-convert /usr/share/backgrounds/teammates.svg -o /usr/share/backgrounds/teammates.png \
-    && convert -size 64x64 xc:none -fill '#3b82f6' -draw 'circle 32,32 32,8' \
-        -fill '#22c55e' -draw 'circle 18,40 18,30' -fill '#eab308' -draw 'circle 46,40 46,30' \
-        -fill '#ef4444' -draw 'circle 32,22 32,14' /opt/desk/icons/chromium.png \
-    && convert -size 64x64 xc:none -fill '#c4622d' -draw 'roundrectangle 10,18 54,52 6,6' \
-        -fill '#f6f1e7' -draw 'roundrectangle 16,26 48,46 3,3' /opt/desk/icons/files.png \
-    && convert -size 64x64 xc:none -fill '#1c1c1c' -draw 'roundrectangle 8,14 56,50 6,6' \
-        -fill '#f5f5f5' -font DejaVu-Sans -pointsize 22 -draw "text 16,40 '>_'" /opt/desk/icons/terminal.png
+    && for name in chromium files terminal; do rsvg-convert -w 128 -h 128 /opt/desk/icons-src/$name.svg -o /opt/desk/icons/$name.png; done
 
 # mkfs.ext4 runs inside this image. The host often does not have e2fsprogs.
 RUN apt-get update && apt-get install -y --no-install-recommends e2fsprogs \
@@ -99,8 +85,8 @@ ENV S6_VERBOSITY=1 \
     S6_CMD_WAIT_FOR_SERVICES_MAXTIME=60000 \
     PYTHONUNBUFFERED=1 \
     MALLOC_ARENA_MAX=2 \
-    DISPLAY_GEOMETRY=1024x768 \
-    DISPLAY_DEPTH=16 \
+    DISPLAY_GEOMETRY=1920x1200 \
+    DISPLAY_DEPTH=24 \
     DISPLAY_NUM=1 \
     COMPUTER_SECOND_DISPLAY=true \
     CDP_PORT=9223 \

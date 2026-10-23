@@ -1,4 +1,4 @@
-"""Per-bot Xvfb + openbox + on-demand x11vnc + Chrome supervision via s6-overlay."""
+"""Per-bot Xvfb + xfwm4 + picom + Plank + on-demand x11vnc + Chrome supervision via s6-overlay."""
 from __future__ import annotations
 
 import asyncio
@@ -84,21 +84,21 @@ CHROME_FLAGS = (
 
 
 def geometry() -> tuple[int, int]:
-    raw = os.environ.get("DISPLAY_GEOMETRY", "1024x768")
+    raw = os.environ.get("DISPLAY_GEOMETRY", "1920x1200")
     parts = raw.lower().replace("x", " ").split()
     try:
         return int(parts[0]), int(parts[1])
     except (IndexError, ValueError):
-        return 1024, 768
+        return 1920, 1200
 
 
 def depth() -> int:
-    raw = os.environ.get("DISPLAY_DEPTH", "16")
+    raw = os.environ.get("DISPLAY_DEPTH", "24")
     try:
         value = int(raw)
     except ValueError:
-        return 16
-    return value if value in (8, 16, 24) else 16
+        return 24
+    return value if value in (8, 16, 24) else 24
 
 
 def chrome_bin() -> str:
@@ -257,7 +257,7 @@ class DesktopManager:
             "  i=$((i+1)); sleep 0.1\n"
             "done\n"
             f"xsetroot -display :{n} -solid '#0b1220' || true\n"
-            f"exec {ident} openbox --sm-disable\n",
+            f"exec {ident} dbus-run-session -- /opt/desk/bin/start-wm :{n}\n",
         )
         _write_service(
             f"panels-{n}",

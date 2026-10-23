@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Eye, Maximize2, Minimize2, Minus, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { api, readDesktopToken } from "@/lib/api";
@@ -646,19 +647,19 @@ export function ComputerPane({
       data-testid="computer-tab"
       data-vnc-state={vncState}
       data-desktop-mode={mode}
-      className={cn("flex min-h-0 min-w-0 flex-col gap-3", !compact && "md:flex-1", fullscreen && !exiting && "motion-pop", exiting && "motion-pop-out pointer-events-none", fullscreen && "dark fixed inset-0 z-[80] gap-3 overflow-hidden bg-neutral-950 p-3 text-neutral-100 sm:p-5")}
+      className={cn("flex min-h-0 min-w-0 flex-col gap-3", !compact && "md:flex-1", fullscreen && !exiting && "motion-pop", exiting && "motion-pop-out pointer-events-none", fullscreen && "dark fixed inset-0 z-[80] gap-0 overflow-hidden bg-[#141414] px-3 pb-3 pt-10 text-neutral-100 sm:px-6")}
     >
-      <div ref={stageRef} data-testid="desktop-stage" className={cn("relative flex min-h-0 min-w-0 flex-col gap-2 bg-background", !compact && "md:min-h-[14rem] md:flex-1", fullscreen && "flex-1 bg-neutral-950")}>
+      <div ref={stageRef} data-testid="desktop-stage" className={cn("relative flex min-h-0 min-w-0 flex-col gap-2 bg-background", !compact && "md:min-h-[14rem] md:flex-1", fullscreen && "flex-1 bg-transparent")}>
         {fullscreen ? (
-          <div className="flex shrink-0 items-center gap-2" data-testid="computer-topbar">
-            <p className="min-w-0 flex-1 truncate text-sm font-medium">{caption || "Teammate"}&apos;s computer</p>
-            <p data-testid="vnc-status" className="hidden text-xs text-neutral-400 sm:block">{statusLabel(vncState)}</p>
-            {mode === "control" ? <Button type="button" data-testid="desktop-keyboard-toggle" variant="ghost" size="sm" className="min-h-9 text-neutral-200 hover:bg-white/10 hover:text-white" aria-pressed={keyboard} onClick={toggleKeyboard}>Keyboard</Button> : null}
-            <Button type="button" data-testid="desktop-fit" variant="ghost" size="sm" className="min-h-9 text-neutral-200 hover:bg-white/10 hover:text-white" onClick={fitWidth}>Fit</Button>
-            <Button type="button" data-testid="computer-collapse" variant="ghost" size="sm" className="min-h-9 text-neutral-200 hover:bg-white/10 hover:text-white" aria-expanded={!collapsedView} aria-controls="computer-frame-wrap" onClick={() => setCollapsedView(v => !v)}>{collapsedView ? "Restore" : "Collapse"}</Button>
-            <Button type="button" data-testid="desktop-fullscreen" variant="ghost" size="sm" className="min-h-9 text-neutral-200 hover:bg-white/10 hover:text-white" aria-pressed={nativeFs} onClick={() => void toggleFullscreen()}>{nativeFs ? "Compact" : "Full screen"}</Button>
-            <Button type="button" data-testid="computer-minimise" variant="ghost" size="sm" className="min-h-9 text-neutral-200 hover:bg-white/10 hover:text-white" aria-label="Minimise to the panel" onClick={() => { if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined); onExitFullscreen?.(); }}>Minimise</Button>
-            <Button type="button" data-testid="computer-close" variant="ghost" size="sm" className="min-h-9 text-neutral-200 hover:bg-white/10 hover:text-white" aria-label="Close the computer" onClick={() => void closeView()}>Close</Button>
+          <div className="absolute inset-x-0 -top-8 flex h-7 items-center justify-end gap-1" data-testid="computer-topbar">
+            <p className="sr-only">{caption || "Teammate"}&apos;s computer</p>
+            <p data-testid="vnc-status" className="sr-only">{statusLabel(vncState)}</p>
+            {mode === "control" ? <Button type="button" data-testid="desktop-keyboard-toggle" variant="ghost" size="sm" className="h-7 px-2 text-xs text-neutral-300 hover:bg-white/10 hover:text-white" aria-pressed={keyboard} onClick={toggleKeyboard}>Keyboard</Button> : null}
+            {zoom > 1.01 ? <Button type="button" data-testid="desktop-fit" variant="ghost" size="sm" className="h-7 px-2 text-xs text-neutral-300 hover:bg-white/10 hover:text-white" onClick={fitWidth}>Fit</Button> : null}
+            <button type="button" data-testid="computer-minimise" className="inline-grid h-7 w-7 place-items-center rounded-md text-neutral-300 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/60" aria-label="Minimise to the panel" title="Minimise to the panel" onClick={() => { if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined); onExitFullscreen?.(); }}><Minimize2 className="h-4 w-4 text-[#e8a35a]" aria-hidden /></button>
+            <button type="button" data-testid="computer-collapse" className="inline-grid h-7 w-7 place-items-center rounded-md text-neutral-300 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/60" aria-expanded={!collapsedView} aria-controls="computer-frame-wrap" title={collapsedView ? "Restore" : "Collapse"} onClick={() => setCollapsedView(v => !v)}><Minus className="h-4 w-4" aria-hidden /><span className="sr-only">{collapsedView ? "Restore" : "Collapse"}</span></button>
+            <button type="button" data-testid="desktop-fullscreen" className="inline-grid h-7 w-7 place-items-center rounded-md text-neutral-300 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/60" aria-pressed={nativeFs} title={nativeFs ? "Exit full screen" : "Full screen"} onClick={() => void toggleFullscreen()}><Maximize2 className="h-4 w-4" aria-hidden /><span className="sr-only">{nativeFs ? "Compact" : "Full screen"}</span></button>
+            <button type="button" data-testid="computer-close" className="inline-grid h-7 w-7 place-items-center rounded-md text-neutral-300 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/60" aria-label="Close the computer" title="Close the computer" onClick={() => void closeView()}><X className="h-4 w-4" aria-hidden /></button>
           </div>
         ) : null}
         {compact ? null : fullscreen ? null : (
@@ -709,10 +710,10 @@ export function ComputerPane({
           className={cn(
             "relative touch-none overflow-hidden bg-background",
             fillWindow
-              ? (fullscreen || nativeFs ? "h-full w-full" : "aspect-[4/3] w-full md:aspect-auto md:h-full")
-              : "aspect-[4/3] w-full",
+              ? (fullscreen ? "aspect-[16/10] w-[min(100cqw,160cqh)]" : nativeFs ? "h-full w-full" : "aspect-[16/10] w-full md:aspect-auto md:h-full")
+              : "aspect-[16/10] w-full",
             compact && "cursor-pointer rounded-xl border border-border bg-black",
-            fullscreen && "rounded-2xl border border-white/10 bg-black shadow-2xl",
+            fullscreen && "rounded-lg border border-white/10 bg-black shadow-[0_8px_40px_rgba(0,0,0,0.55)]",
             fullscreen && recording && "outline outline-2 outline-offset-2 outline-red-500",
             fullscreen && mode === "control" && !recording && "ring-2 ring-bot/70",
           )}
@@ -746,20 +747,20 @@ export function ComputerPane({
         ) : null}
         {fullscreen && collapsedView ? <p className="grid flex-1 place-items-center text-sm text-neutral-400">The desktop is collapsed.</p> : null}
         {fullscreen ? (
-          <div data-testid="control-pill" data-mode={mode} role="status" className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
-            <div className="pointer-events-auto flex items-center gap-3 rounded-full border border-white/10 bg-neutral-900/95 py-1.5 pl-4 pr-1.5 text-sm shadow-xl backdrop-blur">
+          <div data-testid="control-pill" data-mode={mode} role="status" className="flex shrink-0 justify-center pt-2">
+            <div className="flex h-10 items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] p-1 text-sm">
               {mode === "control" ? (
                 <>
-                  <span className="h-2 w-2 rounded-full bg-bot" aria-hidden />
-                  <span className="font-medium">You&apos;re in control</span>
-                  <span className="hidden text-xs text-neutral-400 sm:inline">{caption || "Teammate"} is paused</span>
-                  <Button data-testid="hand-back" size="sm" className="min-h-9 rounded-full bg-red-600 px-4 text-white hover:bg-red-500" disabled={busy !== null} onClick={() => void handBack()}>Stop</Button>
+                  <span className="ml-2 h-2 w-2 rounded-full bg-bot" aria-hidden />
+                  <span className="px-1 font-medium">You&apos;re in control</span>
+                  <span className="hidden pr-1 text-xs text-neutral-400 sm:inline">{caption || "Teammate"} is paused</span>
+                  <Button data-testid="hand-back" size="sm" className="h-8 rounded-full bg-red-600 px-4 text-white hover:bg-red-500" disabled={busy !== null} onClick={() => void handBack()}>Stop</Button>
                 </>
               ) : (
                 <>
-                  <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400 motion-reduce:animate-none" aria-hidden />
-                  <span data-testid="watch-only" className="text-neutral-300">Watching live</span>
-                  <Button data-testid="take-control" size="sm" className="min-h-9 rounded-full bg-bot px-4 text-bot-foreground hover:bg-bot/90" disabled={busy !== null} onClick={() => void takeControl()}>Take control</Button>
+                  <Eye className="ml-2.5 h-4 w-4 text-neutral-500" aria-hidden />
+                  <span data-testid="watch-only" className="pl-1 pr-2 text-neutral-400">Watching</span>
+                  <Button data-testid="take-control" size="sm" className="h-8 rounded-full bg-white px-4 font-medium text-neutral-900 hover:bg-neutral-200" disabled={busy !== null} onClick={() => void takeControl()}>Take control</Button>
                 </>
               )}
             </div>

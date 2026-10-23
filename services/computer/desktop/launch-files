@@ -1,12 +1,6 @@
 #!/bin/sh
 export DISPLAY="${DISPLAY:-:1}"
 if [ -z "${BOT_ROOT:-}" ]; then
-  pid=$(pidof openbox 2>/dev/null || true)
-  if [ -n "$pid" ] && [ -r "/proc/$pid/environ" ]; then
-    BOT_ROOT=$(tr '\0' '\n' < "/proc/$pid/environ" | sed -n 's/^BOT_ROOT=//p' | head -1)
-  fi
-fi
-if [ -z "${BOT_ROOT:-}" ]; then
   for script in /run/service/wm-*/run; do
     [ -r "$script" ] || continue
     BOT_ROOT=$(sed -n 's/^export BOT_ROOT=//p' "$script" | head -1)
@@ -18,4 +12,4 @@ if [ -z "${BOT_ROOT:-}" ] || [ ! -d "$BOT_ROOT" ]; then
   exit 1
 fi
 cd "$BOT_ROOT"
-exec pcmanfm --new-win "$BOT_ROOT"
+exec thunar "$BOT_ROOT"

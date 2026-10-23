@@ -1,13 +1,6 @@
 #!/bin/sh
 export DISPLAY="${DISPLAY:-:1}"
 if [ -z "${BOT_ROOT:-}" ]; then
-  pid=$(pidof openbox 2>/dev/null || true)
-  if [ -n "$pid" ] && [ -r "/proc/$pid/environ" ]; then
-    BOT_ROOT=$(tr '\0' '\n' < "/proc/$pid/environ" | sed -n 's/^BOT_ROOT=//p' | head -1)
-    HOME=$(tr '\0' '\n' < "/proc/$pid/environ" | sed -n 's/^HOME=//p' | head -1)
-  fi
-fi
-if [ -z "${BOT_ROOT:-}" ]; then
   for script in /run/service/wm-*/run; do
     [ -r "$script" ] || continue
     BOT_ROOT=$(sed -n 's/^export BOT_ROOT=//p' "$script" | head -1)
@@ -18,4 +11,4 @@ fi
 if [ -n "${BOT_ROOT:-}" ] && [ -d "$BOT_ROOT" ]; then
   cd "$BOT_ROOT"
 fi
-exec xterm -bg '#0b1220' -fg '#d9e4f0' -fa 'DejaVu Sans Mono' -fs 11 -title 'Terminal'
+exec xfce4-terminal --disable-server --title=Terminal

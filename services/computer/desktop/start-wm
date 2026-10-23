@@ -1,0 +1,32 @@
+#!/bin/sh
+# Per-bot window manager session (runs under dbus-run-session).
+# xfwm4 with its own compositor OFF, picom (xrender, no vsync) for the dock's transparency.
+# Settings are written as xfconf XML so no settings daemon is needed up front.
+set -eu
+export DISPLAY="${1:-:1}"
+export HOME="${HOME:-/data/home/desk}"
+cfg="$HOME/.config/xfce4/xfconf/xfce-perchannel-xml"
+mkdir -p "$cfg"
+cat > "$cfg/xfwm4.xml" <<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfwm4" version="1.0">
+  <property name="general" type="empty">
+    <property name="use_compositing" type="bool" value="false"/>
+    <property name="borderless_maximize" type="bool" value="true"/>
+    <property name="button_layout" type="string" value="O|SHMC"/>
+    <property name="click_to_focus" type="bool" value="true"/>
+    <property name="placement_mode" type="string" value="center"/>
+    <property name="full_width_title" type="bool" value="true"/>
+    <property name="workspace_count" type="int" value="1"/>
+    <property name="theme" type="string" value="Default"/>
+    <property name="title_font" type="string" value="DejaVu Sans Bold 9"/>
+  </property>
+</channel>
+XML
+# Bus-activated helpers (bamf, xfconf) need the display.
+dbus-update-activation-environment DISPLAY HOME >/dev/null 2>&1 || true
+# Share the session bus address with the dock service.
+printf '%s\n' "$DBUS_SESSION_BUS_ADDRESS" > "$HOME/.desk-dbus.tmp"
+mv "$HOME/.desk-dbus.tmp" "$HOME/.desk-dbus"
+picom --config /dev/null --backend xrender >/dev/null 2>&1 &
+exec xfwm4 --compositor=off --sm-client-disable

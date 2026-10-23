@@ -20,8 +20,8 @@ public sealed record DockerComputeOptions
             throw ComputeException.InvalidArgument("COMPUTER_DNS requires comma-separated IPv4 addresses");
         return servers.Distinct().ToArray();
     }
-    public string DisplayGeometry { get; init; } = "1024x768";
-    public string DisplayDepth { get; init; } = "16";
+    public string DisplayGeometry { get; init; } = "1920x1200";
+    public string DisplayDepth { get; init; } = "24";
     public long MemoryBytes { get; init; } = 640L * 1024 * 1024;
     public long NanoCpus { get; init; } = 400_000_000;
     public TimeSpan IdleSuspend { get; init; } = TimeSpan.FromMinutes(10);
