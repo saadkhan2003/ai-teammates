@@ -5,6 +5,53 @@ namespace Teammates.UnitTests;
 public class ReliabilityTests
 {
     [Fact]
+    public void ResumePolicyBoundsRetriesAndExcludesHumanStates()
+    {
+        Assert.Equal(2, Reliability.BackoffSeconds(0));
+        Assert.Equal(2, Reliability.BackoffSeconds(1));
+        Assert.Equal(4, Reliability.BackoffSeconds(2));
+        Assert.Equal(60, Reliability.BackoffSeconds(20));
+        Assert.True(Reliability.IsExcluded("waiting_approval"));
+        Assert.True(Reliability.IsExcluded("waiting_human"));
+        Assert.True(Reliability.IsExcluded("cancelled"));
+        Assert.False(Reliability.IsExcluded("queued"));
+        Assert.True(Reliability.IsAutoResumeReason("lease_expired"));
+        Assert.False(Reliability.IsAutoResumeReason("waiting_approval"));
+    }
+
+    [Fact]
+    public void ResumeWindowAndNoProgressBreakerUseRecentAutoAttemptsOnly()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var ledger = System.Text.Json.Nodes.JsonNode.Parse("""
+            [{"endedAt":"2026-10-24T09:30:00Z","endReason":"lease_expired","progress":false},
+             {"endedAt":"2026-10-24T09:40:00Z","endReason":"lease_expired","progress":false},
+             {"endedAt":"2026-10-24T07:00:00Z","endReason":"lease_expired","progress":false}]
+            """)!.AsArray();
+        var adjusted = new System.Text.Json.Nodes.JsonArray(
+            new System.Text.Json.Nodes.JsonObject { ["endedAt"] = now.AddMinutes(-10).ToString("O"), ["endReason"] = "lease_expired", ["progress"] = false },
+            new System.Text.Json.Nodes.JsonObject { ["endedAt"] = now.AddMinutes(-5).ToString("O"), ["endReason"] = "network_interrupted", ["progress"] = false },
+            new System.Text.Json.Nodes.JsonObject { ["endedAt"] = now.AddMinutes(-2).ToString("O"), ["endReason"] = "lease_expired", ["progress"] = true });
+        Assert.Equal(3, Reliability.RecentAutoResumes(adjusted, now));
+        Assert.Equal(0, Reliability.ConsecutiveNoProgress(adjusted));
+        Assert.Equal(3, Reliability.ConsecutiveNoProgress(ledger));
+    }
+
+    [Fact]
+    public void CheckpointLedgerIsCappedAndContainsOnlyBoundedMetadata()
+    {
+        var ledger = TaskCheckpoint.Read(null);
+        ledger["stepsUsed"] = 12;
+        ledger["lastToolCallId"] = new string('x', 100);
+        var attempts = new System.Text.Json.Nodes.JsonArray();
+        for (var i = 0; i < 200; i++) attempts.Add(new System.Text.Json.Nodes.JsonObject { ["n"] = i, ["endReason"] = "lease_expired", ["progress"] = false });
+        ledger["attempts"] = attempts;
+        var bounded = TaskCheckpoint.Bounded(ledger);
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(bounded) <= TaskCheckpoint.MaxBytes);
+        Assert.DoesNotContain("tool output", bounded, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void CodingWorkPoliciesHaveExpectedBoundaries()
     {
         Assert.Equal(200, RunBudget.Resolve(null,null,null,null).MaxSteps);

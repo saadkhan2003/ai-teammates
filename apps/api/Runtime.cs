@@ -89,13 +89,13 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         var invalid = ToolSchema.Validate(tool, args);
         if (invalid != null)
         {
-            await Step(taskId, tool, args, "invalid", false, new { reason = invalid });
+            await Step(taskId, tool, args, "invalid", false, new { reason = invalid }, EpochOf(body));
             return Results.Json(new { ok = false, status = "invalid", reason = invalid });
         }
         var owner = await OwnerOf(botId);
         if (tool == "update_routine" && await BotMessaging.UpdateBlocked(platform, owner, botId, taskId, args, ct) is { } blocked)
         {
-            await Step(taskId, tool, args, "deny", false, new { reason = blocked, riskClass = ActionClasses.BotManage });
+            await Step(taskId, tool, args, "deny", false, new { reason = blocked, riskClass = ActionClasses.BotManage }, EpochOf(body));
             return Results.Json(new { ok = false, status = "denied", reason = blocked, riskClass = ActionClasses.BotManage });
         }
         var gated = await Gate(botId, taskId, tool, args, false, ct);
@@ -105,7 +105,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
             if (Arg(args, "command").Contains("secret://", StringComparison.Ordinal) || Arg(args, "secret_ref").Length > 0)
                 await platform.SecretEvent(null, "secret.denied", "policy", botId, taskId, tool, Arg(args, "url"), "deny", gated.Reason);
             await platform.Audit("policy", "tool.denied", botId, taskId, new { tool, reason = gated.Reason, riskClass = gated.RiskClass });
-            await Step(taskId, tool, args, decision, false, new { reason = gated.Reason, riskClass = gated.RiskClass });
+            await Step(taskId, tool, args, decision, false, new { reason = gated.Reason, riskClass = gated.RiskClass }, EpochOf(body));
             return Results.Json(new { ok = false, status = "denied", reason = gated.Reason, riskClass = gated.RiskClass });
         }
         if (decision == PolicyEngine.Ask && !await ConsumeApproval(taskId, tool))
@@ -123,7 +123,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
                 using var result = JsonDocument.Parse(JsonSerializer.Serialize(output));
                 if (result.RootElement.TryGetProperty("ok", out var success) && success.ValueKind == JsonValueKind.False)
                 {
-                    await Step(taskId, tool, args, decision, false, output);
+                    await Step(taskId, tool, args, decision, false, output, EpochOf(body));
                     return Results.Json(output);
                 }
             }
@@ -132,15 +132,15 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
                 var json = JsonSerializer.Serialize(output);
                 using var parsed = JsonDocument.Parse(json);
                 var ok = parsed.RootElement.TryGetProperty("ok", out var flag) && flag.ValueKind == JsonValueKind.True;
-                await Step(taskId, tool, args, decision, ok, output);
+                await Step(taskId, tool, args, decision, ok, output, EpochOf(body));
                 return Results.Json(output);
             }
-            await Step(taskId, tool, args, decision, true, output);
+            await Step(taskId, tool, args, decision, true, output, EpochOf(body));
             return Results.Json(new { ok = true, output });
         }
         catch (ToolHalt halt)
         {
-            await Step(taskId, tool, args, decision, false, new { halt.Status, halt.Reason });
+            await Step(taskId, tool, args, decision, false, new { halt.Status, halt.Reason }, EpochOf(body));
             return Results.Json(new { ok = false, status = halt.Status, reason = halt.Reason });
         }
         catch (ComputeException ex) when (ex.IsRecovering)
@@ -149,7 +149,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         }
         catch (ComputeException ex) when (ex.Code == ComputeErrorCode.PermissionDenied)
         {
-            await Step(taskId, tool, args, decision, false, new { reason = ex.Message });
+            await Step(taskId, tool, args, decision, false, new { reason = ex.Message }, EpochOf(body));
             return Results.Json(new { ok = false, status = "denied", reason = ex.Message });
         }
     }
@@ -163,7 +163,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         var tool = body.GetProperty("tool").GetString() ?? "browser";
         var output = body.GetProperty("output");
         var redacted = InjectionFilter.ScrubJson(output.GetRawText());
-        await Step(taskId, tool, body.TryGetProperty("args", out var args) ? args : default, PolicyEngine.Allow, true, JsonDocument.Parse(redacted).RootElement);
+        await Step(taskId, tool, body.TryGetProperty("args", out var args) ? args : default, PolicyEngine.Allow, true, JsonDocument.Parse(redacted).RootElement, epoch);
         if (output.TryGetProperty("targetId", out var target) && target.GetString() is { Length: > 0 } targetId)
         {
             await using var conn = await platform.Data.OpenConnectionAsync(ct);
@@ -778,7 +778,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         return n > 0;
     }
 
-    private async Task Step(Guid taskId, string tool, JsonElement args, string policy, bool ok, object result)
+    private async Task Step(Guid taskId, string tool, JsonElement args, string policy, bool ok, object result, int epoch)
     {
         var json = result is JsonElement element ? element.GetRawText() : JsonSerializer.Serialize(result);
         json = InjectionFilter.ScrubJson(json);
@@ -788,7 +788,38 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         await conn.ExecuteAsync(
             "INSERT INTO task_steps (task_id, seq, tool, args, result, policy, ok, finished_at) VALUES (@task, @seq, @tool, @args::jsonb, @result::jsonb, @policy, @ok, now())",
             new { task = taskId, seq, tool, args = safeArgs, result = json, policy, ok });
-        await conn.ExecuteAsync("UPDATE tasks SET last_progress_at=now(), blocked_reason=NULL, tests_passed_at=CASE WHEN @tool IN ('write_file','edit_file','delete_file') AND @ok THEN NULL ELSE tests_passed_at END WHERE id=@task", new { task = taskId, tool, ok });
+        await conn.ExecuteAsync("""
+            UPDATE tasks SET last_progress_at=now(), blocked_reason=NULL,
+                checkpoint=jsonb_set(coalesce(checkpoint,'{}'::jsonb),'{stepsUsed}',to_jsonb(@seq),true),
+                tests_passed_at=CASE WHEN @tool IN ('write_file','edit_file','delete_file') AND @ok THEN NULL ELSE tests_passed_at END
+            WHERE id=@task AND status='running' AND lease_epoch=@epoch
+            """, new { task = taskId, seq, tool, ok, epoch });
+        if (ok && tool is "write_file" or "edit_file" or "delete_file" or "shell" or "git_commit" or "plan_set" or "plan_update")
+            await conn.ExecuteAsync("UPDATE tasks SET checkpoint=jsonb_set(coalesce(checkpoint,'{}'::jsonb),'{lastProgressAt}',to_jsonb(now()::text),true) WHERE id=@task AND status='running' AND lease_epoch=@epoch", new { task = taskId, epoch });
+        if (tool is "plan_set" or "plan_update")
+        {
+            var plan = await conn.QuerySingleAsync<(int Done, int Total, string? Current)>("""
+                SELECT count(*) FILTER (WHERE status='done')::int AS done,count(*)::int AS total,
+                    (SELECT title FROM task_plan_items WHERE task_id=@task AND status<>'done' ORDER BY position LIMIT 1) AS current
+                FROM task_plan_items WHERE task_id=@task
+                """, new { task = taskId });
+            var safeCurrent = plan.Current == null ? null : OutputRedactor.Redact(plan.Current);
+            var current = safeCurrent == null ? null : safeCurrent[..Math.Min(120, safeCurrent.Length)];
+            var planJson = JsonSerializer.Serialize(new { done = plan.Done, total = plan.Total, current });
+            await conn.ExecuteAsync("UPDATE tasks SET checkpoint=jsonb_set(coalesce(checkpoint,'{}'::jsonb),'{planPosition}',@plan::jsonb,true) WHERE id=@task AND status='running' AND lease_epoch=@epoch", new { task = taskId, epoch, plan = planJson });
+        }
+        if (tool == "git_commit" && ok)
+        {
+            try
+            {
+                using var resultDoc = JsonDocument.Parse(JsonSerializer.Serialize(result));
+                var stdout = resultDoc.RootElement.TryGetProperty("stdout", out var output) ? output.GetString() : null;
+                var sha = System.Text.RegularExpressions.Regex.Match(stdout ?? "", @"\b[0-9a-f]{40}\b").Value;
+                if (sha.Length == 40)
+                    await conn.ExecuteAsync("UPDATE tasks SET checkpoint=jsonb_set(coalesce(checkpoint,'{}'::jsonb),'{lastCommit}',jsonb_build_object('sha',@sha,'at',now()::text),true) WHERE id=@task AND status='running' AND lease_epoch=@epoch", new { task = taskId, epoch, sha });
+            }
+            catch (JsonException) { }
+        }
     }
 
     public async Task RecoverOutbound(CancellationToken ct)

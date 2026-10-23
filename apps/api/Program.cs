@@ -228,8 +228,7 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
                         await platform.Publish(new { type = "task", taskId = task.Id, status = "running", blocked = true });
                     }
                 }
-                var expired = await conn.ExecuteAsync("UPDATE tasks SET status='queued', lease_owner=NULL, lease_until=NULL, waiting_reason='lease_expired', updated_at=now() WHERE status='running' AND lease_until < now()");
-                if (expired > 0) platform.Tasks.Pulse();
+                await Reliability.SweepExpiredLeases(platform, platform.MaxAutoResumesPerHour);
                 await ResumeRecoveredComputers(stoppingToken);
                 if (++_tick % 10 == 0) await SampleComputers(stoppingToken);
                 if (_tick % 15 == 0)
