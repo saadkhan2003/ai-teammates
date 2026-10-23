@@ -38,6 +38,8 @@ import { cn, errorMessage } from "@/lib/utils";
 import { BotAvatar } from "@/components/bot-avatar";
 import { BotAvatarPicker } from "@/components/bot-avatar-picker";
 import { defaultBotAvatar } from "@/lib/avatars";
+import { HISTORY_PAGE, mergeHistory } from "@/lib/history";
+import type { ChatMessage } from "@/lib/types";
 import { LibraryPane } from "@/components/library-pane";
 import { ShareMenu } from "@/components/share-menu";
 import { RecordingBanner, useTeachTask } from "@/components/teach-task";
@@ -94,6 +96,21 @@ const INFO_TABS = [
 
 export function Workspace({ botId }: { botId: string }) {
   const [workspace, setWorkspace] = useState<WorkspaceData | null>(null);
+  const [older, setOlder] = useState<{ botId: string; items: ChatMessage[]; hasMore: boolean | null }>({ botId, items: [], hasMore: null });
+  const olderRef = useRef(older);
+  olderRef.current = older;
+  const workspaceRef = useRef<WorkspaceData | null>(null);
+  workspaceRef.current = workspace;
+  /** Loads one page of older messages in front of the chat. Resolves to whether still older history exists. */
+  const loadOlder = useCallback(async (): Promise<boolean> => {
+    const current = olderRef.current.botId === botId ? olderRef.current : { botId, items: [] as ChatMessage[], hasMore: null };
+    const merged = mergeHistory(current.items, workspaceRef.current?.messages ?? []);
+    const first = merged[0]?.id;
+    if (!first) return false;
+    const page = await api<{ messages: ChatMessage[]; hasMore: boolean }>(`/api/bots/${botId}/messages?before=${first}&limit=${HISTORY_PAGE}`);
+    setOlder({ botId, items: mergeHistory(page.messages ?? [], current.items), hasMore: !!page.hasMore });
+    return !!page.hasMore;
+  }, [botId]);
   const [pane, setPaneRaw] = useState(false);
   const [paneMounted, setPaneMounted] = useState(false);
   const pillRef = useRef<HTMLButtonElement>(null);
@@ -331,7 +348,9 @@ export function Workspace({ botId }: { botId: string }) {
         ) : null}
         <ChatPane
           conversationId={workspace.conversationId}
-          messages={workspace.messages ?? []}
+          messages={mergeHistory(older.botId === botId ? older.items : [], workspace.messages ?? [])}
+          hasOlder={older.botId === botId && older.hasMore !== null ? older.hasMore : !!workspace.messagesHasMore}
+          onLoadOlder={loadOlder}
           events={agentEvents.filter(event => !["delta", "message.delta", "text_delta"].includes(event.type) || workspace.tasks.some(task => task.id === event.taskId && ["running", "planning", "queued"].includes(task.status)))}
           onStop={async () => {
             await Promise.all(workspace.tasks.filter(task => ["running", "planning", "queued"].includes(task.status)).map(task => api(`/api/tasks/${task.id}/cancel`, { method: "POST" })));

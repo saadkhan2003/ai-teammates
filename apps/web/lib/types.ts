@@ -107,6 +107,7 @@ export type Workspace = {
   conversationId: string;
   tasks: Task[];
   messages: ChatMessage[];
+  messagesHasMore?: boolean;
   approvals: Approval[];
   botThreads?: BotThreadView[];
   secretRequests?: SecretRequest[];

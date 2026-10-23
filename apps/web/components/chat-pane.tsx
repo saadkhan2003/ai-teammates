@@ -4,7 +4,8 @@ import { FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } f
 import { Markdown } from "@/components/markdown";
 import { RefreshNotice } from "@/components/refresh-notice";
 import type { AgentEvent } from "@/lib/events";
-import { ArrowUp, Loader2, Notebook, Plus, X as XIcon, Quote } from "lucide-react";
+import { ArrowUp, Loader2, Notebook, Plus, Reply as ReplyIcon, X as XIcon, Quote } from "lucide-react";
+import { highlightPlan, loadUntil } from "@/lib/history";
 import { BotAvatar } from "@/components/bot-avatar";
 import { BotActionRow, BotThreadRow } from "@/components/bot-thread";
 import { parseBotRow, type BotThreadView } from "@/lib/bot-thread";
@@ -36,11 +37,15 @@ export function ChatPane({
   avatar,
   taskTitle,
   botThreads = [],
+  hasOlder = false,
+  onLoadOlder,
 }: {
   botId?: string;
   avatar?: { shape?: string; color?: string; primary?: boolean };
   taskTitle?: string;
   botThreads?: BotThreadView[];
+  hasOlder?: boolean;
+  onLoadOlder?: () => Promise<boolean>;
   conversationId?: string;
   messages: ChatMessage[];
   botName: string;
@@ -133,11 +138,48 @@ export function ChatPane({
     announce("Reply added");
     focusComposer();
   }
-  function jumpTo(id: string) {
-    const node = document.getElementById(`msg-${id}`);
-    if (!node) return;
-    node.scrollIntoView({ block: "center", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
-    node.animate?.([{ backgroundColor: "var(--bot-accent-soft)" }, { backgroundColor: "transparent" }], { duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 1 : 1200 });
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const hasOlderRef = useRef(hasOlder);
+  hasOlderRef.current = hasOlder;
+  const highlightTimers = useRef<number[]>([]);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  /** Scrolls to a message and highlights it: held 3 s, then fades out over 600 ms. Reduced motion: instant scroll, brief static highlight. */
+  function flash(node: HTMLElement) {
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    highlightTimers.current.forEach(window.clearTimeout);
+    highlightTimers.current = [];
+    document.querySelectorAll("[data-jump]").forEach(el => el.removeAttribute("data-jump"));
+    node.scrollIntoView({ block: "center", behavior: reduced ? "auto" : "smooth" });
+    for (const step of highlightPlan(reduced)) {
+      const apply = () => { if (step.phase === "off") node.removeAttribute("data-jump"); else node.setAttribute("data-jump", step.phase); };
+      if (step.after === 0) apply(); else highlightTimers.current.push(window.setTimeout(apply, step.after));
+    }
+  }
+  useEffect(() => () => highlightTimers.current.forEach(window.clearTimeout), []);
+  async function loadEarlier() {
+    if (!onLoadOlder || loadingOlder) return;
+    setLoadingOlder(true);
+    try { await onLoadOlder(); } catch (caught) { toast.error(errorMessage(caught, "Could not load earlier messages.")); } finally { setLoadingOlder(false); }
+  }
+  async function jumpTo(id: string) {
+    let node = document.getElementById(`msg-${id}`);
+    if (!node && onLoadOlder && hasOlderRef.current) {
+      stickRef.current = false;
+      setLoadingOlder(true);
+      try {
+        const found = await loadUntil(id, key => messagesRef.current.some(m => m.id === key), async () => {
+          const more = await onLoadOlder();
+          await new Promise(resolve => window.setTimeout(resolve, 60));
+          return more;
+        });
+        if (!found) { toast.info("That message is too far back to load."); return; }
+        await new Promise(resolve => window.setTimeout(resolve, 60));
+      } catch (caught) { toast.error(errorMessage(caught, "Could not load earlier messages.")); return; } finally { setLoadingOlder(false); }
+      node = document.getElementById(`msg-${id}`);
+    }
+    if (!node) { toast.info("The original message is no longer available."); return; }
+    flash(node);
   }
   function focusSibling(from: HTMLElement, delta: number) {
     const all = Array.from(listRef.current?.querySelectorAll<HTMLElement>("article[data-testid='message-item']") ?? []);
@@ -286,6 +328,7 @@ export function ChatPane({
         setScrolledUp(!stickRef.current);
       }}>
         <div ref={listRef} className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 py-4">
+          {hasOlder ? <Button type="button" data-testid="load-older" variant="ghost" size="sm" className="mx-auto" disabled={loadingOlder} onClick={() => void loadEarlier()}>{loadingOlder ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : null}Load earlier messages</Button> : null}
           {extras}
           {messages.length === 0 ? <div data-testid="chat-empty" className="py-12 text-center"><p className="font-medium">Start a conversation with {botName}</p><p className="mt-2 text-sm text-muted-foreground">Ask a question, share an idea, or assign some work.</p></div> : null}
           {messages.map((message) => {
@@ -369,18 +412,25 @@ export function ChatPane({
         className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
         onSubmit={onSubmit}
       >
+        {parts.filter(part => part.type === "reply").map(part => part.type === "reply" ? (
+          <div key={part.id} data-testid="composer-reply" data-message-id={part.messageId} className="flex min-h-9 items-center gap-2 rounded-full border border-border bg-muted/60 py-1 pl-3 pr-1 text-[13px] text-muted-foreground">
+            <ReplyIcon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span className="sr-only">Replying to {part.author}: </span>
+            <span data-testid="composer-reply-text" className="min-w-0 flex-1 truncate">{part.excerpt}</span>
+            <button type="button" aria-label="Remove reply" data-testid="remove-quote" className="grid h-7 w-7 shrink-0 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" onClick={() => { setParts(current => removePart(current, part.id)); focusComposer(); }}><XIcon className="h-3.5 w-3.5" aria-hidden /></button>
+          </div>
+        ) : null)}
         <div className="rounded-md border border-border bg-card px-3 py-2 shadow-sm">
           {parts.map((part, index) => {
-            if (part.type === "quote" || part.type === "reply") {
-              const isReply = part.type === "reply";
+            if (part.type === "reply") return null;
+            if (part.type === "quote") {
               return (
-                <blockquote key={part.id} data-testid={isReply ? "composer-reply" : "composer-quote"} className="mb-1 flex items-start gap-2 border-l-2 border-bot-border bg-bot-soft px-2 py-1 text-[13px] text-muted-foreground">
-                  <span className="sr-only">{isReply ? "Replying to" : "Quoted text"}</span>
+                <blockquote key={part.id} data-testid="composer-quote" className="mb-1 flex items-start gap-2 border-l-2 border-bot-border bg-bot-soft px-2 py-1 text-[13px] text-muted-foreground">
+                  <span className="sr-only">Quoted text</span>
                   <span className="min-w-0 flex-1">
-                    {isReply ? <span className="block text-[10px] font-semibold uppercase tracking-wide">{part.author}</span> : null}
-                    <span className={isReply ? "line-clamp-2" : "line-clamp-4 whitespace-pre-wrap"}>{isReply ? part.excerpt : part.text}</span>
+                    <span className="line-clamp-4 whitespace-pre-wrap">{part.text}</span>
                   </span>
-                  <button type="button" aria-label={isReply ? "Remove reply" : "Remove quote"} data-testid="remove-quote" className="grid h-6 w-6 shrink-0 place-items-center rounded-md hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" onClick={() => { setParts(current => removePart(current, part.id)); focusComposer(); }}><XIcon className="h-3.5 w-3.5" /></button>
+                  <button type="button" aria-label="Remove quote" data-testid="remove-quote" className="grid h-6 w-6 shrink-0 place-items-center rounded-md hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" onClick={() => { setParts(current => removePart(current, part.id)); focusComposer(); }}><XIcon className="h-3.5 w-3.5" /></button>
                 </blockquote>
               );
             }

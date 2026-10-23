@@ -175,6 +175,19 @@ public static class Routes
             return Results.Json(new { id, name, role, instructions, conversationId = conversation, avatarShape, avatarColor, botToken });
         });
 
+        app.MapGet("/api/bots/{id:guid}/messages", async (HttpContext ctx, Guid id) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
+            Guid? before = Guid.TryParse(ctx.Request.Query["before"], out var b) ? b : null;
+            var limit = int.TryParse(ctx.Request.Query["limit"], out var l) ? Math.Clamp(l, 1, 200) : 100;
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            var conversationId = await conn.ExecuteScalarAsync<Guid>("SELECT id FROM conversations WHERE bot_id=@id ORDER BY created_at LIMIT 1", new { id });
+            var (messages, hasMore) = await LoadMessages(conn, conversationId, before, limit);
+            return Results.Json(new { messages, hasMore });
+        });
+
         app.MapGet("/api/bots/{id:guid}/workspace", async (HttpContext ctx, Guid id) =>
         {
             var user = await RequireUser(ctx, platform);
@@ -184,19 +197,7 @@ public static class Routes
             var bot = Platform.ToDict(await conn.QuerySingleAsync("SELECT id, name, role, instructions, status, model, avatar, avatar_shape, avatar_color, section, notifications_enabled, is_primary, bio, peer_messaging FROM bots WHERE id=@id", new { id }));
             var conversationId = await conn.ExecuteScalarAsync<Guid>("SELECT id FROM conversations WHERE bot_id=@id ORDER BY created_at LIMIT 1", new { id });
             var tasks = (await conn.QueryAsync("SELECT id, title, instruction, status, kind, model_calls, waiting_reason, error, error_code, result::text AS result FROM tasks WHERE bot_id=@id ORDER BY created_at DESC LIMIT 50", new { id })).Select(Platform.ToDict);
-            var messages = (await conn.QueryAsync("SELECT m.id, m.role, m.content, m.created_at, m.metadata::text AS metadata, m.reply_to_message_id, m.deleted_at, m.kind, COALESCE(m.task_id, (SELECT t.id FROM tasks t WHERE t.source_message_id=m.id ORDER BY t.created_at DESC LIMIT 1)) AS request_id, (SELECT t.status FROM tasks t WHERE t.id = COALESCE(m.task_id, (SELECT t2.id FROM tasks t2 WHERE t2.source_message_id=m.id ORDER BY t2.created_at DESC LIMIT 1))) AS task_status FROM messages m WHERE m.conversation_id=@conversation ORDER BY m.created_at LIMIT 200", new { conversation = conversationId })).Select(Platform.ToDict).ToList();
-            var reactionRows = (await conn.QueryAsync("SELECT r.id, r.message_id, r.actor_type::text AS actor_type, r.actor_id, r.emoji, r.created_at FROM message_reactions r JOIN messages m ON m.id=r.message_id WHERE m.conversation_id=@conversation ORDER BY r.created_at", new { conversation = conversationId })).Select(Platform.ToDict).ToList();
-            foreach (var message in messages)
-            {
-                var idText = message["id"]?.ToString();
-                if (message.TryGetValue("metadata", out var metaRaw) && metaRaw is string metaText && metaText.Length > 2)
-                {
-                    try { var meta = JsonSerializer.Deserialize<JsonElement>(metaText); message["parts"] = meta.TryGetProperty("parts", out var pe) ? pe : null; message["skill"] = meta.TryGetProperty("skill", out var se) ? se : null; message["attachments"] = meta.TryGetProperty("attachments", out var ae) ? ae : null; } catch { message["parts"] = null; }
-                }
-                message.Remove("metadata");
-                message["deleted"] = message.TryGetValue("deletedAt", out var del) && del != null;
-                message["reactions"] = reactionRows.Where(row => row["messageId"]?.ToString() == idText).Select(row => new { id = row["id"], actorType = row["actorType"], actorId = row["actorId"], emoji = row["emoji"], createdAt = row["createdAt"] }).ToList();
-            }
+            var (messages, messagesHasMore) = await LoadMessages(conn, conversationId, null, 200);
             var approvals = (await conn.QueryAsync("SELECT a.id, a.action, a.target, a.reason, a.status, a.risk_class, a.summary, th.id AS thread_id, th.title AS thread_title, th.initiator_name AS requested_by, ab.name AS bot_name, (a.bot_id<>@id) AS relayed FROM approvals a JOIN tasks t ON t.id=a.task_id JOIN bots ab ON ab.id=a.bot_id LEFT JOIN bot_threads th ON th.id=t.origin_thread_id WHERE a.status='pending' AND (a.bot_id=@id OR th.initiator_bot_id=@id) ORDER BY a.created_at", new { id })).Select(Platform.ToDict);
             var botThreads = (await conn.QueryAsync("SELECT th.id, th.title, th.status, th.error_code, th.message_count, th.initiator_bot_id, th.peer_bot_id, th.initiator_name, th.peer_name, th.created_at, th.updated_at, (SELECT left(m.content, 600) FROM bot_thread_messages m WHERE m.thread_id=th.id AND m.kind='reply' ORDER BY m.seq DESC LIMIT 1) AS last_reply, (SELECT left(m.content, 600) FROM bot_thread_messages m WHERE m.thread_id=th.id AND m.kind='request' ORDER BY m.seq LIMIT 1) AS first_request FROM bot_threads th WHERE th.initiator_bot_id=@id OR th.peer_bot_id=@id ORDER BY th.created_at DESC LIMIT 50", new { id })).Select(Platform.ToDict);
             var pages = (await conn.QueryAsync("SELECT target_id, url, title FROM browser_pages WHERE bot_id=@id ORDER BY updated_at", new { id })).Select(Platform.ToDict);
@@ -210,7 +211,7 @@ public static class Routes
                     dict["fields"] = JsonSerializer.Deserialize<JsonElement>(fieldJson);
                 return dict;
             });
-            return Results.Json(new { bot, conversationId, tasks, messages, approvals, botThreads, pages, holder, secretRequests, loginRequests, llmProvider = platform.LlmProvider, openrouterConnected = connected });
+            return Results.Json(new { bot, conversationId, tasks, messages, messagesHasMore, approvals, botThreads, pages, holder, secretRequests, loginRequests, llmProvider = platform.LlmProvider, openrouterConnected = connected });
         });
 
         app.MapPost("/api/conversations/{id:guid}/messages", async (HttpContext ctx, Guid id, JsonElement body) =>
@@ -1183,6 +1184,28 @@ public static class Routes
     {
         ctx.Request.Cookies.TryGetValue("teammates_session", out var token);
         return await platform.UserForSession(token);
+    }
+
+    /// <summary>One page of a chat, oldest first. `before` pages back from that message. hasMore says older messages exist.</summary>
+    internal static async Task<(List<Dictionary<string, object?>> Rows, bool HasMore)> LoadMessages(NpgsqlConnection conn, Guid conversationId, Guid? before, int limit)
+    {
+        var messages = (await conn.QueryAsync("SELECT m.id, m.role, m.content, m.created_at, m.metadata::text AS metadata, m.reply_to_message_id, m.deleted_at, m.kind, COALESCE(m.task_id, (SELECT t.id FROM tasks t WHERE t.source_message_id=m.id ORDER BY t.created_at DESC LIMIT 1)) AS request_id, (SELECT t.status FROM tasks t WHERE t.id = COALESCE(m.task_id, (SELECT t2.id FROM tasks t2 WHERE t2.source_message_id=m.id ORDER BY t2.created_at DESC LIMIT 1))) AS task_status FROM messages m WHERE m.conversation_id=@conversation AND (@before::uuid IS NULL OR (m.created_at, m.id) < (SELECT b.created_at, b.id FROM messages b WHERE b.id=@before AND b.conversation_id=@conversation)) ORDER BY m.created_at DESC, m.id DESC LIMIT @lim", new { conversation = conversationId, before, lim = limit + 1 })).Select(Platform.ToDict).ToList();
+        var reactionRows = (await conn.QueryAsync("SELECT r.id, r.message_id, r.actor_type::text AS actor_type, r.actor_id, r.emoji, r.created_at FROM message_reactions r JOIN messages m ON m.id=r.message_id WHERE m.conversation_id=@conversation ORDER BY r.created_at", new { conversation = conversationId })).Select(Platform.ToDict).ToList();
+        foreach (var message in messages)
+        {
+            var idText = message["id"]?.ToString();
+            if (message.TryGetValue("metadata", out var metaRaw) && metaRaw is string metaText && metaText.Length > 2)
+            {
+                try { var meta = JsonSerializer.Deserialize<JsonElement>(metaText); message["parts"] = meta.TryGetProperty("parts", out var pe) ? pe : null; message["skill"] = meta.TryGetProperty("skill", out var se) ? se : null; message["attachments"] = meta.TryGetProperty("attachments", out var ae) ? ae : null; } catch { message["parts"] = null; }
+            }
+            message.Remove("metadata");
+            message["deleted"] = message.TryGetValue("deletedAt", out var del) && del != null;
+            message["reactions"] = reactionRows.Where(row => row["messageId"]?.ToString() == idText).Select(row => new { id = row["id"], actorType = row["actorType"], actorId = row["actorId"], emoji = row["emoji"], createdAt = row["createdAt"] }).ToList();
+        }
+        var hasMore = messages.Count > limit;
+        if (hasMore) messages.RemoveAt(messages.Count - 1);
+        messages.Reverse();
+        return (messages, hasMore);
     }
 
     internal static async Task<bool> Owns(Platform platform, Guid user, Guid bot)

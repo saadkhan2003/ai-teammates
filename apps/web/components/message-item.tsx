@@ -323,10 +323,15 @@ function PartView({ part, byId, expanded, onJump }: { part: MessagePartView; byI
       <span className="sr-only">Quoted text: </span>{part.text}</blockquote>;
   }
   const target = byId.get(part.messageId);
-  const gone = !target || target.deleted;
-  return <button type="button" data-testid="reply-block" disabled={!!gone} onClick={() => onJump(part.messageId)}
-    className="block w-full border-l-2 border-current/40 bg-black/10 px-2 py-1 text-left text-[13px] opacity-75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-    <span className="block text-[10px] font-semibold uppercase tracking-wide">{part.author || "Message"}</span>
-    <span className="line-clamp-2">{gone ? "Original message deleted" : part.excerpt}</span>
+  const gone = !!target?.deleted;
+  const author = part.author || "Message";
+  return <button type="button" data-testid="reply-block" data-reply-to={part.messageId} disabled={gone} onClick={() => onJump(part.messageId)}
+    aria-label={gone ? "Original message deleted" : `Jump to the original message from ${author}`}
+    className="flex w-full items-start gap-2 rounded-lg border border-current/30 bg-black/10 px-2.5 py-1.5 text-left text-[13px] transition-colors hover:bg-black/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-60">
+    <Reply className="mt-0.5 h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
+    <span className="min-w-0 flex-1">
+      <span className="block text-[11px] font-semibold opacity-80">{author}</span>
+      <span className="line-clamp-2 opacity-80 [overflow-wrap:anywhere]">{gone ? "Original message deleted" : part.excerpt}</span>
+    </span>
   </button>;
 }

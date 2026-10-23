@@ -204,3 +204,9 @@ html.light {
 [data-radix-collapsible-content] { overflow: hidden; }
 [data-radix-collapsible-content][data-state="open"] { animation: collapsible-down var(--motion-base) var(--ease-out); }
 [data-radix-collapsible-content][data-state="closed"] { animation: collapsible-up var(--motion-base) var(--ease-out); }
+
+/* Jump-to-message highlight: held ~3 s, then fades out with ease-out over 600 ms (timing is set in lib/history.ts). */
+[data-jump] { border-radius: 1rem; }
+[data-jump="on"] { background-color: var(--bot-accent-soft); box-shadow: 0 0 0 4px var(--bot-accent-soft); }
+[data-jump="fade"] { background-color: transparent; box-shadow: 0 0 0 4px transparent; transition: background-color 600ms cubic-bezier(0, 0, 0.2, 1), box-shadow 600ms cubic-bezier(0, 0, 0.2, 1); }
+@media (prefers-reduced-motion: reduce) { [data-jump="fade"] { transition: none; } }
