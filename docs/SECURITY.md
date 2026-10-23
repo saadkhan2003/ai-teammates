@@ -1,6 +1,6 @@
 # v0.4 reliability security notes
 
-PolicyGate, DLP, TEAMS-ISO firewall enforcement, per-bot Linux UIDs and private workspace modes remain required. Reliability guards do not bypass any of those controls.
+PolicyGate, DLP, per-bot isolation (Bot Isolation Policy: per-bot network and files, bots talk only via the messaging layer), per-bot Linux UIDs and private workspace modes remain required. Reliability guards do not bypass any of those controls.
 
 Browser consent is scoped to the task and the full origin (scheme, hostname, port). Opening a new origin creates an Allow once / Deny approval, including trusted test portals. A previous task's `seen_domains` rows no longer authorize browsing. Skill replay uses the same authorization path. Browser approval does not grant credential use. Persistent credential grants continue to apply only to credential actions; there is no implicit persistent browser grant.
 
