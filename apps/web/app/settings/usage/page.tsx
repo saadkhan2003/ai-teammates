@@ -1,5 +1,6 @@
 "use client";
 
+import { ListSkeleton } from "@/components/ui/skeleton";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { StateMessage } from "@/components/state-message";
@@ -65,7 +66,7 @@ export default function UsagePage() {
 
   return (
     <div className="flex flex-col gap-6">
-      {loading ? <StateMessage title="Loading usage…" detail="Reading model calls, cost, and the quota for this account." /> : null}
+      {loading ? <ListSkeleton label="Loading usage" rows={3} /> : null}
       {error ? <p className="text-sm text-clay">{error}</p> : null}
       {usage ? (
         <section className="grid gap-3 sm:grid-cols-3">

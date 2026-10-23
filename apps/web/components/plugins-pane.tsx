@@ -392,7 +392,7 @@ export function PluginsPane({ mode = "installed" }: { mode?: "both" | "catalog" 
         <div data-testid="plugins-loading" className="flex flex-col gap-2" aria-busy="true">
           <Skeleton className="h-16 w-full" />
           <Skeleton className="h-16 w-full" />
-          <p className="text-sm text-muted-foreground">Loading plugins…</p>
+          <span className="sr-only">Loading plugins…</span>
         </div>
       ) : null}
       {error ? (

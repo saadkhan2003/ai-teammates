@@ -1,5 +1,6 @@
 "use client";
 
+import { ListSkeleton } from "@/components/ui/skeleton";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { StateMessage } from "@/components/state-message";
@@ -272,7 +273,7 @@ export default function SecretsPage() {
         </p>
       </header>
 
-      {loading ? <StateMessage title="Loading secrets…" detail="Checking which keys are already stored." /> : null}
+      {loading ? <ListSkeleton label="Loading secrets" rows={3} /> : null}
       {!loading && error ? (
         <StateMessage
           tone="error"
@@ -481,7 +482,7 @@ export default function SecretsPage() {
       <section data-testid="secret-usage" className="rounded-lg border border-line bg-paper p-4">
         <h2 className="font-display text-2xl">Usage</h2>
         {!selectedId ? <p className="mt-2 text-sm text-muted-foreground">Save a secret to see its usage.</p> : null}
-        {usageLoading ? <p className="mt-2 text-sm text-muted-foreground">Loading usage…</p> : null}
+        {usageLoading ? <ListSkeleton label="Loading usage" rows={1} /> : null}
         {usageError ? (
           <p role="alert" className="mt-2 text-sm text-clay">
             Could not load usage. {usageError}

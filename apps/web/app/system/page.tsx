@@ -1,5 +1,6 @@
 "use client";
 
+import { ListSkeleton } from "@/components/ui/skeleton";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { SettingsFrame } from "@/components/settings-nav";
 import { Input } from "@/components/ui/input";
@@ -162,7 +163,7 @@ export default function SystemPage() {
           Refresh
         </Button>
       </header>
-      {loading ? <StateMessage title="Loading system metrics…" detail="Reading usage and recorded model requests." /> : null}
+      {loading ? <ListSkeleton label="Loading system metrics" rows={3} /> : null}
       {provider ? <p className="text-sm">Provider: {provider}</p> : null}
       {mock ? <p className="text-sm">Provider is mock. These calls stayed on this server and were not sent to OpenRouter.</p> : null}
       <section data-testid="metrics-model-calls" className="rounded-lg border border-line bg-paper p-5 shadow-none">
