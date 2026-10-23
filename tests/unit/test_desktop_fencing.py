@@ -230,3 +230,10 @@ def test_websocket_close_grace_force_release_and_tab_transfer_are_wired():
     assert "transfer=true" in ui
     assert "Take over here" in ui
     assert 'data-testid="force-release"' in ui
+
+
+def test_new_computers_get_an_agent_lease_row_so_shell_is_not_reported_as_human_control():
+    runtime = (ROOT / "apps/api/Runtime.cs").read_text()
+    routes = (ROOT / "apps/api/Routes.cs").read_text()
+    assert "INSERT INTO desktop_lease" in runtime and "ON CONFLICT (computer_id, display) DO NOTHING" in runtime
+    assert "INSERT INTO desktop_lease" in routes and "'agent'" in routes

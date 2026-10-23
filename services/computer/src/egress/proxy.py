@@ -199,7 +199,11 @@ class ConnectProxy:
             await asyncio.gather(_copy(client_reader, upstream_writer), _copy(upstream_reader, client_writer))
             upstream_writer.close()
             await upstream_writer.wait_closed()
-        except (asyncio.IncompleteReadError, asyncio.LimitOverrunError, TimeoutError, UnicodeError, ValueError):
+        except (asyncio.IncompleteReadError, TimeoutError):
+            # An idle or half-open client connection (Chrome pre-connects). Closing silently matters: an
+            # unsolicited 400 on a pooled connection is read by the browser as the answer to its next request.
+            pass
+        except (asyncio.LimitOverrunError, UnicodeError, ValueError):
             await self._reply(client_writer, 400, "invalid CONNECT request")
         finally:
             client_writer.close()

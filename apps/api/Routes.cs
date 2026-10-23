@@ -149,6 +149,12 @@ public static class Routes
                     await conn.ExecuteAsync(
                         "INSERT INTO user_computers (user_id, computer_id, desktop_bot_id, status) VALUES (@user, @computer, @desktop, 'running') ON CONFLICT (user_id) DO NOTHING",
                         new { user, computer = id, desktop = id });
+                    // A new computer starts with the agent holding the display; the migration only seeded computers that existed then.
+                    await conn.ExecuteAsync(
+                        "INSERT INTO desktop_lease (computer_id, display, holder_kind, holder_user_id, epoch, expires_at, updated_at) " +
+                        "SELECT computer_id, 1, 'agent', user_id, 1, clock_timestamp() + interval '90 seconds', clock_timestamp() FROM user_computers WHERE user_id=@user " +
+                        "ON CONFLICT (computer_id, display) DO NOTHING",
+                        new { user });
                     var deadline = DateTimeOffset.UtcNow.AddSeconds(45);
                     while (DateTimeOffset.UtcNow < deadline && !ct.IsCancellationRequested)
                     {

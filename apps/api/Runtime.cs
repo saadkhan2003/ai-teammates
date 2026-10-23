@@ -362,6 +362,13 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         var placement = await platform.PlacementForBot(botId, ct);
         if (!Guid.TryParse(placement.Computer.Value, out var computerId)) return null;
         await using var conn = await platform.Data.OpenConnectionAsync(ct);
+        // A computer created after migration 021 has no lease row yet; seed one with the agent holding the display.
+        await conn.ExecuteAsync(new CommandDefinition("""
+            INSERT INTO desktop_lease (computer_id, display, holder_kind, holder_user_id, epoch, expires_at, updated_at)
+            SELECT computer_id, 1, 'agent', user_id, 1, clock_timestamp() + interval '90 seconds', clock_timestamp()
+            FROM user_computers WHERE computer_id=@computerId
+            ON CONFLICT (computer_id, display) DO NOTHING
+            """, new { computerId }, cancellationToken: ct));
         return await conn.ExecuteScalarAsync<long?>(new CommandDefinition("""
             SELECT epoch FROM desktop_lease
             WHERE computer_id=@computerId AND display=1 AND holder_kind='agent'

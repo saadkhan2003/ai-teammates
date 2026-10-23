@@ -94,3 +94,20 @@ def test_plain_http_request_is_forwarded_upstream_not_echoed_to_the_client(tmp_p
     response, seen = asyncio.run(run())
     assert response.endswith(b"ok") and b"200 OK" in response
     assert seen and seen[0].startswith(b"GET /a.html?q=1 HTTP/1.1\r\n")
+
+
+def test_idle_or_half_open_client_connections_are_closed_without_an_unsolicited_reply():
+    async def run():
+        proxy = ConnectProxy(policy.NetworkPolicy("team_only", []))
+        server = await asyncio.start_server(proxy.handle, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.write(b"GET http://x.test/ HT")
+        await writer.drain()
+        writer.close()                       # client hangs up mid-header
+        reader2, writer2 = await asyncio.open_connection("127.0.0.1", port)
+        writer2.close()                      # pre-connect that never sends
+        await asyncio.sleep(0.2)
+        server.close()
+        return await reader.read(100)
+    assert asyncio.run(run()) == b""
