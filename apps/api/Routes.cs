@@ -103,7 +103,7 @@ public static class Routes
             await using var conn = await platform.Data.OpenConnectionAsync();
             var rows = await conn.QueryAsync(
                 """
-                SELECT b.id, b.name, b.role, b.instructions, b.status, b.created_at, b.section, b.avatar, b.avatar_shape, b.avatar_color, b.model, b.notifications_enabled,
+                SELECT b.id, b.name, b.role, b.instructions, b.status, b.created_at, b.section, b.avatar, b.avatar_shape, b.avatar_color, b.model, b.notifications_enabled, b.is_primary, b.bio,
                        (EXISTS (SELECT 1 FROM approvals a WHERE a.bot_id=b.id AND a.status='pending')
                         OR EXISTS (SELECT 1 FROM tasks t WHERE t.bot_id=b.id AND t.status IN ('waiting_human','waiting_approval'))) AS attention
                 FROM bots b WHERE b.owner_id=@id ORDER BY b.created_at
@@ -123,6 +123,8 @@ public static class Routes
             var avatarShape = body.TryGetProperty("avatarShape", out var shapeEl) ? shapeEl.GetString() ?? "" : "";
             var avatarColor = body.TryGetProperty("avatarColor", out var colorEl) ? colorEl.GetString() ?? "" : "";
             if (!ValidAvatar(shape: avatarShape, color: avatarColor)) return Results.BadRequest(new { error = "invalid avatar" });
+            var bio = BotBio.Normalize(body.TryGetProperty("bio", out var bioEl) ? bioEl.GetString() : "");
+            if (bio == null) return Results.BadRequest(new { error = "invalid bio" });
             var id = Guid.NewGuid();
             var botToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(24)).ToLowerInvariant();
             var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(botToken))).ToLowerInvariant();
@@ -132,7 +134,7 @@ public static class Routes
             var existingBots = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM bots WHERE owner_id=@id", new { id = user });
             if (existingBots >= maxBots) return Results.Json(new { error = "quota", reason = "max_bots" }, statusCode: 403);
             var shared = await conn.QuerySingleOrDefaultAsync<Guid?>("SELECT computer_id FROM user_computers WHERE user_id=@id", new { id = user });
-            await conn.ExecuteAsync("INSERT INTO bots (id, owner_id, name, role, instructions, token_hash, avatar_shape, avatar_color) VALUES (@id, @owner, @name, @role, @instructions, @hash, @avatarShape, @avatarColor)", new { id, owner = user, name, role, instructions, hash, avatarShape, avatarColor });
+            await conn.ExecuteAsync("INSERT INTO bots (id, owner_id, name, role, instructions, token_hash, avatar_shape, avatar_color, is_primary, bio) VALUES (@id, @owner, @name, @role, @instructions, @hash, @avatarShape, @avatarColor, @primary, @bio)", new { id, owner = user, name, role, instructions, hash, avatarShape, avatarColor, primary = existingBots == 0, bio });
             var conversation = await conn.ExecuteScalarAsync<Guid>("INSERT INTO conversations (bot_id, title) VALUES (@id, 'Desk') RETURNING id", new { id });
             await conn.ExecuteAsync("INSERT INTO control_locks (bot_id, holder, epoch) VALUES (@id, 'agent', 1)", new { id });
             try
@@ -179,7 +181,7 @@ public static class Routes
             if (user == null) return Results.Unauthorized();
             if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             await using var conn = await platform.Data.OpenConnectionAsync();
-            var bot = Platform.ToDict(await conn.QuerySingleAsync("SELECT id, name, role, instructions, status, model, avatar, avatar_shape, avatar_color, section, notifications_enabled FROM bots WHERE id=@id", new { id }));
+            var bot = Platform.ToDict(await conn.QuerySingleAsync("SELECT id, name, role, instructions, status, model, avatar, avatar_shape, avatar_color, section, notifications_enabled, is_primary, bio FROM bots WHERE id=@id", new { id }));
             var conversationId = await conn.ExecuteScalarAsync<Guid>("SELECT id FROM conversations WHERE bot_id=@id ORDER BY created_at LIMIT 1", new { id });
             var tasks = (await conn.QueryAsync("SELECT id, title, instruction, status, kind, model_calls, waiting_reason, error, error_code, result::text AS result FROM tasks WHERE bot_id=@id ORDER BY created_at DESC LIMIT 50", new { id })).Select(Platform.ToDict);
             var messages = (await conn.QueryAsync("SELECT m.id, m.role, m.content, m.created_at, m.metadata::text AS metadata, m.reply_to_message_id, m.deleted_at, m.kind, COALESCE(m.task_id, (SELECT t.id FROM tasks t WHERE t.source_message_id=m.id ORDER BY t.created_at DESC LIMIT 1)) AS request_id, (SELECT t.status FROM tasks t WHERE t.id = COALESCE(m.task_id, (SELECT t2.id FROM tasks t2 WHERE t2.source_message_id=m.id ORDER BY t2.created_at DESC LIMIT 1))) AS task_status FROM messages m WHERE m.conversation_id=@conversation ORDER BY m.created_at LIMIT 200", new { conversation = conversationId })).Select(Platform.ToDict).ToList();
@@ -610,6 +612,7 @@ public static class Routes
         PluginModel.Map(app, platform);
         PluginCatalog.Map(app, platform);
         Beta.Map(app, platform);
+        Templates.Map(app, platform);
         MapInternal(app, platform, runtime);
 
         app.Map("/vnc/websockify", async (HttpContext ctx) =>
@@ -1153,13 +1156,13 @@ public static class Routes
         return long.TryParse(line.AsSpan(3).Trim(), out var id) ? id : null;
     }
 
-    private static async Task<Guid?> RequireUser(HttpContext ctx, Platform platform)
+    internal static async Task<Guid?> RequireUser(HttpContext ctx, Platform platform)
     {
         ctx.Request.Cookies.TryGetValue("teammates_session", out var token);
         return await platform.UserForSession(token);
     }
 
-    private static async Task<bool> Owns(Platform platform, Guid user, Guid bot)
+    internal static async Task<bool> Owns(Platform platform, Guid user, Guid bot)
     {
         await using var conn = await platform.Data.OpenConnectionAsync();
         return await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM bots WHERE id=@bot AND owner_id=@user", new { bot, user }) > 0;

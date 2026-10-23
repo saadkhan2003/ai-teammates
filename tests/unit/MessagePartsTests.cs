@@ -99,3 +99,18 @@ public class MessagePartsTests
     [Fact]
     public void PlainTextReducesJsonBlocks() => Assert.Equal("Pick one", MessageParts.PlainText("""{"type":"question","prompt":"Pick one"}"""));
 }
+
+public class BotBioTests
+{
+    [Theory]
+    [InlineData("Personal Chief of Staff", "Personal Chief of Staff")]
+    [InlineData("  line one\nline two ", "line one line two")]
+    [InlineData("", "")]
+    public void NormalizesToOneLine(string raw, string expected) => Assert.Equal(expected, BotBio.Normalize(raw));
+
+    [Fact]
+    public void RejectsTooLong() => Assert.Null(BotBio.Normalize(new string('a', 61)));
+
+    [Fact]
+    public void AcceptsExactlyMax() => Assert.Equal(60, BotBio.Normalize(new string('a', 60))!.Length);
+}

@@ -283,6 +283,12 @@ public static class Beta
             var avatarColor = body.TryGetProperty("avatarColor", out var colorEl) ? colorEl.GetString() : null;
             if (avatarShape is not null && !System.Text.RegularExpressions.Regex.IsMatch(avatarShape, @"^blob(1[0-5]|[1-9])$")) return Results.BadRequest(new { error = "invalid avatar shape" });
             if (avatarColor is not null && avatarColor.Length != 0 && !System.Text.RegularExpressions.Regex.IsMatch(avatarColor, @"^#[0-9a-fA-F]{6}$")) return Results.BadRequest(new { error = "invalid avatar color" });
+            if (body.TryGetProperty("bio", out var bioEl))
+            {
+                var bio = BotBio.Normalize(bioEl.ValueKind == JsonValueKind.String ? bioEl.GetString() : "");
+                if (bio == null) return Results.BadRequest(new { error = "invalid bio" });
+                await conn.ExecuteAsync("UPDATE bots SET bio=@bio, updated_at=now() WHERE id=@id", new { id, bio });
+            }
             if (body.TryGetProperty("name", out var name))
                 await conn.ExecuteAsync("UPDATE bots SET name=@name, updated_at=now() WHERE id=@id", new { id, name = name.GetString() ?? "Teammate" });
             if (body.TryGetProperty("role", out var roleEl))
@@ -299,7 +305,14 @@ public static class Beta
             if (avatarColor is not null) await conn.ExecuteAsync("UPDATE bots SET avatar_color=@value, updated_at=now() WHERE id=@id", new { id, value = avatarColor });
             if (body.TryGetProperty("notifications", out var notes))
                 await conn.ExecuteAsync("UPDATE bots SET notifications_enabled=@on, updated_at=now() WHERE id=@id", new { id, on = notes.ValueKind != JsonValueKind.False });
-            var row = await conn.QuerySingleAsync("SELECT id, name, role, instructions, status, model, avatar, avatar_shape, avatar_color, section, notifications_enabled FROM bots WHERE id=@id", new { id });
+            if (body.TryGetProperty("isPrimary", out var primaryEl) && primaryEl.ValueKind == JsonValueKind.True)
+            {
+                await using var tx = await conn.BeginTransactionAsync();
+                await conn.ExecuteAsync("UPDATE bots SET is_primary=false WHERE owner_id=@owner AND is_primary AND id<>@id", new { id, owner = user }, tx);
+                await conn.ExecuteAsync("UPDATE bots SET is_primary=true, updated_at=now() WHERE id=@id", new { id }, tx);
+                await tx.CommitAsync();
+            }
+            var row = await conn.QuerySingleAsync("SELECT id, name, role, instructions, status, model, avatar, avatar_shape, avatar_color, section, notifications_enabled, is_primary, bio FROM bots WHERE id=@id", new { id });
             return Results.Json(Platform.ToDict(row));
         });
 
@@ -314,6 +327,7 @@ public static class Beta
             if (computer != null)
                 await BotFs.WipeAsync(platform.Compute, new ComputerId(computer.Value.ToString()), id, ct);
             await conn.ExecuteAsync("DELETE FROM bots WHERE id=@id AND owner_id=@owner", new { id, owner = user });
+            await conn.ExecuteAsync("UPDATE bots SET is_primary=true WHERE id=(SELECT id FROM bots WHERE owner_id=@owner ORDER BY created_at LIMIT 1) AND NOT EXISTS (SELECT 1 FROM bots WHERE owner_id=@owner AND is_primary)", new { owner = user });
             return Results.NoContent();
         });
 
