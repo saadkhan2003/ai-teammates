@@ -186,7 +186,11 @@ class Worker:
                 response = await self.request(
                     "POST",
                     f"/internal/tasks/{task_id}/heartbeat",
-                    {"workerId": self.worker_id, "epoch": _epoch(task)},
+                    {"workerId": self.worker_id, "epoch": _epoch(task),
+                     "stepsUsed": int(task.get("_stepsUsed", 0)),
+                     "modelRounds": int(task.get("_modelRounds", 0)),
+                     "lastToolCallId": str(task.get("_lastToolCallId", ""))[:100],
+                     "lastProgressAt": task.get("_lastProgressAt")},
                 )
             except asyncio.CancelledError:
                 raise
@@ -238,17 +242,50 @@ class Worker:
                 user,
             ]
         _note_target(task, messages)
-        rounds = 0
+        checkpoint = task.get("checkpoint")
+        if isinstance(checkpoint, str):
+            try:
+                checkpoint = json.loads(checkpoint)
+            except (ValueError, TypeError):
+                checkpoint = {}
+        if not isinstance(checkpoint, dict):
+            checkpoint = {}
         budget = task.get("budget") if isinstance(task.get("budget"), dict) else {}
-        guard = RunGuard(max_steps=int(budget.get("maxSteps", 200)), max_seconds=float(budget.get("maxSeconds", 3600)))
+        rounds = 0
+        task["_modelRounds"] = int(checkpoint.get("modelRounds", 0))
+        task["_stepsUsed"] = int(checkpoint.get("stepsUsed", 0))
+        task["_lastToolCallId"] = str(checkpoint.get("lastToolCallId", ""))
+        task["_lastProgressAt"] = checkpoint.get("lastProgressAt")
+        guard = RunGuard(
+            max_steps=int(budget.get("maxSteps", 200)), max_seconds=float(budget.get("maxSeconds", 3600)),
+            steps_used=task["_stepsUsed"], seconds_used=float(checkpoint.get("secondsUsed", 0)),
+            max_attempt_steps=int(budget.get("maxAttemptSteps", 400)),
+            max_attempt_seconds=float(budget.get("maxAttemptSeconds", 1800)),
+        )
         grounding_redone = any(isinstance(m, dict) and m.get("grounding_retry") for m in messages)
         while not lost.is_set():
+            if guard.elapsed_seconds > guard.max_seconds:
+                if budget.get("pauseOnBudget", True):
+                    await self._status(task, "waiting_human", reason="budget_reached")
+                else:
+                    await self._fail(task, "time_budget")
+                return
+            if guard.attempt_elapsed_seconds > float(budget.get("maxAttemptSeconds", 1800)):
+                await self._status(task, "queued", reason="attempt_limit")
+                return
             pending_calls = _unanswered_calls(messages)
             if not pending_calls:
-                if rounds >= MAX_MODEL_ROUNDS:
-                    await self._fail(task, "model round cap reached")
+                if rounds >= int(budget.get("maxRounds", MAX_MODEL_ROUNDS)):
+                    await self._status(task, "queued", reason="attempt_limit")
+                    return
+                if task["_modelRounds"] >= int(budget.get("maxRoundsCumulative", MAX_MODEL_ROUNDS)):
+                    if budget.get("pauseOnBudget", True):
+                        await self._status(task, "waiting_human", reason="budget_reached")
+                    else:
+                        await self._fail(task, "model round cap reached")
                     return
                 rounds += 1
+                task["_modelRounds"] += 1
                 outcome = await self._complete_model(task, messages)
                 if outcome == "stop":
                     return
@@ -283,8 +320,19 @@ class Worker:
                     return
                 blocked = guard.note(str(pending.get("name") or ""), pending.get("arguments") if isinstance(pending.get("arguments"), dict) else {})
                 if blocked:
-                    await self._fail(task, blocked)
+                    if blocked in {"attempt_step_budget", "attempt_time_budget"}:
+                        await self._status(task, "queued", reason="attempt_limit")
+                        return
+                    if blocked in {"step_budget", "time_budget", "attempt_step_budget", "attempt_time_budget"}:
+                        if budget.get("pauseOnBudget", True):
+                            await self._status(task, "waiting_human", reason="budget_reached")
+                        else:
+                            await self._fail(task, "step_budget" if "step" in blocked else "time_budget")
+                    else:
+                        await self._fail(task, blocked)
                     return
+                task["_stepsUsed"] = guard.steps
+                task["_lastToolCallId"] = str(pending.get("id") or "")[:100]
                 result = await self._invoke(task, pending, authorize=True)
                 if result is None:
                     return
@@ -347,9 +395,31 @@ class Worker:
 
     async def _run_skill(self, task: dict, skill: dict, lost: asyncio.Event) -> None:
         budget = task.get("budget") if isinstance(task.get("budget"), dict) else {}
-        guard = RunGuard(max_steps=int(budget.get("maxSteps", 200)), max_seconds=float(budget.get("maxSeconds", 3600)))
+        checkpoint = task.get("checkpoint")
+        if isinstance(checkpoint, str):
+            try:
+                checkpoint = json.loads(checkpoint)
+            except (ValueError, TypeError):
+                checkpoint = {}
+        if not isinstance(checkpoint, dict):
+            checkpoint = {}
+        guard = RunGuard(
+            max_steps=int(budget.get("maxSteps", 200)), max_seconds=float(budget.get("maxSeconds", 3600)),
+            steps_used=int(checkpoint.get("stepsUsed", 0)), seconds_used=float(checkpoint.get("secondsUsed", 0)),
+            max_attempt_steps=int(budget.get("maxAttemptSteps", 400)),
+            max_attempt_seconds=float(budget.get("maxAttemptSeconds", 1800)),
+        )
         for step in skill.get("steps") or []:
             if lost.is_set():
+                return
+            if guard.elapsed_seconds > guard.max_seconds:
+                if budget.get("pauseOnBudget", True):
+                    await self._status(task, "waiting_human", reason="budget_reached")
+                else:
+                    await self._fail(task, "time_budget")
+                return
+            if guard.attempt_elapsed_seconds > float(budget.get("maxAttemptSeconds", 1800)):
+                await self._status(task, "queued", reason="attempt_limit")
                 return
             if not isinstance(step, dict):
                 continue
@@ -357,7 +427,12 @@ class Worker:
             args = _bind_target(task, _args(step.get("args") if "args" in step else step.get("arguments")))
             blocked = guard.note(name, args)
             if blocked:
-                await self._fail(task, blocked)
+                if blocked in {"attempt_step_budget", "attempt_time_budget"}:
+                    await self._status(task, "queued", reason="attempt_limit")
+                elif blocked in {"step_budget", "time_budget"} and budget.get("pauseOnBudget", True):
+                    await self._status(task, "waiting_human", reason="budget_reached")
+                else:
+                    await self._fail(task, "step_budget" if "step" in blocked else "time_budget" if "time" in blocked else blocked)
                 return
             result = await self._invoke(task, {"name": name, "arguments": args}, authorize=True)
             if result is None or lost.is_set():

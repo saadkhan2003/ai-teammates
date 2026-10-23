@@ -20,6 +20,10 @@ class RunGuard:
         max_steps: int = MAX_STEPS,
         max_seconds: float = MAX_SECONDS,
         repeat_limit: int = REPEAT_LIMIT,
+        steps_used: int = 0,
+        seconds_used: float = 0,
+        max_attempt_steps: int | None = None,
+        max_attempt_seconds: float | None = None,
         clock: Callable[[], float] | None = None,
     ) -> None:
         self.max_steps = max_steps
@@ -27,14 +31,23 @@ class RunGuard:
         self.repeat_limit = repeat_limit
         self._clock = clock or time.monotonic
         self.started = self._clock()
-        self.steps = 0
+        self.steps = max(0, int(steps_used))
+        self.attempt_steps = 0
+        self.elapsed_before_attempt = max(0.0, float(seconds_used))
+        self.max_attempt_steps = max_attempt_steps
+        self.max_attempt_seconds = max_attempt_seconds
         self._seen: dict[str, int] = {}
 
     def note(self, tool: str, args: dict | None) -> str | None:
         self.steps += 1
+        self.attempt_steps += 1
+        if self.max_attempt_steps is not None and self.attempt_steps > self.max_attempt_steps:
+            return "attempt_step_budget"
         if self.steps > self.max_steps:
             return "step_budget"
-        if self._clock() - self.started > self.max_seconds:
+        if self.max_attempt_seconds is not None and self._clock() - self.started > self.max_attempt_seconds:
+            return "attempt_time_budget"
+        if self.elapsed_before_attempt + self._clock() - self.started > self.max_seconds:
             return "time_budget"
         payload = args if isinstance(args, dict) else {}
         signature = tool + "\n" + json.dumps(payload, sort_keys=True, default=str)[:800]
@@ -45,6 +58,14 @@ class RunGuard:
             if url and self._bump("url:" + url):
                 return "repeat_loop"
         return None
+
+    @property
+    def elapsed_seconds(self) -> float:
+        return self.elapsed_before_attempt + max(0.0, self._clock() - self.started)
+
+    @property
+    def attempt_elapsed_seconds(self) -> float:
+        return max(0.0, self._clock() - self.started)
 
     def note_invalid(self, tool: str) -> str | None:
         if self._bump("invalid:" + (tool or "tool")):
