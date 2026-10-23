@@ -403,7 +403,7 @@ export function Workspace({ botId }: { botId: string }) {
             />
           ) : (
             <div className={cn("min-h-0 flex-1 overflow-y-auto", desktopFull && "overflow-visible")}>
-              <div className={cn("border-b border-border", !computerExpanded && "p-3", computerExpanded && "h-[max(480px,70dvh)]")}>
+              <div className={cn("border-b border-border", !computerExpanded && "p-3", computerExpanded && "flex min-h-[max(480px,70dvh)] flex-col")}>
                 <ComputerPane
                   botId={botId}
                   tasks={workspace.tasks ?? []}

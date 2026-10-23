@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { autoAllowBrowserOpens } from "./helpers";
 
@@ -421,8 +422,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
       data: { nextRunAt: "2000-01-01T00:00:00Z" },
     });
     expect(patched.ok()).toBeTruthy();
-    await page.getByTestId("account-button").click();
-    await page.getByTestId("nav-system").click();
+    await page.goto("/system");
     await expect(page).toHaveURL(/\/system/);
     const start = Date.now();
     let routineTask: TaskRow | undefined;
@@ -709,7 +709,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
       "SELECT coalesce(string_agg(content,' '),'') FROM messages; SELECT coalesce(string_agg(prompt_json::text,' '),'') FROM model_requests; SELECT coalesce(string_agg(result::text,' '),'') FROM task_steps;",
     ]);
     assertClean("database text", columns);
-    const restore = spawnSync("python3", ["/workspace/tests/e2e/restore_check.py"], { encoding: "utf8", timeout: 180_000 });
+    const restore = spawnSync("python3", [path.join(__dirname, "restore_check.py")], { encoding: "utf8", timeout: 180_000 });
     expect(restore.stdout || "").toContain("restore-ok");
     expect(restore.status).toBe(0);
   });

@@ -91,9 +91,30 @@ class BrowserHub:
             raise KeyError(target_id)
         return page
 
+    async def _trim_tabs(self, bot_id: str, context) -> None:
+        """Keep a computer light: close the oldest tabs so renderers never exhaust the container."""
+        limit = max(2, int(os.environ.get("COMPUTER_MAX_TABS", "8")))
+        try:
+            pages = list(context.pages)
+            excess = len(pages) - (limit - 1)
+            if excess <= 0:
+                return
+            tracked = self.pages.get(bot_id, {})
+            for page in pages[:excess]:
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+                for target_id, known in list(tracked.items()):
+                    if known is page:
+                        tracked.pop(target_id, None)
+        except Exception:
+            pass
+
     async def open_tab(self, bot_id: str, url: str, wait: str | None) -> dict:
         browser = await self.connect(bot_id)
         context = self._context(browser)
+        await self._trim_tabs(bot_id, context)
         page = await context.new_page()
         await page.goto(url, wait_until="domcontentloaded", timeout=20000)
         if wait:

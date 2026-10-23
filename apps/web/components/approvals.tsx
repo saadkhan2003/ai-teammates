@@ -27,6 +27,8 @@ function needsDecision(status?: string) {
 export function Approvals({ approvals, onChanged }: { approvals: Approval[]; onChanged: () => void }) {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The workspace only lists pending approvals, so keep what was just decided on screen.
+  const [settled, setSettled] = useState<Record<string, { action: string; target: string; denied: boolean }>>({});
 
   async function decide(id: string, decision: "allow_once" | "allow_domain" | "deny") {
     setPendingId(id);
@@ -36,6 +38,10 @@ export function Approvals({ approvals, onChanged }: { approvals: Approval[]; onC
         method: "POST",
         body: JSON.stringify({ decision }),
       });
+      const decidedItem = approvals.find((item) => item.id === id);
+      if (decidedItem) {
+        setSettled((prev) => ({ ...prev, [id]: { action: decidedItem.action ?? "", target: decidedItem.target ?? "", denied: decision === "deny" } }));
+      }
       toast.success(decision === "deny" ? "Denied." : decision === "allow_domain" ? "Allowed for this domain." : "Allowed once.");
       onChanged();
     } catch (caught) {
@@ -45,10 +51,14 @@ export function Approvals({ approvals, onChanged }: { approvals: Approval[]; onC
     }
   }
 
-  if (approvals.length === 0) return null;
+  const settledOnly = Object.entries(settled).filter(([id]) => !approvals.some((item) => item.id === id));
+  if (approvals.length === 0 && settledOnly.length === 0) return null;
 
   return (
     <div className="flex flex-col gap-3">
+      {settledOnly.map(([id, item]) => (
+        <div key={id} data-testid="approval-card" data-decided="true" className="rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">{item.denied ? "Denied" : "Allowed"} {item.action} {domainOf(item.target) || item.target}</div>
+      ))}
       {approvals.map((approval) => !needsDecision(approval.status) ? (
         <div key={approval.id} data-testid="approval-card" data-decided="true" className="rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">{["denied", "deny", "rejected"].includes(approval.status ?? "") ? "Denied" : "Allowed"} {approval.action} {domainOf(approval.target) || approval.target}</div>
       ) : (
