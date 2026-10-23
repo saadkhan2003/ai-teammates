@@ -32,6 +32,21 @@ public class LibraryTests
     [InlineData("organize_documents.gs", false)]
     public void AppliesSensitiveFilenameDenyList(string name, bool expected) => Assert.Equal(expected, LibraryKinds.IsDeniedName(name));
 
+    [Theory]
+    [InlineData("page.html", "code", "text/html")]
+    [InlineData("image.png", "image", "image/png")]
+    [InlineData("mystery.gs", "unknown", "application/octet-stream")]
+    public void ContentMimeComesFromTheServerKindTable(string name, string kind, string mime) =>
+        Assert.Equal(mime, LibraryKinds.ContentMime(Path.GetExtension(name).TrimStart('.'), kind));
+
+    [Theory]
+    [InlineData("html", false)]
+    [InlineData("svg", false)]
+    [InlineData("png", true)]
+    [InlineData("md", true)]
+    public void ActiveAndKnownContentHaveExplicitInlineAllowLists(string ext, bool expected) =>
+        Assert.Equal(expected, LibraryKinds.InlineSafe(ext, LibraryKinds.Detect("file." + ext, "")));
+
     [Fact]
     public void GroupsKarachiItemsAtLocalMidnight()
     {

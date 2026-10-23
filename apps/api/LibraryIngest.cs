@@ -10,13 +10,28 @@ public static class LibraryIngest
 {
     private static readonly Regex Attachment = new(@"\[attached:\s*(/workspace/uploads/[^\]\r\n]+)\]", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    public static bool HasDeniedAttachment(string content) => Attachment.Matches(content).Any(match =>
+    {
+        var path = match.Groups[1].Value.Trim();
+        return LibraryKinds.IsDeniedName(path) || LibraryKinds.IsDeniedName(Path.GetFileName(path)) || path.Contains("/../", StringComparison.Ordinal) || path.EndsWith("/..", StringComparison.Ordinal);
+    });
+
     public static async Task IndexArtifact(Platform platform, Guid botId, Guid artifactId, string source = "artifact", string direction = "out", Guid? messageId = null, CancellationToken ct = default)
     {
         await using var conn = await platform.Data.OpenConnectionAsync(ct);
-        var row = await conn.QuerySingleOrDefaultAsync<(Guid BotId, Guid? TaskId, string Name, string Mime, long Size, string Sha, DateTime Created)>(
-            "SELECT bot_id,task_id,name,mime,size_bytes,sha256,created_at FROM artifacts WHERE id=@artifact AND bot_id=@bot", new { artifact = artifactId, bot = botId });
+        var row = await conn.QuerySingleOrDefaultAsync<(Guid BotId, Guid? TaskId, string Name, string Mime, long Size, string Sha, DateTime Created, string ObjectKey)>(
+            "SELECT bot_id,task_id,name,mime,size_bytes,sha256,created_at,object_key FROM artifacts WHERE id=@artifact AND bot_id=@bot", new { artifact = artifactId, bot = botId });
         if (row.BotId == Guid.Empty || LibraryKinds.IsDeniedName(row.Name)) return;
-        await Upsert(conn, botId, source, direction, row.Name, row.Mime, row.Size, row.Sha, artifactId, messageId, row.TaskId, row.Created);
+        var dlp = "clean";
+        if (row.Size <= 2_000_000 && (LibraryKinds.Detect(row.Name, row.Mime) is "text" or "markdown" or "code" or "sheet"))
+        {
+            using var blob = await platform.S3.GetObjectAsync(platform.Bucket, row.ObjectKey, ct);
+            using var memory = new MemoryStream(); await blob.ResponseStream.CopyToAsync(memory, ct);
+            if (Dlp.HasStrict(Encoding.UTF8.GetString(memory.ToArray()))) dlp = "redacted";
+        }
+        await Upsert(conn, botId, source, direction, row.Name, row.Mime, row.Size, row.Sha, artifactId, messageId, row.TaskId, row.Created, dlp);
+        var owner = await conn.ExecuteScalarAsync<Guid?>("SELECT owner_id FROM bots WHERE id=@bot", new { bot = botId });
+        if (owner != null) await platform.Audit(owner.Value.ToString(), "library.uploaded", botId, row.TaskId, new { itemNameHash = row.Sha, sizeBytes = row.Size });
     }
 
     public static async Task IndexMessageAttachments(Platform platform, Runtime runtime, Guid botId, Guid messageId, string content, CancellationToken ct)
@@ -42,7 +57,11 @@ public static class LibraryIngest
                 await using (var conn = await platform.Data.OpenConnectionAsync(ct))
                 {
                     artifactId = await conn.ExecuteScalarAsync<Guid>("INSERT INTO artifacts(bot_id,name,mime,size_bytes,sha256,object_key) VALUES(@bot,@name,@mime,@size,@sha,@key) RETURNING id", new { bot = botId, name, mime, size = bytes.LongLength, sha, key });
-                    await Upsert(conn, botId, "upload", "in", name, mime, bytes.LongLength, sha, artifactId, messageId, null, DateTime.UtcNow);
+                    var textLike = LibraryKinds.Detect(name, mime) is "text" or "markdown" or "code" or "sheet";
+                    var dlp = textLike && bytes.Length <= 2_000_000 && Dlp.HasStrict(Encoding.UTF8.GetString(bytes)) ? "redacted" : "clean";
+                    await Upsert(conn, botId, "upload", "in", name, mime, bytes.LongLength, sha, artifactId, messageId, null, DateTime.UtcNow, dlp);
+                    var owner = await conn.ExecuteScalarAsync<Guid?>("SELECT owner_id FROM bots WHERE id=@bot", new { bot = botId });
+                    if (owner != null) await platform.Audit(owner.Value.ToString(), "library.uploaded", botId, null, new { itemNameHash = sha, sizeBytes = bytes.LongLength });
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -52,14 +71,14 @@ public static class LibraryIngest
         }
     }
 
-    private static Task<int> Upsert(System.Data.IDbConnection conn, Guid botId, string source, string direction, string rawName, string mime, long size, string sha, Guid artifactId, Guid? messageId, Guid? taskId, DateTime created) => conn.ExecuteAsync(
+    private static Task<int> Upsert(System.Data.IDbConnection conn, Guid botId, string source, string direction, string rawName, string mime, long size, string sha, Guid artifactId, Guid? messageId, Guid? taskId, DateTime created, string dlp = "clean") => conn.ExecuteAsync(
         """
-        INSERT INTO library_items(bot_id,source,direction,name,ext,mime,kind,size_bytes,sha256,artifact_id,message_id,task_id,created_at)
-        VALUES(@bot,@source,@direction,@name,@ext,@mime,@kind,@size,@sha,@artifact,@message,@task,@created)
+        INSERT INTO library_items(bot_id,source,direction,name,ext,mime,kind,size_bytes,sha256,artifact_id,message_id,task_id,created_at,dlp_state,thumb_state)
+        VALUES(@bot,@source,@direction,@name,@ext,@mime,@kind,@size,@sha,@artifact,@message,@task,@created,@dlp,CASE WHEN @kind IN ('image','screenshots','video','pdf') THEN 'pending' ELSE 'none' END)
         ON CONFLICT (bot_id,sha256,name) WHERE deleted_at IS NULL DO UPDATE SET
           source=EXCLUDED.source,direction=EXCLUDED.direction,mime=EXCLUDED.mime,kind=EXCLUDED.kind,size_bytes=EXCLUDED.size_bytes,
-          artifact_id=EXCLUDED.artifact_id,message_id=EXCLUDED.message_id,task_id=EXCLUDED.task_id,created_at=EXCLUDED.created_at
+          artifact_id=EXCLUDED.artifact_id,message_id=EXCLUDED.message_id,task_id=EXCLUDED.task_id,created_at=EXCLUDED.created_at,dlp_state=EXCLUDED.dlp_state,thumb_state=EXCLUDED.thumb_state
         WHERE EXCLUDED.created_at >= library_items.created_at
         """,
-        new { bot = botId, source, direction, name = LibraryKinds.SanitizeName(rawName), ext = Path.GetExtension(LibraryKinds.SanitizeName(rawName)).TrimStart('.').ToLowerInvariant(), mime, kind = source == "screenshot" ? "screenshots" : LibraryKinds.Detect(rawName, mime), size, sha, artifact = artifactId, message = messageId, task = taskId, created });
+        new { bot = botId, source, direction, name = LibraryKinds.SanitizeName(rawName), ext = Path.GetExtension(LibraryKinds.SanitizeName(rawName)).TrimStart('.').ToLowerInvariant(), mime, kind = source == "screenshot" ? "screenshots" : LibraryKinds.Detect(rawName, mime), size, sha, artifact = artifactId, message = messageId, task = taskId, created, dlp });
 }

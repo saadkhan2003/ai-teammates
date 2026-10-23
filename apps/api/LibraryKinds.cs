@@ -72,4 +72,15 @@ public static class LibraryKinds
                leaf.Contains("credential", StringComparison.Ordinal) || leaf.Contains("cookies", StringComparison.Ordinal) ||
                normalized.Split('/').Any(part => part is ".git" or ".ssh" or "secrets" or "vault" or "browser-profile" or "browser" or "profile");
     }
+
+    public static string ContentMime(string ext, string kind) => ext.ToLowerInvariant() switch
+    {
+        "png" => "image/png", "jpg" or "jpeg" => "image/jpeg", "gif" => "image/gif", "webp" => "image/webp",
+        "pdf" => "application/pdf", "mp4" => "video/mp4", "webm" => "video/webm", "mp3" => "audio/mpeg", "wav" => "audio/wav",
+        "txt" or "log" or "md" or "markdown" or "csv" or "tsv" or "json" or "py" or "cs" or "js" or "ts" or "tsx" or "jsx" or "css" or "sh" or "sql" or "yaml" or "yml" => "text/plain; charset=utf-8",
+        "html" or "htm" => "text/html", "svg" => "image/svg+xml", "xml" => "application/xml",
+        _ when kind == "image" => "application/octet-stream", _ => "application/octet-stream"
+    };
+
+    public static bool InlineSafe(string ext, string kind) => ext.ToLowerInvariant() is "png" or "jpg" or "jpeg" or "webp" or "gif" or "pdf" or "mp4" or "webm" or "mp3" or "wav" or "txt" or "md" or "markdown" or "json" or "csv" or "tsv" or "py" or "cs" or "js" or "ts" or "tsx" or "jsx" or "css" or "sh" or "sql" or "yaml" or "yml";
 }

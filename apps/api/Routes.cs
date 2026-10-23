@@ -290,8 +290,11 @@ public static class Routes
                     asTask = true;
                 }
             }
+            if (botId != null && LibraryIngest.HasDeniedAttachment(content))
+                return Results.Json(new { error = Dlp.Blocked }, statusCode: 422);
             var messageId = await conn.ExecuteScalarAsync<Guid>("INSERT INTO messages (conversation_id, role, content, metadata, reply_to_message_id) VALUES (@id, 'user', @content, @metadata::jsonb, @replyTo) RETURNING id", new { id, content, metadata, replyTo });
-            await LibraryIngest.IndexMessageAttachments(platform, runtime, botId.Value, messageId, content, ctx.RequestAborted);
+            if (botId is Guid indexedBotId)
+                await LibraryIngest.IndexMessageAttachments(platform, runtime, indexedBotId, messageId, content, ctx.RequestAborted);
             var kind = asTask ? "work" : "chat";
             var priority = asTask ? 0 : 10;
             var taskId = await conn.ExecuteScalarAsync<Guid>(

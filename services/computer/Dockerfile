@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         xdotool xterm procps \
         fonts-dejavu-core fonts-liberation \
         git ripgrep patch \
-        imagemagick librsvg2-bin \
+        imagemagick librsvg2-bin poppler-utils \
         util-linux ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
@@ -50,7 +50,8 @@ RUN groupadd --system desk \
     && /opt/desk/venv/bin/pip install --no-cache-dir \
         fastapi==0.115.6 \
         uvicorn==0.34.0 \
-        playwright==1.49.1
+        playwright==1.49.1 \
+        pillow==11.1.0
 
 COPY s6/s6-rc.d/ /etc/s6-overlay/s6-rc.d/
 COPY s6/user-bundles.d/ /etc/s6-overlay/user-bundles.d/

@@ -16,6 +16,7 @@ from desktops import DesktopManager, cdp_port, geometry, rw_port, view_port
 from fixtureserver import start as start_fixtures
 from pure import redact, scrub_tree
 from computer_tools import ffmpeg_argv, safe_recording_name, scale_point, validate_keys
+from library_thumbnail import generate_thumbnail
 
 manager = DesktopManager()
 hub: BrowserHub | None = None
@@ -66,6 +67,20 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.post("/library/thumbnail")
+async def library_thumbnail(request: Request, kind: str = Query(...), _: None = Depends(require_token)):
+    if kind not in {"image", "video", "pdf"}:
+        raise HTTPException(status_code=400, detail="unsupported kind")
+    data = await request.body()
+    if len(data) > 50_000_000:
+        raise HTTPException(status_code=413, detail="blob too large")
+    try:
+        result = generate_thumbnail(data, kind)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="thumbnail generation failed")
+    return Response(content=result, media_type="image/webp", headers={"Cache-Control": "no-store"})
 
 
 def _hub() -> BrowserHub:

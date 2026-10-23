@@ -216,6 +216,14 @@ export function ChatPane({
     if (!node) { toast.info("The original message is no longer available."); return; }
     flash(node);
   }
+  useEffect(() => {
+    const openMessage = (event: Event) => {
+      const id = (event as CustomEvent<string>).detail;
+      if (id) void jumpTo(id);
+    };
+    document.addEventListener("library:open-message", openMessage);
+    return () => document.removeEventListener("library:open-message", openMessage);
+  }, [jumpTo]);
   function focusSibling(from: HTMLElement, delta: number) {
     const all = Array.from(listRef.current?.querySelectorAll<HTMLElement>("article[data-testid='message-item']") ?? []);
     all[all.indexOf(from) + delta]?.focus();

@@ -1,5 +1,5 @@
 export type LibraryKind = "image" | "video" | "audio" | "pdf" | "text" | "markdown" | "code" | "doc" | "sheet" | "archive" | "page" | "link" | "screenshots" | "unknown";
-export type LibraryItem = { id: string; name: string; kind: LibraryKind; ext: string; mime: string; sizeBytes: number; source: string; direction: string; createdAt: string; thumbUrl: string | null; pinned: boolean };
+export type LibraryItem = { id: string; name: string; kind: LibraryKind; ext: string; mime: string; sizeBytes: number; source: string; direction: string; createdAt: string; thumbUrl: string | null; thumbState?: "pending" | "ready" | "none" | "failed"; pinned: boolean; dlpState?: "clean" | "redacted" | "blocked"; messageId?: string | null };
 export type LibraryGroup = { key: "today" | "week" | "older"; label: string; total: number; items: LibraryItem[]; nextCursor: string | null };
 export type LibraryResponse = { pinned: LibraryItem[]; groups: LibraryGroup[] };
 

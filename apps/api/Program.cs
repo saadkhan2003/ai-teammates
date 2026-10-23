@@ -81,6 +81,7 @@ builder.Services.AddSingleton(loginFlow);
 builder.Services.AddSingleton(runtime);
 builder.Services.AddHostedService<Maintenance>();
 builder.Services.AddHostedService<PluginCatalogJob>();
+builder.Services.AddHostedService<LibraryThumbnailWorker>();
 
 var app = builder.Build();
 app.UseExceptionHandler(handler => handler.Run(async ctx =>

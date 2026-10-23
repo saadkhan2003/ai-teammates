@@ -128,7 +128,7 @@ public sealed class Platform
             await conn.ExecuteAsync(provider);
             await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('010') ON CONFLICT DO NOTHING");
         }
-        foreach (var (mid, file) in new[] { ("011", "011_devices.sql"), ("012", "012_reliability.sql"), ("013", "013_feedback.sql"), ("014", "014_avatar.sql"), ("015", "015_bot_messaging.sql"), ("016", "016_chat_actions.sql"), ("017", "017_primary.sql"), ("018", "018_bio.sql"), ("019", "019_coding_work.sql"), ("020", "020_coding_items.sql"), ("021", "021_routine_timezone.sql"), ("022", "022_routines_v2.sql"), ("023", "023_routine_test.sql"), ("024", "024_library.sql") })
+        foreach (var (mid, file) in new[] { ("011", "011_devices.sql"), ("012", "012_reliability.sql"), ("013", "013_feedback.sql"), ("014", "014_avatar.sql"), ("015", "015_bot_messaging.sql"), ("016", "016_chat_actions.sql"), ("017", "017_primary.sql"), ("018", "018_bio.sql"), ("019", "019_coding_work.sql"), ("020", "020_coding_items.sql"), ("021", "021_routine_timezone.sql"), ("022", "022_routines_v2.sql"), ("023", "023_routine_test.sql"), ("024", "024_library.sql"), ("025", "025_library_actions.sql") })
         {
             if (await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id=@mid", new { mid }) != 0) continue;
             await conn.ExecuteAsync(await File.ReadAllTextAsync("/migrations/" + file));
