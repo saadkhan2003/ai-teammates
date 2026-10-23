@@ -106,6 +106,26 @@ def test_long_run_demo_uses_step_filenames_and_resumes_by_results():
     assert json.loads(second["function"]["arguments"])["path"].endswith("long-run-step-00002.txt")
 
 
+def test_shell_append_demo_has_one_append_then_reads_the_result():
+    user = {"role": "user", "content": "SHELL APPEND DEMO"}
+    name, args, _ = _call([user])
+    assert name == "shell"
+    assert args["command"] == "echo x >> /workspace/shell-append-demo.log"
+    read_name, read_args, _ = _call([user, {"role": "tool", "name": "shell", "content": "ok"}])
+    assert read_name == "read_file"
+    assert read_args["path"] == "/workspace/shell-append-demo.log"
+
+
+def test_slow_long_run_inserts_a_delay_once_per_step():
+    user = {"role": "user", "content": "LONG RUN DEMO 2 SLOW"}
+    name, args, _ = _call([user])
+    assert (name, args["command"]) == ("shell", "sleep 0.25 # long-run-delay-1")
+    delayed = [user, {"role": "assistant", "tool_calls": [{"id": "delay", "function": {"name": name, "arguments": json.dumps(args)}}]}, {"role": "tool", "name": "shell", "tool_call_id": "delay", "content": "ok"}]
+    next_name, next_args, _ = _call(delayed)
+    assert next_name == "write_file"
+    assert next_args["path"].endswith("long-run-step-00001.txt")
+
+
 def test_ask_user_plan_then_continues_with_the_choice():
     user = {"role": "user", "content": "Ask which Rakazo ideas should go in now"}
     name, args, result = _call([user])

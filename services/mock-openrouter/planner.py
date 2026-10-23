@@ -29,6 +29,8 @@ def plan(messages: list) -> dict:
     long_run = re.search(r"LONG RUN DEMO\s+(\d+)", _first_user(transcript), re.IGNORECASE)
     if long_run:
         return _long_run_plan(transcript, min(500, int(long_run.group(1))))
+    if "SHELL APPEND DEMO" in _first_user(transcript).upper():
+        return _shell_append_plan(transcript)
     done = sum(1 for item in transcript if item.get("role") == "tool")
     steps = _steps(_first_user(transcript), transcript)
     if done >= len(steps):
@@ -58,12 +60,26 @@ def _long_run_plan(messages: list, count: int) -> dict:
         return _final(f"Long run finished: completed {count} steps.")
     index = done + 1
     path = f"/workspace/long-run-step-{index:05d}.txt"
+    delay_marker = f"long-run-delay-{index}"
+    if "SLOW" in text.upper() and not _has_shell_command(messages, delay_marker):
+        return _tool("shell", {"command": f"sleep 0.25 # long-run-delay-{index}"})
     if not _has_result_for(messages, path, "write_file"):
         content = f"step {index}\n" + ("x" * 20000 if "BIG OUTPUT" in text else "complete\n")
         return _tool("write_file", {"path": path, "content": content})
     if not _has_result_for(messages, path, "read_file"):
         return _tool("read_file", {"path": path})
     return _tool("read_file", {"path": path})
+
+
+def _shell_append_plan(messages: list) -> dict:
+    """Append once, then perform further work so resume can observe ambiguity."""
+    text = _first_user(messages)
+    path = "/workspace/shell-append-demo.log"
+    if not any(item.get("role") == "tool" and "shell" in str(item.get("name") or "") for item in messages):
+        return _tool("shell", {"command": f"echo x >> {path}"})
+    if not _has_result_for(messages, path, "read_file"):
+        return _tool("read_file", {"path": path})
+    return _final("Shell append demo finished.")
 
 
 def _long_run_progress(messages: list) -> int:
@@ -89,6 +105,19 @@ def _long_run_progress(messages: list) -> int:
 def _has_result_for(messages: list, path: str, tool_name: str) -> bool:
     marker = path.rsplit("/", 1)[-1]
     return any(item.get("role") == "tool" and tool_name in str(item.get("name") or "") and marker in _result_path(item, messages) for item in messages)
+
+
+def _has_shell_command(messages: list, marker: str) -> bool:
+    for item in messages:
+        calls = item.get("tool_calls", item.get("toolCalls", []))
+        for call in calls if isinstance(calls, list) else []:
+            function = call.get("function") if isinstance(call.get("function"), dict) else {}
+            try:
+                if marker in str(json.loads(function.get("arguments") or "{}").get("command") or ""):
+                    return True
+            except (TypeError, ValueError):
+                continue
+    return False
 
 
 def _result_path(result: dict, messages: list) -> str:
