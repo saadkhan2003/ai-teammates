@@ -754,6 +754,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
     await shot(page, "dark-second-bot");
 
     await page.getByTestId("account-button").click();
+    await page.getByRole("menuitem", { name: "Settings" }).click();
     await shot(page, "dark-settings-general");
     await page.getByTestId("theme-light").click();
     await expect(page.locator("html")).toHaveClass(/light/);
@@ -768,6 +769,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
       await shot(page, `light-tab-${tab.toLowerCase().replace("/", "-")}`);
     }
     await page.getByTestId("account-button").click();
+    await page.getByRole("menuitem", { name: "Settings" }).click();
     await shot(page, "light-settings-general");
     for (const [tab, file] of [
       ["Vault", "secrets"],
