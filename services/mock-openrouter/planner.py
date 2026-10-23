@@ -23,6 +23,15 @@ Step = tuple[str, str, dict] | tuple[str, str] | tuple[str, Callable[[list], str
 
 def plan(messages: list) -> dict:
     """Return one tool call, or a final assistant message, for this transcript."""
+    response = _plan(messages)
+    # Unique per transcript position, like real providers, so idempotency keys never collide.
+    for choice in response.get("choices", []):
+        for call in (choice.get("message") or {}).get("tool_calls") or []:
+            call["id"] = f"call_{len(messages or []) + 1}"
+    return response
+
+
+def _plan(messages: list) -> dict:
     transcript = [item for item in messages or [] if isinstance(item, dict)]
     if any("[compaction-summary-request]" in _content_text(item.get("content")) for item in transcript):
         return _final(json.dumps(_compaction_summary(transcript), ensure_ascii=False, sort_keys=True))
@@ -111,13 +120,21 @@ def _has_shell_command(messages: list, marker: str) -> bool:
     for item in messages:
         calls = item.get("tool_calls", item.get("toolCalls", []))
         for call in calls if isinstance(calls, list) else []:
-            function = call.get("function") if isinstance(call.get("function"), dict) else {}
-            try:
-                if marker in str(json.loads(function.get("arguments") or "{}").get("command") or ""):
-                    return True
-            except (TypeError, ValueError):
-                continue
+            if marker in str(_call_args(call).get("command") or ""):
+                return True
     return False
+
+
+def _call_args(call: dict) -> dict:
+    function = call.get("function") if isinstance(call.get("function"), dict) else {}
+    raw = function.get("arguments", call.get("arguments"))
+    if isinstance(raw, dict):
+        return raw
+    try:
+        value = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def _tool_name(result: dict, messages: list) -> str:
@@ -143,11 +160,7 @@ def _result_path(result: dict, messages: list) -> str:
         for call in calls if isinstance(calls, list) else []:
             if str(call.get("id") or "") != call_id:
                 continue
-            function = call.get("function") if isinstance(call.get("function"), dict) else {}
-            try:
-                return str(json.loads(function.get("arguments") or "{}").get("path") or "") + " " + _content_text(result.get("content"))
-            except (ValueError, TypeError):
-                break
+            return str(_call_args(call).get("path") or "") + " " + _content_text(result.get("content"))
     return _content_text(result.get("content"))
 
 
