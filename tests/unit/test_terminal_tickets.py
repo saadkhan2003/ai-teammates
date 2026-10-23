@@ -38,7 +38,7 @@ def test_ticket_expiry_and_tampering_rejected():
     with pytest.raises(TicketError):
         store.consume(token, "user", "bot", 1, "user", now=160)
     with pytest.raises(TicketError):
-        store.consume(token[:-1] + ("A" if token[-1] != "A" else "B"), "user", "bot", 1, "user", now=101)
+        store.consume(token[:5] + ("A" if token[5] != "A" else "B") + token[6:], "user", "bot", 1, "user", now=101)
 
 
 def test_ticket_nonce_is_128_bit_and_store_does_not_keep_raw_tokens():

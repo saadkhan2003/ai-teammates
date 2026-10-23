@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -360,7 +361,7 @@ class DesktopManager:
             f"--window-size={width},{height} --window-position=0,0 --start-maximized "
             "--disable-session-crashed-bubble --hide-crash-restore-bubble "
             "--ozone-platform=x11 "
-            + " ".join(CHROME_FLAGS)
+            + " ".join(shlex.quote(flag) for flag in CHROME_FLAGS)
             + f" '{start}'\n",
         )
         await _rescan()

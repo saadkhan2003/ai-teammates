@@ -29,3 +29,14 @@ def test_stdlib_modules_used_as_attributes_are_imported():
         for mod in ("asyncio", "json", "os", "time", "threading", "subprocess"):
             if re.search(rf"(?<![\w.]){mod}\.\w+\(", text):
                 assert re.search(rf"^\s*(import {mod}\b|from {mod}\b)", text, re.M), f"{f.name} uses {mod} without importing it"
+
+
+def test_chrome_flags_are_shell_quoted_in_the_s6_run_script():
+    # An unquoted "MAP * ~NOTFOUND" glob-expanded to s6 directory names and broke the resolver rule.
+    import shlex
+    import sys
+    sys.path.insert(0, str(C / "src"))
+    import desktops
+    quoted = " ".join(shlex.quote(flag) for flag in desktops.CHROME_FLAGS)
+    assert "'--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost , EXCLUDE 127.0.0.1 , EXCLUDE ::1'" in quoted
+    assert "shlex.quote(flag) for flag in CHROME_FLAGS" in (C / "src/desktops.py").read_text()
