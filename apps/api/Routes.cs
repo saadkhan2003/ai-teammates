@@ -92,8 +92,19 @@ public static class Routes
             var user = await RequireUser(ctx, platform);
             if (user == null) return Results.Unauthorized();
             await using var conn = await platform.Data.OpenConnectionAsync();
-            var me = await conn.QuerySingleAsync<(string Username, string Role, string Status, string DisplayName)>("SELECT username, role, status, display_name FROM users WHERE id=@id", new { id = user });
-            return Results.Json(new { id = user, username = me.Username, role = me.Role, status = me.Status, displayName = me.DisplayName });
+            var me = await conn.QuerySingleAsync<(string Username, string Role, string Status, string DisplayName, string Timezone)>("SELECT username, role, status, display_name, timezone FROM users WHERE id=@id", new { id = user });
+            return Results.Json(new { id = user, username = me.Username, role = me.Role, status = me.Status, displayName = me.DisplayName, timezone = me.Timezone });
+        });
+
+        app.MapPatch("/api/auth/timezone", async (HttpContext ctx, JsonElement body) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            var zone = body.ValueKind == JsonValueKind.Object && body.TryGetProperty("timezone", out var zoneEl) && zoneEl.ValueKind == JsonValueKind.String ? zoneEl.GetString() : null;
+            if (!RoutineTime.TryZone(zone, out _)) return Results.BadRequest(new { error = "unknown_timezone" });
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            await conn.ExecuteAsync("UPDATE users SET timezone=@zone WHERE id=@id", new { id = user, zone = zone!.Trim() });
+            return Results.Json(new { ok = true, timezone = zone.Trim() });
         });
 
         app.MapGet("/api/bots", async (HttpContext ctx) =>
@@ -634,9 +645,14 @@ public static class Routes
             var watchRef = body.TryGetProperty("watchRef", out var watchRefEl) && watchRefEl.ValueKind == JsonValueKind.String ? watchRefEl.GetString() ?? "" : "";
             if (watchKind is not ("" or "http" or "memory")) watchKind = "";
             if (watchRef.Length > 500) watchRef = watchRef[..500];
-            var next = Cron.Next(cron, DateTimeOffset.UtcNow, TimeZoneInfo.Utc);
             await using var conn = await platform.Data.OpenConnectionAsync();
-            var routineId = await conn.ExecuteScalarAsync<Guid>("INSERT INTO routines (bot_id, name, cron, instruction, next_run_at, watch_kind, watch_ref) VALUES (@id, @name, @cron, @instruction, @next, @watchKind, @watchRef) RETURNING id", new { id, name, cron, instruction, next, watchKind, watchRef });
+            var zoneId = body.TryGetProperty("timezone", out var zoneEl) && zoneEl.ValueKind == JsonValueKind.String && RoutineTime.TryZone(zoneEl.GetString(), out _)
+                ? zoneEl.GetString()!.Trim()
+                : await RoutineTime.OwnerZoneId(conn, user.Value);
+            DateTimeOffset next;
+            try { next = RoutineTime.Next(cron, DateTimeOffset.UtcNow, zoneId); }
+            catch (Exception) { return Results.BadRequest(new { error = "invalid_cron" }); }
+            var routineId = await conn.ExecuteScalarAsync<Guid>("INSERT INTO routines (bot_id, name, cron, timezone, instruction, next_run_at, watch_kind, watch_ref) VALUES (@id, @name, @cron, @zoneId, @instruction, @next, @watchKind, @watchRef) RETURNING id", new { id, name, cron, zoneId, instruction, next, watchKind, watchRef });
             return Results.Json(new { id = routineId, nextRunAt = next });
         });
 
@@ -650,9 +666,9 @@ public static class Routes
             if (body.TryGetProperty("enabled", out var enabledEl) && enabledEl.ValueKind is JsonValueKind.True or JsonValueKind.False)
             {
                 var enabled = enabledEl.GetBoolean();
-                var cron = await conn.QuerySingleOrDefaultAsync<string>("SELECT r.cron FROM routines r JOIN bots b ON b.id=r.bot_id WHERE r.id=@id AND b.owner_id=@owner", new { id, owner = user });
-                if (cron == null) return Results.NotFound();
-                var nextAt = enabled ? RoutineToggle.NextAfterEnable(cron, DateTimeOffset.UtcNow) : (DateTimeOffset?)null;
+                var found = await conn.QuerySingleOrDefaultAsync<(string Cron, string Timezone)?>("SELECT r.cron, r.timezone FROM routines r JOIN bots b ON b.id=r.bot_id WHERE r.id=@id AND b.owner_id=@owner", new { id, owner = user });
+                if (found == null) return Results.NotFound();
+                var nextAt = enabled ? RoutineToggle.NextAfterEnable(found.Value.Cron, DateTimeOffset.UtcNow, found.Value.Timezone) : (DateTimeOffset?)null;
                 await conn.ExecuteAsync("UPDATE routines SET enabled=@enabled, next_run_at=@nextAt WHERE id=@id", new { id, enabled, nextAt });
                 return Results.Json(new { ok = true, enabled, nextRunAt = nextAt });
             }

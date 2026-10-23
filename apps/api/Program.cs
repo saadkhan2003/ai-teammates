@@ -240,6 +240,13 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
                         logger.LogError("computer isolation alert: {Message}", OutputRedactor.Redact(ex.Message));
                     }
                 }
+                // Routines whose schedule was cleared (timezone migration) get a fresh next run in their own zone.
+                var unscheduled = await conn.QueryAsync<(Guid Id, string Cron, string Timezone)>("SELECT id, cron, timezone FROM routines WHERE enabled AND next_run_at IS NULL AND cron IS NOT NULL");
+                foreach (var item in unscheduled)
+                {
+                    var fresh = RoutineTime.NextOrNull(item.Cron, DateTimeOffset.UtcNow, item.Timezone);
+                    if (fresh != null) await conn.ExecuteAsync("UPDATE routines SET next_run_at=@fresh WHERE id=@id AND next_run_at IS NULL", new { id = item.Id, fresh });
+                }
                 var due = await conn.QueryAsync<(Guid Id, Guid BotId, string Instruction, string Name, string WatchKind, string WatchRef, string WatchFingerprint)>(
                     "SELECT id, bot_id, instruction, name, coalesce(watch_kind,''), coalesce(watch_ref,''), coalesce(watch_fingerprint,'') FROM routines WHERE enabled AND next_run_at IS NOT NULL AND next_run_at <= now()");
                 foreach (var routine in due)
@@ -268,8 +275,8 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
                         await conn.ExecuteAsync("INSERT INTO routine_runs (routine_id, task_id, status) VALUES (@routine, @task, 'queued')", new { routine = routine.Id, task });
                         platform.Tasks.Pulse();
                     }
-                    var cron = await conn.ExecuteScalarAsync<string>("SELECT cron FROM routines WHERE id=@id", new { id = routine.Id });
-                    var next = Cron.Next(cron ?? "0 * * * *", DateTimeOffset.UtcNow, TimeZoneInfo.Utc);
+                    var sched = await conn.QuerySingleOrDefaultAsync<(string Cron, string Timezone)?>("SELECT cron, timezone FROM routines WHERE id=@id", new { id = routine.Id });
+                    var next = RoutineTime.NextOrNull(sched?.Cron ?? "0 * * * *", DateTimeOffset.UtcNow, sched?.Timezone) ?? DateTimeOffset.UtcNow.AddHours(1);
                     await conn.ExecuteAsync("UPDATE routines SET last_run_at=now(), next_run_at=@next WHERE id=@id", new { id = routine.Id, next });
                 }
             }

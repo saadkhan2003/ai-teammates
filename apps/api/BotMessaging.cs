@@ -539,10 +539,11 @@ public static class BotMessaging
         var name = Arg(args, "name").Trim();
         if (Dlp.HasStrict(instruction + name)) return Fail("dlp_blocked");
         if (await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM routines WHERE bot_id=@id", new { id = resolved.Id }) >= PeerLimits.MaxRoutinesPerBot) return Fail("routine_limit");
-        var next = Cron.Next(cron, DateTimeOffset.UtcNow, TimeZoneInfo.Utc);
+        var zoneId = await RoutineTime.BotOwnerZoneId(conn, resolved.Id.Value);
+        var next = RoutineTime.Next(cron, DateTimeOffset.UtcNow, zoneId);
         var routineId = await conn.ExecuteScalarAsync<Guid>(
-            "INSERT INTO routines (bot_id, name, cron, instruction, next_run_at, created_by_bot_id, origin_depth) VALUES (@bot, @name, @cron, @instruction, @next, @creator, @depth) RETURNING id",
-            new { bot = resolved.Id, name, cron, instruction, next, creator = ctx.BotId, depth = ctx.OriginDepth + 1 });
+            "INSERT INTO routines (bot_id, name, cron, timezone, instruction, next_run_at, created_by_bot_id, origin_depth) VALUES (@bot, @name, @cron, @zoneId, @instruction, @next, @creator, @depth) RETURNING id",
+            new { bot = resolved.Id, name, cron, zoneId, instruction, next, creator = ctx.BotId, depth = ctx.OriginDepth + 1 });
         var targetName = await conn.ExecuteScalarAsync<string>("SELECT name FROM bots WHERE id=@id", new { id = resolved.Id }) ?? "";
         var result = new { ok = true, routineId, bot = targetName, nextRunAt = next };
         await Done(conn, ctx, "create_routine", args, result);
