@@ -11,6 +11,10 @@ from urllib.parse import urlsplit
 import workspace
 from desktops import DesktopManager, cdp_port
 from pure import attention_reason, looks_like_phish, origin_of, redact, scrub_tree
+try:
+    from .private_browser import block_normal_browser_private_hosts
+except ImportError:
+    from private_browser import block_normal_browser_private_hosts
 
 
 class BrowserHub:
@@ -116,6 +120,7 @@ class BrowserHub:
         context = self._context(browser)
         await self._trim_tabs(bot_id, context)
         page = await context.new_page()
+        await block_normal_browser_private_hosts(page)
         await page.goto(url, wait_until="domcontentloaded", timeout=20000)
         if wait:
             try:

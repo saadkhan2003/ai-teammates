@@ -2,6 +2,12 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Mapping
+
+try:
+    from .web_bot_auth import WebBotAuthHook
+except ImportError:  # worker executes this module as a top-level script package
+    from web_bot_auth import WebBotAuthHook
 
 ATTENTION_PHRASES = (
     "please complete the captcha",
@@ -21,7 +27,7 @@ def attention_of(text: str) -> str | None:
 
 
 class BrowserHub:
-    def __init__(self) -> None:
+    def __init__(self, web_bot_auth: Mapping | None = None) -> None:
         self._playwright = None
         self._playwright_lock = asyncio.Lock()
         self._browsers: dict = {}
@@ -29,6 +35,7 @@ class BrowserHub:
         self._guard = asyncio.Lock()
         self._pages: dict[str, dict[str, object]] = {}
         self._last: dict[str, str] = {}
+        self._web_bot_auth = web_bot_auth
 
     async def aclose(self) -> None:
         for browser in list(self._browsers.values()):
@@ -99,6 +106,7 @@ class BrowserHub:
         browser = await self.connect(cdp_url)
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
         page = await context.new_page()
+        await self._install_web_bot_auth(page)
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=20000)
         except Exception:
@@ -112,6 +120,14 @@ class BrowserHub:
         target_id = await _target_id(context, page)
         self._remember(cdp_url, target_id, page)
         return await self._snapshot(page, target_id, attention=False)
+
+    async def _install_web_bot_auth(self, page) -> None:
+        config = self._web_bot_auth
+        if not config:
+            return
+        session = await page.context.new_cdp_session(page)
+        hook = WebBotAuthHook(session, config["allowed_hosts"], config["signature_agent"], config["signer"])
+        await hook.enable()
 
     async def browser_extract(self, cdp_url: str, args: dict) -> dict:
         page, target_id = await self._resolve(cdp_url, _target(args))

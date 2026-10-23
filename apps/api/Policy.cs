@@ -40,7 +40,15 @@ public static class ActionClasses
 public sealed class UserPolicy
 {
     public Dictionary<string, string> Classes { get; } = new(ActionClasses.Defaults, StringComparer.Ordinal);
+    public HashSet<string> PrivateHosts { get; } = new(StringComparer.OrdinalIgnoreCase);
     public bool ModelAssist { get; set; }
+
+    public bool IsPrivateHost(string? host)
+    {
+        if (string.IsNullOrWhiteSpace(host) || host.Length > 253) return false;
+        var normalized = host.Trim().TrimEnd('.').ToLowerInvariant();
+        return PrivateHosts.Any(suffix => normalized == suffix || normalized.EndsWith("." + suffix, StringComparison.Ordinal));
+    }
 
     public static UserPolicy Default { get; } = new();
 
@@ -58,6 +66,17 @@ public sealed class UserPolicy
             using var doc = JsonDocument.Parse(json);
             if (doc.RootElement.TryGetProperty("modelAssist", out var assist) && assist.ValueKind is JsonValueKind.True or JsonValueKind.False)
                 policy.ModelAssist = assist.GetBoolean();
+            if (doc.RootElement.TryGetProperty("privateHosts", out var privateHosts) && privateHosts.ValueKind == JsonValueKind.Array && privateHosts.GetArrayLength() <= 500)
+            {
+                foreach (var entry in privateHosts.EnumerateArray())
+                {
+                    if (entry.ValueKind != JsonValueKind.String) continue;
+                    var host = (entry.GetString() ?? "").Trim().ToLowerInvariant();
+                    if (host.StartsWith("*.", StringComparison.Ordinal)) host = host[2..];
+                    host = host.TrimEnd('.');
+                    if (ValidPrivateHost(host)) policy.PrivateHosts.Add(host);
+                }
+            }
             if (doc.RootElement.TryGetProperty("classes", out var classes) && classes.ValueKind == JsonValueKind.Object)
             {
                 foreach (var prop in classes.EnumerateObject())
@@ -74,6 +93,12 @@ public sealed class UserPolicy
             return new UserPolicy();
         }
         return policy;
+    }
+
+    private static bool ValidPrivateHost(string host)
+    {
+        if (host.Length is < 3 or > 253 || host.Contains("..", StringComparison.Ordinal)) return false;
+        return host.Split('.').All(label => label.Length is > 0 and <= 63 && label[0] != '-' && label[^1] != '-' && label.All(c => char.IsAsciiLetterOrDigit(c) || c == '-'));
     }
 }
 

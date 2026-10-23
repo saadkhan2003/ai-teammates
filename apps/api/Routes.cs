@@ -745,6 +745,8 @@ public static class Routes
             var name = body.GetProperty("name").GetString() ?? "";
             var type = PluginModel.NormalizeSecretType(body.GetProperty("type").GetString());
             var value = body.GetProperty("value").GetString() ?? "";
+            if (provider.Equals("web_bot_auth", StringComparison.OrdinalIgnoreCase))
+                return Results.Json(new { error = "reserved namespace" }, statusCode: 403);
             if (!SecretRef.TryParse($"secret://{provider}/{name}", out _, out _))
                 return Results.BadRequest(new { error = "invalid reference" });
             var tools = ReadStrings(body, "allowedTools");

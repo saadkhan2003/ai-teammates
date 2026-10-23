@@ -1,0 +1,7 @@
+Row 14: Added Ed25519 RFC 9421 signing and verification primitives, per-tenant encrypted key creation/loading, JWKS serialization, an injectable CDP Fetch hook restricted to HTTPS host suffixes, and injectable exit-geo locale/timezone overrides. Row 15: Added a tmpfs-gated private Chromium profile on contract port 9600, wipe support, untrusted-session refusal with exit-code metadata 75, normal-browser suffix blocking, and bounded `privateHosts` policy persistence.
+
+Files: `apps/api/Policy.cs`, `apps/api/Routes.cs`, `apps/api/SecurityRoutes.cs`, `apps/api/Teammates.Api.csproj`, `apps/api/WebBotAuth.cs`, `services/agent/browser.py`, `services/agent/web_bot_auth.py`, `services/computer/src/browser.py`, `services/computer/src/private_browser.py`, `tests/unit/PolicyTests.cs`, `tests/unit/WebBotAuthTests.cs`, `tests/unit/test_private_browser.py`, `tests/unit/test_web_bot_auth.py`.
+
+Tests: Python unit suite 122 passed; C# unit suite 209 passed. No tests skipped. Security: Ed25519 private bytes are encrypted at rest, not emitted in JWKS, and the namespace is unavailable to ordinary secret resolution. Signature expiry is capped at 120 seconds; private profile startup requires an exact tmpfs mount.
+
+Incomplete: No public signed-directory endpoint or worker-to-API signing flow; UA/WebGL coherence is not implemented. The private-browser process/CDP lifecycle and propagation of API `privateHosts` into the host suffix file are not wired into the running service. No full VM/browser integration was run.
