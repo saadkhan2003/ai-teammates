@@ -51,6 +51,7 @@ def test_secondary_is_lazy_and_keeps_bot_identity(runtime, monkeypatch):
 
 
 def test_native_routes_require_auth_and_respect_human_control(runtime, monkeypatch):
+    monkeypatch.setenv("DISPLAY_GEOMETRY", "1920x1200")
     pytest.importorskip("fastapi")
     pytest.importorskip("uvicorn")
     from fastapi.testclient import TestClient
@@ -67,22 +68,29 @@ def test_native_routes_require_auth_and_respect_human_control(runtime, monkeypat
     monkeypatch.setattr(runtime.manager, "native_command", command)
     client = TestClient(runtime.app)
     auth = {"Authorization": "Bearer unit-test-only"}
-    for endpoint in ("screenshot", "click", "type", "displays"):
+    for endpoint in ("screenshot", "click", "type", "key", "scroll", "displays"):
         assert client.post(f"/desktops/bot-a/{endpoint}", json={}).status_code == 401
     response = client.post("/desktops/bot-a/screenshot?display=2", headers=auth)
     assert response.status_code == 200 and response.content == b"png"
     assert command.call_args.args[0:2] == ("bot-a", 2)
+    assert client.post("/desktops/bot-a/click", headers=auth, json={"x": 640, "y": 400, "coordinateSpace": "model"}).status_code == 200
+    assert command.call_args.args[2] == ["xdotool", "mousemove", "--sync", "960", "600", "click", "1"]
     assert client.post("/desktops/bot-a/click?display=2", headers=auth, json={"x": 10, "y": 20}).status_code == 200
     assert command.call_args.args[2] == ["xdotool", "mousemove", "--sync", "10", "20", "click", "1"]
     assert client.post("/desktops/bot-a/type?display=2", headers=auth, json={"text": "hello"}).status_code == 200
     assert command.call_args.args[3] == b"hello"
     assert "hello" not in command.call_args.args[2]
+    assert client.post("/desktops/bot-a/key", headers=auth, json={"keys": ["ctrl+l", "Return"]}).status_code == 200
+    assert command.call_args.args[2] == ["xdotool", "key", "--clearmodifiers", "ctrl+l", "Return"]
+    assert client.post("/desktops/bot-a/key", headers=auth, json={"keys": ["$(bad)"]}).status_code == 400
+    assert client.post("/desktops/bot-a/scroll", headers=auth, json={"x": 640, "y": 400, "dy": 2}).status_code == 200
+    assert command.call_args.args[2] == ["xdotool", "mousemove", "--sync", "960", "600", "click", "5"]
     assert client.post("/desktops/bot-a/click", headers=auth, json={"x": -1, "y": 2}).status_code == 400
     assert client.post("/desktops/bot-a/screenshot?display=3", headers=auth).status_code == 422
     assert client.post("/desktops/other/screenshot", headers=auth).status_code == 404
     runtime.manager.desktops["bot-a"].holder = "human"
     before = command.await_count
-    for endpoint in ("screenshot", "click", "type"):
+    for endpoint in ("screenshot", "click", "type", "key", "scroll"):
         assert client.post(f"/desktops/bot-a/{endpoint}?display=2", headers=auth, json={}).status_code == 423
     assert command.await_count == before
 

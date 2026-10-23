@@ -12,12 +12,14 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Query
 from fastapi.responses import Response
 import workspace
 from browser import BrowserHub, run_command
-from desktops import DesktopManager, cdp_port, rw_port, view_port
+from desktops import DesktopManager, cdp_port, geometry, rw_port, view_port
 from fixtureserver import start as start_fixtures
 from pure import redact, scrub_tree
+from computer_tools import ffmpeg_argv, safe_recording_name, scale_point, validate_keys
 
 manager = DesktopManager()
 hub: BrowserHub | None = None
+recordings: dict[str, tuple[asyncio.subprocess.Process, Path, float, Path]] = {}
 
 
 def require_token(authorization: str = Header(default="")) -> None:
@@ -55,6 +57,11 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         print(json.dumps({"level": "error", "msg": "restore failed", "error": str(exc)}), flush=True)
     yield
+    for process, _path, _started, _root in recordings.values():
+        if process.returncode is None:
+            process.kill()
+            await process.wait()
+    recordings.clear()
     await hub.close()
 
 
@@ -172,13 +179,114 @@ async def desktop_click(bot_id: str, body: dict, display: int = Query(1, ge=1, l
     from desktops import geometry
     width, height = geometry()
     try:
-        x, y, button = int(body["x"]), int(body["y"]), int(body.get("button", 1))
+        if isinstance(body["x"], bool) or isinstance(body["y"], bool):
+            raise ValueError()
+        x, y = float(body["x"]), float(body["y"])
+        if body.get("coordinateSpace") == "model":
+            width, height = geometry()
+            x, y = scale_point(x, y, width, height)
+        x, y = int(x), int(y)
+        raw_button = body.get("button", 1)
+        if isinstance(raw_button, bool) or int(raw_button) != raw_button:
+            raise ValueError()
+        button = int(raw_button)
         if not (0 <= x < width and 0 <= y < height and button in (1, 2, 3)):
             raise ValueError()
     except (KeyError, ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail="invalid coordinates or button") from exc
     await native_command(bot_id, display, ["xdotool", "mousemove", "--sync", str(x), str(y), "click", str(button)])
     return {"ok": True}
+
+
+@app.post("/desktops/{bot_id}/key")
+async def desktop_key(bot_id: str, body: dict, display: int = Query(1, ge=1, le=2), _: None = Depends(require_token)):
+    agent_allowed(bot_id)
+    await selected_display(bot_id, display)
+    try:
+        keys = validate_keys(body.get("keys"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await native_command(bot_id, display, ["xdotool", "key", "--clearmodifiers", *keys])
+    return {"ok": True}
+
+
+@app.post("/desktops/{bot_id}/scroll")
+async def desktop_scroll(bot_id: str, body: dict, display: int = Query(1, ge=1, le=2), _: None = Depends(require_token)):
+    agent_allowed(bot_id)
+    await selected_display(bot_id, display)
+    try:
+        width, height = geometry()
+        x, y = scale_point(float(body["x"]), float(body["y"]), width, height)
+        if isinstance(body["dy"], bool) or int(body["dy"]) != body["dy"]:
+            raise ValueError()
+        dy = int(body["dy"])
+        if not -20 <= dy <= 20 or dy == 0:
+            raise ValueError()
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="invalid coordinates or scroll delta") from exc
+    button = "5" if dy > 0 else "4"
+    for _ in range(abs(dy)):
+        await native_command(bot_id, display, ["xdotool", "mousemove", "--sync", str(x), str(y), "click", button])
+    return {"ok": True}
+
+
+@app.post("/desktops/{bot_id}/record/start")
+async def record_start(bot_id: str, body: dict, display: int = Query(1, ge=1, le=2), _: None = Depends(require_token)):
+    agent_allowed(bot_id)
+    desk = await selected_display(bot_id, display)
+    if bot_id in recordings and recordings[bot_id][0].returncode is None:
+        raise HTTPException(status_code=409, detail="recording already active")
+    try:
+        raw_seconds = body.get("maxSeconds", 600)
+        if isinstance(raw_seconds, bool) or int(raw_seconds) != raw_seconds:
+            raise ValueError()
+        max_seconds = int(raw_seconds)
+        if not 1 <= max_seconds <= 600:
+            raise ValueError()
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail="maxSeconds must be between 1 and 600") from exc
+    workspace_bot_id = str(body.get("botId") or bot_id)
+    uid, root, home = workspace.prepare(workspace_bot_id)
+    recordings_dir = root / "recordings"
+    recordings_dir.mkdir(parents=True, exist_ok=True)
+    os.chown(recordings_dir, uid, uid)
+    os.chmod(recordings_dir, 0o700)
+    name = safe_recording_name(body.get("name"))
+    path = recordings_dir / f"{name}.webm"
+    encoder = "libvpx-vp9"
+    probe = await asyncio.create_subprocess_exec("ffmpeg", "-hide_banner", "-encoders", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    encoders, _ = await probe.communicate()
+    if b"libvpx-vp9" not in encoders:
+        encoder = "libx264"
+        path = path.with_suffix(".mp4")
+    if path.exists():
+        path = path.with_name(f"{path.stem}-{int(time.time())}{path.suffix}")
+    width, height = geometry()
+    args = ffmpeg_argv(desk.display, width, height, str(path), max_seconds, encoder)
+    process = await asyncio.create_subprocess_exec(
+        "/command/s6-setuidgid", "--reuid", str(uid), "--regid", str(uid), "--clear-groups", *args,
+        env={"DISPLAY": f":{desk.display}", "HOME": str(home), "PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"},
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+    recordings[bot_id] = (process, path, time.monotonic(), root)
+    return {"ok": True, "name": path.name, "path": workspace.publish_under(root, path), "maxSeconds": max_seconds}
+
+
+@app.post("/desktops/{bot_id}/record/stop")
+async def record_stop(bot_id: str, _: None = Depends(require_token)):
+    recording = recordings.pop(bot_id, None)
+    if recording is None:
+        raise HTTPException(status_code=404, detail="no active recording")
+    process, path, started, root = recording
+    if process.returncode is None:
+        try:
+            process.stdin.write(b"q\n")
+            await process.stdin.drain()
+            await asyncio.wait_for(process.wait(), timeout=20)
+        except (BrokenPipeError, asyncio.TimeoutError):
+            process.kill()
+            await process.wait()
+    size = path.stat().st_size if path.is_file() else 0
+    return {"ok": True, "path": workspace.publish_under(root, path), "bytes": size, "seconds": round(time.monotonic() - started, 2), "name": path.name}
 
 
 @app.post("/desktops/{bot_id}/type")
@@ -448,6 +556,21 @@ async def raw_file(bot_id: str, path: str, _: None = Depends(require_token)):
         return target.read_bytes()
 
     body = _as_bot(bot_id, read)
+    if body is None:
+        raise HTTPException(status_code=404, detail="not found")
+    return Response(content=body, media_type="application/octet-stream")
+
+
+@app.get("/desktops/{bot_id}/recordings/raw")
+async def raw_recording(bot_id: str, workspace_bot_id: str, path: str, _: None = Depends(require_token)):
+    if not path.startswith("/workspace/recordings/"):
+        raise HTTPException(status_code=400, detail="recording path required")
+    def read(root: Path):
+        target = workspace.locate_under(root, path)
+        if not target.is_file() or "recordings" not in target.parts:
+            return None
+        return target.read_bytes()
+    body = _as_bot(workspace_bot_id, read)
     if body is None:
         raise HTTPException(status_code=404, detail="not found")
     return Response(content=body, media_type="application/octet-stream")

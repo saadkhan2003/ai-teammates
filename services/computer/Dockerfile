@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-dejavu-core fonts-liberation \
         git ripgrep patch \
         imagemagick librsvg2-bin \
-        util-linux \
+        util-linux ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL -o /tmp/node.tar.xz "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \

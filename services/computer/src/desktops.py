@@ -342,7 +342,16 @@ class DesktopManager:
         await _wait_port(cdp_port(n))
         # Idle desktop = wallpaper + dock. The window is restored when the bot uses the browser.
         desk.hidden = True
-        asyncio.get_running_loop().create_task(self._browser_window(n, "hide"))
+        asyncio.get_running_loop().create_task(self._hide_when_idle(desk))
+
+    async def _hide_when_idle(self, desk: Desktop) -> None:
+        # Chromium re-raises itself once its first page loads, so hide it a few times early on.
+        for delay in (0, 5, 12):
+            if delay:
+                await asyncio.sleep(delay)
+            if not desk.hidden:
+                return
+            await self._browser_window(desk.display, "hide")
 
     async def _browser_window(self, n: int, action: str) -> None:
         env = dict(os.environ, DISPLAY=f":{n}")

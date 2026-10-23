@@ -383,6 +383,11 @@ def test_acceptance_suite():
     auto_allow_browser_opens(bot_id, stop_browser_approvals)
     conversation = bot["conversationId"]
 
+    evidence_task = wait_task(client, bot_id, submit(client, conversation, "EVIDENCE DEMO"), timeout=180)
+    assert evidence_task["status"] == "completed", evidence_task
+    evidence_status, evidence = client.call("GET", f"/api/tasks/{evidence_task['id']}/evidence")
+    assert evidence_status == 200 and any(item["mime"] == "image/png" for item in evidence), evidence
+
     started = time.time()
     burst = [
         submit(client, conversation, "What should I call you?", as_task=False),

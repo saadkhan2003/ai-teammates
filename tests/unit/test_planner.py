@@ -45,6 +45,16 @@ def test_tests_gate_demo_returns_a_final_answer_first():
     assert not result["choices"][0]["message"].get("tool_calls")
 
 
+def test_evidence_demo_captures_image_and_recording_then_finishes():
+    user = {"role": "user", "content": "EVIDENCE DEMO"}
+    assert _call([user])[:2] == ("computer_screenshot", {})
+    assert _call([user, {"role": "tool", "content": "{}"}])[:2] == ("record_start", {"name": "evidence-demo", "maxSeconds": 10})
+    assert _call([user, {"role": "tool", "content": "{}"}, {"role": "tool", "content": "{}"}])[:2] == ("record_stop", {})
+    final = plan([user, {"role": "tool", "content": "{}"}, {"role": "tool", "content": "{}"}, {"role": "tool", "content": "{}"}])
+    assert final["choices"][0]["finish_reason"] == "stop"
+    assert "recording as evidence" in final["choices"][0]["message"]["content"]
+
+
 def test_terminal_plan_is_write_file():
     name, args, _result = _call([{"role": "user", "content": "Terminal: write the word pong"}])
     assert name == "write_file"

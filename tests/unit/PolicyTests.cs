@@ -22,6 +22,10 @@ public class PolicyTests
     {
         Assert.Equal(ActionClasses.Read, ActionClassifier.Classify("read_file", Args("{}")));
         Assert.Equal(ActionClasses.Read, ActionClassifier.Classify("browser_open", Args("{\"url\":\"https://example.com\"}")));
+        Assert.Equal(ActionClasses.Read, ActionClassifier.Classify("computer_screenshot", Args("{}")));
+        Assert.Equal(ActionClasses.Write, ActionClassifier.Classify("computer_click", Args("{\"x\":1,\"y\":1}")));
+        Assert.Equal(ActionClasses.Write, ActionClassifier.Classify("record_start", Args("{}")));
+        Assert.True(ActionClassifier.IsBuiltIn("computer_key"));
         Assert.Equal(ActionClasses.Write, ActionClassifier.Classify("write_file", Args("{}")));
         Assert.Equal(ActionClasses.Write, ActionClassifier.Classify("plugin_widget", Args("{}")));
         Assert.Equal(ActionClasses.Read, ActionClassifier.Classify("list_invoices", Args("{}")));
