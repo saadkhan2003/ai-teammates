@@ -15,6 +15,7 @@ from browser import BrowserHub, run_command
 from desktops import DesktopManager, cdp_port, rw_port, view_port
 from fixtureserver import start as start_fixtures
 from pure import redact, scrub_tree
+from box_contract import MAX_WINDOWS, PATHS
 
 manager = DesktopManager()
 hub: BrowserHub | None = None
@@ -85,6 +86,13 @@ async def health():
     }
 
 
+@app.post("/doctor")
+async def doctor_report(_: None = Depends(require_token)):
+    from doctor import run_checks
+    checks = run_checks()
+    return {"ok": all(item["ok"] for item in checks.values()), "checks": checks}
+
+
 def _port_open(port: int) -> bool:
     import socket
     sock = socket.socket()
@@ -132,6 +140,58 @@ async def ensure_desktop(body: dict, _: None = Depends(require_token)):
     return manager.status(desk.bot_id)
 
 
+@app.post("/windows/{bot_id}/{display}")
+async def start_window(bot_id: str, display: int, body: dict | None = None, _: None = Depends(require_token)):
+    if not 1 <= display <= MAX_WINDOWS:
+        raise HTTPException(status_code=409, detail="maximum windows reached")
+    try:
+        desk = await manager.select_display(bot_id, display)
+        if body is None or body.get("chrome", True):
+            if not desk.chrome:
+                await manager._spawn_chrome(desk)
+                desk.chrome = True
+        manager.save()
+        return manager.status(bot_id, display)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="maximum windows reached") from exc
+
+
+@app.delete("/windows/{bot_id}/{display}")
+async def stop_window(bot_id: str, display: int, _: None = Depends(require_token)):
+    try:
+        await manager.destroy(bot_id, display)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="primary window cannot be destroyed") from exc
+    (Path(PATHS["windowTokens"]) / str(display)).unlink(missing_ok=True)
+    return {"ok": True, "display": display}
+
+
+@app.post("/windows/{bot_id}/{display}/stop")
+async def stop_window_control(bot_id: str, display: int, _: None = Depends(require_token)):
+    return await stop_window(bot_id, display, _)
+
+
+@app.post("/windows/{bot_id}/{display}/owner-token")
+async def issue_window_owner_token(bot_id: str, display: int, _: None = Depends(require_token)):
+    from window_router import new_owner_token, write_owner_token
+    try:
+        token = new_owner_token()
+        write_owner_token(Path(PATHS["windowTokens"]), display, token)
+        return {"display": display, "ownerToken": token}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid display") from exc
+
+
+@app.delete("/windows/{bot_id}/{display}/owner-token")
+async def revoke_window_owner_token(bot_id: str, display: int, _: None = Depends(require_token)):
+    path = Path(PATHS["windowTokens"]) / str(display)
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="unable to revoke token") from exc
+    return {"ok": True}
+
+
 async def selected_display(bot_id: str, display: int):
     try:
         return await manager.select_display(bot_id, display)
@@ -158,7 +218,7 @@ async def list_displays(bot_id: str, _: None = Depends(require_token)):
 
 
 @app.post("/desktops/{bot_id}/screenshot")
-async def desktop_screenshot(bot_id: str, display: int = Query(1, ge=1, le=2), _: None = Depends(require_token)):
+async def desktop_screenshot(bot_id: str, display: int = Query(1, ge=1, le=MAX_WINDOWS), _: None = Depends(require_token)):
     agent_allowed(bot_id)
     await selected_display(bot_id, display)
     png = await native_command(bot_id, display, ["import", "-window", "root", "png:-"])
@@ -166,7 +226,7 @@ async def desktop_screenshot(bot_id: str, display: int = Query(1, ge=1, le=2), _
 
 
 @app.post("/desktops/{bot_id}/click")
-async def desktop_click(bot_id: str, body: dict, display: int = Query(1, ge=1, le=2), _: None = Depends(require_token)):
+async def desktop_click(bot_id: str, body: dict, display: int = Query(1, ge=1, le=MAX_WINDOWS), _: None = Depends(require_token)):
     agent_allowed(bot_id)
     await selected_display(bot_id, display)
     from desktops import geometry
@@ -182,7 +242,7 @@ async def desktop_click(bot_id: str, body: dict, display: int = Query(1, ge=1, l
 
 
 @app.post("/desktops/{bot_id}/type")
-async def desktop_type(bot_id: str, body: dict, display: int = Query(1, ge=1, le=2), _: None = Depends(require_token)):
+async def desktop_type(bot_id: str, body: dict, display: int = Query(1, ge=1, le=MAX_WINDOWS), _: None = Depends(require_token)):
     agent_allowed(bot_id)
     await selected_display(bot_id, display)
     text = body.get("text", "")

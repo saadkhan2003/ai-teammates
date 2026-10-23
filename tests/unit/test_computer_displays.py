@@ -78,7 +78,7 @@ def test_native_routes_require_auth_and_respect_human_control(runtime, monkeypat
     assert command.call_args.args[3] == b"hello"
     assert "hello" not in command.call_args.args[2]
     assert client.post("/desktops/bot-a/click", headers=auth, json={"x": -1, "y": 2}).status_code == 400
-    assert client.post("/desktops/bot-a/screenshot?display=3", headers=auth).status_code == 422
+    assert client.post("/desktops/bot-a/screenshot?display=9", headers=auth).status_code == 422
     assert client.post("/desktops/other/screenshot", headers=auth).status_code == 404
     runtime.manager.desktops["bot-a"].holder = "human"
     before = command.await_count
@@ -172,3 +172,30 @@ def test_native_process_uses_bot_uid_without_inheriting_service_credentials(runt
     assert called["env"]["DISPLAY"] == ":1"
     assert "COMPUTER_TOKEN" not in called["env"]
     assert called["stdin"] == b"hello"
+
+
+def test_windows_allocate_distinct_contract_ports_and_destroy_independently(runtime, monkeypatch, tmp_path):
+    monkeypatch.setattr("desktops.STATE_PATH", tmp_path / "state.json")
+    from desktops import Desktop
+    manager = runtime.manager
+    manager.desktops["bot-a"] = Desktop("bot-a", 1)
+    monkeypatch.setattr(manager, "_spawn_display", AsyncMock())
+    monkeypatch.setattr("desktops._rescan", AsyncMock())
+    async def run():
+        a, b, c = await asyncio.gather(*(manager.select_display("bot-a", n) for n in (2, 3, 4)))
+        assert len({a.display, b.display, c.display}) == 3
+        await manager.destroy("bot-a", 3)
+        assert manager.status("bot-a", 3) == {"ready": False}
+        assert manager.status("bot-a", 2)["ready"] is True
+        assert manager.status("bot-a", 4)["ready"] is True
+    asyncio.run(run())
+
+
+def test_window_limit_rejects_ninth_and_validates_display(runtime):
+    from desktops import Desktop
+    manager = runtime.manager
+    manager.desktops["bot-a"] = Desktop("bot-a", 1)
+    for window in range(2, 9):
+        manager.windows[("bot-a", window)] = Desktop("bot-a", window)
+    with pytest.raises(ValueError):
+        asyncio.run(manager.select_display("bot-a", 9))

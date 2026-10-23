@@ -1,0 +1,9 @@
+# arch-c1 report
+
+Rows 3–5 add persisted logical windows (1–8), per-window Chrome/CDP routing, API window create/list/destroy and 409 cap handling; injectable doctor checks and a 5-second RFB supervisor; bounded logs; and an internal owner-token router with fixed-size constant-time comparison, private token files, and liveness markers. Tokens use 256-bit CSPRNG output. Doctor failures and router denials do not expose secrets.
+
+Tests: Python unit suite 125 passed, including real Xvfb/x11vnc RFB handshake; .NET unit suite 206 passed; production Compose YAML parsed; port-literal check passed. No Docker use.
+
+Files: row 3 — `apps/api/ComputerWindows.cs`, `apps/api/Dockerfile`, `apps/api/Platform.cs`, `apps/api/Routes.cs`, `db/019_computer_windows.sql`, `services/computer/Dockerfile`, `services/computer/src/{cdp_proxy.py,desktops.py,server.py,window_ctl.py}`, `services/computer/scripts/{start-window,stop-window}`, `tests/unit/test_computer_displays.py`. Row 4 — `apps/api/Reliability.cs`, `deploy/compose.production.yml`, `services/computer/src/{doctor.py,supervisor.py}`, `services/computer/scripts/box-bounded-log`, `services/computer/s6/s6-rc.d/{bounded-log,box-supervisor}` and matching user bundle entries. Row 5 — `services/computer/src/window_router.py`, `services/computer/s6/s6-rc.d/window-router` and its user bundle. Shared tests: `tests/unit/test_computer_arch_health_router.py`.
+
+Not verified: real multi-window container restart, agent-worker-per-window startup, RFB frame rate under agent CPU load, and timed mismatch tolerance; Docker was unavailable by instruction. The router’s upstream mapping is tested with an injected fake; no 14000+N worker is started here. s6 restart thresholds are implemented, but exponential backoff/window restart caps remain incomplete. Existing VNC remains network-reachable for the API bridge, so x11vnc is not loopback-only.

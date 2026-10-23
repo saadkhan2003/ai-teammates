@@ -12,9 +12,10 @@ from __future__ import annotations
 import os
 import socket
 import threading
+from box_contract import CDP_BASE, MAX_WINDOWS, port_for
 
-LISTEN = int(os.environ.get("CDP_PROXY_PORT", "9222"))
-BACKEND = int(os.environ.get("CDP_PORT", "9223"))
+LISTEN = int(os.environ.get("CDP_PROXY_PORT", str(CDP_BASE)))
+BACKEND = int(os.environ.get("CDP_PORT", str(port_for("cdp", 1))))
 
 
 def main() -> None:
@@ -39,6 +40,10 @@ def _handle(client: socket.socket) -> None:
             head, buffered = _read_until_buffered(client, buffered)
             if head is None:
                 return
+            display = _display_of(head)
+            if display is None:
+                return
+            backend_port = BACKEND + display - 1
             caller = _host_of(head) or f"127.0.0.1:{LISTEN}"
             req_len = _content_length(head) or 0
             while len(buffered) < req_len:
@@ -47,9 +52,9 @@ def _handle(client: socket.socket) -> None:
                     return
                 buffered += chunk
             req_body, buffered = buffered[:req_len], buffered[req_len:]
-            upstream = socket.create_connection(("127.0.0.1", BACKEND), timeout=5)
+            upstream = socket.create_connection(("127.0.0.1", backend_port), timeout=5)
             upstream.settimeout(30)
-            upstream.sendall(_rewrite_host(head, f"127.0.0.1:{BACKEND}") + b"\r\n\r\n" + req_body)
+            upstream.sendall(_rewrite_host(head, f"127.0.0.1:{backend_port}") + b"\r\n\r\n" + req_body)
             response, pending = _read_until(upstream, b"\r\n\r\n")
             if response is None:
                 return
@@ -65,9 +70,9 @@ def _handle(client: socket.socket) -> None:
             body = _read_body(upstream, response, pending)
             upstream.close()
             upstream = None
-            needle = f"127.0.0.1:{BACKEND}".encode()
+            needle = f"127.0.0.1:{backend_port}".encode()
             body = body.replace(needle, caller.encode())
-            body = body.replace(f"localhost:{BACKEND}".encode(), caller.encode())
+            body = body.replace(f"localhost:{backend_port}".encode(), caller.encode())
             client.sendall(_with_length(response, len(body)) + b"\r\n\r\n" + body)
             if _wants_close(head):
                 return
@@ -106,6 +111,21 @@ def _host_of(head: bytes) -> str:
     return ""
 
 
+def _display_of(head: bytes) -> int | None:
+    raw = "1"
+    for line in head.split(b"\r\n")[1:]:
+        if line.lower().startswith(b"x-display:"):
+            try:
+                raw = line.split(b":", 1)[1].strip().decode("ascii")
+            except UnicodeDecodeError:
+                return None
+            break
+    if not raw.isascii() or not raw.isdecimal():
+        return None
+    display = int(raw)
+    return display if 1 <= display <= MAX_WINDOWS else None
+
+
 def _rewrite_host(head: bytes, host: str) -> bytes:
     lines = head.split(b"\r\n")
     found = False
@@ -115,7 +135,8 @@ def _rewrite_host(head: bytes, host: str) -> bytes:
             rewritten.append(b"Host: " + host.encode())
             found = True
         else:
-            rewritten.append(line)
+            if not line.lower().startswith(b"x-display:"):
+                rewritten.append(line)
     if not found:
         rewritten.insert(1, b"Host: " + host.encode())
     return b"\r\n".join(rewritten)

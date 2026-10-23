@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /opt/desk/venv/bin/python /opt/desk/src/window_ctl.py stop "$@"
