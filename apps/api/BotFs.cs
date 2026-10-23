@@ -21,7 +21,16 @@ public static class BotFs
     public static string RewriteCommand(Guid botId, string? command)
     {
         if (string.IsNullOrEmpty(command)) return command ?? "";
-        return command.Replace("/workspace", Root(botId), StringComparison.Ordinal);
+        if (System.Text.RegularExpressions.Regex.IsMatch(command, @"(?:^|/)\.\.(?:/|$)"))
+            throw new ToolHalt("denied", "path_escapes_workspace");
+        return System.Text.RegularExpressions.Regex.Replace(command, @"(?<![\w/.-])/workspace(?=/|[^\w.-]|$)", _ => Root(botId));
+    }
+
+    public static IReadOnlyList<string> ShellArgs(string command)
+    {
+        using var stream = typeof(BotFs).Assembly.GetManifestResourceStream("workspace_shell.py")!;
+        using var reader = new StreamReader(stream);
+        return ["python3", "-c", reader.ReadToEnd(), command];
     }
 
     public static void Forget(Guid botId) => Uids.TryRemove(IdOf(botId), out _);

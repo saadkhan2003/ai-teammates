@@ -157,7 +157,7 @@ public sealed record ExecStderr(ulong Sequence, byte[] Data) : ExecEvent(Sequenc
 public sealed record ExecExited(ulong Sequence, int ExitCode, string Signal, TimeSpan Duration, bool OutputTruncated) : ExecEvent(Sequence);
 public sealed record ExecError(ulong Sequence, ComputeErrorCode Code, string Message, bool Retryable) : ExecEvent(Sequence);
 
-public sealed record DesktopAccess(DesktopMode Mode, ulong FencingEpoch, TimeSpan Ttl, bool TakeoverLeaseHeld);
+public sealed record DesktopAccess(DesktopMode Mode, ulong FencingEpoch, TimeSpan Ttl, bool TakeoverLeaseHeld, int Display = 1);
 public sealed record DesktopSession(string Url, string Token, DesktopMode Mode, ulong FencingEpoch, DateTimeOffset ExpiresAt, string Host, int Port);
 public sealed record DesktopEndpoint(ComputerId ComputerId, string Host, int Port, DesktopMode Mode, ulong FencingEpoch, DateTimeOffset ExpiresAt);
 
@@ -214,6 +214,13 @@ public interface IComputeProvider
 public interface IDesktopSessionAuthority
 {
     DesktopEndpoint RequireSession(string token, DateTimeOffset now);
+}
+
+public sealed record ComputerDisplay(int Display, int Width, int Height, bool Ready);
+
+public interface IComputerDisplays
+{
+    Task<IReadOnlyList<ComputerDisplay>> ListDisplaysAsync(ComputerId id, CancellationToken ct);
 }
 
 public interface IComputerDesktopControl

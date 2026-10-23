@@ -88,6 +88,15 @@ message Computer {
   google.protobuf.Timestamp created_at = 9;
   google.protobuf.Timestamp updated_at = 10;
   map<string, string> labels = 11;
+  repeated ComputerDisplay displays = 12;
+}
+
+// Optional secondary desktop is started on demand; dimensions match the primary.
+message ComputerDisplay {
+  uint32 display = 1;
+  uint32 width = 2;
+  uint32 height = 3;
+  bool ready = 4;
 }
 
 message ResourceLimits {
@@ -191,6 +200,8 @@ message GetDesktopSessionRequest {
   DesktopAccess access = 3;
   uint64 fencing_epoch = 4;
   google.protobuf.Duration ttl = 5;
+  // Zero selects primary display for older clients; otherwise 1 or 2.
+  uint32 display = 6;
 }
 message DesktopSession {
   string url = 1;
@@ -198,6 +209,7 @@ message DesktopSession {
   DesktopAccess access = 3;
   uint64 fencing_epoch = 4;
   google.protobuf.Timestamp expires_at = 5;
+  uint32 display = 6;
 }
 
 message SnapshotRequest { RequestMeta meta = 1; string computer_id = 2; string label = 3; }

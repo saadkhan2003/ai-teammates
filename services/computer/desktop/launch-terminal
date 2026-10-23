@@ -18,4 +18,4 @@ fi
 if [ -n "${BOT_ROOT:-}" ] && [ -d "$BOT_ROOT" ]; then
   cd "$BOT_ROOT"
 fi
-exec xterm -fa 'DejaVu Sans Mono' -fs 11 -title 'Terminal'
+exec xterm -bg '#0b1220' -fg '#d9e4f0' -fa 'DejaVu Sans Mono' -fs 11 -title 'Terminal'

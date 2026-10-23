@@ -11,6 +11,15 @@ public sealed record DockerComputeOptions
     public string? SeccompPath { get; init; }
     public int MaxComputers { get; init; } = 2;
     public string ComputerToken { get; init; } = "";
+    public string ComputerDns { get; init; } = Environment.GetEnvironmentVariable("COMPUTER_DNS") ?? "1.1.1.1,8.8.8.8";
+    public bool SecondDisplay { get; init; } = !string.Equals(Environment.GetEnvironmentVariable("COMPUTER_SECOND_DISPLAY"), "false", StringComparison.OrdinalIgnoreCase);
+    public IReadOnlyList<string> DnsServers()
+    {
+        var servers = ComputerDns.Split(',').Select(x => x.Trim()).ToArray();
+        if (servers.Length == 0 || servers.Any(x => !System.Net.IPAddress.TryParse(x, out var ip) || ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork || ip.ToString() != x))
+            throw ComputeException.InvalidArgument("COMPUTER_DNS requires comma-separated IPv4 addresses");
+        return servers.Distinct().ToArray();
+    }
     public string DisplayGeometry { get; init; } = "1024x768";
     public string DisplayDepth { get; init; } = "16";
     public long MemoryBytes { get; init; } = 640L * 1024 * 1024;

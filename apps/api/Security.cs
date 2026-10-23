@@ -147,10 +147,8 @@ public static partial class PolicyEngine
         {
             var url = Arg(args, "url");
             if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return Deny;
-            var host = uri.Host;
-            if (host is "localhost" or "127.0.0.1" or "portal.example.edu" or "auth.example.edu" or "evil.example" or "portal.example.edu.evil.test")
-                return Allow;
-            if (!seenDomains.Contains(host)) return Ask;
+            if (uri.Scheme is not ("http" or "https")) return Deny;
+            if (!seenDomains.Contains(uri.GetLeftPart(UriPartial.Authority))) return Ask;
         }
         if (tool is "type_secret" or "browser.type_secret")
         {

@@ -583,7 +583,7 @@ function FilterChip({ active, onClick, children }: { active: boolean; onClick: (
       data-testid="plugin-filter"
       data-active={active}
       className={cn(
-        "min-h-11 rounded-full border px-3 py-1 text-xs sm:min-h-0",
+        "min-h-11 rounded-md border px-3 py-1 text-xs sm:min-h-0",
         active ? "border-transparent bg-primary text-primary-foreground" : "border-border bg-card text-foreground",
       )}
       onClick={onClick}

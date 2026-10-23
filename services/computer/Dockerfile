@@ -1,4 +1,12 @@
+FROM ghcr.io/astral-sh/uv:0.8.22 AS uv-runtime
 FROM debian:trixie-slim
+
+# uv/uvx are standalone binaries; no extra Python environment or installer.
+COPY --from=uv-runtime /uv /uvx /usr/local/bin/
+
+# Official Node.js 24 LTS tarball (this image already targets x86_64 for s6).
+ARG NODE_VERSION=24.22.1
+ARG NODE_SHA256=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
 
 ARG S6_OVERLAY_VERSION=3.2.3.2
 ARG S6_OVERLAY_NOARCH_SHA256=5379750ed30a84bbd2e2dd74847ba6b5bd29cd0b2e3ea2ec58049b57eb2eda12
@@ -16,6 +24,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         imagemagick \
         util-linux \
     && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL -o /tmp/node.tar.xz "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+    && echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c - \
+    && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
+        "node-v${NODE_VERSION}-linux-x64/bin/node" "node-v${NODE_VERSION}-linux-x64/lib/node_modules/npm" \
+    && rm /tmp/node.tar.xz \
+    && ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+    && node --version && npm --version && npx --version && uv --version && uvx --version
 
 RUN curl -fsSL -o /tmp/s6-noarch.tar.xz \
         "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz" \
@@ -49,6 +66,7 @@ COPY fixtures/ /opt/fixtures/www/
 COPY fixtures/mcp_echo.py /opt/fixtures/mcp_echo.py
 COPY sample-repo/ /opt/fixtures/sample-repo/
 COPY desktop/rc.xml /etc/xdg/openbox/rc.xml
+COPY desktop/wallpaper.svg /usr/share/backgrounds/teammates.svg
 COPY desktop/menu.xml /etc/xdg/openbox/menu.xml
 COPY desktop/top.tint2rc /opt/desk/tint2/top.tint2rc
 COPY desktop/dock.tint2rc /opt/desk/tint2/dock.tint2rc
@@ -64,10 +82,7 @@ RUN chmod +x /etc/s6-overlay/scripts/bots-init /opt/desk/bin/start-panels \
     && find /etc/s6-overlay/s6-rc.d -name run -exec chmod +x {} \; \
     && chmod 0755 /opt/desk/src \
     && mkdir -p /usr/share/backgrounds /opt/desk/icons \
-    && convert -size 1024x768 gradient:'#f7f1e6-#e4d3c0' \
-        \( -size 640x420 radial-gradient:'rgba(196,98,45,0.18)-rgba(196,98,45,0)' \) -geometry +180+120 -composite \
-        \( -size 420x280 radial-gradient:'rgba(255,255,255,0.55)-rgba(255,255,255,0)' \) -geometry +520+40 -composite \
-        /usr/share/backgrounds/teammates.png \
+    && convert -background none /usr/share/backgrounds/teammates.svg /usr/share/backgrounds/teammates.png \
     && convert -size 64x64 xc:none -fill '#3b82f6' -draw 'circle 32,32 32,8' \
         -fill '#22c55e' -draw 'circle 18,40 18,30' -fill '#eab308' -draw 'circle 46,40 46,30' \
         -fill '#ef4444' -draw 'circle 32,22 32,14' /opt/desk/icons/chromium.png \
@@ -87,6 +102,7 @@ ENV S6_VERBOSITY=1 \
     DISPLAY_GEOMETRY=1024x768 \
     DISPLAY_DEPTH=16 \
     DISPLAY_NUM=1 \
+    COMPUTER_SECOND_DISPLAY=true \
     CDP_PORT=9223 \
     CDP_PROXY_PORT=9222 \
     VNC_VIEW_PORT=5900 \

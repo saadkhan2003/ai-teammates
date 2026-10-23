@@ -1,8 +1,8 @@
 # Bottom dock: browser, files, terminal. Icons only, so it stays small.
 rounded = 0
 border_width = 0
-background_color = #f6f4f1 100
-border_color = #e6e0d8 100
+background_color = #111b2b 100
+border_color = #27364b 100
 
 panel_items = L
 panel_size = 100% 52
@@ -10,7 +10,7 @@ panel_margin = 0 0
 panel_padding = 8 0 8
 panel_background_id = 1
 wm_menu = 0
-panel_dock = 0
+panel_dock = 1
 panel_position = bottom center horizontal
 panel_layer = top
 panel_monitor = all

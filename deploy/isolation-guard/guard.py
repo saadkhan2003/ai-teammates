@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import socketserver
 import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler
+
+from rules import rules
 
 SOCKET = os.environ.get("ISOLATION_SOCKET", "/run/teammates/isolation.sock")
 TOKEN = os.environ.get("ISOLATION_TOKEN", "")
@@ -42,16 +45,12 @@ def rules_present() -> bool:
         return False
     if "-j TEAMS-ISO" not in user:
         return False
-    needed = (
-        "-s 172.30.28.10/32",
-        "-s 172.30.28.11/32",
-        "-s 172.30.28.0/24",
-        "REJECT --reject-with tcp-reset",
-        "10.0.0.0/8",
-        "172.16.0.0/12",
-        "192.168.0.0/16",
-    )
-    return all(part in chain for part in needed)
+    actual = [shlex.split(line)[2:] for line in chain.splitlines() if line.startswith("-A TEAMS-ISO ")]
+    # Exact order also rejects stale DNS exceptions and broad private-range allows.
+    try:
+        return actual == rules()
+    except ValueError:
+        return False
 
 
 def install() -> None:

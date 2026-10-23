@@ -8,7 +8,7 @@ import { api } from "@/lib/api";
 import type { Approval } from "@/lib/types";
 import { errorMessage } from "@/lib/utils";
 
-const decided = new Set(["approved", "denied", "allow_once", "allowed", "rejected"]);
+const decided = new Set(["approved", "denied", "allow_once", "allowed", "rejected", "deny", "allow_domain"]);
 
 function domainOf(target?: string) {
   if (!target || !target.includes("://")) return "";
@@ -49,7 +49,9 @@ export function Approvals({ approvals, onChanged }: { approvals: Approval[]; onC
 
   return (
     <div className="flex flex-col gap-3">
-      {approvals.map((approval) => (
+      {approvals.map((approval) => !needsDecision(approval.status) ? (
+        <div key={approval.id} data-testid="approval-card" data-decided="true" className="rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">{["denied", "deny", "rejected"].includes(approval.status ?? "") ? "Denied" : "Allowed"} {approval.action} {domainOf(approval.target) || approval.target}</div>
+      ) : (
         <Card key={approval.id} data-testid="approval-card" className="min-w-0 max-w-full">
           <CardHeader className="p-4">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -82,7 +84,7 @@ export function Approvals({ approvals, onChanged }: { approvals: Approval[]; onC
                     disabled={pendingId === approval.id}
                     onClick={() => void decide(approval.id, "allow_domain")}
                   >
-                    Always allow for this domain
+                    Always allow site
                   </Button>
                 ) : null}
                 <Button

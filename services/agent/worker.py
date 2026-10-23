@@ -14,6 +14,8 @@ from browser import BrowserHub
 from guard import invalid_reason, login_result, present_tool, scrub, should_halt, strip_text
 from plugins import call_allowed, enabled_names
 from run_guard import RunGuard
+from grounding import check_answer, observed_urls
+from retry import send_with_retry
 
 log = logging.getLogger("worker")
 
@@ -208,6 +210,7 @@ class Worker:
         _note_target(task, messages)
         rounds = 0
         guard = RunGuard()
+        grounding_redone = any(isinstance(m, dict) and m.get("grounding_retry") for m in messages)
         while not lost.is_set():
             pending_calls = _unanswered_calls(messages)
             if not pending_calls:
@@ -227,7 +230,14 @@ class Worker:
                     if "mock model has no plan" in content:
                         await self._fail(task, content)
                     else:
-                        await self._complete(task, strip_text(content))
+                        checked = check_answer(instruction, strip_text(content), observed_urls(messages))
+                        await self.request("POST", f"/internal/tasks/{_task_id(task)}/grounding", {"epoch": _epoch(task), **checked.event})
+                        if checked.issues and not grounding_redone:
+                            grounding_redone = True
+                            messages.append({"role": "user", "grounding_retry": True, "content": "Final answer check failed: " + ", ".join(checked.issues) + ". Redo once using only URLs observed in successful tool results, the requested sites, and no more than the requested count. State any shortfall honestly."})
+                            await self._put_transcript(task, messages)
+                            continue
+                        await self._complete(task, checked.text)
                     return
             for pending in pending_calls:
                 if lost.is_set():
@@ -309,10 +319,7 @@ class Worker:
             if blocked:
                 await self._fail(task, blocked)
                 return
-            if name in SKILL_BROWSER_TOOLS:
-                result = await self._browser(task, name, args)
-            else:
-                result = await self._execute_api(task, name, args)
+            result = await self._invoke(task, {"name": name, "arguments": args}, authorize=True)
             if result is None or lost.is_set():
                 return
             invalid = invalid_reason(result)
@@ -464,6 +471,7 @@ class Worker:
                     "botId": _bot_id(task),
                     "epoch": _epoch(task),
                     "tool": tool,
+                    "idempotencyKey": _task_id(task) + ":" + hashlib.sha256((tool + json.dumps(args, sort_keys=True)).encode()).hexdigest(),
                     "args": args,
                 },
             )
@@ -532,23 +540,12 @@ class Worker:
 
     async def request(self, method: str, path: str, body: dict | None = None) -> httpx.Response:
         assert self.client is not None
-        delay = 0.5
-        while True:
-            try:
-                response = await self.client.request(method, path, json=body)
-            except (httpx.TransportError, httpx.TimeoutException):
-                await asyncio.sleep(delay)
-                delay = min(delay * 2, 5)
-                continue
-            if _computer_recovering(response):
-                raise ComputerRecovering()
-            if response.status_code in {500, 502, 503, 504}:
-                await asyncio.sleep(delay)
-                delay = min(delay * 2, 5)
-                continue
-            if response.status_code >= 400:
-                raise httpx.HTTPStatusError("api error", request=response.request, response=response)
-            return response
+        response = await send_with_retry(self.client, method, path, body)
+        if _computer_recovering(response):
+            raise ComputerRecovering()
+        if response.status_code >= 400:
+            raise httpx.HTTPStatusError("api error", request=response.request, response=response)
+        return response
 
     async def request_json(self, method: str, path: str, body: dict | None = None):
         response = await self.request(method, path, body)

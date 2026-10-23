@@ -30,7 +30,7 @@ import {
   normalizeRoutines,
   normalizeSkills,
 } from "@/lib/api";
-import { subscribeEvents } from "@/lib/events";
+import { mergeAgentEvent, parseAgentEvent, subscribeEvents, type AgentEvent } from "@/lib/events";
 import { StatusBadge } from "@/lib/status";
 import type { Artifact, FileEntry, LoginRequest, MemoryItem, Routine, SecretRequest, Skill, Workspace as WorkspaceData } from "@/lib/types";
 import { cn, errorMessage } from "@/lib/utils";
@@ -97,6 +97,9 @@ export function Workspace({ botId }: { botId: string }) {
   const [artifacts, setArtifacts] = useState<ListState<Artifact>>(emptyList);
   const [detailTab, setDetailTab] = useState("overview");
   const [finishedLogins, setFinishedLogins] = useState<LoginRequest[]>([]);
+  const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
+  const [llmConnected, setLlmConnected] = useState<boolean | null>(null);
+  const taskIds = useRef(new Set<string>());
   const seq = useRef(0);
   const auxSeq = useRef(0);
   const tabRef = useRef(detailTab);
@@ -107,6 +110,7 @@ export function Workspace({ botId }: { botId: string }) {
     try {
       const data = normalizeWorkspace(await api<WorkspaceData>(`/api/bots/${botId}/workspace`));
       if (ticket !== seq.current) return;
+      taskIds.current = new Set(data.tasks.map(task => task.id));
       setWorkspace(data);
       setWorkspaceError(null);
     } catch (caught) {
@@ -144,6 +148,16 @@ export function Workspace({ botId }: { botId: string }) {
 
   useEffect(() => {
     setReady(false);
+    setAgentEvents([]);
+    taskIds.current = new Set();
+    setLlmConnected(null);
+    api<Record<string, unknown>>("/api/system/llm-status").then(status => {
+      const connected = status.openrouterConnected ?? status.connected ?? status.configured ?? status.hasKey;
+      if (typeof connected === "boolean") setLlmConnected(connected);
+    }).catch(() => api<unknown>("/api/secrets").then(data => {
+      const items = Array.isArray(data) ? data : (data as { secrets?: unknown[] })?.secrets;
+      if (Array.isArray(items)) setLlmConnected(items.some(item => { const entry = item as Record<string, unknown>; return entry.provider === "openrouter" || entry.namespace === "openrouter"; }));
+    }).catch(() => undefined));
     setWorkspace(null);
     setWorkspaceError(null);
     setPane(window.matchMedia("(min-width: 768px)").matches);
@@ -158,11 +172,14 @@ export function Workspace({ botId }: { botId: string }) {
       debounce = window.setTimeout(() => void loadWorkspace(), 200);
     };
     const stopEvents = subscribeEvents((data) => {
-      let type = "";
-      try {
-        type = String((JSON.parse(data) as { type?: string }).type || "");
-      } catch {
-        type = "";
+      const event = parseAgentEvent(data);
+      const type = event?.type ?? "";
+      if (event && ["grounding", "tool", "tool_call", "tool_result", "delta", "message.delta", "text_delta", "memory"].includes(type)) {
+        // Events without bot/task attribution cannot safely be shown in this workspace.
+        if (event.botId === botId || (typeof event.taskId === "string" && taskIds.current.has(event.taskId))) {
+          const detail = event.detail && typeof event.detail === "object" ? event.detail as Record<string, unknown> : {};
+          setAgentEvents(current => mergeAgentEvent(current, { ...event, ...detail, type: event.type }));
+        }
       }
       schedule();
       if (type !== "task" && type !== "artifact") return;
@@ -189,6 +206,7 @@ export function Workspace({ botId }: { botId: string }) {
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") { setDesktopFull(false); setSettingsOpen(false); setPane(false); }
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "i") {
         event.preventDefault();
         setPane((value) => !value);
@@ -242,7 +260,7 @@ export function Workspace({ botId }: { botId: string }) {
           <button
             type="button"
             data-testid="bot-name-button"
-            className="inline-flex max-w-[70%] items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-sm font-medium shadow-sm"
+            className="inline-flex max-w-[70%] items-center gap-2 rounded-md border border-border bg-card px-3 py-1 text-sm font-medium shadow-sm"
             onClick={() => setPane((value) => !value)}
           >
             <img src="/favicon.svg" alt="" className="h-4 w-4 rounded-sm" />
@@ -262,16 +280,21 @@ export function Workspace({ botId }: { botId: string }) {
         <ChatPane
           conversationId={workspace.conversationId}
           messages={workspace.messages ?? []}
+          events={agentEvents.filter(event => !["delta", "message.delta", "text_delta"].includes(event.type) || workspace.tasks.some(task => task.id === event.taskId && ["running", "planning", "queued"].includes(task.status)))}
+          onStop={async () => {
+            await Promise.all(workspace.tasks.filter(task => ["running", "planning", "queued"].includes(task.status)).map(task => api(`/api/tasks/${task.id}/cancel`, { method: "POST" })));
+            await loadWorkspace();
+          }}
           botName={bot?.name || "Teammate"}
           onSent={() => void loadWorkspace()}
           working={(workspace.tasks ?? []).some((task) => ["running", "planning", "queued"].includes((task.status ?? "").toLowerCase()))}
           extras={
             <>
               {provider.toLowerCase() === "mock" ? <p className="text-sm text-muted-foreground">Provider is mock. This teammate is not calling OpenRouter.</p> : null}
-              {workspace.openrouterConnected === false ? (
-                <p className="rounded-lg border border-border bg-card px-3 py-2 text-sm">
+              {(llmConnected ?? workspace.openrouterConnected) === false ? (
+                <p data-testid="llm-key-banner" className="rounded-md border border-border bg-card px-3 py-2 text-sm">
                   <Link href="/settings/secrets" className="font-medium text-brand">
-                    Connect OpenRouter
+                    Connect OpenRouter in Settings → Vault
                   </Link>
                   <span className="text-muted-foreground"> — model tasks wait until a key is saved.</span>
                 </p>
@@ -311,6 +334,7 @@ export function Workspace({ botId }: { botId: string }) {
                     <p className="truncate font-medium">{task.title || task.instruction}</p>
                     <StatusBadge status={task.status} />
                   </div>
+                  {task.status === "failed" && task.error ? <p role="alert" data-testid="task-error" className="mt-2 whitespace-pre-wrap text-destructive">{task.error}</p> : null}
                 </article>
               ))}
               {(artifacts.items ?? []).slice(0, 2).map((artifact) => (
@@ -374,7 +398,7 @@ export function Workspace({ botId }: { botId: string }) {
             />
           ) : (
             <div className={cn("min-h-0 flex-1 overflow-y-auto", desktopFull && "overflow-visible")}>
-              <div className="border-b border-border p-3">
+              <div className={cn("border-b border-border", !computerExpanded && "p-3", computerExpanded && "h-[max(480px,70dvh)]")}>
                 <ComputerPane
                   botId={botId}
                   tasks={workspace.tasks ?? []}
@@ -444,7 +468,7 @@ export function Workspace({ botId }: { botId: string }) {
                   <TabsContent value="files">
                     <div className="flex flex-col gap-6">
                       <FilesPane botId={botId} files={files.items} error={files.error} loaded={files.loaded} onChanged={() => void loadAux(["files"])} />
-                      <ArtifactsPane artifacts={artifacts.items} error={artifacts.error} loaded={artifacts.loaded} />
+                      <ArtifactsPane artifacts={artifacts.items} error={artifacts.error} loaded={artifacts.loaded} onRetry={() => void loadAux(["artifacts"])} />
                     </div>
                   </TabsContent>
                   <TabsContent value="skills">

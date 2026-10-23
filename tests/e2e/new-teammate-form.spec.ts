@@ -1,0 +1,25 @@
+import { expect, test } from "@playwright/test";
+
+test("name alone creates a teammate and empty names get inline validation", async ({ page }) => {
+  await page.goto("/login");
+  await page.getByTestId("login-username").fill(process.env.OWNER_USERNAME ?? "saad");
+  await page.getByTestId("login-password").fill(process.env.OWNER_PASSWORD ?? "teammates-dev");
+  await page.getByTestId("login-submit").click();
+  await expect(page.getByTestId("app-shell")).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new Event("teammates-open-create")));
+  await page.getByTestId("bot-create").click();
+  await expect(page.getByRole("alert")).toHaveText("Give your teammate a name");
+  await expect(page.getByTestId("bot-name")).toBeFocused();
+  await expect(page.getByTestId("bot-name")).toHaveAttribute("aria-invalid", "true");
+  const name = `Name only ${Date.now()}`;
+  await page.getByTestId("bot-name").fill(name);
+  const created = page.waitForResponse(response => response.url().endsWith("/api/bots") && response.request().method() === "POST");
+  await page.getByTestId("bot-create").click();
+  const response = await created;
+  const bot = await response.json();
+  try {
+    expect(response.ok(), "create name-only teammate").toBeTruthy();
+    expect(bot.role).toBe("Teammate");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  } finally { if (bot.id) await page.request.delete(`/api/bots/${bot.id}`); }
+});

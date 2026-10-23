@@ -1,5 +1,7 @@
 "use client";
 
+import { Skeleton } from "@/components/ui/skeleton";
+
 import { FormEvent, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -115,11 +117,11 @@ export function RoutinesPane({
         </Button>
       </form>
       <div className="rounded-lg border border-line bg-paper p-4">
-        {!loaded ? <p className="text-sm text-muted-foreground">Loading routines…</p> : null}
+        {!loaded ? <Skeleton className="h-20 w-full" /> : null}
         {loaded && error ? (
-          <p role="alert" className="text-sm text-clay">
+          <div className="space-y-2"><p role="alert" className="text-sm text-clay">
             Could not load routines. {error}
-          </p>
+          </p><Button variant="outline" size="sm" onClick={onChanged}>Retry</Button></div>
         ) : null}
         {loaded && !error && routines.length === 0 ? (
           <p className="text-sm text-muted-foreground">No routines scheduled. A routine runs on its cron even when this page is closed.</p>

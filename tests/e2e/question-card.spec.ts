@@ -130,6 +130,7 @@ test("question card answer survives reload and memory notices render", async ({ 
   await expect(answered).toContainText(CHOICE);
   await expect(answered.locator("span").first()).toHaveText(owner.trim().charAt(0).toUpperCase());
   await expect(page.getByTestId("question-card")).toHaveAttribute("data-answered", "true");
+  await expect(card.getByTestId("question-custom-send")).toHaveCount(0);
   await expect(page.getByRole("button", { name: CHOICE, exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Drop them", exact: true })).toHaveCount(0);
   await shot(page.getByTestId("question-card"), `${prefix}-question-card-answered`);

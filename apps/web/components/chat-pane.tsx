@@ -1,6 +1,8 @@
 "use client";
 
-import { FormEvent, type ReactNode, useEffect, useState } from "react";
+import { FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { Markdown } from "@/components/markdown";
+import type { AgentEvent } from "@/lib/events";
 import { Notebook } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -21,6 +23,8 @@ export function ChatPane({
   onSent,
   extras,
   working = false,
+  events = [],
+  onStop,
 }: {
   conversationId?: string;
   messages: ChatMessage[];
@@ -28,7 +32,14 @@ export function ChatPane({
   onSent: () => void;
   extras?: ReactNode;
   working?: boolean;
+  events?: AgentEvent[];
+  onStop?: () => Promise<void>;
 }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const stickRef = useRef(true);
+  const [scrolledUp, setScrolledUp] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [content, setContent] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,6 +59,18 @@ export function ChatPane({
     };
   }, []);
 
+  useEffect(() => {
+    if (stickRef.current) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages, events, working]);
+  useEffect(() => {
+    const node = composerRef.current;
+    if (node) { node.style.height = "auto"; node.style.height = `${Math.min(node.scrollHeight, 180)}px`; }
+  }, [content]);
+  async function stop() {
+    setStopping(true);
+    try { await onStop?.(); } catch (caught) { setError(errorMessage(caught, "Could not stop this run.")); }
+    finally { setStopping(false); }
+  }
   const initial = userName.trim().charAt(0).toUpperCase() || "Y";
 
   async function react(messageId: string, emoji: string) {
@@ -67,6 +90,7 @@ export function ChatPane({
   }
 
   async function send(asTask: boolean, text = content.trim()) {
+    if (sending) return;
     if (!text) {
       setError("Write a message first.");
       return;
@@ -103,8 +127,10 @@ export function ChatPane({
         body: JSON.stringify({ choices, custom }),
       });
       onSent();
+      return true;
     } catch (caught) {
       setError(errorMessage(caught, "Could not send that answer."));
+      return false;
     }
   }
 
@@ -115,24 +141,29 @@ export function ChatPane({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={scrollRef} data-testid="chat-scroll" className="min-h-0 flex-1 overflow-y-auto" onScroll={() => {
+        const node = scrollRef.current;
+        if (!node) return;
+        stickRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
+        setScrolledUp(!stickRef.current);
+      }}>
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 py-4">
           {extras}
-          {messages.length === 0 ? <p className="text-sm text-muted-foreground">No messages yet.</p> : null}
+          {messages.length === 0 ? <div data-testid="chat-empty" className="py-12 text-center"><p className="font-medium">Start a conversation with {botName}</p><p className="mt-2 text-sm text-muted-foreground">Ask a question, share an idea, or assign some work.</p></div> : null}
           {messages.map((message) => {
             const blocks = messageBlocks(message.content);
             const only = blocks.length === 1 ? blocks[0] : null;
             if (only?.kind === "memory") {
               return (
-                <article key={message.id} data-testid="message-item" data-role={message.role} className="mr-auto w-full max-w-md">
+                <article key={message.id} data-testid="message-item" data-role={message.role} className="group mr-auto w-full max-w-md">
                   <MemoryNotice action={only.action} text={only.text} />
-                  <time className="mt-1 block px-1 text-[11px] text-muted-foreground">{formatWhen(message.createdAt)}</time>
+                  <time className="mt-1 block px-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{formatWhen(message.createdAt)}</time>
                 </article>
               );
             }
             if (only?.kind === "question") {
               return (
-                <article key={message.id} data-testid="message-item" data-role={message.role} className="mr-auto w-full max-w-md">
+                <article key={message.id} data-testid="message-item" data-role={message.role} className="group mr-auto w-full max-w-md">
                   <QuestionCard
                     prompt={only.prompt}
                     options={only.options}
@@ -140,9 +171,9 @@ export function ChatPane({
                     allowCustom={only.allowCustom}
                     answer={only.answer}
                     initial={initial}
-                    onAnswer={(choices, custom) => void answer(message.id, choices, custom)}
+                    onAnswer={(choices, custom) => answer(message.id, choices, custom)}
                   />
-                  <time className="mt-1 block px-1 text-[11px] text-muted-foreground">{formatWhen(message.createdAt)}</time>
+                  <time className="mt-1 block px-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{formatWhen(message.createdAt)}</time>
                 </article>
               );
             }
@@ -152,8 +183,9 @@ export function ChatPane({
                 key={message.id}
                 data-testid="message-item"
                 data-role={message.role}
-                className={mine ? "ml-auto min-w-0 max-w-[70%]" : "mr-auto min-w-0 max-w-[70%]"}
+                className={mine ? "group ml-auto min-w-0 max-w-[85%] sm:max-w-[75%]" : "group mr-auto min-w-0 max-w-[85%] sm:max-w-[75%]"}
               >
+                {!mine ? <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground"><img src="/favicon.svg" alt="" className="h-5 w-5 rounded-sm" />{botName}</div> : null}
                 <div
                   className={
                     mine
@@ -168,29 +200,31 @@ export function ChatPane({
                 {(message.reactions ?? []).length > 0 ? (
                   <div className="mt-1 flex flex-wrap gap-1">
                     {message.reactions?.map((reaction) => (
-                      <button
+                      <Button
+                        variant="outline"
+                        size="sm"
                         key={reaction.id ?? `${reaction.actorType}-${reaction.emoji}`}
                         type="button"
                         data-testid="reaction-pill"
                         data-emoji={reaction.emoji}
                         data-actor={reaction.actorType}
                         title={reaction.actorType === "bot" ? botName : "You"}
-                        className="rounded-full border border-border bg-card px-2 py-0.5 text-sm"
+                        className="rounded-md border border-border bg-card px-2 py-0.5 text-sm"
                         onClick={() => {
                           if (reaction.actorType === "user") void react(message.id, reaction.emoji);
                         }}
                       >
                         {reaction.emoji}
-                      </button>
+                      </Button>
                     ))}
                   </div>
                 ) : null}
                 {message.role === "assistant" ? (
                   <div className="mt-1 flex flex-wrap items-center gap-1" data-testid="reaction-picker">
                     {QUICK_REACTIONS.map((emoji) => (
-                      <button key={emoji} type="button" className="rounded-full px-1.5 py-0.5 text-sm hover:bg-accent" onClick={() => void react(message.id, emoji)}>
+                      <Button key={emoji} variant="ghost" size="sm" type="button" className="rounded-md px-1.5 py-0.5 text-sm hover:bg-accent" onClick={() => void react(message.id, emoji)}>
                         {emoji}
-                      </button>
+                      </Button>
                     ))}
                     <input
                       data-testid="reaction-custom"
@@ -208,10 +242,12 @@ export function ChatPane({
                     />
                   </div>
                 ) : null}
-                <time className="mt-1 block px-1 text-[11px] text-muted-foreground">{formatWhen(message.createdAt)}</time>
+                <time className="mt-1 block px-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{formatWhen(message.createdAt)}</time>
               </article>
             );
           })}
+          {events.filter(event => !["delta", "message.delta", "text_delta"].includes(event.type)).map((event, i) => <EventCard key={`${conversationId}-${i}`} event={event} />)}
+          {working && events.some(event => ["delta", "message.delta", "text_delta"].includes(event.type)) ? <div data-testid="streaming-text" className="rounded-md bg-assistant-bubble p-3 text-sm"><Markdown text={events.filter(event => ["delta", "message.delta", "text_delta"].includes(event.type)).map(event => String(event.delta ?? event.text ?? "")).join("")} /><span aria-hidden className="inline-block h-4 w-1 animate-pulse bg-foreground" /></div> : null}
           {working ? (
             <p className="flex items-center gap-2 text-sm text-muted-foreground">
               <img src="/favicon.svg" alt="" className="h-4 w-4 rounded-sm" />
@@ -220,30 +256,35 @@ export function ChatPane({
           ) : null}
         </div>
       </div>
+      {scrolledUp ? <Button data-testid="jump-to-latest" variant="secondary" className="mx-auto my-2" onClick={() => { stickRef.current = true; setScrolledUp(false); scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }}>Jump to latest ↓</Button> : null}
       <form
         data-testid="composer-bar"
         className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
         onSubmit={onSubmit}
       >
-        <div className="rounded-[22px] border border-border bg-card px-3 py-2 shadow-sm">
+        <div className="rounded-md border border-border bg-card px-3 py-2 shadow-sm">
           <Textarea
+            ref={composerRef}
+            aria-label={`Message ${botName}`}
             data-testid="composer"
             value={content}
             onChange={(event) => setContent(event.target.value)}
             placeholder={`Message ${botName}`}
             className="min-h-10 resize-none border-0 bg-transparent px-1 py-1 shadow-none focus-visible:ring-0"
             onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
+              if (event.key === "Escape") { setError(null); composerRef.current?.blur(); }
+              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault();
                 void send(false);
               }
             }}
           />
           <div className="flex items-center justify-end gap-2">
-            <Button data-testid="send-chat" type="submit" variant="secondary" className="min-h-11 rounded-full" disabled={sending || !conversationId}>
+            {working && onStop ? <Button type="button" data-testid="stop-run" variant="destructive" disabled={stopping} onClick={() => void stop()}>{stopping ? "Stopping…" : "Stop"}</Button> : null}
+            <Button data-testid="send-chat" type="submit" variant="secondary" className="min-h-11 rounded-md" disabled={sending || !conversationId}>
               Send
             </Button>
-            <Button data-testid="assign-task" className="min-h-11 rounded-full" disabled={sending || !conversationId} onClick={() => void send(true)}>
+            <Button data-testid="assign-task" className="min-h-11 rounded-md" disabled={sending || !conversationId} onClick={() => void send(true)}>
               Assign work
             </Button>
           </div>
@@ -273,39 +314,44 @@ function QuestionCard({
   allowCustom: boolean;
   answer: string[] | null;
   initial: string;
-  onAnswer: (choices: string[], custom?: string) => void;
+  onAnswer: (choices: string[], custom?: string) => Promise<boolean>;
 }) {
   const [picked, setPicked] = useState<string[]>([]);
   const [custom, setCustom] = useState("");
-  const [sent, setSent] = useState(false);
-  const answered = (answer && answer.length > 0) || sent;
-  const shown = answer && answer.length > 0 ? answer.join(", ") : [...picked, custom.trim()].filter(Boolean).join(", ");
 
-  function choose(label: string) {
-    if (answered) return;
+  const [localAnswer, setLocalAnswer] = useState<string[] | null>(null);
+  const [pending, setPending] = useState(false);
+  const answered = !!((answer?.length ?? 0) || localAnswer?.length);
+  const shown = (answer?.length ? answer : localAnswer ?? []).join(", ");
+
+  async function choose(label: string) {
+    if (answered || pending) return;
     if (multiple) {
       setPicked((current) => (current.includes(label) ? current.filter((item) => item !== label) : [...current, label]));
       return;
     }
-    setSent(true);
-    onAnswer([label]);
+    setPicked([label]);
+    setPending(true);
+    if (await onAnswer([label])) setLocalAnswer([label]);
+    setPending(false);
   }
 
-  function submitCustom() {
-    if (answered) return;
+  async function submitCustom() {
+    if (answered || pending) return;
     const text = custom.trim();
     if (!text && picked.length === 0) return;
-    setSent(true);
-    onAnswer(picked, text);
+    setPending(true);
+    if (await onAnswer(picked, text)) setLocalAnswer([...picked, text].filter(Boolean));
+    setPending(false);
   }
 
   if (answered) {
     return (
-      <div data-testid="question-card" data-answered="true" className="rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
+      <div data-testid="question-card" data-answered="true" className="rounded-md border border-border bg-card px-4 py-3 shadow-sm">
         <div data-testid="question-answered">
           <p className="text-sm text-muted-foreground">{prompt}</p>
           <div className="mt-2 flex items-center gap-2">
-            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-destructive text-[11px] font-medium text-white" aria-hidden>
+            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-destructive text-[11px] font-medium text-white" aria-hidden>
               {initial}
             </span>
             <span className="min-w-0 text-sm text-foreground">{shown}</span>
@@ -316,7 +362,7 @@ function QuestionCard({
   }
 
   return (
-    <div data-testid="question-card" data-answered="false" className="rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
+    <div data-testid="question-card" data-answered="false" className="rounded-md border border-border bg-card px-4 py-3 shadow-sm">
       <p className="text-sm font-medium">{prompt}</p>
       <div className="mt-3 flex flex-col gap-2">
         {options.map((option) => (
@@ -326,6 +372,7 @@ function QuestionCard({
             variant={option.style === "danger" ? "destructive" : multiple && picked.includes(option.label) ? "secondary" : "default"}
             aria-pressed={multiple ? picked.includes(option.label) : undefined}
             data-style={option.style}
+            disabled={pending}
             className="min-h-11 w-full justify-start whitespace-normal text-left"
             onClick={() => choose(option.label)}
           >
@@ -347,13 +394,13 @@ function QuestionCard({
                 }
               }}
             />
-            <Button type="button" variant="secondary" className="min-h-11" data-testid="question-custom-send" onClick={submitCustom}>
+            <Button type="button" variant="secondary" className="min-h-11" data-testid="question-custom-send" disabled={pending} onClick={submitCustom}>
               Send
             </Button>
           </div>
         ) : null}
         {multiple ? (
-          <Button type="button" className="min-h-11" data-testid="question-confirm" disabled={picked.length === 0 && !custom.trim()} onClick={submitCustom}>
+          <Button type="button" className="min-h-11" data-testid="question-confirm" disabled={pending || (picked.length === 0 && !custom.trim())} onClick={submitCustom}>
             Send choice
           </Button>
         ) : null}
@@ -369,7 +416,7 @@ function MemoryNotice({ action, text }: { action: "saved" | "forgot"; text: stri
       <CollapsibleTrigger
         data-testid="memory-notice"
         data-action={action}
-        className="inline-flex min-h-11 items-center gap-2 rounded-full px-1 text-sm text-muted-foreground hover:text-foreground"
+        className="inline-flex min-h-11 items-center gap-2 rounded-md px-1 text-sm text-muted-foreground hover:text-foreground"
       >
         <Notebook className="h-3.5 w-3.5" aria-hidden />
         {label}
@@ -382,7 +429,7 @@ function MemoryNotice({ action, text }: { action: "saved" | "forgot"; text: stri
 }
 
 function MessageBlockView({ block }: { block: ReturnType<typeof messageBlocks>[number] }) {
-  if (block.kind === "text") return <p className="whitespace-pre-wrap break-words">{block.text}</p>;
+  if (block.kind === "text") return <Markdown text={block.text} />;
   if (block.kind === "question" || block.kind === "memory") return null;
   if (block.kind === "form") return <SecureFormCard title={block.title} fields={block.fields} />;
   if (block.kind === "image") {
@@ -457,4 +504,17 @@ function SecureFormCard({ title, fields }: { title: string; fields: FormField[] 
       </Button>
     </form>
   );
+}
+
+function EventCard({ event }: { event: AgentEvent }) {
+  if (event.type === "grounding") {
+    const verified = Number(event.verified ?? event.verifiedLinks);
+    const removed = Number(event.removed ?? event.removedLinks);
+    if (!Number.isFinite(verified) || !Number.isFinite(removed)) return null;
+    return <p data-testid="grounding-notice" role="status" className="text-xs text-muted-foreground">Verified {verified} links, removed {removed}</p>;
+  }
+  if (event.type === "memory") return <MemoryNotice action={event.action === "forgot" ? "forgot" : "saved"} text={String(event.content ?? "")} />;
+  const tool = String(event.tool ?? event.name ?? "Tool");
+  const args = typeof event.args === "object" && event.args ? JSON.stringify(event.args) : String(event.args ?? "");
+  return <Collapsible data-testid="tool-call-card" className="rounded-md border border-border text-xs"><CollapsibleTrigger className="flex min-h-10 w-full items-center gap-2 px-3 text-left"><span aria-hidden>⌘</span><span className="font-medium">{tool}</span><span className="min-w-0 flex-1 truncate text-muted-foreground">{args.slice(0, 90)}</span><span>{String(event.status ?? (event.type === "tool_result" ? "Done" : "Running"))}</span></CollapsibleTrigger><CollapsibleContent><pre className="max-h-64 overflow-auto whitespace-pre-wrap border-t border-border p-3">{JSON.stringify({ args: event.args, result: event.result }, null, 2)}</pre></CollapsibleContent></Collapsible>;
 }

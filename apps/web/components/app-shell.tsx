@@ -263,12 +263,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   const roster = (
     <div className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
       <div className={cn("flex gap-1.5 px-2 pb-2 pt-3", compact ? "flex-col items-center" : "items-center")}>
-        <Button variant="outline" size="icon" className="h-9 w-9 rounded-full bg-background" aria-label="Search" onClick={() => setPalette(true)}>
+        <Button variant="outline" size="icon" className="h-9 w-9 rounded-md bg-background" aria-label="Search" onClick={() => setPalette(true)}>
           <Search />
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button data-testid="new-bot" variant="outline" size="icon" className="h-9 w-9 rounded-full bg-background" aria-label="New">
+            <Button data-testid="new-bot" variant="outline" size="icon" className="h-9 w-9 rounded-md bg-background" aria-label="New">
               <Plus />
             </Button>
           </DropdownMenuTrigger>
@@ -296,7 +296,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             data-testid="rail-toggle"
             variant="outline"
             size="icon"
-            className="h-9 w-9 rounded-full bg-background"
+            className="h-9 w-9 rounded-md bg-background"
             aria-label={compact ? "Expand sidebar" : "Collapse sidebar"}
             onClick={toggleRail}
           >
@@ -306,7 +306,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </div>
       {compact || !activeBot ? null : (
         <div className="flex flex-col items-center px-3 pb-3">
-          <div className="grid h-16 w-16 place-items-center rounded-xl border border-sidebar-border bg-background text-base font-medium">
+          <div className="grid h-16 w-16 place-items-center rounded-md border border-sidebar-border bg-background text-base font-medium">
             {activeBot.avatar || initials(activeBot.name)}
           </div>
           <p className="mt-2 max-w-full truncate text-sm font-medium">{activeBot.name}</p>
@@ -394,7 +394,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <DropdownMenuTrigger asChild>
             <Button data-testid="notifications" variant="ghost" size="icon" className="relative h-9 w-9 shrink-0" aria-label="Notifications">
               <Bell />
-              {unread > 0 ? <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-brand" /> : null}
+              {unread > 0 ? <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-md bg-brand" /> : null}
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align="start" className="w-64">
@@ -484,7 +484,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   data-testid="plugins-tab"
                   data-active={pluginTab === tab}
                   className={cn(
-                    "rounded-full px-3 py-1 text-sm",
+                    "rounded-md px-3 py-1 text-sm",
                     pluginTab === tab ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground",
                   )}
                   onClick={() => setPluginTab(tab)}
@@ -583,12 +583,17 @@ function CreateTeammateDialog({
 
   async function createBot(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!name.trim()) {
+      setFormError("Give your teammate a name");
+      document.getElementById("bot-name")?.focus();
+      return;
+    }
     setCreating(true);
     setFormError(null);
     try {
       await api("/api/bots", {
         method: "POST",
-        body: JSON.stringify({ name, role, instructions }),
+        body: JSON.stringify({ name: name.trim(), role: role.trim() || "Teammate", instructions: instructions.trim() }),
       });
       setName("");
       setRole("");
@@ -609,22 +614,24 @@ function CreateTeammateDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>New teammate</DialogTitle>
-          <DialogDescription>Name, title, and the instructions they should follow. All three stay on this step.</DialogDescription>
+          <DialogDescription>A name is enough to start. Add a title and instructions whenever you like.</DialogDescription>
         </DialogHeader>
-        <form className="flex flex-col gap-3" onSubmit={createBot}>
+        <form className="flex flex-col gap-3" onSubmit={createBot} noValidate>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="bot-name" className="flex items-center gap-2">
               <span className="grid h-6 w-6 place-items-center rounded-md bg-primary text-[11px] text-primary-foreground">A</span>
               Name
             </Label>
-            <Input id="bot-name" data-testid="bot-name" value={name} onChange={(event) => setName(event.target.value)} required />
+            <Input id="bot-name" data-testid="bot-name" value={name} onChange={(event) => { setName(event.target.value); setFormError(null); }} aria-invalid={!!formError && !name.trim()} aria-describedby="bot-name-help bot-form-error" />
+            <p id="bot-name-help" className="text-xs text-muted-foreground">Required. What should we call your teammate?</p>
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="bot-role" className="flex items-center gap-2">
               <span className="grid h-6 w-6 place-items-center rounded-md bg-primary text-[11px] text-primary-foreground">B</span>
               Title
             </Label>
-            <Input id="bot-role" data-testid="bot-role" value={role} onChange={(event) => setRole(event.target.value)} required />
+            <Input id="bot-role" data-testid="bot-role" value={role} onChange={(event) => setRole(event.target.value)} aria-describedby="bot-role-help" />
+            <p id="bot-role-help" className="text-xs text-muted-foreground">Optional. Defaults to Teammate.</p>
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="bot-instructions" className="flex items-center gap-2">
@@ -636,11 +643,12 @@ function CreateTeammateDialog({
               data-testid="bot-instructions"
               value={instructions}
               onChange={(event) => setInstructions(event.target.value)}
-              required
+              aria-describedby="bot-instructions-help"
             />
           </div>
+          <p id="bot-instructions-help" className="text-xs text-muted-foreground">Optional. Describe their work, preferences, or goals.</p>
           {formError ? (
-            <p role="alert" className="text-sm text-destructive">
+            <p id="bot-form-error" role="alert" className="text-sm text-destructive">
               {formError}
             </p>
           ) : null}

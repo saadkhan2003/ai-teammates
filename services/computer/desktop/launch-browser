@@ -19,5 +19,16 @@ done
 if [ -n "$best" ]; then
   xdotool windowactivate "$best" >/dev/null 2>&1 || true
   xdotool windowraise "$best" >/dev/null 2>&1 || true
+else
+  # A secondary display starts without Chromium to save memory. Launch on demand
+  # as the panel's bot UID, with a distinct profile and the same lean defaults.
+  export PYTHONPATH=/opt/desk/src
+  exec /opt/desk/venv/bin/python -c '
+import os
+from pathlib import Path
+from desktops import CHROME_FLAGS, chrome_bin
+profile = Path(os.environ["HOME"]) / ".config" / ("chromium-display-" + os.environ["DISPLAY"].lstrip(":"))
+os.execv(chrome_bin(), [chrome_bin(), "--user-data-dir=" + str(profile), "--start-maximized", *CHROME_FLAGS])
+'
 fi
 exit 0

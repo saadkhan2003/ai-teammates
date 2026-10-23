@@ -14,6 +14,8 @@ export type Task = {
   kind?: string;
   modelCalls?: number;
   waitingReason?: string;
+  error?: string;
+  errorCode?: string;
   result?: string;
 };
 

@@ -68,6 +68,8 @@ services:
       CGROUP_PARENT: ${CGROUP_PARENT:-}
       DISPLAY_GEOMETRY: ${DISPLAY_GEOMETRY:-1024x768}
       DISPLAY_DEPTH: ${DISPLAY_DEPTH:-16}
+      COMPUTER_DNS: ${COMPUTER_DNS:-1.1.1.1,8.8.8.8}
+      COMPUTER_SECOND_DISPLAY: ${COMPUTER_SECOND_DISPLAY:-true}
       IDLE_SUSPEND_MINUTES: ${IDLE_SUSPEND_MINUTES:-10}
       IDLE_POWER: ${IDLE_POWER:-hibernate}
       IDLE_HIBERNATE_MINUTES: ${IDLE_HIBERNATE_MINUTES:-30}
@@ -204,6 +206,7 @@ services:
     environment:
       ISOLATION_TOKEN: ${ISOLATION_TOKEN:-dev-isolation-token-change-me}
       ISOLATION_SOCKET: /run/teammates/isolation.sock
+      COMPUTER_DNS: ${COMPUTER_DNS:-1.1.1.1,8.8.8.8}
     volumes:
       - /run/teammates:/run/teammates
     mem_limit: 48m

@@ -1072,7 +1072,7 @@ public static class PluginCatalog
         }
         try
         {
-            return await OutboundLog.Run(platform, owner, botId, taskId, loaded.ModelName, loaded.ActionClass, args, () => DispatchCall(platform, botId, loaded, args, secret, ct), ct);
+            return await OutboundLog.Run(platform, owner, botId, taskId, loaded.ModelName, loaded.ActionClass, args, () => DispatchCall(platform, botId, loaded, args, secret, ct, OutboundLog.Key(taskId, loaded.ModelName, Dlp.Redact(args.GetRawText()))), ct);
         }
         finally
         {
@@ -1080,15 +1080,15 @@ public static class PluginCatalog
         }
     }
 
-    private static async Task<object> DispatchCall(Platform platform, Guid botId, LoadedCall loaded, JsonElement args, byte[]? secret, CancellationToken ct)
+    private static async Task<object> DispatchCall(Platform platform, Guid botId, LoadedCall loaded, JsonElement args, byte[]? secret, CancellationToken ct, string retryKey)
     {
         if (loaded.Transport == "builtin")
             return new { tool = loaded.ToolName, args = RedactedArgs(args) };
         if (loaded.Transport == "stdio")
             return await CallStdio(platform, botId, loaded, args, ct);
         if (loaded.Method.Length > 0 && loaded.Path.Length > 0)
-            return await CallOpenApi(loaded, args, secret, ct);
-        return await CallMcp(loaded, args, secret, ct);
+            return await CallOpenApi(loaded, args, secret, ct, retryKey);
+        return await CallMcp(loaded, args, secret, ct, retryKey);
     }
 
     private static async Task<object> CallStdio(Platform platform, Guid botId, LoadedCall loaded, JsonElement args, CancellationToken ct)
@@ -1141,7 +1141,7 @@ public static class PluginCatalog
         }
     }
 
-    private static async Task<object> CallOpenApi(LoadedCall loaded, JsonElement args, byte[]? secret, CancellationToken ct)
+    private static async Task<object> CallOpenApi(LoadedCall loaded, JsonElement args, byte[]? secret, CancellationToken ct, string retryKey)
     {
         var path = loaded.Path;
         if (args.ValueKind == JsonValueKind.Object)
@@ -1154,6 +1154,7 @@ public static class PluginCatalog
         var blocked = await SsrfGuard.ResolveAsync(url, ct);
         if (blocked.Blocked) throw new ToolHalt("denied", blocked.Reason);
         using var request = new HttpRequestMessage(new HttpMethod(loaded.Method), url);
+        request.Headers.TryAddWithoutValidation("Idempotency-Key", retryKey);
         ApplySecret(request, loaded.AuthType, secret);
         if (loaded.Method is "POST" or "PUT" or "PATCH")
             request.Content = new StringContent(args.ValueKind == JsonValueKind.Undefined ? "{}" : args.GetRawText(), Encoding.UTF8, "application/json");
@@ -1165,10 +1166,10 @@ public static class PluginCatalog
             var token = Encoding.UTF8.GetString(secret);
             if (token.Length > 0) body = body.Replace(token, "[redacted]", StringComparison.Ordinal);
         }
-        return new { status = (int)response.StatusCode, body };
+        return new { status = (int)response.StatusCode, body, retrySafe = response.Headers.TryGetValues("Idempotency-Key", out var echoed) && echoed.SingleOrDefault() == retryKey };
     }
 
-    private static async Task<object> CallMcp(LoadedCall loaded, JsonElement args, byte[]? secret, CancellationToken ct)
+    private static async Task<object> CallMcp(LoadedCall loaded, JsonElement args, byte[]? secret, CancellationToken ct, string retryKey)
     {
         var blocked = await SsrfGuard.ResolveAsync(loaded.RemoteUrl, ct);
         if (blocked.Blocked) throw new ToolHalt("denied", blocked.Reason);
@@ -1182,11 +1183,12 @@ public static class PluginCatalog
         using var request = new HttpRequestMessage(HttpMethod.Post, loaded.RemoteUrl);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
+        request.Headers.TryAddWithoutValidation("Idempotency-Key", retryKey);
         ApplySecret(request, loaded.AuthType, secret);
         using var response = await PluginHttp.Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         var body = await PluginProbe.ReadLimited(response.Content, 32_768, ct);
         body = Dlp.Redact(body);
-        return new { status = (int)response.StatusCode, body };
+        return new { status = (int)response.StatusCode, body, retrySafe = response.Headers.TryGetValues("Idempotency-Key", out var echoed) && echoed.SingleOrDefault() == retryKey };
     }
 
     private static void ApplySecret(HttpRequestMessage request, string auth, byte[]? secret)

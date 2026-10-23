@@ -74,6 +74,7 @@ var loginBroker = new LoginBroker();
 var loginFlow = new LoginFlow(platform, loginBroker);
 var runtime = new Runtime(platform, loginFlow);
 builder.Services.AddSingleton(platform);
+builder.Services.AddSingleton(new DeviceGate(data));
 builder.Services.AddSingleton(loginBroker);
 builder.Services.AddSingleton(loginFlow);
 builder.Services.AddSingleton(runtime);
@@ -128,6 +129,7 @@ catch (Exception ex)
 }
 Routes.Map(app, platform, runtime);
 SecurityRoutes.Map(app, platform, loginFlow);
+Devices.Map(app, platform);
 app.Run();
 
 public sealed class BrokerSecretResolver : IExecSecretResolver

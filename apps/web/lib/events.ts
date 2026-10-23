@@ -42,6 +42,8 @@ export function subscribeEvents(onMessage: (data: string) => void, onStatus?: (s
         const { value, done } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
+        buffer = buffer.replace(/\r\n/g, "\n");
+        if (buffer.length > 2_000_000) throw new Error("Event frame too large");
         const chunks = buffer.split("\n\n");
         buffer = chunks.pop() ?? "";
         for (const chunk of chunks) {
@@ -53,7 +55,9 @@ export function subscribeEvents(onMessage: (data: string) => void, onStatus?: (s
             else if (line.startsWith("data:")) dataLines.push(line.slice(5).replace(/^ /, ""));
           }
           if (id) lastId = id;
-          if (dataLines.length) onMessage(dataLines.join("\n"));
+          if (dataLines.length) {
+            try { onMessage(dataLines.join("\n")); } catch { /* A malformed event must not disconnect the stream. */ }
+          }
         }
         if (lastId) report("open");
       }
@@ -89,4 +93,30 @@ export function subscribeEvents(onMessage: (data: string) => void, onStatus?: (s
     document.removeEventListener("visibilitychange", onVisible);
     window.removeEventListener("online", onVisible);
   };
+}
+
+export type AgentEvent = { type: string; botId?: string; taskId?: string; [key: string]: unknown };
+export function parseAgentEvent(data: string): AgentEvent | null {
+  try {
+    const value: unknown = JSON.parse(data);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    if (typeof record.type !== "string") return null;
+    return record as AgentEvent;
+  } catch { return null; }
+}
+
+export function mergeAgentEvent(current: AgentEvent[], event: AgentEvent): AgentEvent[] {
+  if (["delta", "message.delta", "text_delta"].includes(event.type)) {
+    const index = current.findIndex(item => item.taskId === event.taskId && ["delta", "message.delta", "text_delta"].includes(item.type));
+    const incoming = typeof event.delta === "string" ? event.delta : typeof event.text === "string" ? event.text : "";
+    if (index >= 0) return current.map((item, i) => i === index ? { ...item, ...event, delta: (String(item.delta ?? item.text ?? "") + incoming).slice(0, 1_000_000) } : item);
+  }
+  const callId = event.callId ?? event.toolCallId ?? event.id;
+  const toolEvent = ["tool", "tool_call", "tool_result"].includes(event.type);
+  if (event.type === "grounding" || (toolEvent && callId != null)) {
+    const index = current.findIndex(item => item.taskId === event.taskId && (event.type === "grounding" ? item.type === "grounding" : ["tool", "tool_call", "tool_result"].includes(item.type) && (item.callId ?? item.toolCallId ?? item.id) === callId));
+    if (index >= 0) return current.map((item, i) => i === index ? { ...item, ...event } : item);
+  }
+  return [...current.slice(-99), event];
 }

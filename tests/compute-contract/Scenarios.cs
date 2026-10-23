@@ -259,6 +259,70 @@ public class Scenarios
         await provider.Delete(id);
     }
 
+    [Theory]
+    [MemberData(nameof(Kinds))]
+    public async Task Scenario16_SecondDisplaySharesFencingAndLease(string kind)
+    {
+        await using var provider = Open(kind);
+        var id = NewId();
+        await provider.Create(id);
+        await provider.WaitReady(id);
+        var displays = await provider.Displays(id);
+        Assert.Equal(new[] { 1, 2 }, displays.Select(d => d.Display));
+        Assert.False(displays[1].Ready);
+        var primary = await provider.GetDesktopSessionAsync(id, new DesktopAccess(DesktopMode.View, 1, TimeSpan.FromMinutes(1), false), CancellationToken.None);
+        var second = await provider.GetDesktopSessionAsync(id, new DesktopAccess(DesktopMode.View, 1, TimeSpan.FromMinutes(1), false, 2), CancellationToken.None);
+        Assert.Equal(5900, primary.Port);
+        Assert.Equal(5901, second.Port);
+        Assert.True((await provider.Displays(id))[1].Ready);
+        await Assert.ThrowsAsync<ComputeException>(() => provider.GetDesktopSessionAsync(id, new DesktopAccess(DesktopMode.Interactive, 1, TimeSpan.FromMinutes(1), false, 2), CancellationToken.None));
+        var interactive = await provider.GetDesktopSessionAsync(id, new DesktopAccess(DesktopMode.Interactive, 2, TimeSpan.FromMinutes(1), true, 2), CancellationToken.None);
+        Assert.Equal(6901, interactive.Port);
+        Assert.Throws<ComputeException>(() => provider.RequireSession(primary.Token, DateTimeOffset.UtcNow));
+        Assert.Throws<ComputeException>(() => provider.RequireSession(second.Token, DateTimeOffset.UtcNow));
+        await Assert.ThrowsAsync<ComputeException>(() => provider.GetDesktopSessionAsync(id, new DesktopAccess(DesktopMode.View, 2, TimeSpan.FromMinutes(1), false, 3), CancellationToken.None));
+        await provider.RestartComputerAsync(id, IdempotencyKey.Require("display-restart-" + id.Value), CancellationToken.None);
+        await provider.WaitReady(id);
+        Assert.False((await provider.Displays(id))[1].Ready);
+        await provider.Delete(id);
+    }
+
+    [Fact]
+    public void ComputerDnsDefaultsAndValidation()
+    {
+        Assert.Equal(new[] { "1.1.1.1", "8.8.8.8" }, new DockerComputeOptions { ComputerDns = "1.1.1.1,8.8.8.8" }.DnsServers());
+        Assert.Equal(new[] { "10.0.0.2" }, new DockerComputeOptions { ComputerDns = "10.0.0.2, 10.0.0.2" }.DnsServers());
+        foreach (var raw in new[] { "", "1.1.1.1,", "::1", "example.com", "10.0.0.0/8", "127.1" })
+            Assert.Throws<ComputeException>(() => new DockerComputeOptions { ComputerDns = raw }.DnsServers());
+    }
+
+    [Fact]
+    public async Task DockerCreateSetsExplicitDnsWithoutCallingDaemon()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "tm-dns-" + Guid.NewGuid().ToString("n"));
+        await using var provider = new DockerComputeProvider(new DockerComputeOptions { ComputerDns = "10.0.0.2,1.1.1.1" }, Secrets(), Store(root));
+        var build = typeof(DockerComputeProvider).GetMethod("BuildCreate", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var create = (Docker.DotNet.Models.CreateContainerParameters)build.Invoke(provider,
+            new object?[] { Spec(NewId(), "fake"), "dns-test", "workspace", "profile", false, 0UL, null })!;
+        Assert.Equal(new[] { "10.0.0.2", "1.1.1.1" }, create.HostConfig.DNS);
+        Assert.DoesNotContain(create.HostConfig.DNS, x => x == "127.0.0.11");
+        Assert.Contains("COMPUTER_SECOND_DISPLAY=true", create.Env);
+    }
+
+    [Fact]
+    public async Task FakeCanDisableTheSecondaryDisplay()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "tm-display-" + Guid.NewGuid().ToString("n"));
+        var provider = new FakeComputeProvider(new FakeComputeOptions { Root = root, SecondDisplay = false }, Secrets(), Store(root));
+        var id = NewId();
+        await provider.CreateComputerAsync(Spec(id, "fake"), IdempotencyKey.Require("create-" + id.Value), CancellationToken.None);
+        Assert.Single(await provider.ListDisplaysAsync(id, CancellationToken.None));
+        var error = await Assert.ThrowsAsync<ComputeException>(() => provider.GetDesktopSessionAsync(id,
+            new DesktopAccess(DesktopMode.View, 1, TimeSpan.FromMinutes(1), false, 2), CancellationToken.None));
+        Assert.Equal(ComputeErrorCode.InvalidArgument, error.Code);
+        await provider.DeleteComputerAsync(id, new DeleteOptions(false), IdempotencyKey.Require("delete-" + id.Value), CancellationToken.None);
+    }
+
     private static Harness Open(string kind) => new(kind);
 
     private static ComputerId NewId() => new(Guid.NewGuid().ToString());
@@ -316,6 +380,8 @@ public class Scenarios
                 _sessions = docker;
             }
         }
+
+        public Task<IReadOnlyList<ComputerDisplay>> Displays(ComputerId id) => ((IComputerDisplays)_inner).ListDisplaysAsync(id, CancellationToken.None);
 
         public Task<Computer> Create(ComputerId id) => CreateComputerAsync(Spec(id, _kind), IdempotencyKey.Require("c-" + id.Value), CancellationToken.None);
 

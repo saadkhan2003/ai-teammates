@@ -19,7 +19,7 @@
   <theme>
     <name>Clearlooks</name>
     <titleLayout>NLIMC</titleLayout>
-    <keepBorder>yes</keepBorder>
+    <keepBorder>no</keepBorder>
     <animateIconify>no</animateIconify>
     <font place="ActiveWindow"><name>DejaVu Sans</name><size>10</size><weight>Normal</weight><slant>Normal</slant></font>
     <font place="InactiveWindow"><name>DejaVu Sans</name><size>10</size><weight>Normal</weight><slant>Normal</slant></font>
@@ -44,7 +44,8 @@
     <right>0</right>
   </margins>
   <applications>
-    <application class="*">
+    <application type="normal">
+      <decor>no</decor>
       <maximized>yes</maximized>
     </application>
   </applications>

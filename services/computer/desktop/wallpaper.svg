@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+<defs><linearGradient id="night" x2="1" y2="1"><stop stop-color="#0b1220"/><stop offset="1" stop-color="#19273b"/></linearGradient><radialGradient id="glow"><stop stop-color="#34546b" stop-opacity=".6"/><stop offset="1" stop-color="#152033" stop-opacity="0"/></radialGradient></defs>
+<path fill="url(#night)" d="M0 0h1440v900H0z"/><ellipse fill="url(#glow)" cx="1080" cy="270" rx="750" ry="560"/>
+<g fill="none" stroke="#7695b0" stroke-opacity=".12"><path d="M-200 850Q400 100 1640 430"/><path d="M-200 880Q420 180 1640 470"/><path d="M-200 910Q440 260 1640 510"/></g></svg>

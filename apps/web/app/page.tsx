@@ -91,7 +91,7 @@ export default function DashboardPage() {
           {!loading && !error
             ? bots.map((bot) => (
                 <Link key={bot.id} href={`/bots/${bot.id}`} className="flex items-center gap-3 border-b border-border px-4 py-3">
-                  <span className="grid h-10 w-10 place-items-center rounded-full bg-muted text-xs font-medium">
+                  <span className="grid h-10 w-10 place-items-center rounded-md bg-muted text-xs font-medium">
                     {bot.avatar || initials(bot.name)}
                   </span>
                   <span className="min-w-0">
@@ -145,7 +145,7 @@ export default function DashboardPage() {
                   href={`/bots/${bot.id}`}
                   className="flex h-full flex-col items-center rounded-lg border border-border bg-card px-3 py-4 text-center hover:bg-accent"
                 >
-                  <span className="grid h-14 w-14 place-items-center rounded-xl bg-muted text-sm font-medium">
+                  <span className="grid h-14 w-14 place-items-center rounded-md bg-muted text-sm font-medium">
                     {bot.avatar || initials(bot.name)}
                   </span>
                   <span className="mt-2 max-w-full truncate text-sm font-medium">{bot.name}</span>

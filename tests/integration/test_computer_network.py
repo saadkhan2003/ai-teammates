@@ -46,7 +46,14 @@ def http(url, timeout=3.0):
     except Exception as exc:
         return type(exc).__name__
 
+try:
+    dns = "resolved" if socket.getaddrinfo("example.com", 443) else "empty"
+except OSError:
+    dns = "failed"
 report = {
+    "dns": dns,
+    "private10": tcp("10.0.0.2", 80),
+    "private192": tcp("192.168.0.1", 80),
     "postgres": tcp(postgres_ip, 5432),
     "seaweed": tcp(seaweed_ip, 8333),
     "api": tcp(api_ip, 8080),
@@ -85,8 +92,9 @@ def test_bot_computer_cannot_reach_postgres_seaweed_or_internal_api():
         nets = _docker("inspect", "-f", "{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}", name).split()
         assert nets == ["teammates-computers"], (name, nets)
         report = _probe(name, postgres_ip, seaweed_ip, api_ip, agent_ip)
-        for key in ("postgres", "seaweed", "api", "agent", "internal", "health"):
+        for key in ("postgres", "seaweed", "api", "agent", "internal", "health", "private10", "private192"):
             assert report[key] != "open" and not str(report[key]).startswith("open "), (name, key, report)
+        assert report["dns"] == "resolved", (name, report)
         assert report["local"].startswith("open "), (name, report)
         assert report["internet"].startswith("open "), (name, report)
 

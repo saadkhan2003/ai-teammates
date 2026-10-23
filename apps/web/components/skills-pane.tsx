@@ -1,5 +1,7 @@
 "use client";
 
+import { Skeleton } from "@/components/ui/skeleton";
+
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -37,11 +39,11 @@ export function SkillsPane({
 
   return (
     <div data-testid="skill-list" className="rounded-lg border border-line bg-paper p-4">
-      {!loaded ? <p className="text-sm text-muted-foreground">Loading skills…</p> : null}
+      {!loaded ? <Skeleton className="h-20 w-full" /> : null}
       {loaded && error ? (
-        <p role="alert" className="text-sm text-clay">
+        <div className="space-y-2"><p role="alert" className="text-sm text-clay">
           Could not load skills. {error}
-        </p>
+        </p><Button variant="outline" size="sm" onClick={onChanged}>Retry</Button></div>
       ) : null}
       {loaded && !error && skills.length === 0 ? (
         <p className="text-sm text-muted-foreground">No skills yet. Workflows this bot learns will appear here for replay.</p>

@@ -71,7 +71,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         if (tool == "browser_open" && Uri.TryCreate(Arg(args, "url"), UriKind.Absolute, out var uri))
         {
             await using var conn = await platform.Data.OpenConnectionAsync(ct);
-            await conn.ExecuteAsync("INSERT INTO seen_domains (bot_id, domain) VALUES (@bot, @domain) ON CONFLICT DO NOTHING", new { bot = botId, domain = uri.Host });
+            await conn.ExecuteAsync("INSERT INTO task_browser_origins (task_id, origin) VALUES (@task, @origin) ON CONFLICT DO NOTHING", new { task = taskId, origin = uri.GetLeftPart(UriPartial.Authority) });
         }
         return Results.Json(new { decision = "allow" });
     }
@@ -199,8 +199,8 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
                 return await DeleteFile(owner, botId, taskId, computer, args, ct);
             case "shell":
             {
-                var command = BotFs.RewriteCommand(botId, Arg(args, "command"));
-                var (code, stdout, stderr) = await Run(computer, botId, ["bash", "-lc", command], null, ct);
+                var command = Arg(args, "command");
+                var (code, stdout, stderr) = await Run(computer, botId, BotFs.ShellArgs(command), null, ct);
                 return new { exitCode = code, stdout = OutputRedactor.Redact(stdout), stderr = OutputRedactor.Redact(stderr) };
             }
             case "setup_env":
@@ -259,7 +259,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
             value = "";
             throw new ToolHalt("denied", "command contains a resolved secret");
         }
-        var (code, stdout, stderr) = await Run(computer, botId, ["bash", "-lc", BotFs.RewriteCommand(botId, command)], new Dictionary<string, string> { [envName] = value }, ct, [new SecretEnvBinding(envName, reference, botId.ToString())]);
+        var (code, stdout, stderr) = await Run(computer, botId, BotFs.ShellArgs(command), new Dictionary<string, string> { [envName] = value }, ct, [new SecretEnvBinding(envName, reference, botId.ToString())]);
         value = "";
         return new { exitCode = code, stdout, stderr };
     }
@@ -598,7 +598,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
     private async Task<PolicyDecision> Gate(Guid botId, Guid taskId, string tool, JsonElement args, bool approved, CancellationToken ct)
     {
         var owner = await OwnerOf(botId);
-        var seen = await Seen(botId);
+        var seen = await Seen(taskId);
         var policy = await SecurityRoutes.Load(platform, owner);
         var rules = await SecurityRoutes.DenyRules(platform);
         await using var conn = await platform.Data.OpenConnectionAsync(ct);
@@ -952,10 +952,10 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         return await conn.ExecuteScalarAsync<Guid>("SELECT owner_id FROM bots WHERE id=@id", new { id = botId });
     }
 
-    private async Task<HashSet<string>> Seen(Guid botId)
+    private async Task<HashSet<string>> Seen(Guid taskId)
     {
         await using var conn = await platform.Data.OpenConnectionAsync();
-        var rows = await conn.QueryAsync<string>("SELECT domain FROM seen_domains WHERE bot_id=@id", new { id = botId });
+        var rows = await conn.QueryAsync<string>("SELECT origin FROM task_browser_origins WHERE task_id=@id", new { id = taskId });
         return rows.ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 

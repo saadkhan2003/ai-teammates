@@ -1,0 +1,174 @@
+"""Native display routing retains per-bot identity, authentication and takeover fencing."""
+import asyncio
+import importlib.util
+import sys
+from pathlib import Path
+from unittest.mock import AsyncMock
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture
+def runtime(monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT / "services/computer/src"))
+    # The rest of the repository can import similarly named agent modules.
+    for name in ("workspace", "pure", "desktops", "browser", "fixtureserver"):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    from types import SimpleNamespace
+    import desktops
+    module = SimpleNamespace(manager=desktops.DesktopManager())
+    monkeypatch.setenv("COMPUTER_TOKEN", "unit-test-only")
+    monkeypatch.setenv("COMPUTER_SECOND_DISPLAY", "true")
+    monkeypatch.setenv("VNC_VIEW_PORT", "5900")
+    monkeypatch.setenv("VNC_RW_PORT", "6900")
+    monkeypatch.setenv("CDP_PORT", "9223")
+    return module
+
+
+def test_secondary_is_lazy_and_keeps_bot_identity(runtime, monkeypatch):
+    from desktops import Desktop
+    manager = runtime.manager
+    manager.desktops["bot-a"] = Desktop("bot-a", 1)
+    spawn = AsyncMock()
+    monkeypatch.setattr(manager, "_spawn_display", spawn)
+    assert manager.list_displays("bot-a")[1]["ready"] is False
+    async def run():
+        desk = await manager.select_display("bot-a", 2)
+        again = await manager.select_display("bot-a", 2)
+        assert desk is again
+        assert desk.bot_id == "bot-a" and desk.display == 2
+    asyncio.run(run())
+    assert spawn.await_count == 1
+    assert manager.list_displays("bot-a")[1]["ready"] is True
+    from desktops import view_port, rw_port, cdp_port
+    assert (view_port(1), view_port(2), rw_port(2), cdp_port(2)) == (5900, 5901, 6901, 9224)
+    monkeypatch.setenv("COMPUTER_SECOND_DISPLAY", "false")
+    assert len(manager.list_displays("bot-a")) == 1
+    with pytest.raises(ValueError):
+        asyncio.run(manager.select_display("bot-a", 2))
+
+
+def test_native_routes_require_auth_and_respect_human_control(runtime, monkeypatch):
+    pytest.importorskip("fastapi")
+    pytest.importorskip("uvicorn")
+    from fastapi.testclient import TestClient
+    spec = importlib.util.spec_from_file_location("computer_display_server", ROOT / "services/computer/src/server.py")
+    server = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(server)
+    server.manager = runtime.manager
+    runtime = server
+    from desktops import Desktop
+    runtime.manager.desktops["bot-a"] = Desktop("bot-a", 1)
+    select = AsyncMock(return_value=runtime.manager.desktops["bot-a"])
+    command = AsyncMock(return_value=b"png")
+    monkeypatch.setattr(runtime.manager, "select_display", select)
+    monkeypatch.setattr(runtime.manager, "native_command", command)
+    client = TestClient(runtime.app)
+    auth = {"Authorization": "Bearer unit-test-only"}
+    for endpoint in ("screenshot", "click", "type", "displays"):
+        assert client.post(f"/desktops/bot-a/{endpoint}", json={}).status_code == 401
+    response = client.post("/desktops/bot-a/screenshot?display=2", headers=auth)
+    assert response.status_code == 200 and response.content == b"png"
+    assert command.call_args.args[0:2] == ("bot-a", 2)
+    assert client.post("/desktops/bot-a/click?display=2", headers=auth, json={"x": 10, "y": 20}).status_code == 200
+    assert command.call_args.args[2] == ["xdotool", "mousemove", "--sync", "10", "20", "click", "1"]
+    assert client.post("/desktops/bot-a/type?display=2", headers=auth, json={"text": "hello"}).status_code == 200
+    assert command.call_args.args[3] == b"hello"
+    assert "hello" not in command.call_args.args[2]
+    assert client.post("/desktops/bot-a/click", headers=auth, json={"x": -1, "y": 2}).status_code == 400
+    assert client.post("/desktops/bot-a/screenshot?display=3", headers=auth).status_code == 422
+    assert client.post("/desktops/other/screenshot", headers=auth).status_code == 404
+    runtime.manager.desktops["bot-a"].holder = "human"
+    before = command.await_count
+    for endpoint in ("screenshot", "click", "type"):
+        assert client.post(f"/desktops/bot-a/{endpoint}?display=2", headers=auth, json={}).status_code == 423
+    assert command.await_count == before
+
+
+def test_holder_changes_cover_both_displays(runtime, monkeypatch):
+    from desktops import Desktop
+    primary = Desktop("bot-a", 1)
+    secondary = Desktop("bot-a", 2)
+    runtime.manager.desktops["bot-a"] = primary
+    runtime.manager.secondary["bot-a"] = secondary
+    calls = AsyncMock()
+    monkeypatch.setattr(runtime.manager, "_set_display_holder", calls)
+    asyncio.run(runtime.manager.set_holder("bot-a", "agent", 5))
+    assert [c.args for c in calls.call_args_list] == [(primary, "agent", 5), (secondary, "agent", 5)]
+
+
+def test_generated_secondary_services_use_same_uid_and_no_port_collision(runtime, monkeypatch, tmp_path):
+    import desktops
+    monkeypatch.setattr(desktops.workspace, "prepare", lambda bot: (31000, tmp_path / "bot", tmp_path / "home"))
+    scripts = {}
+    monkeypatch.setattr(desktops, "_write_service", lambda name, script, **kwargs: scripts.update({name: script}))
+    monkeypatch.setattr(desktops, "_rescan", AsyncMock())
+    monkeypatch.setattr(desktops, "_wait_x", AsyncMock())
+    monkeypatch.setattr(desktops.asyncio, "sleep", AsyncMock())
+    bot = "a" * 32
+    asyncio.run(runtime.manager._spawn_display(desktops.Desktop(bot, 2)))
+    assert "Xvfb :2" in scripts["xvfb-2"]
+    assert "-nolisten tcp" in scripts["xvfb-2"]
+    assert "--reuid 31000 --regid 31000 --clear-groups" in scripts["wm-2"]
+    assert "-rfbport 5901" in scripts["vncview-2"]
+    assert "-rfbport 6901" in scripts["vncrw-2"]
+    assert "-viewonly" in scripts["vncview-2"]
+
+
+def test_concurrent_bots_cannot_allocate_the_same_x_display(runtime, monkeypatch):
+    from desktops import Desktop
+    runtime.manager.desktops.update({"bot-a": Desktop("bot-a", 1), "bot-b": Desktop("bot-b", 3)})
+    async def spawn(desk):
+        await asyncio.sleep(0)
+    monkeypatch.setattr(runtime.manager, "_spawn_display", spawn)
+    async def run():
+        a, b = await asyncio.gather(runtime.manager.select_display("bot-a", 2), runtime.manager.select_display("bot-b", 2))
+        assert a.display != b.display
+        assert a.bot_id == "bot-a" and b.bot_id == "bot-b"
+    asyncio.run(run())
+
+
+def test_native_command_rechecks_control_after_display_start(runtime, monkeypatch):
+    from desktops import Desktop
+    primary = Desktop("bot-a", 1)
+    runtime.manager.desktops["bot-a"] = primary
+    async def spawn(desk):
+        primary.holder = "human"
+    monkeypatch.setattr(runtime.manager, "_spawn_display", spawn)
+    with pytest.raises(PermissionError):
+        asyncio.run(runtime.manager.native_command("bot-a", 2, ["xdotool", "type", "blocked"]))
+    assert runtime.manager.secondary["bot-a"].holder == "human"
+
+
+def test_secondary_status_returns_allocated_ports(runtime, monkeypatch):
+    import desktops
+    runtime.manager.desktops["bot-a"] = desktops.Desktop("bot-a", 1)
+    runtime.manager.secondary["bot-a"] = desktops.Desktop("bot-a", 4)
+    monkeypatch.setattr(desktops, "_port_open", lambda port: False)
+    assert runtime.manager.status("bot-a", 2)["viewPort"] == 5903
+    assert runtime.manager.status("bot-a", 2)["rwPort"] == 6903
+
+
+def test_native_process_uses_bot_uid_without_inheriting_service_credentials(runtime, monkeypatch, tmp_path):
+    import desktops
+    runtime.manager.desktops["bot-a"] = desktops.Desktop("bot-a", 1)
+    monkeypatch.setattr(desktops.workspace, "prepare", lambda bot: (31000, tmp_path, tmp_path / "home"))
+    called = {}
+    class Process:
+        returncode = 0
+        async def communicate(self, data):
+            called["stdin"] = data
+            return b"ok", b""
+    async def create(*argv, **kwargs):
+        called.update(argv=argv, **kwargs)
+        return Process()
+    monkeypatch.setattr(desktops.asyncio, "create_subprocess_exec", create)
+    monkeypatch.setenv("COMPUTER_TOKEN", "unit-test-only")
+    output = asyncio.run(runtime.manager.native_command("bot-a", 1, ["xdotool", "type", "--file", "-"], b"hello"))
+    assert output == b"ok"
+    assert called["argv"][:6] == ("setpriv", "--reuid", "31000", "--regid", "31000", "--clear-groups")
+    assert called["env"]["DISPLAY"] == ":1"
+    assert "COMPUTER_TOKEN" not in called["env"]
+    assert called["stdin"] == b"hello"

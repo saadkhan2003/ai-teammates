@@ -13,17 +13,11 @@ else
     IPT=iptables
 fi
 
-"$IPT" -N TEAMS-ISO 2>/dev/null || true
-"$IPT" -F TEAMS-ISO
-if ! "$IPT" -C DOCKER-USER -j TEAMS-ISO 2>/dev/null; then
-    "$IPT" -I DOCKER-USER 1 -j TEAMS-ISO
+# The guard image and the host checkout use the same pure rule generator.
+base=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ -f "$base/isolation-guard/rules.py" ]; then
+    policy="$base/isolation-guard/rules.py"
+else
+    policy="$base/rules.py"
 fi
-
-"$IPT" -A TEAMS-ISO -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
-"$IPT" -A TEAMS-ISO -s 172.30.28.10/32 -j RETURN
-"$IPT" -A TEAMS-ISO -s 172.30.28.11/32 -j RETURN
-for dest in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16; do
-    "$IPT" -A TEAMS-ISO -s 172.30.28.0/24 -d "$dest" -p tcp -j REJECT --reject-with tcp-reset
-    "$IPT" -A TEAMS-ISO -s 172.30.28.0/24 -d "$dest" -p udp -j DROP
-done
-"$IPT" -A TEAMS-ISO -j RETURN
+exec python3 "$policy" "$IPT"

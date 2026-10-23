@@ -112,17 +112,17 @@ def chrome_bin() -> str:
 
 def cdp_port(display: int) -> int:
     override = os.environ.get("CDP_PORT", "").strip()
-    return int(override) if override else 9222 + display
+    return int(override) + display - 1 if override else 9222 + display
 
 
 def view_port(display: int) -> int:
     override = os.environ.get("VNC_VIEW_PORT", "").strip()
-    return int(override) if override else 5900 + display
+    return int(override) + display - 1 if override else 5900 + display
 
 
 def rw_port(display: int) -> int:
     override = os.environ.get("VNC_RW_PORT", "").strip()
-    return int(override) if override else 6900 + display
+    return int(override) + display - 1 if override else 6900 + display
 
 
 async def _run(args: list[str]) -> None:
@@ -181,6 +181,8 @@ async def _wait_port(port: int, timeout: float = 30) -> None:
 class DesktopManager:
     def __init__(self) -> None:
         self.desktops: dict[str, Desktop] = {}
+        self.secondary: dict[str, Desktop] = {}
+        self._display_lock = asyncio.Lock()
         self.tokens = TokenBook()
         self._locks: dict[str, asyncio.Lock] = {}
 
@@ -211,9 +213,12 @@ class DesktopManager:
         async with self.lock_for(bot_id):
             current = self.desktops.get(bot_id)
             if current is None:
-                current = Desktop(bot_id=bot_id, display=display, name=name)
-                self.desktops[bot_id] = current
-                await self._spawn_display(current)
+                async with self._display_lock:
+                    if display < 1 or any(d.display == display for d in [*self.desktops.values(), *self.secondary.values()]):
+                        raise ValueError("display already assigned or invalid")
+                    current = Desktop(bot_id=bot_id, display=display, name=name)
+                    await self._spawn_display(current)
+                    self.desktops[bot_id] = current
             current.name = name or current.name
             if chrome and not current.chrome:
                 await self._spawn_chrome(current)
@@ -251,7 +256,7 @@ class DesktopManager:
             "  xdpyinfo -display \"$DISPLAY\" >/dev/null 2>&1 && break\n"
             "  i=$((i+1)); sleep 0.1\n"
             "done\n"
-            f"xsetroot -display :{n} -solid '#e7dccb' || true\n"
+            f"xsetroot -display :{n} -solid '#0b1220' || true\n"
             f"exec {ident} openbox --sm-disable\n",
         )
         _write_service(
@@ -345,8 +350,58 @@ class DesktopManager:
             await _wait_port(cdp_port(desk.display))
         desk.chrome = True
 
-    async def set_viewer(self, bot_id: str, up: bool) -> None:
-        desk = self.desktops[bot_id]
+    def list_displays(self, bot_id: str) -> list[dict]:
+        if bot_id not in self.desktops:
+            raise KeyError(bot_id)
+        width, height = geometry()
+        count = 2 if os.environ.get("COMPUTER_SECOND_DISPLAY", "true").lower() == "true" else 1
+        return [{"display": n, "width": width, "height": height,
+                 "ready": n == 1 or bot_id in self.secondary} for n in range(1, count + 1)]
+
+    async def select_display(self, bot_id: str, display: int = 1) -> Desktop:
+        if display not in (1, 2):
+            raise ValueError("display must be 1 or 2")
+        primary = self.desktops[bot_id]
+        if display == 1:
+            return primary
+        if os.environ.get("COMPUTER_SECOND_DISPLAY", "true").lower() != "true":
+            raise ValueError("second display is disabled")
+        async with self.lock_for(bot_id):
+            if bot_id not in self.secondary:
+                async with self._display_lock:
+                    used = {d.display for d in [*self.desktops.values(), *self.secondary.values()]}
+                    physical = next(n for n in range(2, 1000) if n not in used)
+                    desk = Desktop(bot_id, physical, primary.name, primary.holder, primary.epoch)
+                    await self._spawn_display(desk)
+                    desk.holder, desk.epoch = primary.holder, primary.epoch
+                    self.secondary[bot_id] = desk
+            return self.secondary[bot_id]
+
+    async def native_command(self, bot_id: str, display: int, argv: list[str], data: bytes | None = None) -> bytes:
+        import shlex
+        desk = await self.select_display(bot_id, display)
+        if self.desktops[bot_id].holder != "agent":
+            raise PermissionError("human holds control")
+        uid, _root, home = workspace.prepare(bot_id)
+        proc = await asyncio.create_subprocess_exec(
+            *shlex.split(_as_bot(uid)), *argv,
+            env={"DISPLAY": f":{desk.display}", "HOME": str(home), "PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"},
+            stdin=asyncio.subprocess.PIPE if data is not None else asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        try:
+            output, _ = await asyncio.wait_for(proc.communicate(data), timeout=15)
+        except BaseException:
+            proc.kill()
+            await proc.wait()
+            raise
+        if proc.returncode:
+            raise RuntimeError("desktop command failed")
+        return output
+
+    async def set_viewer(self, bot_id: str, up: bool, display: int = 1) -> None:
+        if not up and display == 1 and bot_id in self.secondary:
+            await self.set_viewer(bot_id, False, 2)
+        desk = await self.select_display(bot_id, display)
         service = f"/run/service/vncview-{desk.display}"
         if not Path(service).exists():
             raise RuntimeError("view vnc service missing")
@@ -373,7 +428,10 @@ class DesktopManager:
             await _svc("-d", term)
 
     async def set_holder(self, bot_id: str, holder: str, epoch: int) -> None:
-        desk = self.desktops[bot_id]
+        for desk in [self.desktops[bot_id], *([self.secondary[bot_id]] if bot_id in self.secondary else [])]:
+            await self._set_display_holder(desk, holder, epoch)
+
+    async def _set_display_holder(self, desk: Desktop, holder: str, epoch: int) -> None:
         desk.holder = holder
         desk.epoch = epoch
         service = f"/run/service/vncrw-{desk.display}"
@@ -398,8 +456,8 @@ class DesktopManager:
         import grp
         return grp.getgrnam("desk").gr_gid
 
-    def status(self, bot_id: str) -> dict:
-        desk = self.desktops.get(bot_id)
+    def status(self, bot_id: str, display: int = 1) -> dict:
+        desk = self.desktops.get(bot_id) if display == 1 else self.secondary.get(bot_id)
         if desk is None:
             return {"ready": False}
         rw_up = _port_open(rw_port(desk.display))

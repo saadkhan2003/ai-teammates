@@ -6,6 +6,7 @@
     <RootNamespace>Teammates.Api</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="../../services/agent/workspace_shell.py" LogicalName="workspace_shell.py" />
     <EmbeddedResource Include="stdio_wrap.py" LogicalName="stdio_wrap.py" />
     <EmbeddedResource Include="..\..\services\computer\src\workspace.py" Link="workspace.py" LogicalName="workspace.py" />
   </ItemGroup>

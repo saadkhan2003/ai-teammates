@@ -18,7 +18,7 @@ namespace Teammates.Compute;
 /// MVP compute implementation. Talks to the Docker engine through a restricted socket proxy.
 /// User computers never receive the socket.
 /// </summary>
-public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAuthority, IComputerDesktopControl, IAsyncDisposable
+public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAuthority, IComputerDisplays, IComputerDesktopControl, IAsyncDisposable
 {
     private const string ManagedLabel = "teammates.managed";
     private readonly DockerComputeOptions _options;
@@ -59,6 +59,7 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
 
     public DockerComputeProvider(DockerComputeOptions options, IExecSecretResolver secrets, ISnapshotStore snapshots, ILogger<DockerComputeProvider>? logger = null)
     {
+        _ = options.DnsServers(); // Reject invalid resolver configuration before creating resources.
         _options = options;
         _secrets = secrets;
         _snapshots = snapshots;
@@ -584,8 +585,19 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
         }
     }
 
+    public async Task<IReadOnlyList<ComputerDisplay>> ListDisplaysAsync(ComputerId id, CancellationToken ct)
+    {
+        var json = await ControlAsync(id, "/desktops/" + Uri.EscapeDataString(id.Value) + "/displays", "{}", ct);
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.GetProperty("displays").EnumerateArray().Select(x => new ComputerDisplay(
+            x.GetProperty("display").GetInt32(), x.GetProperty("width").GetInt32(),
+            x.GetProperty("height").GetInt32(), x.GetProperty("ready").GetBoolean())).ToArray();
+    }
+
     public async Task<DesktopSession> GetDesktopSessionAsync(ComputerId id, DesktopAccess access, CancellationToken ct)
     {
+        if (access.Display is < 1 or > 2 || (access.Display == 2 && !_options.SecondDisplay))
+            throw ComputeException.InvalidArgument("display must be enabled and be 1 or 2");
         var row = await DemandAsync(id, ct);
         await WakeAsync(row, ct);
         var computer = row.Computer;
@@ -603,18 +615,21 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
             epoch = row.Epoch;
         }
         var mode = access.Mode == DesktopMode.Unspecified ? DesktopMode.View : access.Mode;
+        string desktopState;
         if (mode == DesktopMode.Interactive)
-            await SetHolderAsync(id, "human", epoch, ct);
+            desktopState = await ControlAsync(id, "/desktops/" + Uri.EscapeDataString(id.Value) + "/control",
+                JsonSerializer.Serialize(new { holder = "human", epoch, display = access.Display }), ct);
         else
         {
-            await ControlAsync(id, "/desktops/" + Uri.EscapeDataString(id.Value) + "/viewer", "{\"up\":true}", ct);
+            desktopState = await ControlAsync(id, "/desktops/" + Uri.EscapeDataString(id.Value) + "/viewer", JsonSerializer.Serialize(new { up = true, display = access.Display }), ct);
             lock (_sync) row.ViewerRunning = true;
         }
         var ttl = access.Ttl <= TimeSpan.Zero ? TimeSpan.FromMinutes(2) : access.Ttl;
         lock (_sync) row.ViewerUntil = DateTimeOffset.UtcNow.Add(ttl);
         var token = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24)).ToLowerInvariant();
         var host = await HostOf(id, row, ct);
-        var port = mode == DesktopMode.Interactive ? 6900 : 5900;
+        using var state = JsonDocument.Parse(desktopState);
+        var port = state.RootElement.GetProperty(mode == DesktopMode.Interactive ? "rwPort" : "viewPort").GetInt32();
         var session = new DesktopSession("/vnc/websockify?token=" + token, token, mode, epoch, DateTimeOffset.UtcNow.Add(ttl), host, port);
         lock (_sync) _sessions[token] = (session, id);
         return session;
@@ -834,6 +849,7 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
                 ? new List<string> { profile + ":/data" }
                 : new List<string> { workspace + ":/data/workspace", profile + ":/data/profiles" },
             Tmpfs = new Dictionary<string, string> { ["/tmp"] = "rw,nosuid,nodev,size=64m" },
+            DNS = _options.DnsServers().ToList(),
             ShmSize = 64L * 1024 * 1024,
             SecurityOpt = security,
             ExtraHosts = new List<string>
@@ -861,6 +877,7 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
                 "COMPUTER_TOKEN=" + _options.ComputerToken,
                 "COMPUTER_NAME=" + (spec.Labels.TryGetValue("name", out var label) ? label : "Teammate"),
                 "DISPLAY_NUM=1",
+                "COMPUTER_SECOND_DISPLAY=" + (_options.SecondDisplay ? "true" : "false"),
                 // Chrome binds DevTools to 127.0.0.1. cdp-proxy publishes :9222.
                 "CDP_PORT=9223",
                 "VNC_VIEW_PORT=5900",

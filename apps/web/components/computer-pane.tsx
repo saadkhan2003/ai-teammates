@@ -589,15 +589,15 @@ export function ComputerPane({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const fillWindow = fullscreen || nativeFs;
+  const fillWindow = fullscreen || nativeFs || !compact;
   const view = (
     <div
       data-testid="computer-tab"
       data-vnc-state={vncState}
       data-desktop-mode={mode}
-      className={cn("flex min-w-0 flex-col gap-3", fullscreen && "fixed inset-0 z-[80] gap-2 overflow-hidden bg-background p-2")}
+      className={cn("flex min-h-0 min-w-0 flex-col gap-3", !compact && "h-full", fullscreen && "fixed inset-0 z-[80] gap-2 overflow-hidden bg-background")}
     >
-      <div ref={stageRef} data-testid="desktop-stage" className={cn("flex min-h-0 min-w-0 flex-col gap-2 bg-background", fullscreen && "h-full min-h-0 flex-1")}>
+      <div ref={stageRef} data-testid="desktop-stage" className={cn("flex min-h-0 min-w-0 flex-col gap-2 bg-background", !compact && "h-full min-h-0 flex-1")}>
         {fullscreen ? (
           <div className="flex shrink-0 items-center gap-2">
             <p className="text-sm font-medium">Computer</p>
@@ -665,9 +665,9 @@ export function ComputerPane({
           data-testid="desktop-frame"
           data-zoom={zoom.toFixed(2)}
           className={cn(
-            "relative mx-auto touch-none overflow-hidden bg-[#e7dccb]",
+            "relative touch-none overflow-hidden bg-background",
             fillWindow
-              ? "aspect-[4/3] h-[min(100cqh,calc(100cqw*3/4))] w-[min(100cqw,calc(100cqh*4/3))] max-w-full"
+              ? "h-full w-full"
               : "aspect-[4/3] w-full",
             compact && "cursor-pointer rounded-lg",
           )}

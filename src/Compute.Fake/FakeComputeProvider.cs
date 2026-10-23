@@ -10,6 +10,7 @@ public sealed class FakeComputeOptions
 {
     public int MaxComputers { get; init; } = 8;
     public string? AllowedOwner { get; init; }
+    public bool SecondDisplay { get; init; } = true;
     public bool DockerAvailable { get; set; } = true;
     public string Root { get; init; } = Path.Combine(Path.GetTempPath(), "teammates-fake-" + Guid.NewGuid().ToString("n"));
 }
@@ -17,7 +18,7 @@ public sealed class FakeComputeOptions
 /// <summary>
 /// In-memory computers with a real local process for Exec. Used by caller tests and the contract suite.
 /// </summary>
-public sealed class FakeComputeProvider : IComputeProvider, IDesktopSessionAuthority, IComputerDesktopControl
+public sealed class FakeComputeProvider : IComputeProvider, IDesktopSessionAuthority, IComputerDisplays, IComputerDesktopControl
 {
     private readonly FakeComputeOptions _options;
     private readonly IExecSecretResolver _secrets;
@@ -28,6 +29,7 @@ public sealed class FakeComputeProvider : IComputeProvider, IDesktopSessionAutho
     private readonly Dictionary<string, Mutable> _computers = new();
     private readonly Dictionary<string, string> _tombstones = new();
     private readonly Dictionary<string, DesktopSession> _sessions = new();
+    private readonly HashSet<string> _secondDisplays = new();
     private readonly ConcurrentDictionary<string, byte> _execOnce = new();
 
     public FakeComputeProvider(FakeComputeOptions options, IExecSecretResolver secrets, ISnapshotStore snapshots)
@@ -93,6 +95,7 @@ public sealed class FakeComputeProvider : IComputeProvider, IDesktopSessionAutho
             if (_idempotency.TryGet(key, hash, out cached)) return cached;
             if (options.Grace > TimeSpan.Zero) await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(options.Grace.TotalMilliseconds, 1500)), ct);
             var computer = Mutate(id, current => current with { State = ComputerState.Stopped, UpdatedAt = DateTimeOffset.UtcNow }, static s => s is not ComputerState.Deleted and not ComputerState.Deleting);
+            lock (_sync) _secondDisplays.Remove(id.Value);
             _idempotency.Remember(key, hash, computer);
             return computer;
         }
@@ -106,6 +109,7 @@ public sealed class FakeComputeProvider : IComputeProvider, IDesktopSessionAutho
         {
             if (_idempotency.TryGet(key, hash, out cached)) return cached;
             var computer = Mutate(id, current => current with { State = ComputerState.Running, UpdatedAt = DateTimeOffset.UtcNow }, static s => s is not ComputerState.Deleted and not ComputerState.Deleting);
+            lock (_sync) _secondDisplays.Remove(id.Value);
             _idempotency.Remember(key, hash, computer);
             return computer;
         }
@@ -120,6 +124,7 @@ public sealed class FakeComputeProvider : IComputeProvider, IDesktopSessionAutho
             if (_idempotency.TryGet(key, hash, out cached)) return cached;
             var image = string.IsNullOrWhiteSpace(options.ImageRef) ? null : options.ImageRef;
             var computer = Mutate(id, current => current with { State = ComputerState.Running, ImageRef = image ?? current.ImageRef, UpdatedAt = DateTimeOffset.UtcNow, HostId = "fake-new" }, static s => s is not ComputerState.Deleted and not ComputerState.Deleting);
+            lock (_sync) _secondDisplays.Remove(id.Value);
             _idempotency.Remember(key, hash, computer);
             return computer;
         }
@@ -142,6 +147,7 @@ public sealed class FakeComputeProvider : IComputeProvider, IDesktopSessionAutho
                 if (!_computers.Remove(id.Value, out var existing))
                     throw ComputeException.NotFound("computer not found");
                 _tombstones[id.Value] = existing.Computer.OwnerId;
+                _secondDisplays.Remove(id.Value);
             }
             if (!options.RetainVolumes)
             {
@@ -273,8 +279,19 @@ public sealed class FakeComputeProvider : IComputeProvider, IDesktopSessionAutho
         _execOnce.TryAdd(key.Value, 1);
     }
 
+    public async Task<IReadOnlyList<ComputerDisplay>> ListDisplaysAsync(ComputerId id, CancellationToken ct)
+    {
+        _ = await GetComputerAsync(id, ct);
+        lock (_sync)
+            return _options.SecondDisplay
+                ? new[] { new ComputerDisplay(1, 1024, 768, true), new ComputerDisplay(2, 1024, 768, _secondDisplays.Contains(id.Value)) }
+                : new[] { new ComputerDisplay(1, 1024, 768, true) };
+    }
+
     public Task<DesktopSession> GetDesktopSessionAsync(ComputerId id, DesktopAccess access, CancellationToken ct)
     {
+        if (access.Display is < 1 or > 2 || (access.Display == 2 && !_options.SecondDisplay))
+            throw ComputeException.InvalidArgument("display must be enabled and be 1 or 2");
         var computer = GetComputerAsync(id, ct).Result;
         if (computer.State is not (ComputerState.Running or ComputerState.Idle))
             throw ComputeException.FailedPrecondition("desktop requires a running computer");
@@ -293,8 +310,12 @@ public sealed class FakeComputeProvider : IComputeProvider, IDesktopSessionAutho
         }
         var ttl = access.Ttl <= TimeSpan.Zero ? TimeSpan.FromMinutes(2) : access.Ttl;
         var token = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24)).ToLowerInvariant();
-        var session = new DesktopSession("/vnc/websockify?token=" + token, token, access.Mode == DesktopMode.Unspecified ? DesktopMode.View : access.Mode, epoch, DateTimeOffset.UtcNow.Add(ttl), "fake", access.Mode == DesktopMode.Interactive ? 6900 : 5900);
-        lock (_sync) _sessions[token] = session with { };
+        var session = new DesktopSession("/vnc/websockify?token=" + token, token, access.Mode == DesktopMode.Unspecified ? DesktopMode.View : access.Mode, epoch, DateTimeOffset.UtcNow.Add(ttl), "fake", (access.Mode == DesktopMode.Interactive ? 6900 : 5900) + access.Display - 1);
+        lock (_sync)
+        {
+            _sessions[token] = session with { };
+            if (access.Display == 2) _secondDisplays.Add(id.Value);
+        }
         _sessionsHold(id, session);
         return Task.FromResult(session);
     }

@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Query
 from fastapi.responses import Response
 import workspace
 from browser import BrowserHub, run_command
@@ -132,6 +132,67 @@ async def ensure_desktop(body: dict, _: None = Depends(require_token)):
     return manager.status(desk.bot_id)
 
 
+async def selected_display(bot_id: str, display: int):
+    try:
+        return await manager.select_display(bot_id, display)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="desktop not ready") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+async def native_command(bot_id: str, display: int, argv: list[str], data: bytes | None = None):
+    try:
+        return await manager.native_command(bot_id, display, argv, data)
+    except PermissionError as exc:
+        raise HTTPException(status_code=423, detail="human holds control") from exc
+
+
+@app.get("/desktops/{bot_id}/displays")
+@app.post("/desktops/{bot_id}/displays")
+async def list_displays(bot_id: str, _: None = Depends(require_token)):
+    try:
+        return {"displays": manager.list_displays(bot_id)}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="desktop not ready") from exc
+
+
+@app.post("/desktops/{bot_id}/screenshot")
+async def desktop_screenshot(bot_id: str, display: int = Query(1, ge=1, le=2), _: None = Depends(require_token)):
+    agent_allowed(bot_id)
+    await selected_display(bot_id, display)
+    png = await native_command(bot_id, display, ["import", "-window", "root", "png:-"])
+    return Response(content=png, media_type="image/png")
+
+
+@app.post("/desktops/{bot_id}/click")
+async def desktop_click(bot_id: str, body: dict, display: int = Query(1, ge=1, le=2), _: None = Depends(require_token)):
+    agent_allowed(bot_id)
+    await selected_display(bot_id, display)
+    from desktops import geometry
+    width, height = geometry()
+    try:
+        x, y, button = int(body["x"]), int(body["y"]), int(body.get("button", 1))
+        if not (0 <= x < width and 0 <= y < height and button in (1, 2, 3)):
+            raise ValueError()
+    except (KeyError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail="invalid coordinates or button") from exc
+    await native_command(bot_id, display, ["xdotool", "mousemove", "--sync", str(x), str(y), "click", str(button)])
+    return {"ok": True}
+
+
+@app.post("/desktops/{bot_id}/type")
+async def desktop_type(bot_id: str, body: dict, display: int = Query(1, ge=1, le=2), _: None = Depends(require_token)):
+    agent_allowed(bot_id)
+    await selected_display(bot_id, display)
+    text = body.get("text", "")
+    if not isinstance(text, str) or len(text) > 10000:
+        raise HTTPException(status_code=400, detail="invalid text")
+    # stdin keeps typed text out of process arguments and logs.
+    await native_command(bot_id, display, ["xdotool", "type", "--clearmodifiers", "--delay", "1", "--file", "-"], text.encode())
+    return {"ok": True}
+
+
 @app.get("/desktops/{bot_id}")
 async def desktop_status(bot_id: str, _: None = Depends(require_token)):
     return manager.status(bot_id)
@@ -146,14 +207,16 @@ async def restart_chrome(bot_id: str, _: None = Depends(require_token)):
 
 @app.post("/desktops/{bot_id}/viewer")
 async def set_viewer(bot_id: str, body: dict, _: None = Depends(require_token)):
-    await manager.set_viewer(bot_id, bool(body.get("up", True)))
-    return manager.status(bot_id)
+    await selected_display(bot_id, int(body.get("display", 1)))
+    await manager.set_viewer(bot_id, bool(body.get("up", True)), int(body.get("display", 1)))
+    return manager.status(bot_id, int(body.get("display", 1)))
 
 
 @app.post("/desktops/{bot_id}/control")
 async def set_control(bot_id: str, body: dict, _: None = Depends(require_token)):
+    await selected_display(bot_id, int(body.get("display", 1)))
     await manager.set_holder(bot_id, str(body["holder"]), int(body["epoch"]))
-    return manager.status(bot_id)
+    return manager.status(bot_id, int(body.get("display", 1)))
 
 
 @app.post("/desktops/{bot_id}/vnc-tokens")

@@ -202,7 +202,9 @@ public static class OutboundLog
             """
             INSERT INTO outbound_actions (idempotency_key, owner_user_id, bot_id, task_id, kind, tool, status, request)
             VALUES (@key, @owner, @bot, @task, @kind, @tool, 'pending', CAST(@request AS jsonb))
-            ON CONFLICT (idempotency_key) DO NOTHING
+            ON CONFLICT (idempotency_key) DO UPDATE SET status='pending', finished_at=NULL, retry_attempts=outbound_actions.retry_attempts+1,
+                request=outbound_actions.request - 'retry_safe'
+            WHERE outbound_actions.status='failed' AND outbound_actions.request->>'retry_safe'='true' AND outbound_actions.retry_attempts<4
             RETURNING id
             """,
             new { key, owner, bot = botId, task = taskId, kind, tool, request = requestJson });
@@ -304,7 +306,14 @@ public static class OutboundLog
         try
         {
             var output = await execute();
-            await Finish(conn, taskId, tool, request, JsonSerializer.Serialize(output));
+            var outputJson = JsonSerializer.Serialize(output);
+            using var parsed = JsonDocument.Parse(outputJson);
+            var result = parsed.RootElement;
+            if (RetryContract.CanRetry(result))
+            {
+                await conn.ExecuteAsync("UPDATE outbound_actions SET status='failed',request=jsonb_set(request,'{retry_safe}','true'::jsonb),result=CAST(@outputJson AS jsonb),finished_at=now() WHERE idempotency_key=@key AND status='pending'", new { key = Key(taskId, tool, request), outputJson });
+            }
+            else await Finish(conn, taskId, tool, request, outputJson);
             return output;
         }
         catch
@@ -631,4 +640,12 @@ public static class YamlJson
             return JsonValue.Create(text);
         }
     }
+}
+
+public static class RetryContract
+{
+    public static bool CanRetry(JsonElement result) => result.ValueKind == JsonValueKind.Object
+        && result.TryGetProperty("retrySafe", out var safe) && safe.ValueKind == JsonValueKind.True
+        && result.TryGetProperty("status", out var status) && status.ValueKind == JsonValueKind.Number && status.TryGetInt32(out var code)
+        && code is 408 or 429 or 500 or 502 or 503 or 504;
 }

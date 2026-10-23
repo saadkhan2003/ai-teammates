@@ -28,11 +28,11 @@
   --chart-3: #737373;
   --chart-4: #3a3a3a;
   --chart-5: #2a2a2a;
-  --radius: 8px;
-  --radius-button: 8px;
-  --radius-input: 8px;
-  --radius-card: 14px;
-  --radius-bubble: 18px;
+  --radius: 6px;
+  --radius-button: 6px;
+  --radius-input: 6px;
+  --radius-card: 6px;
+  --radius-bubble: 6px;
   --sidebar: #141414;
   --sidebar-foreground: #f5f5f5;
   --sidebar-primary: #f5f5f5;
@@ -136,5 +136,5 @@ html.light {
   width: 100%;
   flex-direction: column;
   background: var(--background);
-  padding: 8px;
+  padding: 0;
 }

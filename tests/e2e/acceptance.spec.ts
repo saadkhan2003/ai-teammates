@@ -499,6 +499,8 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
     const credential = page.getByTestId("approval-card").filter({ hasText: "type_secret" });
     await expect(credential).toBeVisible({ timeout: 90_000 });
     await credential.getByTestId("approve-domain").click();
+    await expect(credential).toHaveAttribute("data-decided", "true");
+    await expect(credential.getByTestId("approve-once")).toHaveCount(0);
     const typed = await expectDone(page, botId, loginTask, 180_000);
     expect(resultText(typed).toLowerCase()).toContain("typed");
     const injected = await expectDone(page, botId, await assignTracked(page, botId, INJECT), 180_000);
