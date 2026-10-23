@@ -26,7 +26,7 @@ type DenyRule = {
   builtin?: boolean;
 };
 
-type NetworkPolicyResponse = { mode?: "allow_all" | "defaults_with_team" | "team_only"; entries?: string[]; groups?: string[]; locked?: boolean };
+type NetworkPolicyResponse = { mode?: "allow_all" | "defaults_with_team" | "team_only"; entries?: string[]; groups?: string[]; locked?: boolean; failClosed?: boolean };
 
 export default function PolicySettingsPage() {
   const [classes, setClasses] = useState<Record<string, string>>({});
@@ -41,6 +41,7 @@ export default function PolicySettingsPage() {
   const [networkEntries, setNetworkEntries] = useState("");
   const [networkGroups, setNetworkGroups] = useState("");
   const [networkLocked, setNetworkLocked] = useState(false);
+  const [networkFailClosed, setNetworkFailClosed] = useState(false);
 
   async function load() {
     const policy = await api<PolicyResponse>("/api/policy");
@@ -49,6 +50,7 @@ export default function PolicySettingsPage() {
     setNetworkEntries((network.entries ?? []).join("\n"));
     setNetworkGroups((network.groups ?? []).join("\n"));
     setNetworkLocked(Boolean(network.locked));
+    setNetworkFailClosed(Boolean(network.failClosed));
     setClasses(policy.classes ?? {});
     setAssist(Boolean(policy.modelAssist));
     const me = await api<{ role?: string }>("/api/auth/me");
@@ -88,6 +90,7 @@ export default function PolicySettingsPage() {
           entries: networkEntries.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
           groups: networkGroups.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
           locked: networkLocked,
+          failClosed: networkFailClosed,
         }),
       });
       toast.success("Network policy saved.");
@@ -184,6 +187,10 @@ export default function PolicySettingsPage() {
             <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
               <div><p className="text-sm">Lock policy</p><p className="text-xs text-muted-foreground">When locked, group entries are ignored.</p></div>
               <Switch checked={networkLocked} onCheckedChange={setNetworkLocked} aria-label="Lock network policy" />
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
+              <div><p className="text-sm">Fail closed when desktop route is lost</p><p className="text-xs text-muted-foreground">After the 90 second reconnect grace period, block outbound traffic instead of using the server route.</p></div>
+              <Switch checked={networkFailClosed} onCheckedChange={setNetworkFailClosed} aria-label="Fail closed for egress" />
             </div>
           </CardContent>
         </Card>

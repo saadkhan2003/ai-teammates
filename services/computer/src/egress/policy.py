@@ -19,7 +19,7 @@ class NetworkPolicy:
     locked: bool = False
     version: int = 0
 
-    def __init__(self, mode="team_only", entries=(), locked=False, version=0):
+    def __init__(self, mode="team_only", entries=(), locked=False, version=0, fail_closed=False):
         if mode not in {"allow_all", "defaults_with_team", "team_only"}:
             raise ValueError("invalid network policy mode")
         if isinstance(entries, (str, bytes)) or not isinstance(entries, (list, tuple)):
@@ -44,6 +44,7 @@ class NetworkPolicy:
         object.__setattr__(self, "entries", tuple(dict.fromkeys(values)))
         object.__setattr__(self, "locked", bool(locked))
         object.__setattr__(self, "version", int(version))
+        object.__setattr__(self, "fail_closed", bool(fail_closed))
 
     def with_group_entries(self, entries):
         return self if self.locked else NetworkPolicy(self.mode, (*self.entries, *entries), False, self.version)
@@ -103,7 +104,7 @@ class PolicyFile:
         self.poll_seconds = min(max(float(poll_seconds), 0.25), 60)
         self._stat = None
         self._checked = 0.0
-        self.policy = NetworkPolicy()
+        self.policy = None
 
     def current(self):
         now = time.monotonic()
@@ -117,13 +118,14 @@ class PolicyFile:
                 if stat.st_size > 64_000:
                     raise ValueError("network policy file too large")
                 raw = json.loads(self.path.read_text(encoding="utf-8"))
-                if not isinstance(raw, dict) or int(raw.get("version", 0)) < self.policy.version:
+                if not isinstance(raw, dict) or (self.policy is not None and int(raw.get("version", 0)) < self.policy.version):
                     raise ValueError("stale network policy version")
-                self.policy = NetworkPolicy(raw.get("mode", "team_only"), raw.get("entries", []), raw.get("locked", False), raw.get("version", 0))
+                candidate = NetworkPolicy(raw.get("mode", "team_only"), raw.get("entries", []), raw.get("locked", False), raw.get("version", 0), raw.get("failClosed", False))
+                self.policy = candidate
                 self._stat = marker
         except FileNotFoundError:
-            self.policy = NetworkPolicy()
+            pass
         except (OSError, ValueError, json.JSONDecodeError):
-            # Invalid or unreadable policy must never retain a permissive snapshot.
-            self.policy = NetworkPolicy("team_only")
+            # Keep the last known-good policy. No snapshot means callers fail closed.
+            pass
         return self.policy

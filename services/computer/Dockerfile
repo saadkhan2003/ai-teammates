@@ -50,7 +50,8 @@ RUN groupadd --system desk \
     && /opt/desk/venv/bin/pip install --no-cache-dir \
         fastapi==0.115.6 \
         uvicorn==0.34.0 \
-        playwright==1.49.1
+        playwright==1.49.1 \
+    && /opt/desk/venv/bin/pip install --no-cache-dir websockets==15.0.1
 
 COPY s6/s6-rc.d/ /etc/s6-overlay/s6-rc.d/
 COPY s6/user-bundles.d/ /etc/s6-overlay/user-bundles.d/

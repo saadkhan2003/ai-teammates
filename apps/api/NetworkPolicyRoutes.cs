@@ -27,6 +27,7 @@ public static class NetworkPolicyRoutes
         {
             var user = await User(ctx, platform);
             if (user is null) return Results.Unauthorized();
+            if (ctx.Request.ContentLength is > 256_000) return Results.BadRequest(new { error = "network policy request too large" });
             if (body.ValueKind != JsonValueKind.Object) return Results.BadRequest(new { error = "invalid network policy" });
             try
             {
@@ -40,11 +41,12 @@ public static class NetworkPolicyRoutes
                 var entries = Strings(body, "entries");
                 var groups = Strings(body, "groups");
                 var locked = body.TryGetProperty("locked", out var lockedJson) && lockedJson.ValueKind == JsonValueKind.True;
+                var failClosed = body.TryGetProperty("failClosed", out var failClosedJson) && failClosedJson.ValueKind == JsonValueKind.True;
                 var max = MaxEntries(ctx.RequestServices.GetRequiredService<IConfiguration>());
                 if (entries.Count + groups.Count > max) throw new ArgumentException($"network policy accepts at most {max} entries");
                 IEnumerable<string> effective = locked ? entries : entries.Concat(groups);
                 _ = new NetworkPolicy(mode, effective);
-                var result = new { mode = modeText, entries, groups, locked, version = Version(currentText) + 1, updatedAt = DateTimeOffset.UtcNow };
+                var result = new { mode = modeText, entries, groups, locked, failClosed, version = Version(currentText) + 1, updatedAt = DateTimeOffset.UtcNow };
                 var root = JsonNode.Parse(currentText ?? "{}") as JsonObject ?? new JsonObject();
                 root["networkPolicy"] = JsonSerializer.SerializeToNode(result);
                 var serialized = root.ToJsonString();
@@ -64,7 +66,9 @@ public static class NetworkPolicyRoutes
         });
     }
 
-    private static object Read(string? settings)
+    private static object Read(string? settings) => ReadPolicy(settings);
+
+    public static object ReadPolicy(string? settings)
     {
         try
         {

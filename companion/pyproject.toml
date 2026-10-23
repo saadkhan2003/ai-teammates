@@ -2,7 +2,8 @@
 name = "teammates-companion"
 version = "0.4.0"
 requires-python = ">=3.10"
-description = "A stdlib-only Teammates device companion"
+description = "Teammates device companion with optional desktop egress relay"
+dependencies = ["websockets==15.0.1"]
 
 [project.scripts]
 teammates-companion = "teammates_companion:main"

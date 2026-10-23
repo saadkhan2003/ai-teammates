@@ -9,7 +9,7 @@ namespace Teammates.Api;
 /// <summary>Owner-scoped, authenticated byte relay for a computer proxy and its paired device.</summary>
 public static class EgressRelay
 {
-    private sealed class Pair { public WebSocket? Computer; public WebSocket? Companion; public readonly TaskCompletionSource Ready = new(TaskCreationOptions.RunContinuationsAsynchronously); }
+    private sealed class Pair { public WebSocket? Computer; public WebSocket? Companion; public Task? RelayTask; public readonly TaskCompletionSource Ready = new(TaskCreationOptions.RunContinuationsAsynchronously); }
     private static readonly ConcurrentDictionary<Guid, Pair> Pairs = new();
 
     public static bool TokenMatches(string expected, string presented)
@@ -33,6 +33,7 @@ public static class EgressRelay
         {
             if (!ctx.WebSockets.IsWebSocketRequest || role is not ("computer" or "companion")) { ctx.Response.StatusCode = 400; return; }
             Guid owner;
+            var relayComputerId = computerId;
             await using (var conn = await platform.Data.OpenConnectionAsync())
             {
                 if (role == "computer")
@@ -50,12 +51,13 @@ public static class EgressRelay
                     var row = await conn.QuerySingleOrDefaultAsync<(Guid Owner, string Hash)>("SELECT owner_id, token_hash FROM devices WHERE id=@id", new { id = parsed });
                     if (row.Owner == Guid.Empty || !TokenHashMatches(row.Hash, token)) { ctx.Response.StatusCode = 401; return; }
                     owner = row.Owner;
-                    var computerOwner = await conn.ExecuteScalarAsync<Guid?>("SELECT user_id FROM user_computers WHERE computer_id=@computerId", new { computerId });
-                    if (computerOwner != owner) { ctx.Response.StatusCode = 403; return; }
+                    var ownedComputer = await conn.ExecuteScalarAsync<Guid?>("SELECT computer_id FROM user_computers WHERE user_id=@owner ORDER BY created_at DESC LIMIT 1", new { owner });
+                    if (ownedComputer is null) { ctx.Response.StatusCode = 404; return; }
+                    relayComputerId = ownedComputer.Value;
                 }
             }
             using var socket = await ctx.WebSockets.AcceptWebSocketAsync();
-            var pair = Pairs.GetOrAdd(computerId, _ => new Pair());
+            var pair = Pairs.GetOrAdd(relayComputerId, _ => new Pair());
             lock (pair)
             {
                 if (role == "computer") pair.Computer = socket;
@@ -65,18 +67,19 @@ public static class EgressRelay
             try
             {
                 await pair.Ready.Task.WaitAsync(TimeSpan.FromSeconds(90), ctx.RequestAborted);
-                if (role == "computer" && pair.Companion is { } companion)
+                Task relayTask;
+                lock (pair)
                 {
-                    await Task.WhenAny(Relay(socket, companion, ctx.RequestAborted), Relay(companion, socket, ctx.RequestAborted));
+                    relayTask = pair.RelayTask ??= RelayBoth(pair.Computer!, pair.Companion!, ctx.RequestAborted);
                 }
-                else while (socket.State == WebSocketState.Open) await Task.Delay(TimeSpan.FromSeconds(1), ctx.RequestAborted);
+                await relayTask;
             }
             catch (OperationCanceledException) { }
             catch (WebSocketException) { }
             finally
             {
                 lock (pair) { if (role == "computer") pair.Computer = null; else pair.Companion = null; }
-                if (pair.Computer is null && pair.Companion is null) Pairs.TryRemove(computerId, out _);
+                if (pair.Computer is null && pair.Companion is null) Pairs.TryRemove(relayComputerId, out _);
             }
         });
     }
@@ -96,5 +99,12 @@ public static class EgressRelay
             if (result.MessageType == WebSocketMessageType.Close) break;
             await destination.SendAsync(buffer.AsMemory(0, result.Count), result.MessageType, result.EndOfMessage, ct);
         }
+    }
+
+    private static async Task RelayBoth(WebSocket computer, WebSocket companion, CancellationToken ct)
+    {
+        await Task.WhenAny(Relay(computer, companion, ct), Relay(companion, computer, ct));
+        try { if (computer.State == WebSocketState.Open) await computer.CloseAsync(WebSocketCloseStatus.NormalClosure, "relay closed", CancellationToken.None); } catch (WebSocketException) { }
+        try { if (companion.State == WebSocketState.Open) await companion.CloseAsync(WebSocketCloseStatus.NormalClosure, "relay closed", CancellationToken.None); } catch (WebSocketException) { }
     }
 }

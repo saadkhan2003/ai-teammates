@@ -9,12 +9,16 @@ import os
 import re
 import socket
 import time
+import urllib.error
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import box_contract
 from egress.policy import NetworkPolicy, PolicyFile
 from egress.ssrf import is_blocked_ip, resolve_public
+from egress.relay import RouteState
+from egress.control_plane import EgressControlPlane
+from egress.relay_tunnel import RelayTunnelManager
 
 MAX_HEADER = 16_384
 _AUTH_TOKEN = re.compile(r"^[A-Za-z0-9_-]{22,256}$")
@@ -28,7 +32,7 @@ def valid_attach_token(expected: str, presented: str) -> bool:
 def _audit(event: str, host: str, port: int, allowed: bool, reason: str = "") -> None:
     path = os.environ.get("EGRESS_AUDIT_PATH", "/tmp/egress-audit.jsonl")
     # Host is bounded and control characters are rejected before reaching here.
-    record = {"ts": int(time.time()), "event": event, "host": host[:253], "port": port,
+    record = {"ts": int(time.time()), "event": event, "host": safe_audit_destination(host), "port": port,
               "allowed": allowed, "reason": reason[:120]}
     try:
         fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -36,6 +40,17 @@ def _audit(event: str, host: str, port: int, allowed: bool, reason: str = "") ->
             stream.write(json.dumps(record, separators=(",", ":")) + "\n")
     except OSError:
         pass
+
+
+def safe_audit_destination(value: str) -> str:
+    """Keep audit destinations to a host only, stripping credentials, paths and query data."""
+    try:
+        candidate = value if "://" in value else "//" + value
+        parsed = urlsplit(candidate)
+        host = parsed.hostname or "invalid-host"
+        return host[:253].replace("\r", "").replace("\n", "")
+    except (ValueError, UnicodeError):
+        return "invalid-host"
 
 
 def _parse_authority(value: str) -> tuple[str, int]:
@@ -73,10 +88,27 @@ async def _copy(reader, writer):
 
 
 class ConnectProxy:
-    def __init__(self, policy=None, fail_closed_path=None):
-        self.policy = policy or NetworkPolicy()
+    def __init__(self, policy=None, fail_closed_path=None, route_state=None, control_plane=None, relay_manager=None):
+        self.policy = policy
         self.policy_file = PolicyFile(os.environ.get("EGRESS_POLICY_FILE", "/run/egress/policy.json"))
         self.fail_closed_path = Path(fail_closed_path or box_contract.PATHS["egressFailClosed"])
+        self.route_state = route_state or RouteState(fail_closed=self.fail_closed_path.exists())
+        self.control_plane = control_plane
+        self.relay_manager = relay_manager
+
+    def current_policy(self):
+        loaded = self.policy_file.current()
+        if loaded is not None:
+            self.route_state.fail_closed = bool(getattr(loaded, "fail_closed", self.route_state.fail_closed))
+        return loaded if loaded is not None else self.policy
+
+    async def decision(self, host, port, allowed, reason=""):
+        _audit("connect", host, port, allowed, reason)
+        if self.control_plane:
+            try:
+                await asyncio.to_thread(self.control_plane.audit, safe_audit_destination(host), port, allowed, reason)
+            except (OSError, ValueError, urllib.error.URLError):
+                pass
 
     async def handle(self, client_reader, client_writer):
         peer = client_writer.get_extra_info("peername")
@@ -113,36 +145,50 @@ class ConnectProxy:
                     authority += f":{port}"
                 safe_headers.extend([f"Host: {authority}", "Connection: close"])
                 forward_header = (f"{parts[0]} {path} {parts[2]}\r\n" + "\r\n".join(safe_headers) + "\r\n\r\n").encode("latin-1")
-            policy = self.policy_file.current() if self.policy_file.path.exists() else self.policy
+            policy = self.current_policy()
+            if policy is None:
+                await self.decision(host, port, False, "network policy unavailable")
+                await self._reply(client_writer, 503, "network policy unavailable")
+                return
             if not policy.allows(host, port):
-                _audit("connect", host, port, False, policy.block_reason(host))
+                await self.decision(host, port, False, policy.block_reason(host))
                 await self._reply(client_writer, 403, policy.block_reason(host))
                 return
-            if self.fail_closed_path.exists():
-                _audit("connect", host, port, False, "desktop route unavailable")
+            route = self.route_state.mode()
+            if route == "blocked":
+                await self.decision(host, port, False, "desktop route unavailable")
                 await self._reply(client_writer, 503, "egress route unavailable")
                 return
-            try:
-                addresses = await resolve_public(host, port)
-            except (ValueError, PermissionError, OSError):
-                _audit("connect", host, port, False, "destination address is blocked")
-                await self._reply(client_writer, 403, "destination address is blocked")
-                return
             upstream_reader = upstream_writer = None
-            for family, socktype, proto, _, sockaddr in addresses:
-                # Do not resolve the hostname a second time during connect.
-                sock = socket.socket(family, socktype, proto)
-                sock.setblocking(False)
+            if route == "desktop":
                 try:
-                    await asyncio.get_running_loop().sock_connect(sock, sockaddr)
-                    upstream_reader, upstream_writer = await asyncio.open_connection(sock=sock)
-                    break
-                except OSError:
-                    sock.close()
+                    if self.relay_manager is None:
+                        raise ConnectionError("relay unavailable")
+                    upstream_reader, upstream_writer = await self.relay_manager.open(host, port)
+                except (ConnectionError, OSError, TimeoutError):
+                    await self._reply(client_writer, 503, "desktop egress route unavailable")
+                    return
+            else:
+                try:
+                    addresses = await resolve_public(host, port)
+                except (ValueError, PermissionError, OSError):
+                    await self.decision(host, port, False, "destination address is blocked")
+                    await self._reply(client_writer, 403, "destination address is blocked")
+                    return
+                for family, socktype, proto, _, sockaddr in addresses:
+                    # Resolve once and connect only to the checked address.
+                    sock = socket.socket(family, socktype, proto)
+                    sock.setblocking(False)
+                    try:
+                        await asyncio.get_running_loop().sock_connect(sock, sockaddr)
+                        upstream_reader, upstream_writer = await asyncio.open_connection(sock=sock)
+                        break
+                    except OSError:
+                        sock.close()
             if upstream_writer is None:
                 await self._reply(client_writer, 502, "upstream unavailable")
                 return
-            _audit("connect", host, port, True)
+            await self.decision(host, port, True)
             client_writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n" if is_connect else forward_header)
             await client_writer.drain()
             await asyncio.gather(_copy(client_reader, upstream_writer), _copy(upstream_reader, client_writer))
@@ -168,7 +214,21 @@ class ConnectProxy:
 async def serve():
     import logging
     logging.basicConfig(level=logging.INFO)
-    proxy = ConnectProxy()
+    control = EgressControlPlane()
+    route_state = RouteState()
+    relay = RelayTunnelManager(route_state=route_state)
+    proxy = ConnectProxy(control_plane=control, route_state=route_state, relay_manager=relay)
+    asyncio.create_task(relay.run())
+
+    async def refresh_policy():
+        while True:
+            try:
+                await asyncio.to_thread(control.refresh)
+            except (OSError, ValueError, urllib.error.URLError):
+                pass  # A previous valid snapshot remains active; no snapshot means deny.
+            await asyncio.sleep(10)
+
+    asyncio.create_task(refresh_policy())
     server = await asyncio.start_server(proxy.handle, "127.0.0.1", box_contract.EGRESS_PROXY, limit=MAX_HEADER)
     async with server:
         await server.serve_forever()

@@ -21,6 +21,35 @@ def test_egress_firewall_only_allows_loopback_proxy_and_drops_all_else():
     assert "udp dport 53 accept" not in rules
 
 
+def test_direct_connect_bypass_is_still_dropped_when_proxy_environment_is_cleared():
+    # Bot commands can unset these variables; the kernel rules remain the boundary.
+    env = {"HTTP_PROXY": "http://127.0.0.1", "ALL_PROXY": "http://127.0.0.1", "NO_PROXY": "localhost"}
+    env.pop("ALL_PROXY")
+    env.pop("NO_PROXY")
+    assert "ALL_PROXY" not in env and "NO_PROXY" not in env
+    rules = subprocess.run([sys.executable, str(ROOT / "deploy/egress-firewall.py"), "--print"], check=True, capture_output=True, text=True).stdout
+    accepts = [line.strip() for line in rules.splitlines() if line.strip().endswith("accept")]
+    port = json.loads((ROOT / "contracts/box-contract.json").read_text())["fixedPorts"]["egressProxy"]
+    assert rules.split("chain output {", 1)[1].split("}", 1)[0].find("policy drop;") >= 0
+    assert accepts == ["meta skuid @egress_proxy_uids accept", f"ip daddr 127.0.0.1 tcp dport {port} accept"]
+    assert "ct state established,related accept" not in rules
+    assert "set egress_proxy_uids { type uid; elements = { 0 }; }" in rules
+
+
+def test_bot_peer_paths_are_denied_at_uid_and_loopback_boundary():
+    rules = subprocess.run([sys.executable, str(ROOT / "deploy/egress-firewall.py"), "--print"], check=True, capture_output=True, text=True).stdout
+    assert "meta skuid @bot_uids oifname \"lo\" drop" in rules
+    assert "policy drop" in rules and "counter drop" in rules
+    sys.path.insert(0, str(ROOT / "deploy"))
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("egress_firewall", ROOT / "deploy/egress-firewall.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    configured = module.render([31001, 31002])
+    assert "set bot_uids { type uid; elements = { 31001, 31002 }; }" in configured
+    assert "meta skuid @bot_uids oifname \"lo\" drop" in configured
+
+
 def test_proxy_ssrf_guard_blocks_sensitive_address_families_and_legacy_ipv4():
     sys.path.insert(0, str(ROOT / "services/computer/src"))
     from egress.ssrf import is_blocked_ip

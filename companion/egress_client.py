@@ -2,11 +2,44 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
+import socket
 import time
 from urllib.parse import quote, urlsplit, urlunsplit
 
 RECONNECT_GRACE_SECONDS = 90
+
+
+def _public_address(value: str) -> bool:
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        address = address.ipv4_mapped
+    return address.is_global
+
+
+async def _connect_public(host: str, port: int):
+    """Resolve once on the companion and connect only to checked public addresses."""
+    loop = asyncio.get_running_loop()
+    infos = await loop.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    if not infos or any(not _public_address(item[4][0]) for item in infos):
+        raise PermissionError("destination address is blocked")
+    last_error = None
+    for family, socktype, proto, _, sockaddr in infos:
+        sock = socket.socket(family, socktype, proto)
+        sock.setblocking(False)
+        try:
+            await loop.sock_connect(sock, sockaddr)
+            return await asyncio.open_connection(sock=sock)
+        except OSError as exc:
+            last_error = exc
+            sock.close()
+    if last_error:
+        raise last_error
+    raise OSError("destination unavailable")
 
 
 class EgressClient:
@@ -45,15 +78,20 @@ class EgressClient:
         """Handle multiplexed CONNECT frames: JSON open/close, binary id+TCP bytes."""
         streams = {}
         pumps = set()
+        send_lock = asyncio.Lock()
+
+        async def send(frame):
+            async with send_lock:
+                await ws.send(frame)
 
         async def pump(stream_id, reader):
             try:
                 while block := await reader.read(65532):
-                    await ws.send(stream_id.to_bytes(4, "big") + block)
+                    await send(stream_id.to_bytes(4, "big") + block)
             except (OSError, ConnectionError):
                 pass
             finally:
-                await ws.send(json.dumps({"type": "close", "id": stream_id}))
+                await send(json.dumps({"type": "close", "id": stream_id}))
 
         try:
             async for frame in ws:
@@ -74,15 +112,15 @@ class EgressClient:
                         continue
                     host, port = message.get("host"), message.get("port")
                     if not isinstance(host, str) or len(host) > 253 or not isinstance(port, int) or not 1 <= port <= 65535:
-                        await ws.send(json.dumps({"type": "error", "id": stream_id, "reason": "invalid destination"}))
+                        await send(json.dumps({"type": "error", "id": stream_id, "reason": "invalid destination"}))
                         continue
                     try:
-                        reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=10)
-                    except (OSError, TimeoutError):
-                        await ws.send(json.dumps({"type": "error", "id": stream_id, "reason": "desktop connect failed"}))
+                        reader, writer = await asyncio.wait_for(_connect_public(host, port), timeout=10)
+                    except (OSError, TimeoutError, PermissionError):
+                        await send(json.dumps({"type": "error", "id": stream_id, "reason": "destination address is blocked or unavailable"}))
                         continue
                     streams[stream_id] = (reader, writer)
-                    await ws.send(json.dumps({"type": "connected", "id": stream_id}))
+                    await send(json.dumps({"type": "connected", "id": stream_id}))
                     task = asyncio.create_task(pump(stream_id, reader))
                     pumps.add(task)
                     task.add_done_callback(pumps.discard)

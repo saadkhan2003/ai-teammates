@@ -143,6 +143,7 @@ BotMessaging.Map(app, platform);
 Devices.Map(app, platform);
 app.MapNetworkPolicyRoutes(platform);
 EgressRelay.Map(app, platform);
+app.MapEgressControlRoutes(platform);
 Feedback.Map(app, platform);
 app.Run();
 

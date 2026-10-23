@@ -1,0 +1,110 @@
+import asyncio
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).parents[2]
+sys.path.insert(0, str(ROOT / "services/computer/src"))
+
+from egress.policy import PolicyFile
+from egress.proxy import ConnectProxy
+
+
+def test_policy_file_keeps_last_good_and_fails_closed_until_first_valid(tmp_path):
+    path = tmp_path / "policy.json"
+    policy = PolicyFile(path, poll_seconds=0.25)
+    assert policy.current() is None
+
+    path.write_text(json.dumps({"version": 3, "mode": "team_only", "entries": ["good.example"]}))
+    policy._checked = 0
+    assert policy.current().allows("good.example", 443)
+    assert not policy.current().allows("other.example", 443)
+
+    path.write_text('{"version":2,"mode":"allow_all"}')
+    policy._checked = 0
+    assert policy.current().allows("good.example", 443)
+    assert not policy.current().allows("other.example", 443)
+
+
+def test_proxy_rejects_when_no_policy_has_ever_loaded():
+    proxy = ConnectProxy()
+    assert proxy.current_policy() is None
+
+
+def test_audit_redacts_path_and_query_and_bounds_reason():
+    from egress.proxy import safe_audit_destination
+
+    assert safe_audit_destination("https://user:pass@example.test/private/path?token=secret#frag") == "example.test"
+    assert safe_audit_destination("example.test") == "example.test"
+
+
+def test_route_state_prefers_desktop_then_falls_back_or_blocks_after_grace():
+    from egress.relay import RouteState, RECONNECT_GRACE_SECONDS
+
+    now = [0.0]
+    route = RouteState(fail_closed=False, clock=lambda: now[0])
+    assert route.mode() == "default"
+    route.attached()
+    assert route.mode() == "desktop"
+    route.dropped()
+    now[0] = RECONNECT_GRACE_SECONDS - .1
+    assert route.mode() == "desktop"
+    now[0] = RECONNECT_GRACE_SECONDS + .1
+    assert route.mode() == "default"
+
+    closed = RouteState(fail_closed=True, clock=lambda: now[0])
+    closed.attached()
+    closed.dropped()
+    now[0] += RECONNECT_GRACE_SECONDS + .1
+    assert closed.mode() == "blocked"
+
+
+def test_control_plane_writes_versioned_snapshot_atomically_and_audit_is_host_only(tmp_path):
+    from egress.control_plane import EgressControlPlane
+
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *_): pass
+        def read(self, limit): return json.dumps({"mode":"team_only", "entries":["example.test"], "groups":["group.test"], "locked":False, "version":4, "failClosed":True}).encode()
+
+    calls = []
+    control = EgressControlPlane(api_url="http://api", computer_id="fake-computer", token="FAKE_TOKEN_123456789", policy_path=tmp_path / "policy.json", opener=lambda request, timeout: (calls.append(request) or Response()))
+    assert control.refresh()
+    snapshot = json.loads((tmp_path / "policy.json").read_text())
+    assert snapshot["version"] == 4 and snapshot["failClosed"]
+    assert snapshot["entries"] == ["example.test", "group.test"]
+    control.audit("example.test", 443, False, "blocked by policy")
+    assert json.loads(calls[-1].data)["host"] == "example.test"
+
+
+def test_relay_tunnel_multiplexes_connect_and_tcp_bytes_in_memory():
+    from egress.relay_tunnel import RelayTunnelManager
+
+    class FakeWs:
+        def __init__(self): self.sent = []
+        async def send(self, frame): self.sent.append(frame)
+
+    async def scenario():
+        manager = RelayTunnelManager(api_url="https://api", computer_id="fake-id", token="fake", connector=lambda: None)
+        fake = FakeWs()
+        manager.websocket = fake
+        open_task = asyncio.create_task(manager.open("public.example", 443))
+        await asyncio.sleep(0)
+        request = json.loads(fake.sent[0])
+        assert request["type"] == "connect" and request["host"] == "public.example"
+        manager.pending[request["id"]].put_nowait({"type": "connected", "id": request["id"]})
+        reader, writer = await open_task
+        await manager._read_loop(_one_frame(bytes.fromhex("00000001") + b"hello"))
+        assert await reader.read() == b"hello"
+        await manager.send(bytes.fromhex("00000001") + b"world")
+        assert fake.sent[-1] == bytes.fromhex("00000001") + b"world"
+        writer.close()
+        await asyncio.sleep(0)
+        assert json.loads(fake.sent[-1])["type"] == "close"
+
+    def _one_frame(frame):
+        async def iterator():
+            yield frame
+        return iterator()
+
+    asyncio.run(scenario())
