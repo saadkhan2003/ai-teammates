@@ -18,6 +18,7 @@ public static class Routes
 
     public static void Map(WebApplication app, Platform platform, Runtime runtime)
     {
+        LibraryRoutes.Map(app, platform);
         app.MapGet("/health", async () =>
         {
             var postgres = false;
@@ -290,6 +291,7 @@ public static class Routes
                 }
             }
             var messageId = await conn.ExecuteScalarAsync<Guid>("INSERT INTO messages (conversation_id, role, content, metadata, reply_to_message_id) VALUES (@id, 'user', @content, @metadata::jsonb, @replyTo) RETURNING id", new { id, content, metadata, replyTo });
+            await LibraryIngest.IndexMessageAttachments(platform, runtime, botId.Value, messageId, content, ctx.RequestAborted);
             var kind = asTask ? "work" : "chat";
             var priority = asTask ? 0 : 10;
             var taskId = await conn.ExecuteScalarAsync<Guid>(
@@ -712,7 +714,7 @@ public static class Routes
             var user = await RequireUser(ctx, platform);
             if (user == null) return Results.Unauthorized();
             await using var conn = await platform.Data.OpenConnectionAsync(ct);
-            var row = await conn.QuerySingleOrDefaultAsync<(string Name, string Key, string Mime)>("SELECT a.name, a.object_key, a.mime FROM artifacts a JOIN bots b ON b.id=a.bot_id WHERE a.id=@id AND b.owner_id=@owner", new { id, owner = user });
+            var row = await conn.QuerySingleOrDefaultAsync<(string Name, string Key, string Mime)>("SELECT a.name, a.object_key, a.mime FROM artifacts a JOIN bots b ON b.id=a.bot_id WHERE (a.id=@id OR EXISTS (SELECT 1 FROM library_items li WHERE li.id=@id AND li.artifact_id=a.id AND li.deleted_at IS NULL)) AND b.owner_id=@owner ORDER BY (a.id=@id) DESC LIMIT 1", new { id, owner = user });
             if (string.IsNullOrEmpty(row.Key)) return Results.NotFound();
             using var obj = await platform.S3.GetObjectAsync(platform.Bucket, row.Key, ct);
             using var memory = new MemoryStream();

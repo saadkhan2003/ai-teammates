@@ -556,7 +556,7 @@ export function Workspace({ botId }: { botId: string }) {
                     </div>
                   </TabsContent>
                   <TabsContent value="library">
-                    <LibraryPane botId={botId} botName={bot?.name || "Teammate"} botShape={bot?.avatarShape} botColor={bot?.avatarColor} files={files.items} artifacts={artifacts.items} loaded={files.loaded && artifacts.loaded} />
+                    <LibraryPane botId={botId} botName={bot?.name || "Teammate"} botShape={bot?.avatarShape} botColor={bot?.avatarColor} />
                     <div className="mt-5 border-t border-border pt-4">
                       <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Manage files</h3>
                       <FilesPane botId={botId} files={files.items} error={files.error} loaded={files.loaded} onChanged={() => void loadAux(["files"])} />

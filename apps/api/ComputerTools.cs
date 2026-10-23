@@ -45,7 +45,7 @@ public static class ComputerTools
             var bytes = output.ToArray();
             var fileName = details.RootElement.GetProperty("name").GetString() ?? "screen-recording.webm";
             var mime = fileName.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase) ? "video/mp4" : "video/webm";
-            return await SaveBinary(platform, botId, taskId, "evidence-" + Path.GetFileNameWithoutExtension(fileName) + Path.GetExtension(fileName), mime, bytes, ct);
+            return await SaveBinary(platform, botId, taskId, "evidence-" + Path.GetFileNameWithoutExtension(fileName) + Path.GetExtension(fileName), mime, bytes, ct, "recording");
         }
 
         var body = JsonSerializer.Deserialize<Dictionary<string, object?>>(args.GetRawText()) ?? new();
@@ -70,7 +70,7 @@ public static class ComputerTools
             var bytes = await response.Content.ReadAsByteArrayAsync(ct);
             if (bytes.Length > MaxArtifactBytes) throw new ToolHalt("invalid", "screenshot exceeds 50 MB artifact limit");
             var name = "evidence-" + DateTimeOffset.UtcNow.ToString("yyyyMMddTHHmmssfffZ") + ".png";
-            return await SaveBinary(platform, botId, taskId, name, "image/png", bytes, ct);
+            return await SaveBinary(platform, botId, taskId, name, "image/png", bytes, ct, "screenshot");
         }
         var result = await SendJson(platform, baseUrl, path, body, ct);
         return result.Result;
@@ -95,7 +95,7 @@ public static class ComputerTools
         return request;
     }
 
-    private static async Task<object> SaveBinary(Platform platform, Guid botId, Guid taskId, string name, string mime, byte[] bytes, CancellationToken ct)
+    private static async Task<object> SaveBinary(Platform platform, Guid botId, Guid taskId, string name, string mime, byte[] bytes, CancellationToken ct, string source = "artifact")
     {
         if (bytes.Length > MaxArtifactBytes) throw new ToolHalt("invalid", "artifact exceeds 50 MB limit");
         var key = $"artifacts/{botId}/{Guid.NewGuid():n}/{Path.GetFileName(name)}";
@@ -106,6 +106,7 @@ public static class ComputerTools
         var id = await conn.ExecuteScalarAsync<Guid>(
             "INSERT INTO artifacts (bot_id, task_id, name, mime, size_bytes, sha256, object_key) VALUES (@bot,@task,@name,@mime,@size,@sha,@key) RETURNING id",
             new { bot = botId, task = taskId, name, mime, size = bytes.Length, sha, key });
+        await LibraryIngest.IndexArtifact(platform, botId, id, source, ct: ct);
         return new { id, name, mime, bytes = bytes.Length };
     }
 }

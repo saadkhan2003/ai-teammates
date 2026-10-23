@@ -609,6 +609,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         var id = await conn.ExecuteScalarAsync<Guid>(
             "INSERT INTO artifacts (bot_id, task_id, name, mime, size_bytes, sha256, object_key) VALUES (@bot, @task, @name, 'text/plain', @size, @sha, @key) RETURNING id",
             new { bot = botId, task = taskId, name, size = stored.Length, sha, key });
+        await LibraryIngest.IndexArtifact(platform, botId, id, ct: ct);
         return new { id, name };
     }
 

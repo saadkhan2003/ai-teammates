@@ -32,5 +32,5 @@ test("library and share controls are available in the bot panel", async ({ page 
   await expect(page.getByRole("menuitem", { name: "Share a template link" })).toBeVisible();
   await page.keyboard.press("Escape");
   await page.getByRole("tab", { name: "Library" }).click();
-  await expect(page.getByText(/Nothing here yet|Loading library|Today|Yesterday/).first()).toBeVisible();
+  await expect(page.getByText(/Nothing here yet|Loading library|Today|This week|Older/).first()).toBeVisible();
 });
