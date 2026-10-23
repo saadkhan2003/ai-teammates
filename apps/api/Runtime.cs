@@ -238,8 +238,11 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         switch (tool)
         {
             case "write_file":
-                await Run(computer, botId, ["python3", "-c", BotFs.Script("write_file(sys.argv[1], sys.argv[2])"), Arg(args, "path"), Arg(args, "content")], null, ct);
+            {
+                var (writeCode, _, writeErr) = await Run(computer, botId, ["python3", "-c", BotFs.Script("write_file(sys.argv[1], sys.argv[2])"), Arg(args, "path"), Arg(args, "content")], null, ct);
+                if (writeCode != 0) throw new ToolHalt("failed", "write_failed " + (writeErr.Length > 300 ? writeErr[..300] : writeErr));
                 return new { ok = true, path = Arg(args, "path") };
+            }
             case "read_file":
             {
                 var (code, stdout, _) = await Run(computer, botId, ["python3", "-c", BotFs.Script("read_file(sys.argv[1])"), Arg(args, "path")], null, ct);

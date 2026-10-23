@@ -11,7 +11,11 @@ import sys
 import threading
 from pathlib import Path
 
-from egress import firewall
+try:
+    from egress import firewall
+except ImportError:  # shipped to the API and run as `python3 -c`, so the package is not on sys.path
+    sys.path.insert(0, "/opt/desk/src")
+    from egress import firewall
 
 _HEX = set("0123456789abcdef")
 
