@@ -257,6 +257,13 @@ def write_b64(raw: str, payload: str) -> None:
     path.write_bytes(base64.b64decode(payload))
 
 
+def append_b64(raw: str, payload: str) -> None:
+    path = locate(raw)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("ab") as handle:
+        handle.write(base64.b64decode(payload))
+
+
 def read_b64(raw: str) -> None:
     path = locate(raw)
     if not path.is_file():
