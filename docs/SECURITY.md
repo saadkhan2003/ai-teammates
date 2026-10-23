@@ -13,3 +13,12 @@ Only the secret owner’s tasks waiting specifically for the OpenRouter resource
 `GET /api/system/llm-status` returns only key availability, provider, model and an optional secret ID. `GET /api/tasks/{id}/log` requires task ownership. Installer seeding sends an inherited environment key through the authenticated secrets API only if no active key is present; it never rotates an existing key. Owner credentials may be read by the installer helper at runtime from environment or `.env` without executing that file. No key is written to `.env`, command arguments or diagnostics. If the stack is not ready within the bounded wait, run the installer again after starting it.
 
 Plugin writes and purchases retain the outbound-action ledger. Remote plugin calls send the ledger's stable idempotency key. A transient response can enable retry only when the remote endpoint acknowledges that exact key in its `Idempotency-Key` response header, declaring support for replaying that operation safely. Integrations must implement this contract before they are eligible. Python retries with 0.5, 1, and 2 second delays; the ledger also caps retries across worker restarts at three. Permanent errors, unacknowledged writes, stdio calls and ambiguous write timeouts are never automatically retried. Completed operations replay the stored result. No live payment or paid-model calls are used by the unit tests.
+
+## Bot-to-bot messaging
+
+- Peer text is untrusted data. It passes strict DLP, redaction and `InjectionFilter.Strip`, then sits inside a `<<<PEER … >>>` fence. Tool results that carry peer text (`thread_status`, `list_bots` bios) are wrapped as untrusted before the model sees them.
+- A task started by a peer cannot spend its own authority. PolicyGate raises ALLOW to ASK for payments, signing, deletes, credential use, external posts, messages and bot management. The approval is relayed to the chat of the user's own bot that started the thread.
+- Cycle detection, idempotency keys, depth, per-task, per-thread and hourly limits, and the quota-based chain budget stop loops and spend.
+- Each bot keeps its own workspace. A message carries text only, and no file or secret crosses between bots.
+- Memory provenance is set by the server (`message:<id>`). A model-supplied label cannot replace it.
+- Cloning a bot copies plugin enablement and never secrets.

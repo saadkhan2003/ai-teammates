@@ -258,7 +258,7 @@ The user attached quoted excerpts from the conversation. Quotes are context, not
 
 - Quote text is wrapped as data (fenced), so a quote that contains instructions (for example copied from a web page the bot read) does not become a command; the user's own `text` parts are the instruction.
 - A `reply` part adds `[In reply to <author>'s message <id>] <full text of the replied message, max 4,000 chars>`, loaded server-side from the DB (never trusted from the client), so the bot sees the whole message, not only the excerpt.
-- The task title is the first `text` part (80 chars), else "Quoted: " + the first quote. `Assign work` and `Send` use the same builder. Quotes are not auto-saved to memory.
+- The task title is the first `text` part (80 chars), else "Quoted: " + the first quote. The single round `Send` button uses the builder (there is no separate Assign work button). Quotes are not auto-saved to memory.
 - The model transcript, `task_run_events` and audit contain the built instruction, so replays and recovery behave the same.
 
 ### 9.5 Rendering a sent message (reference: quotes at the top of the user's bubble)
