@@ -182,11 +182,17 @@ public static class Routes
             var bot = Platform.ToDict(await conn.QuerySingleAsync("SELECT id, name, role, instructions, status, model, avatar, avatar_shape, avatar_color, section, notifications_enabled FROM bots WHERE id=@id", new { id }));
             var conversationId = await conn.ExecuteScalarAsync<Guid>("SELECT id FROM conversations WHERE bot_id=@id ORDER BY created_at LIMIT 1", new { id });
             var tasks = (await conn.QueryAsync("SELECT id, title, instruction, status, kind, model_calls, waiting_reason, error, error_code, result::text AS result FROM tasks WHERE bot_id=@id ORDER BY created_at DESC LIMIT 50", new { id })).Select(Platform.ToDict);
-            var messages = (await conn.QueryAsync("SELECT id, role, content, created_at FROM messages WHERE conversation_id=@conversation ORDER BY created_at LIMIT 200", new { conversation = conversationId })).Select(Platform.ToDict).ToList();
+            var messages = (await conn.QueryAsync("SELECT m.id, m.role, m.content, m.created_at, m.metadata::text AS metadata, m.reply_to_message_id, m.deleted_at, m.kind, COALESCE(m.task_id, (SELECT t.id FROM tasks t WHERE t.source_message_id=m.id ORDER BY t.created_at DESC LIMIT 1)) AS request_id, (SELECT t.status FROM tasks t WHERE t.id = COALESCE(m.task_id, (SELECT t2.id FROM tasks t2 WHERE t2.source_message_id=m.id ORDER BY t2.created_at DESC LIMIT 1))) AS task_status FROM messages m WHERE m.conversation_id=@conversation ORDER BY m.created_at LIMIT 200", new { conversation = conversationId })).Select(Platform.ToDict).ToList();
             var reactionRows = (await conn.QueryAsync("SELECT r.id, r.message_id, r.actor_type::text AS actor_type, r.actor_id, r.emoji, r.created_at FROM message_reactions r JOIN messages m ON m.id=r.message_id WHERE m.conversation_id=@conversation ORDER BY r.created_at", new { conversation = conversationId })).Select(Platform.ToDict).ToList();
             foreach (var message in messages)
             {
                 var idText = message["id"]?.ToString();
+                if (message.TryGetValue("metadata", out var metaRaw) && metaRaw is string metaText && metaText.Length > 2)
+                {
+                    try { var meta = JsonSerializer.Deserialize<JsonElement>(metaText); message["parts"] = meta.TryGetProperty("parts", out var pe) ? pe : null; } catch { message["parts"] = null; }
+                }
+                message.Remove("metadata");
+                message["deleted"] = message.TryGetValue("deletedAt", out var del) && del != null;
                 message["reactions"] = reactionRows.Where(row => row["messageId"]?.ToString() == idText).Select(row => new { id = row["id"], actorType = row["actorType"], actorId = row["actorId"], emoji = row["emoji"], createdAt = row["createdAt"] }).ToList();
             }
             var approvals = (await conn.QueryAsync("SELECT id, action, target, reason, status, risk_class, summary FROM approvals WHERE bot_id=@id AND status='pending' ORDER BY created_at", new { id })).Select(Platform.ToDict);
@@ -211,16 +217,61 @@ public static class Routes
             await using var conn = await platform.Data.OpenConnectionAsync();
             var botId = await conn.ExecuteScalarAsync<Guid?>("SELECT c.bot_id FROM conversations c JOIN bots b ON b.id=c.bot_id WHERE c.id=@id AND b.owner_id=@owner", new { id, owner = user });
             if (botId == null) return Results.NotFound();
-            var content = body.GetProperty("content").GetString() ?? "";
-            if (Dlp.HasStrict(content))
-                return Results.Json(new { error = "Blocked by the data policy. Card numbers, IDs, and secrets are not sent." }, statusCode: 422);
             var asTask = body.TryGetProperty("asTask", out var flag) && flag.ValueKind == JsonValueKind.True;
-            var messageId = await conn.ExecuteScalarAsync<Guid>("INSERT INTO messages (conversation_id, role, content) VALUES (@id, 'user', @content) RETURNING id", new { id, content });
+            string content, instruction, title;
+            string metadata = "{}";
+            Guid? replyTo = null;
+            if (body.TryGetProperty("parts", out var partsEl) && partsEl.ValueKind != JsonValueKind.Null)
+            {
+                var parsed = MessageParts.Parse(partsEl);
+                if (!parsed.Ok) return Results.Json(new { error = parsed.Error }, statusCode: 400);
+                var parts = parsed.Parts;
+                var ids = parts.Where(p => p.Type == "reply").Select(p => p.MessageId!.Value)
+                    .Concat(parts.Where(p => p.SourceMessageId != null).Select(p => p.SourceMessageId!.Value)).Distinct().ToArray();
+                var known = ids.Length == 0 ? new List<dynamic>() : (await conn.QueryAsync("SELECT m.id, m.role, m.content, m.deleted_at FROM messages m WHERE m.conversation_id=@id AND m.id = ANY(@ids)", new { id, ids })).ToList();
+                var replies = new Dictionary<Guid, MessageParts.ReplyInfo>();
+                var botName = await conn.ExecuteScalarAsync<string>("SELECT name FROM bots WHERE id=@botId", new { botId }) ?? "Assistant";
+                foreach (var row in known)
+                {
+                    if (row.deleted_at != null) continue;
+                    replies[(Guid)row.id] = new MessageParts.ReplyInfo((Guid)row.id, (string)row.role == "user" ? "You" : botName, MessageParts.PlainText((string)row.content));
+                }
+                foreach (var part in parts.Where(p => p.Type == "reply"))
+                {
+                    var target = known.FirstOrDefault(r => (Guid)r.id == part.MessageId);
+                    if (target == null) return Results.Json(new { error = "reply_target_not_found" }, statusCode: 400);
+                    if (target.deleted_at != null) return Results.Json(new { error = "reply_target_deleted" }, statusCode: 400);
+                }
+                var knownIds = known.Select(r => (Guid)r.id).ToHashSet();
+                parts = parts.Select(p => p.Type == "quote" && p.SourceMessageId != null && !knownIds.Contains(p.SourceMessageId.Value) ? p with { SourceMessageId = null } : p).ToList();
+                if (Dlp.HasStrict(MessageParts.Concat(parts, replies.Values.Select(r => r.Text))))
+                    return Results.Json(new { error = "Blocked by the data policy. Card numbers, IDs, and secrets are not sent." }, statusCode: 422);
+                content = MessageParts.Flatten(parts);
+                instruction = MessageParts.BuildInstruction(parts, replies);
+                title = MessageParts.Title(parts);
+                var stored = parts.Select(p => p.Type switch
+                {
+                    "quote" => (object)new { type = "quote", text = p.Text, sourceMessageId = p.SourceMessageId },
+                    "reply" => new { type = "reply", messageId = p.MessageId, author = replies.TryGetValue(p.MessageId!.Value, out var r) ? r.Author : "", excerpt = replies.TryGetValue(p.MessageId!.Value, out var r2) ? MessageParts.Excerpt(r2.Text) : "" },
+                    _ => new { type = "text", text = p.Text },
+                }).ToList();
+                metadata = JsonSerializer.Serialize(new { parts = stored });
+                replyTo = parts.FirstOrDefault(p => p.Type == "reply")?.MessageId;
+            }
+            else
+            {
+                content = body.GetProperty("content").GetString() ?? "";
+                if (Dlp.HasStrict(content))
+                    return Results.Json(new { error = "Blocked by the data policy. Card numbers, IDs, and secrets are not sent." }, statusCode: 422);
+                instruction = content;
+                title = MessageParts.Clip(content, 80);
+            }
+            var messageId = await conn.ExecuteScalarAsync<Guid>("INSERT INTO messages (conversation_id, role, content, metadata, reply_to_message_id) VALUES (@id, 'user', @content, @metadata::jsonb, @replyTo) RETURNING id", new { id, content, metadata, replyTo });
             var kind = asTask ? "work" : "chat";
             var priority = asTask ? 0 : 10;
             var taskId = await conn.ExecuteScalarAsync<Guid>(
                 "INSERT INTO tasks (bot_id, conversation_id, title, instruction, kind, priority, status, source_message_id) VALUES (@bot, @conversation, @title, @instruction, @kind, @priority, 'queued', @message) RETURNING id",
-                new { bot = botId, conversation = id, title = content.Length > 80 ? content[..80] : content, instruction = content, kind, priority, message = messageId });
+                new { bot = botId, conversation = id, title, instruction, kind, priority, message = messageId });
             await platform.Publish(new { type = "task", taskId });
             platform.Tasks.Pulse();
             return Results.Json(new { messageId, taskId, status = "queued" });
@@ -231,6 +282,18 @@ public static class Routes
             var user = await RequireUser(ctx, platform);
             if (user == null) return Results.Unauthorized();
             return await runtime.AnswerQuestion(user.Value, id, body);
+        });
+        app.MapDelete("/api/messages/{id:guid}", async (HttpContext ctx, Guid id) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            return await ChatActions.Delete(platform, user.Value, id);
+        });
+        app.MapPost("/api/messages/{id:guid}/retry", async (HttpContext ctx, Guid id) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            return await ChatActions.Retry(platform, user.Value, id);
         });
         app.MapPost("/api/messages/{id:guid}/reactions", (HttpContext ctx, Guid id, JsonElement body) => Reactions.Post(ctx, platform, id, body));
         app.MapDelete("/api/messages/{id:guid}/reactions", (HttpContext ctx, Guid id) => Reactions.Delete(ctx, platform, id));
