@@ -361,6 +361,8 @@ export function Workspace({ botId }: { botId: string }) {
           avatar={{ shape: bot?.avatarShape || defaultBotAvatar(bot?.id || botId).shape, color: bot?.avatarColor || defaultBotAvatar(bot?.id || botId).color, primary: bot?.isPrimary }}
           botThreads={workspace.botThreads ?? []}
           taskTitle={(workspace.tasks ?? []).find(task => ["running", "planning"].includes((task.status ?? "").toLowerCase()))?.title}
+          activeTaskId={(workspace.tasks ?? []).find(task => ["running", "planning", "waiting_human"].includes((task.status ?? "").toLowerCase()))?.id}
+          evidenceTaskId={(workspace.tasks ?? []).find(task => ["running", "planning", "waiting_human"].includes((task.status ?? "").toLowerCase()))?.id ?? (workspace.tasks ?? [])[0]?.id}
           onSent={() => void loadWorkspace()}
           working={(workspace.tasks ?? []).some((task) => ["running", "planning", "queued"].includes((task.status ?? "").toLowerCase()))}
           extras={

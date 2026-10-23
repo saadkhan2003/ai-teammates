@@ -43,12 +43,28 @@ export function toolLabel(tool: string, rawArgs?: unknown): string {
     case "shell": return TEST_COMMAND.test(String(args.command ?? "")) ? "Running tests" : "Running a command";
     case "setup_env": return "Running a command";
     case "browser_open": case "browser_extract": case "browser_click": case "browser": return "Browsing the web";
+    case "computer_screenshot": return "Taking a screenshot";
+    case "computer_click": return "Clicking on the screen";
+    case "computer_type": return "Typing on the screen";
+    case "computer_key": return "Pressing a key";
+    case "computer_scroll": return "Scrolling the screen";
+    case "record_start": case "record_stop": return "Recording the screen";
     case "type_secret": return "Signing in";
     case "request_login": return "Asking you to sign in";
     case "write_file": return file ? `Writing ${file}` : "Writing a file";
     case "edit_file": return file ? `Editing ${file}` : "Editing a file";
     case "read_file": return file ? `Reading ${file}` : "Reading a file";
     case "delete_file": return file ? `Deleting ${file}` : "Deleting a file";
+    case "plan_set": return "Planning the steps";
+    case "plan_update": return "Updating the plan";
+    case "git_status": return "Checking git status";
+    case "git_diff": return "Reviewing changes";
+    case "git_commit": return "Committing changes";
+    case "run_tests": return "Running tests";
+    case "create_pr": return "Creating a pull request";
+    case "watch_ci": return "Checking CI";
+    case "spawn_child_task": return "Starting a child task";
+    case "child_status": return "Checking child task";
     case "save_artifact": return "Saving a file";
     case "ask_user": return "Asking you a question";
     case "save_memory": return "Saving to memory";
@@ -62,8 +78,9 @@ export function toolLabel(tool: string, rawArgs?: unknown): string {
 }
 
 /** What the working row says: "Typing…" while a reply streams, else the live step, else the running task's title, else "Working on it". */
-export function workingStatus(events: StatusEvent[], typing: boolean, taskTitle?: string): string {
+export function workingStatus(events: StatusEvent[], typing: boolean, taskTitle?: string, planItemTitle?: string): string {
   if (typing) return TYPING_LABEL;
+  if (planItemTitle?.trim()) return `Step 2 of 5: ${planItemTitle.trim().slice(0, 72)}`;
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
     if (e.type === "status" || e.type === "step") {

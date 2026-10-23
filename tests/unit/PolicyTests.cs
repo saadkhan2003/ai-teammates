@@ -26,6 +26,9 @@ public class PolicyTests
         Assert.Equal(ActionClasses.Write, ActionClassifier.Classify("plugin_widget", Args("{}")));
         Assert.Equal(ActionClasses.Read, ActionClassifier.Classify("list_invoices", Args("{}")));
         Assert.Equal(ActionClasses.Delete, ActionClassifier.Classify("delete_file", Args("{\"path\":\"/workspace/secret.txt\"}")));
+        Assert.Equal(ActionClasses.ExternalPost, ActionClassifier.Classify("create_pr", Args("{\"title\":\"x\"}")));
+        Assert.Equal(PolicyEngine.Ask, Gate("create_pr", "{\"title\":\"x\",\"body\":\"y\"}").Decision);
+        Assert.True(ActionClassifier.IsBuiltIn("create_pr"));
         Assert.Equal(ActionClasses.SendMessage, ActionClassifier.Classify("send_message", Args("{\"to\":\"ada\"}")));
         Assert.Equal(ActionClasses.ExternalPost, ActionClassifier.Classify("external_post", Args("{\"url\":\"https://board.example/posts\"}")));
         Assert.Equal(ActionClasses.CredentialUse, ActionClassifier.Classify("type_secret", Args("{\"secret_ref\":\"secret://university/password\"}")));

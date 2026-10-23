@@ -21,10 +21,27 @@ public static class ToolSchema
         Fn("browser_open", "Open a URL in the bot browser", Req("url", "string", "Absolute URL"), Opt("wait", "string", "CSS selector to wait for")),
         Fn("browser_extract", "Read text from the current page", Opt("selector", "string", "CSS selector")),
         Fn("browser_click", "Click an element", Req("selector", "string", "CSS selector")),
+        Fn("computer_screenshot", "Capture the desktop screen as task evidence"),
+        Fn("computer_click", "Click at model-space desktop coordinates", Req("x", "number", "Horizontal coordinate from 0 to 1279"), Req("y", "number", "Vertical coordinate from 0 to 799"), Opt("button", "number", "Mouse button 1, 2, or 3")),
+        Fn("computer_type", "Type text on the desktop", Req("text", "string", "Text to type")),
+        Fn("computer_key", "Press up to 8 allowlisted desktop keys", Arr("keys", "Key names or combinations", true, "string", 1, 8)),
+        Fn("computer_scroll", "Scroll at model-space desktop coordinates", Req("x", "number", "Horizontal coordinate from 0 to 1279"), Req("y", "number", "Vertical coordinate from 0 to 799"), Req("dy", "number", "Scroll steps from -20 to 20, excluding zero")),
+        Fn("record_start", "Start a desktop recording, up to 600 seconds", Opt("name", "string", "Recording name"), Opt("maxSeconds", "number", "Maximum duration, 1 to 600 seconds")),
+        Fn("record_stop", "Stop the desktop recording and save it as evidence"),
         Fn("write_file", "Write a workspace file", Req("path", "string", "Path"), Req("content", "string", "Contents")),
         Fn("read_file", "Read a workspace file", Req("path", "string", "Path")),
         Fn("edit_file", "Replace text in a file", Req("path", "string", "Path"), Req("search", "string", "Text to find"), Req("replace", "string", "Replacement")),
         Fn("delete_file", "Delete a file", Req("path", "string", "Path")),
+        Fn("plan_set", "Set the task checklist", Arr("items", "Checklist titles", true, "string", 1, 20)),
+        Fn("plan_update", "Update a checklist item by its one-based index", Req("index", "string", "One-based item number"), Enum("status", "pending, in_progress, done, or blocked", true, "pending", "in_progress", "done", "blocked")),
+        Fn("git_status", "Show concise git status", Opt("repo", "string", "Repository path under workspace")),
+        Fn("git_diff", "Show diff stats and up to 400 lines", Opt("repo", "string", "Repository path under workspace")),
+        Fn("git_commit", "Commit workspace changes. Does not bypass hooks.", Req("message", "string", "Commit message"), Opt("repo", "string", "Repository path under workspace")),
+        Fn("run_tests", "Run tests with a supported runner", Enum("runner", "Test runner", true, "auto", "npm", "pytest", "dotnet", "make"), Opt("args", "string", "Arguments without shell metacharacters"), Opt("repo", "string", "Repository path under workspace")),
+        Fn("create_pr", "Ask first, then create a pull request. Use watch_ci to inspect checks.", Req("title", "string", "Title"), Req("body", "string", "Description"), Opt("base", "string", "Base branch"), Opt("repo", "string", "Repository path under workspace")),
+        Fn("watch_ci", "Read current pull request CI checks", Opt("pr", "string", "Pull request number or URL")),
+        Fn("spawn_child_task", "Create an isolated child worktree. Nothing is merged automatically; merge with git merge task/<id>.", Req("title", "string", "Short title"), Req("instruction", "string", "Child task"), Opt("repo", "string", "Repository path"), Opt("branch", "string", "Branch name")),
+        Fn("child_status", "Read a child task status", Req("task_id", "string", "Child task id")),
         Fn("shell", "Run a shell command", Req("command", "string", "Command")),
         Fn("setup_env", "Run a command with a secret in the environment", Req("secret_ref", "string", "secret:// reference"), Req("env_name", "string", "Env var"), Req("command", "string", "Command")),
         Fn("type_secret", "Type a stored secret into a password field", Req("secret_ref", "string", "secret:// reference"), Opt("selector", "string", "CSS selector"), Req("url", "string", "Page URL")),
@@ -93,6 +110,8 @@ public static class ToolSchema
             if (tool == "ask_user" && field.Name == "prompt" && !present) continue;
             if (field.Required && !present) return tool + " requires " + field.Name;
             if (!present) continue;
+            if (field.Type == "number" && (value.ValueKind != JsonValueKind.Number || !value.TryGetDouble(out var number) || !double.IsFinite(number)))
+                return tool + " " + field.Name + " must be a finite number";
             if (field.Type == "string")
             {
                 if (value.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(value.GetString()))
@@ -118,6 +137,14 @@ public static class ToolSchema
                 }
             }
         }
+        if (tool is "computer_click" or "computer_scroll")
+        {
+            if (!args.TryGetProperty("x", out var x) || !x.TryGetDouble(out var xv) || xv < 0 || xv >= 1280) return tool + " x must be from 0 to 1279";
+            if (!args.TryGetProperty("y", out var y) || !y.TryGetDouble(out var yv) || yv < 0 || yv >= 800) return tool + " y must be from 0 to 799";
+        }
+        if (tool == "computer_click" && args.TryGetProperty("button", out var button) && (!button.TryGetInt32(out var buttonValue) || buttonValue is < 1 or > 3)) return "computer_click button must be 1, 2, or 3";
+        if (tool == "computer_scroll" && (!args.TryGetProperty("dy", out var dy) || !dy.TryGetInt32(out var delta) || delta is < -20 or > 20 or 0)) return "computer_scroll dy must be from -20 to 20, excluding zero";
+        if (tool == "record_start" && args.TryGetProperty("maxSeconds", out var seconds) && (!seconds.TryGetInt32(out var duration) || duration is < 1 or > 600)) return "record_start maxSeconds must be from 1 to 600";
         if (tool == "ask_user")
         {
             var prompt = args.TryGetProperty("prompt", out var promptEl) && promptEl.ValueKind == JsonValueKind.String ? promptEl.GetString() ?? "" : "";

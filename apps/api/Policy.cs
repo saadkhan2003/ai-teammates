@@ -154,11 +154,13 @@ public static class ActionClassifier
     private static readonly HashSet<string> BuiltInTools = new(StringComparer.Ordinal)
     {
         "browser_open", "browser_extract", "browser_click", "browser_screenshot",
+        "computer_screenshot", "computer_click", "computer_type", "computer_key", "computer_scroll", "record_start", "record_stop",
         "write_file", "read_file", "edit_file", "delete_file", "shell", "setup_env",
         "type_secret", "browser.type_secret", "save_memory", "search_memory", "save_artifact",
         "request_secret", "request_login", "react_to_message", "send_message", "external_post", "sign",
         "search_tools", "load_tool",
-        "list_bots", "message_bot", "reply_to_bot", "thread_status", "create_bot", "update_bot", "list_routines", "create_routine"
+        "list_bots", "message_bot", "reply_to_bot", "thread_status", "create_bot", "update_bot", "list_routines", "create_routine",
+        "plan_set", "plan_update", "git_status", "git_diff", "git_commit", "run_tests", "create_pr", "watch_ci", "spawn_child_task", "child_status"
     };
 
     public static bool IsBuiltIn(string tool) => BuiltInTools.Contains(tool);
@@ -197,6 +199,7 @@ public static class ActionClassifier
         if (tool is "list_bots" or "thread_status" or "list_routines") return ActionClasses.Read;
         if (tool is "send_message" or "send_email" or "send_sms") return ActionClasses.SendMessage;
         if (tool is "external_post" or "publish" or "post_message") return ActionClasses.ExternalPost;
+        if (tool == "create_pr") return ActionClasses.ExternalPost;
         if (tool is "delete_file" || blob.Contains("\"rm ") || blob.Contains(" rm ")) return ActionClasses.Delete;
         if (tool is "type_secret" or "browser.type_secret" or "request_login" or "request_secret" or "setup_env")
             return ActionClasses.CredentialUse;
@@ -206,10 +209,23 @@ public static class ActionClassifier
             case "search_memory":
             case "browser_extract":
             case "browser_screenshot":
+            case "computer_screenshot":
             case "browser_open":
             case "browser_click":
             case "search_tools":
             case "load_tool":
+                return ActionClasses.Read;
+            case "computer_click":
+            case "computer_type":
+            case "computer_key":
+            case "computer_scroll":
+            case "record_start":
+            case "record_stop":
+                return ActionClasses.Write;
+            case "git_status":
+            case "git_diff":
+            case "watch_ci":
+            case "child_status":
                 return ActionClasses.Read;
             case "write_file":
             case "edit_file":

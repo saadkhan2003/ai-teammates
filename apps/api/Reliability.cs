@@ -8,7 +8,9 @@ public static class TaskErrors
     {
         "connect_openrouter" or "no_openrouter_key" => ("no_openrouter_key", "No OpenRouter key set. Add one in Settings > Vault."),
         "provider rejected the request" or "provider_error" => ("provider_error", "The model provider rejected the request. Check the key and model in Settings > Vault."),
-        "step_budget" or "time_budget" or "repeat_loop" or "invalid_repeat" or "model round cap reached" => ("run_limit", "The task stopped after reaching a run limit. Try a smaller request."),
+        "step_budget" => ("step_budget", "The task reached its step limit. Raise the task budget or the bot's default work limit in Work settings."),
+        "time_budget" => ("time_budget", "The task reached its time limit. Raise the task budget or the bot's default work limit in Work settings."),
+        "repeat_loop" or "invalid_repeat" or "model round cap reached" => ("run_limit", "The task stopped after reaching a run limit. Try a smaller request."),
         "denied" => ("denied", "The requested action was denied."),
         _ => ("worker_error", "The task could not finish. Please retry or check the service status.")
     };

@@ -212,6 +212,21 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
             {
                 await runtime.RecoverOutbound(stoppingToken);
                 await using var conn = await platform.Data.OpenConnectionAsync(stoppingToken);
+                var stallSeconds = int.TryParse(Environment.GetEnvironmentVariable("STALL_SECONDS"), out var configuredStall) ? Math.Clamp(configuredStall, 30, 86400) : 300;
+                var stalled = await conn.QueryAsync<(Guid Id, Guid BotId, string Title, Guid? ConversationId, int Nudges, double IdleSeconds)>("SELECT id,bot_id,title,conversation_id,stall_nudges,extract(epoch from now()-last_progress_at) FROM tasks WHERE status='running' AND lease_until>now() AND blocked_reason IS NULL");
+                foreach (var task in stalled)
+                {
+                    var decision = StallPolicy.Decide(TimeSpan.FromSeconds(task.IdleSeconds), task.Nudges, TimeSpan.FromSeconds(stallSeconds));
+                    if (decision == StallDecision.Nudge) await conn.ExecuteAsync("UPDATE tasks SET nudge_pending=true,stall_nudges=stall_nudges+1 WHERE id=@id AND stall_nudges=0", new { id = task.Id });
+                    else if (decision == StallDecision.Block)
+                    {
+                        await conn.ExecuteAsync("UPDATE tasks SET blocked_reason='stalled' WHERE id=@id", new { id = task.Id });
+                        if (task.ConversationId != null) await conn.ExecuteAsync("INSERT INTO messages(conversation_id,role,content,task_id) VALUES(@conversation,'assistant',@text,@id)", new { conversation = task.ConversationId, id = task.Id, text = $"I'm stuck on {task.Title}. What should I do?" });
+                        var owner = await conn.ExecuteScalarAsync<Guid>("SELECT owner_id FROM bots WHERE id=@id", new { id = task.BotId });
+                        await platform.Notify(owner, "task.blocked", "Task is stuck", task.Title);
+                        await platform.Publish(new { type = "task", taskId = task.Id, status = "running", blocked = true });
+                    }
+                }
                 var expired = await conn.ExecuteAsync("UPDATE tasks SET status='queued', lease_owner=NULL, lease_until=NULL, waiting_reason='lease_expired', updated_at=now() WHERE status='running' AND lease_until < now()");
                 if (expired > 0) platform.Tasks.Pulse();
                 await ResumeRecoveredComputers(stoppingToken);

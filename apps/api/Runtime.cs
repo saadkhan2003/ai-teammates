@@ -111,6 +111,15 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         try
         {
             var output = await Dispatch(owner, botId, taskId, tool, args, ct);
+            if (tool.StartsWith("computer_", StringComparison.Ordinal) || tool.StartsWith("record_", StringComparison.Ordinal))
+            {
+                using var result = JsonDocument.Parse(JsonSerializer.Serialize(output));
+                if (result.RootElement.TryGetProperty("ok", out var success) && success.ValueKind == JsonValueKind.False)
+                {
+                    await Step(taskId, tool, args, decision, false, output);
+                    return Results.Json(output);
+                }
+            }
             if (tool == "react_to_message")
             {
                 var json = JsonSerializer.Serialize(output);
@@ -183,6 +192,14 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         var computer = placement.Computer;
         switch (tool)
         {
+            case "computer_screenshot":
+            case "computer_click":
+            case "computer_type":
+            case "computer_key":
+            case "computer_scroll":
+            case "record_start":
+            case "record_stop":
+                return await ComputerTools.Run(platform, botId, taskId, computer, placement.Desktop, tool, args, ct);
             case "write_file":
                 await Run(computer, botId, ["python3", "-c", BotFs.Script("write_file(sys.argv[1], sys.argv[2])"), Arg(args, "path"), Arg(args, "content")], null, ct);
                 return new { ok = true, path = Arg(args, "path") };
@@ -198,6 +215,18 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
                 return new { ok = true, path = Arg(args, "path") };
             case "delete_file":
                 return await DeleteFile(owner, botId, taskId, computer, args, ct);
+            case "plan_set":
+            case "plan_update":
+            case "git_status":
+            case "git_diff":
+            case "git_commit":
+            case "run_tests":
+            case "create_pr":
+            case "watch_ci":
+            case "spawn_child_task":
+            case "child_status":
+                return await CodingTools.Run(platform, botId, taskId, tool, args,
+                    argv => Run(computer, botId, argv, null, ct), ct);
             case "shell":
             {
                 var command = Arg(args, "command");
@@ -751,6 +780,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         await conn.ExecuteAsync(
             "INSERT INTO task_steps (task_id, seq, tool, args, result, policy, ok, finished_at) VALUES (@task, @seq, @tool, @args::jsonb, @result::jsonb, @policy, @ok, now())",
             new { task = taskId, seq, tool, args = safeArgs, result = json, policy, ok });
+        await conn.ExecuteAsync("UPDATE tasks SET last_progress_at=now(), blocked_reason=NULL, tests_passed_at=CASE WHEN @tool IN ('write_file','edit_file','delete_file') AND @ok THEN NULL ELSE tests_passed_at END WHERE id=@task", new { task = taskId, tool, ok });
     }
 
     public async Task RecoverOutbound(CancellationToken ct)

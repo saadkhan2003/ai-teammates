@@ -6,8 +6,8 @@ import json
 import time
 from typing import Any, Callable
 
-MAX_STEPS = 24
-MAX_SECONDS = 90
+MAX_STEPS = 200
+MAX_SECONDS = 3600
 REPEAT_LIMIT = 3
 # The second invalid call for one tool ends the run. The first is returned to the model.
 INVALID_LIMIT = 2

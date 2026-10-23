@@ -36,6 +36,14 @@ def plan(messages: list) -> dict:
 
 def _steps(text: str, messages: list) -> list[Step]:
     stripped = text.strip()
+    if "PLAN DEMO" in text:
+        return [
+            ("tool", "plan_set", {"items": ["Inspect the project", "Make the change", "Run the tests"]}),
+            ("tool", "plan_update", {"index": "1", "status": "done"}),
+            ("final", "Plan demo finished."),
+        ]
+    if "TESTS GATE DEMO" in text:
+        return [("final", "I am ready to finish this task.")]
     peer = _peer_steps(stripped, messages)
     if peer is not None:
         return peer
@@ -57,6 +65,13 @@ def _steps(text: str, messages: list) -> list[Step]:
         return [
             ("tool", "forget_memory", {"content": "My favorite editor is Helix"}),
             ("final", "Forgot."),
+        ]
+    if "EVIDENCE DEMO" in stripped:
+        return [
+            ("tool", "computer_screenshot", {}),
+            ("tool", "record_start", {"name": "evidence-demo", "maxSeconds": 10}),
+            ("tool", "record_stop", {}),
+            ("final", "Captured a desktop screenshot and recording as evidence."),
         ]
     if stripped == "What should I call you?" or stripped.startswith("What should I call you?"):
         return [("final", "I'm your teammate. Call me whatever fits the work.")]

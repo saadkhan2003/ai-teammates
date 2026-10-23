@@ -4,6 +4,22 @@ namespace Teammates.UnitTests;
 
 public class ReliabilityTests
 {
+    [Fact]
+    public void CodingWorkPoliciesHaveExpectedBoundaries()
+    {
+        Assert.Equal(200, RunBudget.Resolve(null,null,null,null).MaxSteps);
+        Assert.Equal(3600, RunBudget.Resolve(null,null,null,null).MaxSeconds);
+        Assert.Equal(4, RunBudget.Resolve(1,1,null,null).MaxSteps);
+        Assert.Equal(21600, RunBudget.Resolve(null,99999,null,null).MaxSeconds);
+        Assert.Equal(StallDecision.Nudge, StallPolicy.Decide(TimeSpan.FromMinutes(5),0,TimeSpan.FromMinutes(5)));
+        Assert.Equal(StallDecision.Block, StallPolicy.Decide(TimeSpan.FromMinutes(10),1,TimeSpan.FromMinutes(5)));
+        Assert.False(TestGate.Check(true,null,false));
+        Assert.True(TestGate.Check(true,null,true));
+        Assert.True(TestGate.Check(false,null,false));
+        Assert.NotNull(DurationEstimate.Range([60,120,180,300]));
+        Assert.Null(DurationEstimate.Range([60,120]));
+        Assert.Equal("passing", CiSummary.From("""[{"name":"unit","state":"SUCCESS","link":"x"}]""").State);
+    }
     [Theory]
     [InlineData("waiting_resource", "connect_openrouter", true)]
     [InlineData("waiting_resource", "computer_recovering", false)]

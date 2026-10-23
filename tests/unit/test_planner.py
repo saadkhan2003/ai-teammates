@@ -30,6 +30,21 @@ def test_alpha_plan_step_0_is_browser_open():
     assert result["choices"][0]["finish_reason"] == "tool_calls"
 
 
+def test_plan_demo_sets_and_updates_a_three_step_plan():
+    name, args, _ = _call([{"role": "user", "content": "PLAN DEMO"}])
+    assert name == "plan_set" and len(args["items"]) == 3
+    second = plan([{"role": "user", "content": "PLAN DEMO"}, {"role": "tool", "content": "{}"}])
+    call = second["choices"][0]["message"]["tool_calls"][0]["function"]
+    assert call["name"] == "plan_update"
+    assert json.loads(call["arguments"]) == {"index": "1", "status": "done"}
+
+
+def test_tests_gate_demo_returns_a_final_answer_first():
+    result = plan([{"role": "user", "content": "TESTS GATE DEMO"}])
+    assert result["choices"][0]["finish_reason"] == "stop"
+    assert not result["choices"][0]["message"].get("tool_calls")
+
+
 def test_terminal_plan_is_write_file():
     name, args, _result = _call([{"role": "user", "content": "Terminal: write the word pong"}])
     assert name == "write_file"

@@ -16,6 +16,13 @@ test("maps tools to short human labels", () => {
   assert.equal(toolLabel("write_file", { path: "/workspace/notes/plan.md" }), "Writing plan.md");
   assert.equal(toolLabel("write_file", {}), "Writing a file");
   assert.equal(toolLabel("read_file", { path: "a/b.txt" }), "Reading b.txt");
+  assert.equal(toolLabel("computer_screenshot"), "Taking a screenshot");
+  assert.equal(toolLabel("computer_click"), "Clicking on the screen");
+  assert.equal(toolLabel("computer_type"), "Typing on the screen");
+  assert.equal(toolLabel("computer_key"), "Pressing a key");
+  assert.equal(toolLabel("computer_scroll"), "Scrolling the screen");
+  assert.equal(toolLabel("record_start"), "Recording the screen");
+  assert.equal(toolLabel("record_stop"), "Recording the screen");
 });
 
 test("unknown tools fall back to Working on it", () => {
@@ -30,5 +37,6 @@ test("working row: typing beats step, step beats tool, tool beats title, title b
   assert.equal(workingStatus([{ type: "status", text: "Planning the steps" }, tool], false), "Messaging Scout");
   assert.equal(workingStatus([], false, "Fix the badge"), "Fix the badge");
   assert.equal(workingStatus([], false), "Working on it");
+  assert.equal(workingStatus([], false, "Task", "Update the tests"), "Step 2 of 5: Update the tests");
   assert.equal(workingStatus([{ type: "tool", tool: "weird" }], false), "Working on it");
 });

@@ -7,6 +7,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "services" / "agent
 from run_guard import RunGuard
 
 
+def test_new_default_budget_is_one_hour_and_two_hundred_steps():
+    guard = RunGuard()
+    assert guard.max_steps == 200
+    assert guard.max_seconds == 3600
+
+
+def test_nudge_text_is_plain_user_instruction():
+    from worker import nudge_message
+
+    assert nudge_message() == {"role": "user", "content": "You have made no progress for N minutes. Say what is blocking you, or take the next concrete step, or call ask_user."}
+
+
 def test_repeat_and_step_and_time_budgets():
     clock = {"now": 0.0}
 

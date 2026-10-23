@@ -45,6 +45,11 @@ MAX_MODEL_ROUNDS = 12
 HOLD_PREFIX = "HOLD_FOR_RECOVERY"
 RECOVERING = "computer_recovering"
 _ALLOW = object()
+STALL_NUDGE = "You have made no progress for N minutes. Say what is blocking you, or take the next concrete step, or call ask_user."
+
+
+def nudge_message() -> dict[str, str]:
+    return {"role": "user", "content": STALL_NUDGE}
 
 
 def env_int(name: str, default: int) -> int:
@@ -190,6 +195,12 @@ class Worker:
                     lost.set()
                     return
                 log.warning("heartbeat status=%s id=%s", exc.response.status_code, task_id)
+            if not stop.is_set() and 'response' in locals():
+                try:
+                    if response.json().get("nudge"):
+                        await self._append_nudge(task)
+                except (ValueError, AttributeError):
+                    pass
             if stop.is_set():
                 return
             try:
@@ -197,6 +208,11 @@ class Worker:
                 return
             except asyncio.TimeoutError:
                 continue
+
+    async def _append_nudge(self, task: dict) -> None:
+        messages = await self._load_transcript(task)
+        messages.append(nudge_message())
+        await self._put_transcript(task, messages)
 
     async def execute(self, task: dict, lost: asyncio.Event) -> None:
         instruction = str(task.get("instruction") or "")
@@ -223,7 +239,8 @@ class Worker:
             ]
         _note_target(task, messages)
         rounds = 0
-        guard = RunGuard()
+        budget = task.get("budget") if isinstance(task.get("budget"), dict) else {}
+        guard = RunGuard(max_steps=int(budget.get("maxSteps", 200)), max_seconds=float(budget.get("maxSeconds", 3600)))
         grounding_redone = any(isinstance(m, dict) and m.get("grounding_retry") for m in messages)
         while not lost.is_set():
             pending_calls = _unanswered_calls(messages)
@@ -251,7 +268,15 @@ class Worker:
                             messages.append({"role": "user", "grounding_retry": True, "content": "Final answer check failed: " + ", ".join(checked.issues) + ". Redo once using only URLs observed in successful tool results, the requested sites, and no more than the requested count. State any shortfall honestly."})
                             await self._put_transcript(task, messages)
                             continue
-                        await self._complete(task, checked.text)
+                        outcome = await self._complete(task, checked.text)
+                        if outcome == "tests_required":
+                            rejections = sum(1 for m in messages if isinstance(m, dict) and m.get("tests_gate_rejection")) + 1
+                            if rejections >= 3:
+                                await self._status(task, "waiting_human", reason="tests_required")
+                                return
+                            messages.append({"role": "user", "tests_gate_rejection": True, "content": "Tests are required before completing this task. Run run_tests, fix any failures, then provide your final answer."})
+                            await self._put_transcript(task, messages)
+                            continue
                     return
             for pending in pending_calls:
                 if lost.is_set():
@@ -321,7 +346,8 @@ class Worker:
         await self._complete(task, "Recovered.")
 
     async def _run_skill(self, task: dict, skill: dict, lost: asyncio.Event) -> None:
-        guard = RunGuard()
+        budget = task.get("budget") if isinstance(task.get("budget"), dict) else {}
+        guard = RunGuard(max_steps=int(budget.get("maxSteps", 200)), max_seconds=float(budget.get("maxSeconds", 3600)))
         for step in skill.get("steps") or []:
             if lost.is_set():
                 return
@@ -531,12 +557,16 @@ class Worker:
         body.update(extra)
         await self.request("POST", f"/internal/tasks/{_task_id(task)}/status", body)
 
-    async def _complete(self, task: dict, text: str) -> None:
-        await self.request(
+    async def _complete(self, task: dict, text: str) -> str | None:
+        response = await self.request(
             "POST",
             f"/internal/tasks/{_task_id(task)}/complete",
             {"workerId": self.worker_id, "epoch": _epoch(task), "text": text},
+            allow_status=(422,),
         )
+        if response.status_code == 422 and response.json().get("error") == "tests_required":
+            return "tests_required"
+        return None
 
     async def _fail(self, task: dict, error: str) -> None:
         try:
@@ -552,12 +582,12 @@ class Worker:
         except Exception as exc:
             log.warning("fail post type=%s", type(exc).__name__)
 
-    async def request(self, method: str, path: str, body: dict | None = None) -> httpx.Response:
+    async def request(self, method: str, path: str, body: dict | None = None, allow_status: tuple[int, ...] = ()) -> httpx.Response:
         assert self.client is not None
         response = await send_with_retry(self.client, method, path, body)
         if _computer_recovering(response):
             raise ComputerRecovering()
-        if response.status_code >= 400:
+        if response.status_code >= 400 and response.status_code not in allow_status:
             raise httpx.HTTPStatusError("api error", request=response.request, response=response)
         return response
 

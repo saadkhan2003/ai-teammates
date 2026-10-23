@@ -319,6 +319,78 @@ public static class Routes
             return Results.Json((await conn.QueryAsync("SELECT id,type,detail,created_at FROM task_run_events WHERE task_id=@id ORDER BY id", new { id })).Select(Platform.ToDict));
         });
 
+        app.MapPatch("/api/bots/{id:guid}/work-settings", async (HttpContext ctx, Guid id, JsonElement body) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            if (!await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM bots WHERE id=@id AND owner_id=@owner)", new { id, owner = user })) return Results.NotFound();
+            if (body.ValueKind != JsonValueKind.Object || body.EnumerateObject().Any(p => p.Name is not ("maxSteps" or "maxSeconds" or "requireTests"))) return Results.BadRequest(new { error = "invalid work settings" });
+            if (body.TryGetProperty("maxSteps", out var stepValue) && (stepValue.ValueKind != JsonValueKind.Number || !stepValue.TryGetInt32(out _))) return Results.BadRequest(new { error = "maxSteps must be an integer" });
+            if (body.TryGetProperty("maxSeconds", out var secondsValue) && (secondsValue.ValueKind != JsonValueKind.Number || !secondsValue.TryGetInt32(out _))) return Results.BadRequest(new { error = "maxSeconds must be an integer" });
+            if (body.TryGetProperty("requireTests", out var requireValue) && requireValue.ValueKind is not (JsonValueKind.True or JsonValueKind.False)) return Results.BadRequest(new { error = "requireTests must be a boolean" });
+            var steps = body.TryGetProperty("maxSteps", out var se) && se.ValueKind == JsonValueKind.Number ? Math.Clamp(se.GetInt32(), 4, 1000) : (int?)null;
+            var seconds = body.TryGetProperty("maxSeconds", out var te) && te.ValueKind == JsonValueKind.Number ? Math.Clamp(te.GetInt32(), 30, 21600) : (int?)null;
+            var tests = body.TryGetProperty("requireTests", out var re) && re.ValueKind is JsonValueKind.True or JsonValueKind.False ? re.GetBoolean() : (bool?)null;
+            await conn.ExecuteAsync("UPDATE bots SET default_budget_steps=coalesce(@steps,default_budget_steps),default_budget_seconds=coalesce(@seconds,default_budget_seconds),require_tests=coalesce(@tests,require_tests),updated_at=now() WHERE id=@id", new { id, steps, seconds, tests });
+            return Results.Json(new { ok = true });
+        });
+        app.MapPatch("/api/tasks/{id:guid}/budget", async (HttpContext ctx, Guid id, JsonElement body) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            var owns = await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE t.id=@id AND b.owner_id=@owner)", new { id, owner = user });
+            if (!owns) return Results.NotFound();
+            if (body.ValueKind != JsonValueKind.Object || body.EnumerateObject().Any(p => p.Name is not ("maxSteps" or "maxSeconds"))) return Results.BadRequest(new { error = "invalid task budget" });
+            if (body.TryGetProperty("maxSteps", out var stepValue) && (stepValue.ValueKind != JsonValueKind.Number || !stepValue.TryGetInt32(out _))) return Results.BadRequest(new { error = "maxSteps must be an integer" });
+            if (body.TryGetProperty("maxSeconds", out var secondsValue) && (secondsValue.ValueKind != JsonValueKind.Number || !secondsValue.TryGetInt32(out _))) return Results.BadRequest(new { error = "maxSeconds must be an integer" });
+            var steps = body.TryGetProperty("maxSteps", out var se) && se.ValueKind == JsonValueKind.Number ? Math.Clamp(se.GetInt32(), 4, 1000) : (int?)null;
+            var seconds = body.TryGetProperty("maxSeconds", out var te) && te.ValueKind == JsonValueKind.Number ? Math.Clamp(te.GetInt32(), 30, 21600) : (int?)null;
+            await conn.ExecuteAsync("UPDATE tasks SET budget_steps=coalesce(@steps,budget_steps),budget_seconds=coalesce(@seconds,budget_seconds) WHERE id=@id", new { id, steps, seconds });
+            return Results.Json(new { ok = true });
+        });
+        app.MapGet("/api/tasks/{id:guid}/plan", async (HttpContext ctx, Guid id) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            var task = await conn.QuerySingleOrDefaultAsync<(Guid BotId, string Title, string Status, bool? Required, DateTimeOffset? Passed, bool Override, bool? BotRequired, DateTimeOffset? Started, string Instruction, string? Blocked, Guid Owner, string Kind)>("SELECT t.bot_id,t.title,t.status,t.require_tests,t.tests_passed_at,t.tests_override,b.require_tests,t.started_at,t.instruction,t.blocked_reason,b.owner_id,t.kind FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE t.id=@id AND b.owner_id=@owner", new { id, owner = user });
+            if (task.BotId == Guid.Empty) return Results.NotFound();
+            var budgetRow = await conn.QuerySingleAsync<(int? Steps, int? Seconds, int? BotSteps, int? BotSeconds)>("SELECT t.budget_steps,t.budget_seconds,b.default_budget_steps,b.default_budget_seconds FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE t.id=@id", new { id });
+            var budget = RunBudget.Resolve(budgetRow.Steps,budgetRow.Seconds,budgetRow.BotSteps,budgetRow.BotSeconds);
+            var items = await conn.QueryAsync("SELECT position,title,status,updated_at AS \"updatedAt\" FROM task_plan_items WHERE task_id=@id ORDER BY position", new { id });
+            var usage = await conn.QuerySingleAsync<(int Steps, double Elapsed)>("SELECT (SELECT count(*)::int FROM task_steps WHERE task_id=@id),coalesce(extract(epoch from now()-started_at),0)::float8 FROM tasks WHERE id=@id", new { id });
+            var lengthBucket = task.Instruction.Length < 200 ? 0 : task.Instruction.Length < 800 ? 1 : 2;
+            var durations = await conn.QueryAsync<double>("SELECT extract(epoch from finished_at-started_at)::float8 FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE b.owner_id=@owner AND t.kind=@kind AND t.status='completed' AND t.started_at IS NOT NULL AND t.finished_at IS NOT NULL AND CASE WHEN length(t.instruction)<200 THEN 0 WHEN length(t.instruction)<800 THEN 1 ELSE 2 END=@bucket ORDER BY t.finished_at DESC LIMIT 30", new { owner = task.Owner, kind = task.Kind, bucket = lengthBucket });
+            var range = DurationEstimate.Range(durations.AsList());
+            object? estimate = range is null ? null : new { low = range.Value.LowSeconds, high = range.Value.HighSeconds, n = range.Value.Count, label = "estimate" };
+            var planPayload = new { taskId = id, title = task.Title, status = task.Status, items, budget = new { maxSteps = budget.MaxSteps, maxSeconds = budget.MaxSeconds, label = budget.Label }, stepsUsed = usage.Steps, elapsedSeconds = usage.Elapsed, tests = new { required = task.Required ?? task.BotRequired ?? false, passedAt = task.Passed, @override = task.Override }, blocked = task.Blocked != null, blockedReason = task.Blocked, estimate, evidence = Array.Empty<object>() };
+            return Results.Json(planPayload);
+        });
+        app.MapGet("/api/tasks/{id:guid}/evidence", async (HttpContext ctx, Guid id, CancellationToken ct) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            await using var conn = await platform.Data.OpenConnectionAsync(ct);
+            var owns = await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE t.id=@id AND b.owner_id=@owner)", new { id, owner = user });
+            if (!owns) return Results.NotFound();
+            var rows = await conn.QueryAsync("SELECT a.id,a.name,a.mime,a.size_bytes AS bytes,a.created_at AS \"createdAt\" FROM artifacts a WHERE a.task_id=@id AND a.name LIKE 'evidence-%' ORDER BY a.created_at", new { id });
+            return Results.Json(rows.Select(Platform.ToDict));
+        });
+        app.MapPost("/api/tasks/{id:guid}/override-tests", async (HttpContext ctx, Guid id) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            var row = await conn.QuerySingleOrDefaultAsync<(Guid BotId,string Status,string? Reason)>("SELECT t.bot_id,t.status,t.waiting_reason FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE t.id=@id AND b.owner_id=@owner", new { id, owner=user });
+            if (row.BotId==Guid.Empty) return Results.NotFound();
+            await conn.ExecuteAsync("UPDATE tasks SET tests_override=true,status=CASE WHEN status='waiting_human' AND waiting_reason='tests_required' THEN 'queued' ELSE status END,waiting_reason=CASE WHEN waiting_reason='tests_required' THEN NULL ELSE waiting_reason END,lease_epoch=lease_epoch+1 WHERE id=@id", new { id });
+            await platform.Audit("task", "tests.override", row.BotId, id, new { taskId=id });
+            if (row.Status=="waiting_human" && row.Reason=="tests_required") platform.Tasks.Pulse();
+            return Results.Json(new { ok=true });
+        });
+
         app.MapGet("/api/system/llm-status", async (HttpContext ctx) =>
         {
             var user = await RequireUser(ctx, platform);
@@ -592,12 +664,12 @@ public static class Routes
             var user = await RequireUser(ctx, platform);
             if (user == null) return Results.Unauthorized();
             await using var conn = await platform.Data.OpenConnectionAsync(ct);
-            var row = await conn.QuerySingleOrDefaultAsync<(string Name, string Key)>("SELECT a.name, a.object_key FROM artifacts a JOIN bots b ON b.id=a.bot_id WHERE a.id=@id AND b.owner_id=@owner", new { id, owner = user });
+            var row = await conn.QuerySingleOrDefaultAsync<(string Name, string Key, string Mime)>("SELECT a.name, a.object_key, a.mime FROM artifacts a JOIN bots b ON b.id=a.bot_id WHERE a.id=@id AND b.owner_id=@owner", new { id, owner = user });
             if (string.IsNullOrEmpty(row.Key)) return Results.NotFound();
             using var obj = await platform.S3.GetObjectAsync(platform.Bucket, row.Key, ct);
             using var memory = new MemoryStream();
             await obj.ResponseStream.CopyToAsync(memory, ct);
-            return Results.File(memory.ToArray(), "application/octet-stream", row.Name);
+            return Results.File(memory.ToArray(), string.IsNullOrWhiteSpace(row.Mime) ? "application/octet-stream" : row.Mime, enableRangeProcessing: row.Mime.StartsWith("video/", StringComparison.OrdinalIgnoreCase));
         });
 
         app.MapGet("/api/usage", async (HttpContext ctx) =>
@@ -906,8 +978,10 @@ public static class Routes
             foreach (var id in ids)
             {
                 var task = await conn.QuerySingleAsync<(Guid Id, Guid BotId, string Instruction, string Kind, int Attempt, int Epoch, string? Checkpoint, Guid? SkillId, Guid? ConversationId, Guid? SourceMessageId)>(
-                    "UPDATE tasks SET status='running', lease_owner=@worker, lease_until=now()+interval '20 seconds', lease_epoch=lease_epoch+1, attempt=attempt+1, started_at=coalesce(started_at, now()), updated_at=now() WHERE id=@id RETURNING id, bot_id, instruction, kind, attempt, lease_epoch, checkpoint::text, skill_id, conversation_id, source_message_id",
+                "UPDATE tasks SET status='running', lease_owner=@worker, lease_until=now()+interval '20 seconds', lease_epoch=lease_epoch+1, attempt=attempt+1, started_at=coalesce(started_at, now()), last_progress_at=now(), updated_at=now() WHERE id=@id RETURNING id, bot_id, instruction, kind, attempt, lease_epoch, checkpoint::text, skill_id, conversation_id, source_message_id",
                     new { id, worker }, tx);
+                var budget = await conn.QuerySingleAsync<(int? TaskSteps, int? TaskSeconds, int? BotSteps, int? BotSeconds)>("SELECT t.budget_steps,t.budget_seconds,b.default_budget_steps,b.default_budget_seconds FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE t.id=@id", new { id }, tx);
+                var resolvedBudget = RunBudget.Resolve(budget.TaskSteps, budget.TaskSeconds, budget.BotSteps, budget.BotSeconds);
                 var feedback = (await conn.QueryAsync<(Guid MessageId, string Emoji, string Action)>(
                     """
                     UPDATE bot_feedback SET consumed_at=now(), task_id=@task
@@ -927,7 +1001,7 @@ public static class Routes
                 }
                 var placement = await platform.PlacementForBot(task.BotId);
                 var dns = DockerComputeProvider.ContainerName(placement.Computer);
-                rows.Add(new { id = task.Id, botId = task.BotId, computerId = placement.Computer.Value, cdpUrl = $"http://{dns}:9222", instruction = task.Instruction, kind = task.Kind, attempt = task.Attempt, epoch = task.Epoch, checkpoint = task.Checkpoint, conversationId = task.ConversationId, messageId = task.SourceMessageId, feedback, skill = skillJson });
+                rows.Add(new { id = task.Id, botId = task.BotId, computerId = placement.Computer.Value, cdpUrl = $"http://{dns}:9222", instruction = task.Instruction, kind = task.Kind, attempt = task.Attempt, epoch = task.Epoch, checkpoint = task.Checkpoint, conversationId = task.ConversationId, messageId = task.SourceMessageId, feedback, skill = skillJson, budget = new { maxSteps = resolvedBudget.MaxSteps, maxSeconds = resolvedBudget.MaxSeconds, label = resolvedBudget.Label } });
                 wake.Add(placement.Computer.Value);
             }
             await tx.CommitAsync();
@@ -953,8 +1027,10 @@ public static class Routes
         {
             if (!Worker(ctx, platform)) return Results.Unauthorized();
             await using var conn = await platform.Data.OpenConnectionAsync();
-            var n = await conn.ExecuteAsync("UPDATE tasks SET lease_until=now()+interval '20 seconds', updated_at=now() WHERE id=@id AND lease_owner=@worker AND lease_epoch=@epoch AND status='running'", new { id, worker = body.GetProperty("workerId").GetString(), epoch = body.GetProperty("epoch").GetInt32() });
-            return n == 0 ? Results.StatusCode(409) : Results.Json(new { ok = true });
+            var result = await conn.QuerySingleOrDefaultAsync<bool?>("UPDATE tasks SET lease_until=now()+interval '20 seconds', updated_at=now() WHERE id=@id AND lease_owner=@worker AND lease_epoch=@epoch AND status='running' RETURNING nudge_pending", new { id, worker = body.GetProperty("workerId").GetString(), epoch = body.GetProperty("epoch").GetInt32() });
+            if (result == null) return Results.StatusCode(409);
+            if (result.Value) await conn.ExecuteAsync("UPDATE tasks SET nudge_pending=false WHERE id=@id", new { id });
+            return Results.Json(new { ok = true, nudge = result.Value });
         });
 
         app.MapGet("/internal/tasks/{id:guid}/transcript", async (HttpContext ctx, Guid id) =>
@@ -998,6 +1074,7 @@ public static class Routes
                 seq++;
             }
             await tx.CommitAsync();
+            await conn.ExecuteAsync("UPDATE tasks SET last_progress_at=now(),blocked_reason=NULL WHERE id=@id", new { id });
             return Results.Json(new { ok = true });
         });
 
@@ -1016,6 +1093,8 @@ public static class Routes
             var text = OutputRedactor.Redact(body.GetProperty("text").GetString());
             await using var conn = await platform.Data.OpenConnectionAsync();
             var epoch = body.TryGetProperty("epoch", out var epochEl) ? epochEl.GetInt32() : -1;
+            var gate = await conn.QuerySingleOrDefaultAsync<(bool Required, DateTimeOffset? Passed, bool Override)>("SELECT coalesce(t.require_tests,b.require_tests,false),t.tests_passed_at,t.tests_override FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE t.id=@id", new { id });
+            if (!TestGate.Check(gate.Required, gate.Passed, gate.Override)) return Results.Json(new { error = "tests_required" }, statusCode: 422);
             var completed = await conn.QuerySingleOrDefaultAsync<(Guid? ConversationId, int Applied)>("UPDATE tasks SET status='completed', result=@result::jsonb, finished_at=now(), lease_owner=NULL, lease_until=NULL, updated_at=now() WHERE id=@id AND status='running' AND lease_epoch=@epoch RETURNING conversation_id, 1 AS applied", new { id, result = JsonSerializer.Serialize(new { text }), epoch });
             if (completed.Applied == 0) return Results.StatusCode(409);
             var conversation = completed.ConversationId;

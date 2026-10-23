@@ -24,6 +24,8 @@ import { messageBlocks, type FormField, type QuestionOption } from "@/lib/messag
 import type { ChatMessage } from "@/lib/types";
 import { errorMessage, formatWhen } from "@/lib/utils";
 
+type TaskPlan = { taskId: string; title: string; status: string; items: { title: string; status: string }[]; budget: { label: string }; tests: { required: boolean; passedAt?: string; override: boolean }; blocked: boolean; estimate?: { lowSeconds: number; highSeconds: number; n: number; label: string } | null };
+
 export function ChatPane({
   conversationId,
   messages,
@@ -36,6 +38,8 @@ export function ChatPane({
   botId,
   avatar,
   taskTitle,
+  activeTaskId,
+  evidenceTaskId,
   botThreads = [],
   hasOlder = false,
   onLoadOlder,
@@ -43,6 +47,8 @@ export function ChatPane({
   botId?: string;
   avatar?: { shape?: string; color?: string; primary?: boolean };
   taskTitle?: string;
+  activeTaskId?: string;
+  evidenceTaskId?: string;
   botThreads?: BotThreadView[];
   hasOlder?: boolean;
   onLoadOlder?: () => Promise<boolean>;
@@ -60,6 +66,24 @@ export function ChatPane({
   useEffect(() => { setAvatarMode(working ? "working" : "idle"); return () => setAvatarMode("idle"); }, [working]);
   const [scrolledUp, setScrolledUp] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [plan, setPlan] = useState<TaskPlan | null>(null);
+  const [evidence, setEvidence] = useState<Array<{ id: string; name: string; mime: string; bytes: number }>>([]);
+  useEffect(() => {
+    if (!activeTaskId) { setPlan(null); return; }
+    let live = true;
+    const refresh = () => { void api<TaskPlan>(`/api/tasks/${activeTaskId}/plan`).then(value => { if (live) setPlan(value); }).catch(() => {}); };
+    refresh();
+    const timer = window.setInterval(refresh, 5000);
+    return () => { live = false; window.clearInterval(timer); };
+  }, [activeTaskId, events]);
+  useEffect(() => {
+    if (!evidenceTaskId) { setEvidence([]); return; }
+    let live = true;
+    api<Array<{ id: string; name: string; mime: string; bytes: number }>>(`/api/tasks/${evidenceTaskId}/evidence`)
+      .then(value => { if (live) setEvidence(value); })
+      .catch(() => { if (live) setEvidence([]); });
+    return () => { live = false; };
+  }, [evidenceTaskId, messages.length]);
   const [parts, setParts] = useState<ComposerPart[]>(initialParts);
   const partRefs = useRef(new Map<string, HTMLTextAreaElement>());
   const listRef = useRef<HTMLDivElement>(null);
@@ -389,6 +413,16 @@ export function ChatPane({
               </MessageItem>
             );
           })}
+          {evidence.length ? <section aria-label="Task evidence" className="rounded-md border border-border bg-card p-3">
+            <h3 className="mb-2 text-sm font-medium">Evidence</h3>
+            <div className="grid gap-3 sm:grid-cols-2">{evidence.map(item => {
+              const url = `/api/artifacts/${item.id}/download`;
+              return <figure key={item.id} className="min-w-0 overflow-hidden rounded-md border border-border">
+                {item.mime?.startsWith("image/") ? <img src={url} alt={item.name} loading="lazy" className="max-h-96 w-full object-contain" /> : item.mime?.startsWith("video/") ? <video src={url} controls preload="none" className="w-full" /> : null}
+                <figcaption className="truncate border-t border-border px-2 py-1.5 text-xs text-muted-foreground">{item.name} · {Math.max(1, Math.round(item.bytes / 1024))} KB</figcaption>
+              </figure>;
+            })}</div>
+          </section> : null}
           {events.filter(event => !["delta", "message.delta", "text_delta"].includes(event.type)).map((event, i) => <EventCard key={`${conversationId}-${i}`} event={event} />)}
           {working && events.some(event => ["delta", "message.delta", "text_delta"].includes(event.type)) ? <div data-testid="streaming-text" className="rounded-md bg-assistant-bubble p-3 text-sm"><Markdown text={events.filter(event => ["delta", "message.delta", "text_delta"].includes(event.type)).map(event => String(event.delta ?? event.text ?? "")).join("")} /><span aria-hidden className="inline-block h-4 w-1 animate-pulse bg-foreground" /></div> : null}
           {working ? (
@@ -397,6 +431,15 @@ export function ChatPane({
               <ShimmerText text={workingStatus(events, events.some(event => ["delta", "message.delta", "text_delta"].includes(event.type)), taskTitle)} />
             </div>
           ) : null}
+          {plan && plan.items.length ? <section aria-label="Task plan" className="rounded-md border border-border bg-card p-3 text-sm">
+            <h3 className="font-medium">Plan</h3>
+            <ul className="mt-2 space-y-1">{plan.items.map((item, index) => <li key={index} className="flex gap-2"><span aria-hidden>{item.status === "done" ? "✓" : item.status === "blocked" ? "!" : item.status === "in_progress" ? "◉" : "○"}</span><span>{item.title}</span></li>)}</ul>
+            <p className="mt-2 text-xs text-muted-foreground">Budget: {plan.budget.label}</p>
+            {plan.estimate ? <p className="text-xs text-muted-foreground">Estimate: ~{Math.round(plan.estimate.lowSeconds / 60)}–{Math.round(plan.estimate.highSeconds / 60)} min (from {plan.estimate.n} similar runs)</p> : null}
+            <p className="text-xs">Tests: {plan.tests.required ? plan.tests.passedAt || plan.tests.override ? "passed" : "required" : "optional"}</p>
+            {plan.blocked ? <p className="mt-2 rounded-md border border-destructive/40 p-2">This task is blocked.</p> : null}
+            {plan.tests.required && !plan.tests.passedAt && !plan.tests.override && plan.status === "waiting_human" ? <Button size="sm" className="mt-2" onClick={() => void api(`/api/tasks/${plan.taskId}/override-tests`, { method: "POST" }).then(() => onSent())}>Mark done without tests</Button> : null}
+          </section> : null}
           <RefreshNotice variant="chat" />
         </div>
       </div>
