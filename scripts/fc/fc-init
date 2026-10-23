@@ -1,0 +1,54 @@
+#!/bin/sh
+# PID 1 inside the Firecracker microVM (installed at /sbin/fc-init by scripts/fc-build-rootfs.sh).
+# Kernel command line switches:  fc.mode=smoke  prove the image boots, print markers, reboot (default)
+#                                fc.mode=full   mount API filesystems, then exec the image's s6 /init
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+mount -t proc proc /proc 2>/dev/null
+mount -t sysfs sysfs /sys 2>/dev/null
+mount -t devtmpfs devtmpfs /dev 2>/dev/null
+mkdir -p /dev/pts /dev/shm /run /tmp
+mount -t devpts devpts /dev/pts 2>/dev/null
+mount -t tmpfs -o mode=1777,size=512m tmpfs /dev/shm
+mount -t tmpfs -o mode=0755 tmpfs /run
+mount -t tmpfs -o mode=1777 tmpfs /tmp
+mount -t cgroup2 none /sys/fs/cgroup 2>/dev/null
+echo 1 > /proc/sys/kernel/sysrq 2>/dev/null
+
+MODE=smoke
+for w in $(cat /proc/cmdline); do
+  case "$w" in fc.mode=*) MODE=${w#fc.mode=} ;; esac
+done
+
+if [ "$MODE" = full ]; then
+  exec /init
+fi
+
+ok=1
+check() {  # check NAME COMMAND...
+  name=$1; shift
+  if out=$("$@" 2>&1); then echo "FC_CHECK_OK   $name: $(echo "$out" | head -1)"
+  else echo "FC_CHECK_FAIL $name: $(echo "$out" | head -1)"; ok=0; fi
+}
+echo "FC_SMOKE_BEGIN"
+echo "FC_KERNEL=$(uname -r) FC_UPTIME_S=$(cut -d' ' -f1 /proc/uptime)"
+echo "FC_MEM_KB=$(awk '/MemTotal/ {print $2}' /proc/meminfo) FC_CPUS=$(grep -c '^processor' /proc/cpuinfo)"
+check rootfs-writable sh -c 'echo x > /var/tmp/.fc && rm /var/tmp/.fc && echo ok'
+check vsock-device test -c /dev/vsock
+check python3 python3 --version
+check node node --version
+check xvfb-binary sh -c 'command -v Xvfb'
+check xfwm4-binary sh -c 'command -v xfwm4'
+check plank-binary sh -c 'command -v plank'
+check chromium-version chromium --version
+# Real desktop: start Xvfb and ask it for display info.
+Xvfb :99 -screen 0 1280x800x24 >/tmp/xvfb.log 2>&1 &
+XPID=$!
+sleep 3
+check xvfb-display sh -c 'DISPLAY=:99 xdpyinfo | grep -m1 "dimensions:"'
+# Chromium inside the VM (root + --no-sandbox is only for this smoke test; the product runs as per-bot UIDs).
+check chromium-headless sh -c 'DISPLAY=:99 timeout 40 chromium --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --dump-dom about:blank | grep -m1 -o "<html"'
+kill "$XPID" 2>/dev/null
+if [ "$ok" = 1 ]; then echo "FC_SMOKE_OK"; else echo "FC_SMOKE_FAIL"; fi
+sync
+echo b > /proc/sysrq-trigger 2>/dev/null
+exit 0   # init exit -> kernel panic=1 -> reboot -> Firecracker exits
