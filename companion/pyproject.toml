@@ -1,0 +1,8 @@
+[project]
+name = "teammates-companion"
+version = "0.4.0"
+requires-python = ">=3.10"
+description = "A stdlib-only Teammates device companion"
+
+[project.scripts]
+teammates-companion = "teammates_companion:main"

@@ -30,4 +30,17 @@ jobs:
           python3 -m pip install pytest
           python3 -m pytest -q tests/unit
           dotnet test tests/compute-contract/Compute.ContractTests.csproj --nologo
+      - name: web build
+        run: |
+          cd apps/web
+          npm ci
+          npm run build
+      - name: companion and optional browser tests
+        run: |
+          python3 -m pytest -q tests/unit/test_companion.py
+          if [ "${{ vars.RUN_PLAYWRIGHT }}" = "true" ]; then
+            npx --prefix apps/web playwright test
+          else
+            echo "Playwright is local/optional; set RUN_PLAYWRIGHT=true to enable it."
+          fi
       # Full stack, Playwright, and eval-real are local: make test / make eval-real.

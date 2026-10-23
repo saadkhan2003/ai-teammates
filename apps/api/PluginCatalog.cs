@@ -152,7 +152,7 @@ public static class PluginProbe
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(3));
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.UserAgent.ParseAdd("teammates/0.3");
+        request.Headers.UserAgent.ParseAdd("teammates/0.4");
         using var response = await PluginHttp.Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
         var code = (int)response.StatusCode;
         return (code > 0 && code < 500, "status=" + code);

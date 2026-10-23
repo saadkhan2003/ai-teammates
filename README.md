@@ -1,6 +1,6 @@
 # Teammates
 
-Self-hosted bots that each keep a Linux computer, a visible browser, and a conversation. This is MVP v0.1: one owner, one machine, a mock model unless you connect your own OpenRouter key.
+Self-hosted bots that each keep a Linux computer, a visible browser, and a conversation. This is v0.4: managed devices, a companion CLI, and a mock model unless you connect your own OpenRouter key.
 
 A bot can react to a user message with one emoji. The same emoji removes it, and a different emoji replaces it. The pill updates from the conversation event stream. A reaction you add to a bot message is hidden feedback for the bot's next turn. It does not start a task or a reply.
 
@@ -12,6 +12,10 @@ The API is **ASP.NET Core 10 LTS** (`net10.0`). There is no separate computer-ma
 bash scripts/install.sh
 sudo docker compose up -d --build
 ```
+
+## v0.4
+
+v0.4 adds device pairing and permissions in **Settings → Computer**, plus the cross-platform Python companion in [`companion/`](companion/). Upgrade with the normal compose rebuild, create a pairing code in Settings, then run `teammates-companion pair --server URL --code CODE` and `teammates-companion run`. See [`companion/README.md`](companion/README.md) and [`docs/COMPANION.md`](docs/COMPANION.md).
 
 Open [http://127.0.0.1:18080](http://127.0.0.1:18080). Sign in as `saad` / `teammates-dev` (change these in `.env` before any shared host).
 

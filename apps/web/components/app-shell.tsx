@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, ChevronRight, Menu, PanelLeft, PanelLeftClose, Plug, Plus, Search } from "lucide-react";
+import { Bell, ChevronRight, CircleHelp, Info, Menu, PanelLeft, PanelLeftClose, Plug, Plus, Search, Settings, Upload, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
@@ -35,6 +35,9 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -97,6 +100,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const [pluginTab, setPluginTab] = useState<"marketplace" | "yours">("yours");
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -193,6 +198,10 @@ export function AppShell({ children }: { children: ReactNode }) {
       if ((event.metaKey || event.ctrlKey) && key === "k") {
         event.preventDefault();
         setPalette(true);
+      }
+      if ((event.metaKey || event.ctrlKey) && key === "/") {
+        event.preventDefault();
+        setShortcutsOpen(true);
       }
       if ((event.metaKey || event.ctrlKey) && event.key === ",") {
         event.preventDefault();
@@ -413,20 +422,40 @@ export function AppShell({ children }: { children: ReactNode }) {
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
-        <Link
-          href="/settings"
-          data-testid="account-button"
-          onClick={() => setOpen(false)}
-          className={cn(
-            "flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1 hover:bg-sidebar-accent",
-            compact && "flex-none justify-center px-0",
-          )}
-        >
-          <Avatar className="h-7 w-7">
-            <AvatarFallback className="text-[10px]">{initials(username)}</AvatarFallback>
-          </Avatar>
-          {compact ? <span className="sr-only">{username}</span> : <span className="min-w-0 truncate text-sm">{username}</span>}
-        </Link>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              data-testid="account-button"
+              variant="ghost"
+              className={cn("h-10 min-w-0 flex-1 justify-start gap-2 px-1.5", compact && "w-9 flex-none justify-center px-0")}
+            >
+              <Avatar className="h-7 w-7"><AvatarFallback className="text-[10px]">{initials(username)}</AvatarFallback></Avatar>
+              {compact ? <span className="sr-only">{username}</span> : <span className="min-w-0 truncate text-sm">{username}</span>}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="top" align="start" className="w-64" data-testid="account-menu">
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>Weekly usage <span className="ml-auto text-xs text-muted-foreground">7% used</span></DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-56">
+                <div className="px-2 py-2"><p className="text-sm font-medium">Weekly usage</p><p className="text-xs text-muted-foreground">Resets in 7 days</p><p className="mt-2 text-2xl font-medium">7% <span className="text-xs text-muted-foreground">used</span></p></div>
+                <DropdownMenuItem onSelect={() => go("/settings/usage")}>Manage usage</DropdownMenuItem>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuItem onSelect={() => go("/settings/computer")}><Upload /> Get app</DropdownMenuItem>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger><CircleHelp /> Support</DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                <DropdownMenuItem onSelect={() => window.open("/docs/COMPANION.md", "_blank")}><CircleHelp /> Help Center</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setShortcutsOpen(true)}>⌨ Keyboard shortcuts</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => toast.info("Feedback is available in the next release.")}>✉ Send Feedback</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setAboutOpen(true)}><Info /> About</DropdownMenuItem>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuItem onSelect={() => go("/settings")}><Settings /> Settings</DropdownMenuItem>
+            <DropdownMenuItem disabled title="Single-owner build">＋ Add account</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => void api("/api/auth/logout", { method: "POST" }).then(() => router.push("/login"))}>Log out</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   );
@@ -561,6 +590,13 @@ export function AppShell({ children }: { children: ReactNode }) {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        <Dialog open={aboutOpen} onOpenChange={setAboutOpen}>
+          <DialogContent className="sm:max-w-sm text-center" data-testid="about-dialog">
+            <DialogHeader><div className="mx-auto grid h-16 w-16 place-items-center rounded-xl bg-brand text-3xl font-bold text-background">✦</div><DialogTitle className="text-2xl">AI Teammates</DialogTitle><DialogDescription>Version {process.env.NEXT_PUBLIC_APP_VERSION || "0.4.0"}<br />Built {process.env.NEXT_PUBLIC_BUILD_DATE || "2026"}<br />Copyright © 2026 AI Teammates</DialogDescription></DialogHeader>
+            <Button variant="outline" data-testid="copy-version-info" onClick={() => { void navigator.clipboard?.writeText("AI Teammates 0.4.0"); toast.success("Version info copied."); }}>Copy version info</Button>
+          </DialogContent>
+        </Dialog>
+        <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       </div>
     </TooltipProvider>
   );
@@ -656,6 +692,27 @@ function CreateTeammateDialog({
             {creating ? "Creating…" : "Create"}
           </Button>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+const shortcutGroups = [
+  ["Essentials", [["Search", "Ctrl K  or  Ctrl Shift F"], ["New Bot", "Ctrl N"], ["Send", "Enter"], ["Go to Bot", "Ctrl 1–9"], ["Compact sidebar", "Ctrl B"], ["Settings", "Ctrl ,"], ["Keyboard shortcuts", "Ctrl /"]]],
+  ["Chat", [["Focus chat", "Ctrl I"], ["Find in chat", "Ctrl F"], ["Dictate", "Ctrl D"], ["Add selection to chat", "Ctrl L"]]],
+  ["Navigation", [["Previous / next Bot", "Alt ↑ / Alt ↓"], ["Back / forward", "Ctrl [ / Ctrl ]"], ["Switch Bots", "Hold Ctrl  Tab"]]],
+  ["Panels", [["Details", "Ctrl Alt B"], ["Skills", "Ctrl Shift W"], ["Connect apps", "Ctrl Shift M"]]],
+  ["Window", [["Zoom", "Ctrl + / Ctrl − / Ctrl 0"], ["Full screen", "F11"]]],
+] as const;
+
+function ShortcutsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl" data-testid="shortcuts-dialog">
+        <DialogHeader><DialogTitle>Keyboard shortcuts</DialogTitle></DialogHeader>
+        <div className="grid gap-x-10 gap-y-5 sm:grid-cols-2">
+          {shortcutGroups.map(([title, entries]) => <section key={title}><h3 className="mb-2 text-sm font-medium">{title}</h3><div className="divide-y divide-border">{entries.map(([label, keys]) => <div key={label} className="flex min-h-10 items-center justify-between gap-3 text-sm"><span>{label}</span><span className="text-xs text-muted-foreground">{keys.split(" ").map((key, index) => <kbd key={`${key}-${index}`} className="ml-1 rounded border border-border bg-muted px-1.5 py-0.5 font-mono">{key}</kbd>)}</span></div>)}</div></section>)}
+        </div>
       </DialogContent>
     </Dialog>
   );
