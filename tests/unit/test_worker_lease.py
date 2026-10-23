@@ -44,3 +44,20 @@ def test_desktop_busy_response_is_recognized_without_logging_payload():
     response = httpx.Response(409, request=request, json={"detail": {"code": "DESKTOP_BUSY"}})
     assert _desktop_busy(response)
     assert not _desktop_busy(httpx.Response(409, request=request, json={"error": "other"}))
+
+
+def test_feedback_is_folded_into_an_existing_transcript_once():
+    from worker import _fold_feedback
+
+    note = "Hidden feedback, not chat and no reply expected: the user reacted 🎉 on message m1."
+    messages = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "do it"},
+        {"role": "assistant", "content": "", "toolCalls": [{"id": "c1", "name": "shell", "args": {}}]},
+    ]
+    _fold_feedback(messages, note)
+    _fold_feedback(messages, note)
+    assert messages[0]["content"].count(note) == 1
+    assert messages[-1]["role"] == "assistant" and len(messages) == 3
+    _fold_feedback(messages, "")
+    assert messages[0]["content"] == "sys\n" + note

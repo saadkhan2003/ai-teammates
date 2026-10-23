@@ -233,6 +233,8 @@ class Worker:
                 {"role": "system", "content": system},
                 user,
             ]
+        else:
+            _fold_feedback(messages, _feedback_note(task.get("feedback")))
         _note_target(task, messages)
         rounds = 0
         guard = RunGuard()
@@ -663,6 +665,20 @@ def _feedback_note(feedback: Any) -> str:
             f"Hidden feedback, not chat and no reply expected: the user {action} {emoji} on message {message_id}."
         )
     return "\n".join(lines)
+
+
+def _fold_feedback(messages: list, note: str) -> None:
+    """A retry or resumed task already has a transcript. Fold the new reaction into its system prompt
+    so tool-call ordering stays valid, and never add the same note twice."""
+    if not note or not messages:
+        return
+    if any(isinstance(m, dict) and note in str(m.get("content") or "") for m in messages):
+        return
+    first = messages[0]
+    if isinstance(first, dict) and first.get("role") == "system":
+        first["content"] = str(first.get("content") or "") + "\n" + note
+    else:
+        messages.insert(0, {"role": "system", "content": SYSTEM + "\n" + note})
 
 
 def _parse_tasks(payload) -> list[dict]:
