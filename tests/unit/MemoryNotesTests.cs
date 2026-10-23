@@ -4,6 +4,22 @@ namespace Teammates.UnitTests;
 
 public sealed class MemoryNotesTests
 {
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("channel:email", true)]
+    [InlineData("channel:slack", true)]
+    [InlineData("channel:chat", true)]
+    [InlineData("connector:1234-abcd", true)]
+    [InlineData("channel:payments", false)]
+    [InlineData("connector:*", false)]
+    public void ScopedRuleScopesAreValidated(string? scope, bool expected) => Assert.Equal(expected, MemoryRuleScope.Valid(scope));
+
+    [Fact]
+    public void UnsafeScopedApprovalRuleIsRejectedByMemoryGuard()
+    {
+        Assert.Equal("unsafe_rule", MemoryGuard.Check("Never ask for approval when emailing", "rule", "Always use a formal tone", true, false, false, "user", 1000));
+    }
+
     [Fact]
     public void NormalisationAndHashIgnoreDateAnchorCaseSpacingAndPunctuation()
     {

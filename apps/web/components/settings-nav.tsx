@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 const tabs = [
   { href: "/settings", label: "General", exact: true },
   { href: "/settings/policy", label: "Policy", testId: "nav-policy" },
+  { href: "/settings/approval-rules", label: "Approval rules", testId: "nav-approval-rules" },
   { href: "/settings/computer", label: "Computer" },
   { href: "/settings/secrets", label: "Vault" },
   { href: "/settings/plugins", label: "Plugins" },

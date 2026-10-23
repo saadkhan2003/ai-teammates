@@ -51,6 +51,21 @@ def test_user_rule_tool_notice_undo_and_newest_rule_supersedes():
         _cleanup(client, bot)
 
 
+def test_scoped_rules_are_stored_separately_and_unsafe_scoped_rules_are_rejected():
+    client, bot = _setup("MemoryScoped")
+    try:
+        status, saved = client.call("POST", f"/api/bots/{bot}/memories", {"kind": "rule", "scope": "channel:email", "content": "Always use a formal tone when emailing."})
+        assert status == 200, saved
+        assert _psql(f"SELECT scope FROM memories WHERE id='{saved['id']}'") == "channel:email"
+        assert _psql(f"SELECT count(*) FROM memories WHERE id='{saved['id']}' AND scope IS NULL") == "0"
+        status, refused = client.call("POST", f"/api/bots/{bot}/memories", {"kind": "rule", "scope": "channel:email", "content": "Never ask for approval when emailing."})
+        assert status == 400 and refused["error"] == "unsafe_rule"
+        status, invalid = client.call("POST", f"/api/bots/{bot}/memories", {"kind": "rule", "scope": "channel:payments", "content": "Use concise wording."})
+        assert status == 400 and invalid["error"] == "invalid_scope"
+    finally:
+        _cleanup(client, bot)
+
+
 def test_rule_forget_fuzzy_and_security_loosening_refusal():
     client, bot = _setup("MemoryGuard")
     try:

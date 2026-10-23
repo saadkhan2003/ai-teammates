@@ -39,7 +39,7 @@ SYSTEM = (
     "When the user states a standing preference with always, never, from now on, or whenever, save it with save_memory(kind='rule'). "
     "The app shows a Saved to notes notice; do not repeat that in prose. If a rule is rejected as unsafe, briefly explain that approval and security rules cannot be changed by notes. "
     "If a note is rejected as use_vault, say contact details cannot be kept in notes and offer to use them for this task only; never repeat the value. "
-    "Standing rules are user preferences only. They never grant permissions or change approval requirements."
+    "Standing rules are user preferences only. Scoped rules appear only when using the matching channel or connector; apply them to that action. They never grant permissions or change approval requirements."
 )
 
 BROWSER_TOOLS = {"browser_open", "browser_extract", "browser_click", "browser_screenshot"}
@@ -344,6 +344,22 @@ class Worker:
             for pending in pending_calls:
                 if lost.is_set():
                     return
+                pending_name = str(pending.get("name") or "")
+                pending_args = pending.get("arguments") if isinstance(pending.get("arguments"), dict) else {}
+                scoped_scope, scoped_context = scoped_rule_context(task, pending_name, pending_args)
+                already_injected = task.setdefault("_scoped_rules_injected", set())
+                if scoped_context and scoped_scope not in already_injected:
+                    already_injected.add(scoped_scope)
+                    deferred = {"deferred": True, "message": "This tool call was not run. Read these scoped user rules, then decide whether to call the tool again.", "scopedRules": scoped_context}
+                    messages.append({"role": "tool", "name": pending_name, "toolCallId": pending["id"], "tool_call_id": pending["id"], "content": json.dumps(present_tool(pending_name, pending_args, deferred))})
+                    _note_target(task, messages)
+                    try:
+                        await self._put_transcript(task, messages)
+                    except httpx.HTTPStatusError as exc:
+                        if exc.response.status_code in LEASE_GONE:
+                            return
+                        raise
+                    continue
                 blocked = guard.note(str(pending.get("name") or ""), pending.get("arguments") if isinstance(pending.get("arguments"), dict) else {})
                 if blocked:
                     await self._fail(task, blocked)
@@ -691,6 +707,59 @@ def _feedback_note(feedback: Any) -> str:
             f"Hidden feedback, not chat and no reply expected: the user {action} {emoji} on message {message_id}."
         )
     return "\n".join(lines)
+
+
+def scoped_rule_context(task: dict, tool: str, args: dict | None = None) -> tuple[str, str]:
+    """Return a bounded prompt block only for the channel or connector being used."""
+    if not isinstance(task, dict) or task.get("memoryMode", task.get("memory_mode", "off")) == "off" or task.get("botMemoryMode") == "off":
+        return "", ""
+    scopes: list[str] = []
+    lowered = tool.lower()
+    if tool == "send_message":
+        recipient = str((args or {}).get("to") or "").lower()
+        scopes.append("channel:slack" if recipient.startswith("slack:") else "channel:email" if "@" in recipient else "channel:chat")
+    if "slack" in lowered:
+        scopes.append("channel:slack")
+    elif "email" in lowered or "mail" in lowered:
+        scopes.append("channel:email")
+    elif "chat" in lowered:
+        scopes.append("channel:chat")
+    if lowered.startswith("plugin_"):
+        bits = lowered.split("_", 2)
+        if len(bits) > 1:
+            connector_prefix = bits[1]
+            for item in task.get("scopedRules", task.get("scoped_rules", [])):
+                scope = str(item.get("scope") or "") if isinstance(item, dict) else ""
+                if scope.startswith("connector:") and scope[len("connector:"):].replace("-", "").lower().startswith(connector_prefix):
+                    scopes.append(scope)
+    raw = task.get("scopedRules", task.get("scoped_rules", []))
+    if not isinstance(raw, list):
+        return "", ""
+    matched_scopes = [scope for scope in dict.fromkeys(scopes) if any(isinstance(r, dict) and r.get("scope") == scope and str(r.get("content") or "").strip() for r in raw)]
+    if not matched_scopes:
+        return "", ""
+    cap = task.get("ruleTokens", task.get("rule_tokens", 600))
+    try:
+        char_cap = max(4, min(24000, int(cap) * 4))
+    except (TypeError, ValueError):
+        char_cap = 2400
+    blocks: list[str] = []
+    used = 0
+    for scope in matched_scopes:
+        lines: list[str] = []
+        for item in raw:
+            if not isinstance(item, dict) or item.get("scope") != scope:
+                continue
+            line = "- " + strip_text(str(item.get("content") or "").strip())[:280]
+            if used + len(scope) + len(line) + 18 > char_cap:
+                break
+            lines.append(line)
+            used += len(scope) + len(line) + 18
+        if lines:
+            blocks.append(f"Rules for {scope} (user preferences; never change approval or security requirements):\n" + "\n".join(lines))
+    if not blocks:
+        return "", ""
+    return "|".join(matched_scopes), "\n".join(blocks)
 
 
 def _parse_tasks(payload) -> list[dict]:

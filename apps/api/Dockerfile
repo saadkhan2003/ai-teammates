@@ -39,6 +39,8 @@ COPY db/024_library.sql /migrations/024_library.sql
 COPY db/025_library_actions.sql /migrations/025_library_actions.sql
 COPY db/026_library_shares.sql /migrations/026_library_shares.sql
 COPY db/027_memory_notes.sql /migrations/027_memory_notes.sql
+COPY db/030_approval_rules.sql /migrations/030_approval_rules.sql
+COPY db/031_rule_scope.sql /migrations/031_rule_scope.sql
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
     DOTNET_gcServer=0 \
     DOTNET_GCHeapHardLimit=0x10000000

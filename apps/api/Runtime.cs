@@ -349,8 +349,9 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         var visibility = Arg(args, "visibility");
         if (visibility.Length > 0 && visibility is not ("owner" or "bot")) return new { saved = false, reason = "invalid_visibility" };
         var actor = context.Peer ? "peer" : context.Routine ? "routine" : "agent";
-        var scope = Arg(args, "scope");
-        var result = await _memory.Save(botId, owner, taskId, content, kind, actor, visibility, context.UserText, explicitRequest, context.Peer, context.Routine, conversationId: scope == "conversation" ? context.ConversationId : null);
+        var memoryScope = Arg(args, "memory_scope");
+        var ruleScope = Arg(args, "scope");
+        var result = await _memory.Save(botId, owner, taskId, content, kind, actor, visibility, context.UserText, explicitRequest, context.Peer, context.Routine, conversationId: memoryScope == "conversation" ? context.ConversationId : null, ruleScope: ruleScope.Length == 0 ? null : ruleScope);
         if (result is not null)
         {
             var json = JsonSerializer.SerializeToElement(result);
@@ -664,10 +665,25 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         var decision = PolicyGate.Evaluate(tool, args, seen, policy, rules, instruction, approved, grants, hint, peerOrigin);
         if (decision.Decision != PolicyEngine.Deny && await TypeSecretOffDomain(conn, owner, tool, args))
             decision = decision with { Decision = PolicyEngine.Deny, Reason = "domain_not_allowed" };
-        if (!policy.ModelAssist || ActionClassifier.IsBuiltIn(tool) || decision.HardDeny || decision.Decision == PolicyEngine.Deny)
-            return decision;
-        var label = await ClassifyWithModel(owner, botId, taskId, tool, args, ct);
-        return PolicyGate.WithModelLabel(decision, label, policy);
+        if (policy.ModelAssist && !ActionClassifier.IsBuiltIn(tool) && !decision.HardDeny && decision.Decision != PolicyEngine.Deny)
+        {
+            var label = await ClassifyWithModel(owner, botId, taskId, tool, args, ct);
+            decision = PolicyGate.WithModelLabel(decision, label, policy);
+        }
+        // Persistent approval rules are consulted only after the complete policy path,
+        // including model labels and every hard/legacy/user/DLP denial above.
+        if (decision.Decision != PolicyEngine.Ask) return decision;
+        if (await conn.ExecuteScalarAsync<bool>("SELECT (t.origin_thread_id IS NOT NULL OR t.origin_depth > 0 OR t.kind IN ('peer','peer_reply','peer_notice')) FROM tasks t WHERE t.id=@task", new { task = taskId })) return decision;
+        if (!ApprovalRules.AllowedClass(decision.RiskClass, tool)) return decision;
+        var active = await conn.QueryAsync<(Guid Id, string Matcher)>("SELECT id, matcher::text FROM approval_rules WHERE owner_id=@owner AND revoked_at IS NULL AND (bot_id IS NULL OR bot_id=@bot) AND action_class=@class AND tool=@tool", new { owner, bot = botId, @class = decision.RiskClass, tool });
+        foreach (var rule in active)
+        {
+            if (!ApprovalRules.Matches(decision.RiskClass, tool, rule.Matcher, args)) continue;
+            await conn.ExecuteAsync("UPDATE approval_rules SET last_used_at=now(), use_count=use_count+1 WHERE id=@id", new { rule.Id });
+            await platform.Audit("approval_rule", "approval_rule.used", botId, taskId, new { id = rule.Id, actionClass = decision.RiskClass, tool });
+            return decision with { Decision = PolicyEngine.Allow, Reason = "approval_rule" };
+        }
+        return decision;
     }
 
     private static async Task<bool> TypeSecretOffDomain(System.Data.IDbConnection conn, Guid owner, string tool, JsonElement args)

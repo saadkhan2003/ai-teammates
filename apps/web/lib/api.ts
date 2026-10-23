@@ -1,5 +1,6 @@
 import { reportFailure, reportSuccess, wireConnectionEvents } from "@/lib/connection";
 import type { DesktopToken, SecretTestResult } from "@/lib/types";
+import { normalizeMemoryRows } from "@/lib/memory-notes";
 
 export class ApiError extends Error {
   status: number;
@@ -106,14 +107,7 @@ export function normalizeFiles(data: unknown) {
 }
 
 export function normalizeMemories(data: unknown) {
-  return asList(data, ["memories", "items"]).map((entry, index) => {
-    const record = (entry ?? {}) as Record<string, unknown>;
-    return {
-      id: text(record.id) || `memory-${index + 1}`,
-      content: text(record.content ?? record.text),
-      createdAt: text(record.createdAt ?? record.created_at) || undefined,
-    };
-  });
+  return normalizeMemoryRows(data);
 }
 
 export function normalizeSkills(data: unknown) {

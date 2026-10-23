@@ -128,7 +128,14 @@ export type FileEntry = {
 export type MemoryItem = {
   id: string;
   content: string;
+  kind: "profile" | "rule" | "journal" | "fact" | "summary";
+  status: string;
+  pinned: boolean;
+  visibility: string;
+  author: string;
   createdAt?: string;
+  updatedAt?: string;
+  lastConfirmedAt?: string;
 };
 
 export type Skill = {

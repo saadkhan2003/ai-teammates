@@ -51,7 +51,7 @@ public static class ToolSchema
             Arr("styles", "primary or danger, one per option", false, "string", null, null, ["primary", "danger"]),
             Opt("multiple", "boolean", "Allow more than one"),
             Opt("allow_custom", "boolean", "Allow a typed answer")),
-        Fn("save_memory", "Remember a fact", Req("content", "string", "Fact"), Opt("kind", "string", "profile, journal, rule or fact"), Opt("scope", "string", "agent or conversation"), Opt("visibility", "string", "bot or owner"), Opt("sensitivity", "string", "Whether the note is sensitive")),
+        Fn("save_memory", "Remember a fact", Req("content", "string", "Fact"), Opt("kind", "string", "profile, journal, rule or fact"), Opt("scope", "string", "For a rule only: channel:email, channel:slack, channel:chat, or connector:<id>. Omit for a global rule."), Opt("memory_scope", "string", "agent or conversation"), Opt("visibility", "string", "bot or owner"), Opt("sensitivity", "string", "Whether the note is sensitive")),
         Fn("update_memory", "Correct a saved fact by writing a new version", Req("id", "string", "Memory id"), Req("content", "string", "Corrected fact")),
         Fn("forget_memory", "Forget a saved fact by id, query, or exact content", Opt("id", "string", "Memory id"), Opt("query", "string", "Search query"), Opt("content", "string", "Exact legacy content")),
         Fn("search_memory", "Search memory", Req("query", "string", "Query"), Opt("limit", "number", "1 to 20 results"), Opt("kind", "string", "Optional note kind")),
