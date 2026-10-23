@@ -2,6 +2,7 @@
 
 import { FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { Markdown } from "@/components/markdown";
+import { RefreshNotice } from "@/components/refresh-notice";
 import type { AgentEvent } from "@/lib/events";
 import { Notebook } from "lucide-react";
 import { toast } from "sonner";
@@ -254,6 +255,7 @@ export function ChatPane({
               {botName} is working
             </p>
           ) : null}
+          <RefreshNotice variant="chat" />
         </div>
       </div>
       {scrolledUp ? <Button data-testid="jump-to-latest" variant="secondary" className="mx-auto my-2" onClick={() => { stickRef.current = true; setScrolledUp(false); scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }}>Jump to latest ↓</Button> : null}

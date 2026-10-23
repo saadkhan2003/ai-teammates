@@ -6,6 +6,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { BotAvatar } from "@/components/bot-avatar";
+import { RefreshNotice } from "@/components/refresh-notice";
+import { REFRESH_EVENT, wireConnectionEvents } from "@/lib/connection";
 import { BotAvatarPicker } from "@/components/bot-avatar-picker";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -134,7 +136,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         }),
       );
     } catch {
-      setBots([]);
+      // Keep the last good roster; the "Couldn't refresh" notice offers a retry.
     }
   }, []);
 
@@ -152,11 +154,13 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (pathname === "/login" || pathname === "/invite") return;
+    wireConnectionEvents();
     void load();
     const timer = window.setInterval(() => void load(), 15_000);
     const refresh = () => void load();
     const openCreate = () => setCreateOpen(true);
     window.addEventListener("teammates-bots-changed", refresh);
+    window.addEventListener(REFRESH_EVENT, refresh);
     window.addEventListener("teammates-open-create", openCreate);
     let debounce = 0;
     const stopEvents = subscribeEvents(
@@ -177,6 +181,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       window.clearTimeout(debounce);
       stopEvents();
       window.removeEventListener("teammates-bots-changed", refresh);
+      window.removeEventListener(REFRESH_EVENT, refresh);
       window.removeEventListener("teammates-open-create", openCreate);
     };
   }, [load, pathname]);
@@ -337,6 +342,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </Button>
         )}
       </div>
+      {compact ? null : <RefreshNotice variant="sidebar" />}
       {compact || !activeBot ? null : (
         <div className="flex flex-col items-center px-3 pb-3">
           <div className="grid h-16 w-16 place-items-center rounded-md border border-sidebar-border bg-background text-base font-medium">

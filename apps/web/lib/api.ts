@@ -1,3 +1,4 @@
+import { reportFailure, reportSuccess, wireConnectionEvents } from "@/lib/connection";
 import type { DesktopToken, SecretTestResult } from "@/lib/types";
 
 export class ApiError extends Error {
@@ -30,12 +31,21 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   if (typeof init.body === "string" && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  const response = await fetch(path, {
-    ...init,
-    headers,
-    credentials: "include",
-    cache: "no-store",
-  });
+  wireConnectionEvents();
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      ...init,
+      headers,
+      credentials: "include",
+      cache: "no-store",
+    });
+  } catch (caught) {
+    if (!(caught instanceof DOMException && caught.name === "AbortError")) reportFailure();
+    throw caught;
+  }
+  if ([502, 503, 504].includes(response.status)) reportFailure();
+  else reportSuccess();
   if (
     response.status === 401 &&
     typeof window !== "undefined" &&

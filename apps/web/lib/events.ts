@@ -1,3 +1,5 @@
+import { REFRESH_EVENT, reportFailure, reportSuccess } from "@/lib/connection";
+
 export type StreamStatus = {
   state: "open" | "reconnecting" | "closed";
   lastId: string;
@@ -34,6 +36,7 @@ export function subscribeEvents(onMessage: (data: string) => void, onStatus?: (s
         return;
       }
       if (!response.ok || !response.body) throw new Error(String(response.status));
+      reportSuccess();
       report("open");
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -62,7 +65,9 @@ export function subscribeEvents(onMessage: (data: string) => void, onStatus?: (s
         if (lastId) report("open");
       }
     } catch {
-      // The visibility or online handler aborts the reader on purpose.
+      // The visibility or online handler aborts the reader on purpose; only a
+      // still-current attempt counts as a connection failure.
+      if (gen === generation && !stopped && !hidden()) reportFailure();
     } finally {
       if (gen === generation && !stopped && !hidden()) {
         report("reconnecting");
@@ -81,6 +86,8 @@ export function subscribeEvents(onMessage: (data: string) => void, onStatus?: (s
     void connect();
   };
 
+  const onRefresh = () => { window.clearTimeout(timer); void connect(); };
+  window.addEventListener(REFRESH_EVENT, onRefresh);
   document.addEventListener("visibilitychange", onVisible);
   window.addEventListener("online", onVisible);
   void connect();
@@ -92,6 +99,7 @@ export function subscribeEvents(onMessage: (data: string) => void, onStatus?: (s
     window.clearTimeout(timer);
     document.removeEventListener("visibilitychange", onVisible);
     window.removeEventListener("online", onVisible);
+    window.removeEventListener(REFRESH_EVENT, onRefresh);
   };
 }
 

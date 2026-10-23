@@ -32,6 +32,7 @@ import {
 } from "@/lib/api";
 import { mergeAgentEvent, parseAgentEvent, subscribeEvents, type AgentEvent } from "@/lib/events";
 import { StatusBadge } from "@/lib/status";
+import { REFRESH_EVENT, useConnection } from "@/lib/connection";
 import type { Artifact, FileEntry, LoginRequest, MemoryItem, Routine, SecretRequest, Skill, Workspace as WorkspaceData } from "@/lib/types";
 import { cn, errorMessage } from "@/lib/utils";
 import { BotAvatar } from "@/components/bot-avatar";
@@ -102,6 +103,7 @@ export function Workspace({ botId }: { botId: string }) {
   const [finishedLogins, setFinishedLogins] = useState<LoginRequest[]>([]);
   const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
   const [llmConnected, setLlmConnected] = useState<boolean | null>(null);
+  const connection = useConnection();
   const taskIds = useRef(new Set<string>());
   const seq = useRef(0);
   const auxSeq = useRef(0);
@@ -208,6 +210,12 @@ export function Workspace({ botId }: { botId: string }) {
   }, [loadWorkspace, loadAux]);
 
   useEffect(() => {
+    const refresh = () => { void loadWorkspace(); void loadAux([tabRef.current === "files" ? "files" : "artifacts", "routines"]); };
+    window.addEventListener(REFRESH_EVENT, refresh);
+    return () => window.removeEventListener(REFRESH_EVENT, refresh);
+  }, [loadWorkspace, loadAux]);
+
+  useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") { setDesktopFull(false); setSettingsOpen(false); setPane(false); }
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "i") {
@@ -275,7 +283,7 @@ export function Workspace({ botId }: { botId: string }) {
             </span>
           ) : null}
         </header>
-        {workspaceError ? (
+        {workspaceError && !connection.failed ? (
           <p role="alert" className="px-4 pt-3 text-sm text-destructive">
             Could not refresh the workspace. {workspaceError}
           </p>

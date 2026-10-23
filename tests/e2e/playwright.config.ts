@@ -14,7 +14,7 @@ export default defineConfig({
   },
   workers: 1,
   projects: [
-    { name: "desktop", testMatch: /(?:acceptance|security|links|vnc-lifecycle|question-card|plugins|new-teammate-form|create-bot|about|account-menu|settings-modal|shortcuts|settings-computer|chat-polish|events)\.spec\.ts/, use: { ...devices["Desktop Chrome"] } },
+    { name: "desktop", testMatch: /(?:acceptance|security|links|vnc-lifecycle|question-card|plugins|new-teammate-form|create-bot|about|account-menu|settings-modal|shortcuts|settings-computer|chat-polish|events|refresh-notice)\.spec\.ts/, use: { ...devices["Desktop Chrome"] } },
     {
       name: "iphone-13",
       testMatch: /mobile\.spec\.ts|question-card\.spec\.ts|plugins\.spec\.ts/,
