@@ -27,9 +27,9 @@ function keysymFor(char: string) {
   return code < 0x100 ? code : 0x01000000 + code;
 }
 
-function socketUrl(token: string) {
+function socketUrl(token: string, windowId: string) {
   const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${scheme}://${window.location.host}/vnc/websockify?token=${encodeURIComponent(token)}`;
+  return `${scheme}://${window.location.host}/vnc/websockify?token=${encodeURIComponent(token)}&window=${encodeURIComponent(windowId)}`;
 }
 
 function statusLabel(state: VncState) {
@@ -101,6 +101,16 @@ function releaseSocket(rfb: RfbClient | null): Promise<void> {
   });
 }
 
+function desktopTabId(): string {
+  const key = "teammates.desktop.tab";
+  let value = sessionStorage.getItem(key);
+  if (!value) {
+    value = crypto.randomUUID();
+    sessionStorage.setItem(key, value);
+  }
+  return value;
+}
+
 export function ComputerPane({
   botId,
   tasks,
@@ -147,6 +157,7 @@ export function ComputerPane({
   const screenRef = useRef<HTMLDivElement>(null);
   const rfbRef = useRef<RfbClient | null>(null);
   const sessionRef = useRef(0);
+  const leaseEpoch = useRef(0);
   const modeRef = useRef<DesktopMode>("view");
   const ignoreRef = useRef(new Set<number>());
   const connectGen = useRef(0);
@@ -216,7 +227,7 @@ export function ComputerPane({
     screen.replaceChildren();
     const session = ++sessionRef.current;
     const RFB = imported.default;
-    const rfb = new RFB(screen, socketUrl(token)) as unknown as RfbClient;
+    const rfb = new RFB(screen, socketUrl(token, botIdRef.current)) as unknown as RfbClient;
     const resolved: DesktopMode = mobileRef.current && nextMode === "control" && !armedControl.current ? "view" : nextMode;
     rfb.scaleViewport = true;
     rfb.showDotCursor = true;
@@ -273,9 +284,10 @@ export function ComputerPane({
         await releaseSocket(previous);
       }
       if (gen !== connectGen.current || !wantViewRef.current) return;
-      const raw = await api<unknown>(path, { method: "POST" });
+      const raw = await api<unknown>(path, { method: "POST", headers: { "X-Desktop-Tab": desktopTabId() } });
       if (gen !== connectGen.current || !wantViewRef.current) return;
       const token = readDesktopToken(raw);
+      if (typeof token.epoch === "number") leaseEpoch.current = token.epoch;
       const mode = token.mode === "control" ? "control" : nextMode;
       await openSocket(token.token, mode, gen);
     });
@@ -289,7 +301,7 @@ export function ComputerPane({
     const gen = ++connectGen.current;
     setError(null);
     try {
-      await openView("view", `/api/bots/${botIdRef.current}/computer/view-token`, gen);
+      await openView("view", `/api/computers/${botIdRef.current}/vnc-ticket?role=watch`, gen);
     } catch (caught) {
       if (gen !== connectGen.current || !wantViewRef.current) return;
       liveRef.current = false;
@@ -396,7 +408,7 @@ export function ComputerPane({
     pendingRef.current = true;
     const gen = ++connectGen.current;
     try {
-      await openView("control", `/api/bots/${botId}/computer/take-control`, gen);
+      await openView("control", `/api/computers/${botId}/vnc-ticket?role=control&transfer=true`, gen);
       if (gen === connectGen.current) onChanged();
     } catch (caught) {
       if (gen === connectGen.current) setError(errorMessage(caught, "Could not take control."));
@@ -405,6 +417,19 @@ export function ComputerPane({
       setBusy(null);
     }
   }
+
+  useEffect(() => {
+    if (mode !== "control") return;
+    const timer = window.setInterval(() => {
+      void api(`/api/computers/${botId}/lease`, { method: "POST", body: JSON.stringify({ action: "heartbeat", tabId: desktopTabId(), epoch: leaseEpoch.current }) }).then((result) => {
+        const value = result as { epoch?: unknown };
+        if (typeof value?.epoch === "number") leaseEpoch.current = value.epoch;
+      }).catch(() => {
+        setError("The control lease expired. Take control again to continue.");
+      });
+    }, 10_000 + Math.floor(Math.random() * 1000));
+    return () => window.clearInterval(timer);
+  }, [botId, mode]);
 
   const autoKey = useRef(autoControlKey);
   useEffect(() => {
@@ -495,7 +520,7 @@ export function ComputerPane({
     const gen = ++connectGen.current;
     pendingRef.current = true;
     try {
-      await api(`/api/bots/${botId}/computer/hand-back`, { method: "POST" });
+      await api(`/api/bots/${botId}/computer/hand-back`, { method: "POST", body: JSON.stringify({ tabId: desktopTabId(), epoch: leaseEpoch.current }) });
       ignoreRef.current.add(sessionRef.current);
       const closing = activeSocket ?? rfbRef.current;
       rfbRef.current = null;
@@ -514,6 +539,44 @@ export function ComputerPane({
       setError(errorMessage(caught, "Could not hand the computer back."));
     } finally {
       if (gen === connectGen.current) pendingRef.current = false;
+      setBusy(null);
+    }
+  }
+
+  async function forceRelease() {
+    const reason = window.prompt("Reason for releasing this desktop lease:")?.trim();
+    if (!reason) return;
+    setBusy("force-release");
+    setError(null);
+    try {
+      await api(`/api/computers/${botId}/lease/force-release`, {
+        method: "POST",
+        body: JSON.stringify({ reason, epoch: leaseEpoch.current }),
+      });
+      armedControl.current = false;
+      modeRef.current = "view";
+      setMode("view");
+      const closing = activeSocket ?? rfbRef.current;
+      rfbRef.current = null;
+      await enqueueSocket(() => releaseSocket(closing));
+      if (wantViewRef.current) await startView();
+      onChanged();
+    } catch (caught) {
+      setError(errorMessage(caught, "Could not release the desktop lease."));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function continueBot() {
+    setBusy("continue");
+    setError(null);
+    try {
+      await api(`/api/computers/${botId}/continue`, { method: "POST" });
+      onChanged();
+    } catch (caught) {
+      setError(errorMessage(caught, "Could not continue the bot."));
+    } finally {
       setBusy(null);
     }
   }
@@ -539,7 +602,7 @@ export function ComputerPane({
     try {
       await api(`/api/bots/${botId}/computer/human-input`, {
         method: "POST",
-        body: JSON.stringify({ selector: "#human-check" }),
+        body: JSON.stringify({ selector: "#human-check", tabId: desktopTabId(), epoch: leaseEpoch.current }),
       });
       toast.success("Click sent.");
       onChanged();
@@ -677,11 +740,12 @@ export function ComputerPane({
           ) : null}
           <div className="flex flex-wrap gap-2">
             <Button data-testid="take-control" className="min-h-11 flex-1" disabled={busy !== null} onClick={() => void takeControl()}>
-              Take control
+              Take over here
             </Button>
             <Button data-testid="hand-back" variant="secondary" className="min-h-11 flex-1 border-2 border-foreground font-semibold" disabled={busy !== null} onClick={() => void handBack()}>
               Hand back
             </Button>
+            {holder === "human" ? <Button data-testid="force-release" variant="destructive" className="min-h-11 flex-1" disabled={busy !== null} onClick={() => void forceRelease()}>Force release</Button> : null}
             <Button
               data-testid="desktop-fullscreen"
               variant="secondary"
@@ -760,7 +824,7 @@ export function ComputerPane({
                 <>
                   <Eye className="ml-2.5 h-4 w-4 text-neutral-500" aria-hidden />
                   <span data-testid="watch-only" className="pl-1 pr-2 text-neutral-400">Watching</span>
-                  <Button data-testid="take-control" size="sm" className="h-8 rounded-full bg-white px-4 font-medium text-neutral-900 hover:bg-neutral-200" disabled={busy !== null} onClick={() => void takeControl()}>Take control</Button>
+                  <Button data-testid="take-control" size="sm" className="h-8 rounded-full bg-white px-4 font-medium text-neutral-900 hover:bg-neutral-200" disabled={busy !== null} onClick={() => void takeControl()}>Take over here</Button>
                 </>
               )}
             </div>
@@ -796,9 +860,9 @@ export function ComputerPane({
       {waiting.length > 0 ? (
         <div data-testid="attention-banner" role="status" className={cn("rounded-lg border border-border bg-card p-4", fullscreen && "fixed bottom-20 left-1/2 z-[90] w-[min(32rem,92vw)] -translate-x-1/2 border-white/10 bg-neutral-900 text-neutral-100 shadow-xl")}>
           <p className="font-medium">A task is waiting on you.</p>
-          <p className="mt-1 text-sm">The bot stopped for a human check. Take control, finish it, then hand the computer back.</p>
+          <p className="mt-1 text-sm">The bot waits for you to finish the human step and explicitly continue.</p>
           <ul className="mt-3 flex flex-col gap-3">
-            {waiting.map((task) => (
+            {waiting.filter((task) => task.waitingReason !== "await_continue").map((task) => (
               <li key={task.id} className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-sm font-medium">{task.title || task.instruction || "Waiting task"}</p>
@@ -810,6 +874,11 @@ export function ComputerPane({
               </li>
             ))}
           </ul>
+          {waiting.some((task) => task.waitingReason === "await_continue") && mode !== "control" ? (
+            <Button data-testid="continue-bot" size="sm" className="mt-3" disabled={busy !== null} onClick={() => void continueBot()}>
+              Continue bot
+            </Button>
+          ) : null}
           {mode === "control" ? (
             <div className="mt-3">
               <Button data-testid="human-click" size="sm" variant="secondary" disabled={busy !== null} onClick={() => void humanClick()}>

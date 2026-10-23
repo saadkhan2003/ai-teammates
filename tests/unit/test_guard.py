@@ -102,3 +102,14 @@ def test_preexec_gate_fails_closed_for_risky_calls():
 def test_shell_shape_uses_normalized_argv_without_substring_matching():
     assert normalize_argv(["bash", "-lc", "echo hello"]) == ["bash", "-lc", "echo hello"]
     assert normalize_argv(["bash", "-lc", "echo hello"]) != normalize_argv(["bash", "-lc", "echo hello; rm -rf /tmp"])
+
+
+def test_stamp_actor_adds_bounded_agent_identity_without_mutating_input():
+    from guard import stamp_actor
+    payload = {"tool": "browser_click"}
+    stamped = stamp_actor(payload, "worker-a")
+    assert stamped["actor_id"] == "agent:worker-a"
+    assert "actor_id" not in payload
+    import pytest
+    with pytest.raises(ValueError):
+        stamp_actor(payload, "x" * 121)

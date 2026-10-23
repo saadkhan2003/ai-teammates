@@ -86,6 +86,15 @@ def should_halt(status) -> bool:
     return status in HALT_STATUSES
 
 
+def stamp_actor(payload: dict, worker_id: str) -> dict:
+    """Attach a bounded, non-secret actor id to computer-action API requests."""
+    if not isinstance(payload, dict) or not isinstance(worker_id, str) or not worker_id or len(worker_id) > 120:
+        raise ValueError("invalid action actor")
+    stamped = dict(payload)
+    stamped["actor_id"] = "agent:" + worker_id
+    return stamped
+
+
 def login_result(body: dict) -> dict:
     output = body.get("output") if isinstance(body.get("output"), dict) else {}
     login_status = str(output.get("status") or body.get("status") or "denied")

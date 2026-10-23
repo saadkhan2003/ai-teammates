@@ -14,7 +14,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Query
 from fastapi.responses import FileResponse, Response
 import workspace
 from browser import BrowserHub, run_command
-from desktops import DesktopManager, cdp_port, rw_port, view_port
+from desktops import DesktopManager, StaleDesktopEpoch, cdp_port, rw_port, view_port
 from fixtureserver import start as start_fixtures
 from pure import redact, scrub_tree
 from private_browser import PrivateBrowser, load_host_suffixes, private_browser_url_allowed, replace_host_suffixes
@@ -23,11 +23,25 @@ from urllib.parse import quote
 import httpx
 from box_contract import MAX_WINDOWS, PATHS
 from recorder import Recorder, RecorderConflict
+from desktop_fencing import ActionOutcome, DesktopFence, LeaseConflict, LeaseSnapshot
 
 manager = DesktopManager()
 hub: BrowserHub | None = None
 teach_recorder: Recorder | None = None
 private_browser: PrivateBrowser | None = None
+fences: dict[str, DesktopFence] = {}
+
+
+def _fence(bot_id: str) -> DesktopFence:
+    fence = fences.get(bot_id)
+    if fence is None:
+        async def release_inputs():
+            desk = manager.desktops.get(bot_id)
+            if desk is not None:
+                await manager._cancel_display_actions(desk)
+        fence = DesktopFence(release_held=release_inputs)
+        fences[bot_id] = fence
+    return fence
 
 
 def require_token(authorization: str = Header(default="")) -> None:
@@ -42,12 +56,21 @@ def _eq(left: str, right: str) -> bool:
     return hmac.compare_digest(left, right)
 
 
-def agent_allowed(bot_id: str) -> None:
+async def agent_allowed(bot_id: str, body: dict, action_path: str = "agent-action") -> tuple[str, int]:
     desk = manager.desktops.get(bot_id)
     if desk is None:
         raise HTTPException(status_code=404, detail="desktop not ready")
-    if desk.holder != "agent":
-        raise HTTPException(status_code=423, detail="human holds control")
+    actor_id = body.get("actor_id", body.get("actorId"))
+    epoch = body.get("epoch")
+    if (not isinstance(actor_id, str) or not actor_id or len(actor_id) > 128 or
+            not isinstance(epoch, int) or isinstance(epoch, bool) or epoch != desk.epoch or
+            desk.holder != "agent"):
+        raise HTTPException(status_code=409, detail={"code": "DESKTOP_BUSY", "holder": desk.holder, "epoch": desk.epoch})
+    try:
+        await _fence(bot_id).authorize_effect(action_path, actor_id, epoch)
+    except LeaseConflict as exc:
+        raise HTTPException(status_code=409, detail={"code": "DESKTOP_BUSY", "message": "You're in control — tell me when to continue", "epoch": exc.current.epoch}) from exc
+    return actor_id, epoch
 
 
 @asynccontextmanager
@@ -299,9 +322,12 @@ async def selected_display(bot_id: str, display: int):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-async def native_command(bot_id: str, display: int, argv: list[str], data: bytes | None = None):
+async def native_command(bot_id: str, display: int, argv: list[str], data: bytes | None = None,
+                         actor_id: str | None = None, epoch: int | None = None):
     try:
-        return await manager.native_command(bot_id, display, argv, data)
+        return await manager.native_command(bot_id, display, argv, data, actor_id, epoch)
+    except StaleDesktopEpoch as exc:
+        raise HTTPException(status_code=409, detail={"code": "DESKTOP_BUSY", "holder": exc.holder, "epoch": exc.epoch}) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=423, detail="human holds control") from exc
 
@@ -316,16 +342,18 @@ async def list_displays(bot_id: str, _: None = Depends(require_token)):
 
 
 @app.post("/desktops/{bot_id}/screenshot")
-async def desktop_screenshot(bot_id: str, display: int = Query(1, ge=1, le=MAX_WINDOWS), _: None = Depends(require_token)):
-    agent_allowed(bot_id)
+async def desktop_screenshot(bot_id: str, body: dict, display: int = Query(1, ge=1, le=MAX_WINDOWS), _: None = Depends(require_token)):
+    actor_id, epoch = await agent_allowed(bot_id, body, "screenshot")
     await selected_display(bot_id, display)
-    png = await native_command(bot_id, display, ["import", "-window", "root", "png:-"])
+    png = await _fence(bot_id).run_effect("screenshot", actor_id, epoch,
+        native_command(bot_id, display, ["import", "-window", "root", "png:-"], actor_id=actor_id, epoch=epoch))
+    if isinstance(png, ActionOutcome): return {"code": "DESKTOP_BUSY", "status": png.value}
     return Response(content=png, media_type="image/png")
 
 
 @app.post("/desktops/{bot_id}/click")
 async def desktop_click(bot_id: str, body: dict, display: int = Query(1, ge=1, le=MAX_WINDOWS), _: None = Depends(require_token)):
-    agent_allowed(bot_id)
+    actor_id, epoch = await agent_allowed(bot_id, body)
     await selected_display(bot_id, display)
     from desktops import geometry
     width, height = geometry()
@@ -335,19 +363,21 @@ async def desktop_click(bot_id: str, body: dict, display: int = Query(1, ge=1, l
             raise ValueError()
     except (KeyError, ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail="invalid coordinates or button") from exc
-    await native_command(bot_id, display, ["xdotool", "mousemove", "--sync", str(x), str(y), "click", str(button)])
+    result = await _fence(bot_id).run_effect("xdotool", actor_id, epoch, native_command(bot_id, display, ["xdotool", "mousemove", "--sync", str(x), str(y), "click", str(button)], actor_id=actor_id, epoch=epoch))
+    if isinstance(result, ActionOutcome): return {"ok": False, "code": "DESKTOP_BUSY", "status": result.value}
     return {"ok": True}
 
 
 @app.post("/desktops/{bot_id}/type")
 async def desktop_type(bot_id: str, body: dict, display: int = Query(1, ge=1, le=MAX_WINDOWS), _: None = Depends(require_token)):
-    agent_allowed(bot_id)
+    actor_id, epoch = await agent_allowed(bot_id, body)
     await selected_display(bot_id, display)
     text = body.get("text", "")
     if not isinstance(text, str) or len(text) > 10000:
         raise HTTPException(status_code=400, detail="invalid text")
     # stdin keeps typed text out of process arguments and logs.
-    await native_command(bot_id, display, ["xdotool", "type", "--clearmodifiers", "--delay", "1", "--file", "-"], text.encode())
+    result = await _fence(bot_id).run_effect("xdotool", actor_id, epoch, native_command(bot_id, display, ["xdotool", "type", "--clearmodifiers", "--delay", "1", "--file", "-"], text.encode(), actor_id=actor_id, epoch=epoch))
+    if isinstance(result, ActionOutcome): return {"ok": False, "code": "DESKTOP_BUSY", "status": result.value}
     return {"ok": True}
 
 
@@ -372,9 +402,51 @@ async def set_viewer(bot_id: str, body: dict, _: None = Depends(require_token)):
 
 @app.post("/desktops/{bot_id}/control")
 async def set_control(bot_id: str, body: dict, _: None = Depends(require_token)):
-    await selected_display(bot_id, int(body.get("display", 1)))
-    await manager.set_holder(bot_id, str(body["holder"]), int(body["epoch"]))
-    return manager.status(bot_id, int(body.get("display", 1)))
+    display = int(body.get("display", 1))
+    await selected_display(bot_id, display)
+    holder = str(body.get("holder", ""))
+    if holder not in {"human", "agent", "fenced"}:
+        raise HTTPException(status_code=400, detail="invalid lease holder")
+    epoch = int(body["epoch"])
+    actor_id = str(body.get("actorId") or ("api-human" if holder == "human" else "agent:service"))
+    try:
+        await _fence(bot_id).set_holder(holder, actor_id if holder != "fenced" else None,
+                                        str(body.get("tabId")) if holder == "human" else None, epoch)
+        await manager.set_holder(bot_id, holder, epoch)
+    except (StaleDesktopEpoch, LeaseConflict) as exc:
+        state = exc.current if isinstance(exc, LeaseConflict) else None
+        raise HTTPException(status_code=409, detail={"code": "DESKTOP_BUSY", "holder": getattr(exc, "holder", state.holder_kind if state else "unknown"), "epoch": getattr(exc, "epoch", state.epoch if state else epoch)}) from exc
+    return manager.status(bot_id, display)
+
+
+@app.post("/desktops/{bot_id}/lease")
+async def desktop_lease(bot_id: str, body: dict, _: None = Depends(require_token)):
+    if bot_id not in manager.desktops:
+        raise HTTPException(status_code=404, detail="desktop not ready")
+    actor_id = body.get("actorId")
+    action = body.get("action")
+    if not isinstance(actor_id, str) or not actor_id or len(actor_id) > 128:
+        raise HTTPException(status_code=400, detail="invalid actor")
+    action = str(action)
+    role = str(body.get("role", "human"))
+    if action == "state":
+        state = await _fence(bot_id).state()
+        return {"actorId": state.holder_user_id, "role": state.holder_kind, "epoch": state.epoch}
+    if action not in {"acquire", "release"} or role not in {"human", "agent"}:
+        raise HTTPException(status_code=400, detail="invalid lease action")
+    epoch = body.get("epoch")
+    if not isinstance(epoch, int) or isinstance(epoch, bool):
+        raise HTTPException(status_code=400, detail="lease epoch required")
+    holder = "human" if action == "acquire" else "agent"
+    tab_id = body.get("tabId") if holder == "human" else None
+    try:
+        await _fence(bot_id).set_holder(holder, actor_id if holder == "human" else "agent:service", tab_id, epoch)
+        await manager.set_holder(bot_id, holder, epoch)
+    except (StaleDesktopEpoch, LeaseConflict) as exc:
+        state = exc.current if isinstance(exc, LeaseConflict) else None
+        raise HTTPException(status_code=409, detail={"code": "DESKTOP_BUSY", "epoch": getattr(exc, "epoch", state.epoch if state else epoch)}) from exc
+    state = await _fence(bot_id).state()
+    return {"actorId": state.holder_user_id, "role": state.holder_kind, "epoch": state.epoch, "expiresIn": state.ttl}
 
 
 @app.post("/desktops/{bot_id}/teach/start")
@@ -469,53 +541,58 @@ async def put_tokens(bot_id: str, body: dict, _: None = Depends(require_token)):
 
 @app.post("/desktops/{bot_id}/browser/open")
 async def browser_open(bot_id: str, body: dict, _: None = Depends(require_token)):
-    agent_allowed(bot_id)
-    result = await _hub().open_tab(bot_id, body["url"], body.get("wait"))
+    actor_id, epoch = await agent_allowed(bot_id, body)
+    result = await _fence(bot_id).run_effect("cdp", actor_id, epoch, _hub().open_tab(bot_id, body["url"], body.get("wait")))
     return result
 
 
 @app.post("/desktops/{bot_id}/browser/extract")
 async def browser_extract(bot_id: str, body: dict, _: None = Depends(require_token)):
-    agent_allowed(bot_id)
-    return await _hub().extract(bot_id, body.get("targetId"), body.get("selector"))
+    actor_id, epoch = await agent_allowed(bot_id, body, "browser_screenshot")
+    result = await _fence(bot_id).run_effect("browser_screenshot", actor_id, epoch,
+        _hub().extract(bot_id, body.get("targetId"), body.get("selector")))
+    return {"code": "DESKTOP_BUSY", "status": result.value} if isinstance(result, ActionOutcome) else result
 
 
 @app.post("/desktops/{bot_id}/browser/inspect")
 async def browser_inspect(bot_id: str, body: dict, _: None = Depends(require_token)):
-    agent_allowed(bot_id)
-    await _hub().list_pages(bot_id)
-    return await _hub().inspect(bot_id, body["targetId"], _selector(body.get("selector") or body.get("element")))
+    actor_id, epoch = await agent_allowed(bot_id, body)
+    async def inspect():
+        await _hub().list_pages(bot_id)
+        return await _hub().inspect(bot_id, body["targetId"], _selector(body.get("selector") or body.get("element")))
+    result = await _fence(bot_id).run_effect("cdp", actor_id, epoch, inspect())
+    return {"code": "DESKTOP_BUSY", "status": result.value} if isinstance(result, ActionOutcome) else result
 
 
 @app.post("/desktops/{bot_id}/browser/type-secret")
 async def browser_type_secret(bot_id: str, body: dict, _: None = Depends(require_token)):
-    agent_allowed(bot_id)
+    actor_id, epoch = await agent_allowed(bot_id, body)
     value = str(body.get("value") or "")
     try:
         await _hub().list_pages(bot_id)
-        return await _hub().type_secret(
+        return await _fence(bot_id).run_effect("cdp", actor_id, epoch, _hub().type_secret(
             bot_id,
             body["targetId"],
             _selector(body.get("selector") or body.get("element")),
             value,
             str(body.get("expectedOrigin") or ""),
-        )
+        ))
     finally:
         del value
 
 
 @app.post("/desktops/{bot_id}/browser/fill-login")
 async def browser_fill_login(bot_id: str, body: dict, _: None = Depends(require_token)):
-    agent_allowed(bot_id)
+    actor_id, epoch = await agent_allowed(bot_id, body)
     fields = body.get("fields") or []
     try:
-        return await _hub().fill_login(
+        return await _fence(bot_id).run_effect("cdp", actor_id, epoch, _hub().fill_login(
             bot_id,
             str(body.get("targetId") or ""),
             fields if isinstance(fields, list) else [],
             str(body.get("expectedOrigin") or ""),
             str(body.get("submitSelector") or ""),
-        )
+        ))
     finally:
         if isinstance(fields, list):
             for field in fields:
@@ -526,14 +603,15 @@ async def browser_fill_login(bot_id: str, body: dict, _: None = Depends(require_
 
 @app.post("/desktops/{bot_id}/browser/click")
 async def browser_click(bot_id: str, body: dict, _: None = Depends(require_token)):
-    agent_allowed(bot_id)
-    return await _hub().click(bot_id, body["targetId"], body["selector"])
+    actor_id, epoch = await agent_allowed(bot_id, body)
+    return await _fence(bot_id).run_effect("cdp", actor_id, epoch, _hub().click(bot_id, body["targetId"], body["selector"]))
 
 
 @app.post("/desktops/{bot_id}/browser/screenshot")
 async def browser_screenshot(bot_id: str, body: dict, _: None = Depends(require_token)):
-    agent_allowed(bot_id)
-    png = await _hub().screenshot(bot_id, body.get("targetId"))
+    actor_id, epoch = await agent_allowed(bot_id, body, "browser_screenshot")
+    png = await _fence(bot_id).run_effect("browser_screenshot", actor_id, epoch, _hub().screenshot(bot_id, body.get("targetId")))
+    if isinstance(png, ActionOutcome): return {"code": "DESKTOP_BUSY", "status": png.value}
     return Response(content=png, media_type="image/png")
 
 
@@ -555,16 +633,37 @@ async def get_cookies(bot_id: str, _: None = Depends(require_token)):
 
 @app.post("/desktops/{bot_id}/shell")
 async def shell(bot_id: str, body: dict, _: None = Depends(require_token)):
-    result = await run_command(bot_id, str(body.get("command") or ""), None, int(body.get("timeout") or 30), [])
-    return result
+    actor_id, epoch = await agent_allowed(bot_id, body, "shell")
+    command, timeout = _shell_request(body, 30)
+    result = await _fence(bot_id).run_effect("shell", actor_id, epoch,
+        run_command(bot_id, command, None, timeout, []))
+    return {"code": "DESKTOP_BUSY", "status": result.value} if isinstance(result, ActionOutcome) else result
+
+
+def _shell_request(body: dict, default_timeout: int) -> tuple[str, int]:
+    command = body.get("command", "")
+    timeout = body.get("timeout", default_timeout)
+    if (not isinstance(command, str) or len(command) > 10000 or
+            not isinstance(timeout, int) or isinstance(timeout, bool) or not 1 <= timeout <= 120):
+        raise HTTPException(status_code=400, detail="invalid shell request")
+    return command, timeout
 
 
 @app.post("/desktops/{bot_id}/setup-env")
 async def setup_env(bot_id: str, body: dict, _: None = Depends(require_token)):
-    env = {str(k): str(v) for k, v in (body.get("env") or {}).items()}
+    actor_id, epoch = await agent_allowed(bot_id, body, "shell")
+    command, timeout = _shell_request(body, 30)
+    raw_env = body.get("env") or {}
+    if not isinstance(raw_env, dict) or len(raw_env) > 64:
+        raise HTTPException(status_code=400, detail="invalid environment")
+    if any(not isinstance(k, str) or not k or len(k) > 128 or not isinstance(v, str) or len(v) > 65536 for k, v in raw_env.items()):
+        raise HTTPException(status_code=400, detail="invalid environment")
+    env = dict(raw_env)
     values = list(env.values())
     try:
-        return await run_command(bot_id, str(body.get("command") or ""), env, int(body.get("timeout") or 30), values)
+        result = await _fence(bot_id).run_effect("shell", actor_id, epoch,
+            run_command(bot_id, command, env, timeout, values))
+        return {"code": "DESKTOP_BUSY", "status": result.value} if isinstance(result, ActionOutcome) else result
     finally:
         try:
             scrub_tree(values, workspace.root_for(bot_id))
@@ -576,23 +675,27 @@ async def setup_env(bot_id: str, body: dict, _: None = Depends(require_token)):
 
 @app.post("/desktops/{bot_id}/ssh-key")
 async def ssh_key(bot_id: str, body: dict, _: None = Depends(require_token)):
+    actor_id, epoch = await agent_allowed(bot_id, body, "shell")
     material = str(body.get("material") or "")
+    command, timeout = _shell_request(body, 20)
+    if len(material) > 65536:
+        raise HTTPException(status_code=400, detail="invalid key material")
     key_path = Path("/run/desk/keys") / f"{bot_id}-{int(time.time())}.key"
     key_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         key_path.write_text(material)
         os.chmod(key_path, 0o600)
-        command = str(body.get("command") or "true")
+        command = command or "true"
         if material and material in command:
             return {"exitCode": 126, "stdout": "", "stderr": "command contains a resolved secret", "rejected": True}
-        result = await run_command(
+        result = await _fence(bot_id).run_effect("shell", actor_id, epoch, run_command(
             bot_id,
             command,
             {"GIT_SSH_COMMAND": f"ssh -i {key_path} -o IdentitiesOnly=yes"},
-            int(body.get("timeout") or 20),
+            timeout,
             [material],
-        )
-        return result
+        ))
+        return {"code": "DESKTOP_BUSY", "status": result.value} if isinstance(result, ActionOutcome) else result
     finally:
         if key_path.exists():
             key_path.unlink()
@@ -602,7 +705,8 @@ async def ssh_key(bot_id: str, body: dict, _: None = Depends(require_token)):
 @app.post("/desktops/{bot_id}/human-input")
 async def human_input(bot_id: str, body: dict, _: None = Depends(require_token)):
     desk = manager.desktops.get(bot_id)
-    if desk is None or desk.holder != "human":
+    epoch = body.get("epoch")
+    if desk is None or desk.holder != "human" or not isinstance(epoch, int) or isinstance(epoch, bool) or epoch != desk.epoch:
         raise HTTPException(status_code=403, detail="human control is not held")
     target = str(body.get("targetId") or "")
     selector = _selector(body.get("selector") or body.get("element"))

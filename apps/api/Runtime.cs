@@ -129,6 +129,10 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
             return Results.Json(new { ok = false, status = "invalid", reason = invalid });
         }
         var owner = await OwnerOf(botId);
+        var actorId = body.TryGetProperty("actor_id", out var actorValue) ? actorValue.GetString() ?? "" : "";
+        var desktopEpoch = await AgentDesktopEpoch(botId, ct);
+        if ((tool is "browser_open" or "browser_extract" or "browser_click" or "browser_screenshot" or "type_secret" or "shell") && desktopEpoch == null)
+            return Results.Json(new { code = "DESKTOP_BUSY", reason = "You're in control — tell me when to continue" }, statusCode: 409);
         var gated = await Gate(botId, taskId, tool, args, false, ct);
         var decision = gated.Decision;
         if (decision == PolicyEngine.Deny)
@@ -148,7 +152,13 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         if (decision == PolicyEngine.Ask) decision = PolicyEngine.Allow;
         try
         {
-            var output = await Dispatch(owner, botId, taskId, tool, args, ct);
+            var output = await Dispatch(owner, botId, taskId, tool, args, actorId, desktopEpoch ?? 0, ct);
+            if (output is JsonElement desktopResult && desktopResult.ValueKind == JsonValueKind.Object &&
+                desktopResult.TryGetProperty("code", out var desktopCode) && desktopCode.GetString() == "DESKTOP_BUSY")
+            {
+                await Step(taskId, tool, args, "DESKTOP_BUSY", false, new { status = "DESKTOP_BUSY" });
+                return Results.Json(new { code = "DESKTOP_BUSY" }, statusCode: 409);
+            }
             if (tool == "react_to_message")
             {
                 var json = JsonSerializer.Serialize(output);
@@ -168,6 +178,12 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         catch (ComputeException ex) when (ex.IsRecovering)
         {
             return Results.Json(new { error = ComputeException.RecoveringMessage }, statusCode: 503);
+        }
+        catch (ComputeException ex) when (ex.Code == ComputeErrorCode.FailedPrecondition &&
+            (tool is "browser_open" or "browser_extract" or "browser_click" or "browser_screenshot" or "type_secret" or "shell" or "setup_env"))
+        {
+            await Step(taskId, tool, args, "DESKTOP_BUSY", false, new { status = "DESKTOP_BUSY" });
+            return Results.Json(new { code = "DESKTOP_BUSY" }, statusCode: 409);
         }
         catch (ComputeException ex) when (ex.Code == ComputeErrorCode.PermissionDenied)
         {
@@ -214,7 +230,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         return Results.Json(new { status = "ok" });
     }
 
-    private async Task<object> Dispatch(Guid owner, Guid botId, Guid taskId, string tool, JsonElement args, CancellationToken ct)
+    private async Task<object> Dispatch(Guid owner, Guid botId, Guid taskId, string tool, JsonElement args, string actorId, long desktopEpoch, CancellationToken ct)
     {
         if (BotMessaging.IsTool(tool)) return await BotMessaging.Run(platform, owner, botId, taskId, tool, args, ct);
         var placement = await platform.PlacementForBot(botId, ct);
@@ -239,13 +255,15 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
             case "shell":
             {
                 var command = Arg(args, "command");
-                var (code, stdout, stderr) = await Run(computer, botId, BotFs.ShellArgs(command), null, ct);
-                return new { exitCode = code, stdout = OutputRedactor.Redact(stdout), stderr = OutputRedactor.Redact(stderr) };
+                var response = await platform.Compute.ControlAsync(computer, $"/desktops/{placement.Desktop}/shell",
+                    JsonSerializer.Serialize(new { command, timeout = 30, actor_id = actorId, epoch = desktopEpoch }), ct);
+                using var shellResult = JsonDocument.Parse(response);
+                return shellResult.RootElement.Clone();
             }
             case "setup_env":
-                return await Setup(owner, botId, taskId, computer, args, ct);
+                return await Setup(owner, botId, taskId, computer, placement.Desktop, args, actorId, desktopEpoch, ct);
             case "type_secret":
-                return await TypeSecret(owner, botId, taskId, computer, args, ct);
+                return await TypeSecret(owner, botId, taskId, computer, args, actorId, desktopEpoch, ct);
             case "ask_user":
                 return await AskUser(botId, taskId, args);
             case "save_memory":
@@ -277,7 +295,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         }
     }
 
-    private async Task<object> Setup(Guid owner, Guid botId, Guid taskId, ComputerId computer, JsonElement args, CancellationToken ct)
+    private async Task<object> Setup(Guid owner, Guid botId, Guid taskId, ComputerId computer, string desktop, JsonElement args, string actorId, long desktopEpoch, CancellationToken ct)
     {
         var reference = Arg(args, "secret_ref");
         var command = Arg(args, "command");
@@ -298,19 +316,21 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
             value = "";
             throw new ToolHalt("denied", "command contains a resolved secret");
         }
-        var (code, stdout, stderr) = await Run(computer, botId, BotFs.ShellArgs(command), new Dictionary<string, string> { [envName] = value }, ct, [new SecretEnvBinding(envName, reference, botId.ToString())]);
+        var response = await platform.Compute.ControlAsync(computer, $"/desktops/{desktop}/setup-env",
+            JsonSerializer.Serialize(new { command, env = new Dictionary<string, string> { [envName] = value }, timeout = 30, actor_id = actorId, epoch = desktopEpoch }), ct);
         value = "";
-        return new { exitCode = code, stdout, stderr };
+        using var setupResult = JsonDocument.Parse(response);
+        return setupResult.RootElement.Clone();
     }
 
-    private async Task<object> TypeSecret(Guid owner, Guid botId, Guid taskId, ComputerId computer, JsonElement args, CancellationToken ct)
+    private async Task<object> TypeSecret(Guid owner, Guid botId, Guid taskId, ComputerId computer, JsonElement args, string actorId, long desktopEpoch, CancellationToken ct)
     {
         var reference = Arg(args, "secret_ref");
         var selector = Arg(args, "selector");
         if (string.IsNullOrWhiteSpace(selector)) selector = "#password";
         var target = Arg(args, "targetId");
         var desktop = (await platform.PlacementForBot(botId, ct)).Desktop;
-        var inspectBody = JsonSerializer.Serialize(new { targetId = target, selector });
+        var inspectBody = JsonSerializer.Serialize(new { targetId = target, selector, actor_id = actorId, epoch = desktopEpoch });
         var inspect = await platform.Compute.ControlAsync(computer, $"/desktops/{desktop}/browser/inspect", inspectBody, ct);
         using var doc = JsonDocument.Parse(inspect);
         var origin = doc.RootElement.TryGetProperty("frameOrigin", out var frame) ? frame.GetString() ?? "" : "";
@@ -321,7 +341,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         var secret = resolved.Value;
         var value = Encoding.UTF8.GetString(secret);
         CryptographicOperations.ZeroMemory(secret);
-        var payload = JsonSerializer.Serialize(new { targetId = target, selector, value, expectedOrigin = origin });
+        var payload = JsonSerializer.Serialize(new { targetId = target, selector, value, expectedOrigin = origin, actor_id = actorId, epoch = desktopEpoch });
         value = "";
         var typed = await platform.Compute.ControlAsync(computer, $"/desktops/{desktop}/browser/type-secret", payload, ct);
         using var result = JsonDocument.Parse(typed);
@@ -332,6 +352,18 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
             throw new ToolHalt("denied", reason ?? "inject_failed");
         }
         return new { ok = true };
+    }
+
+    private async Task<long?> AgentDesktopEpoch(Guid botId, CancellationToken ct)
+    {
+        var placement = await platform.PlacementForBot(botId, ct);
+        if (!Guid.TryParse(placement.Computer.Value, out var computerId)) return null;
+        await using var conn = await platform.Data.OpenConnectionAsync(ct);
+        return await conn.ExecuteScalarAsync<long?>(new CommandDefinition("""
+            SELECT epoch FROM desktop_lease
+            WHERE computer_id=@computerId AND display=1 AND holder_kind='agent'
+              AND expires_at > clock_timestamp()
+            """, new { computerId }, cancellationToken: ct));
     }
 
     private async Task<object> SaveMemory(Guid botId, Guid taskId, string content, string source)

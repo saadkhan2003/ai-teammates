@@ -779,7 +779,8 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
     {
         var row = await DemandAsync(id, ct);
         lock (_sync) if (epoch > row.Epoch) row.Epoch = epoch;
-        var payload = "{\"holder\":\"" + (holder == "human" ? "human" : "agent") + "\",\"epoch\":" + epoch + "}";
+        var safeHolder = holder is "human" or "agent" or "fenced" ? holder : "fenced";
+        var payload = "{\"holder\":\"" + safeHolder + "\",\"epoch\":" + epoch + "}";
         await ControlAsync(id, "/desktops/" + Uri.EscapeDataString(id.Value) + "/control", payload, ct);
     }
 
