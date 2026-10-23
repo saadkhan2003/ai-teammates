@@ -659,7 +659,7 @@ export function ComputerPane({
           </p>
         </div>
         )}
-        <div className={cn("grid w-full place-items-center", fillWindow && (fullscreen || nativeFs ? "min-h-0 w-full flex-1 [container-type:size]" : "md:min-h-0 md:w-full md:flex-1 md:[container-type:size]"))}>
+        <div className={cn("grid w-full place-items-center", fillWindow && (fullscreen || nativeFs ? "min-h-0 w-full flex-1 [container-type:size]" : "md:min-h-[14rem] md:w-full md:flex-1 md:[container-type:size]"))}>
         <div
           ref={frameRef}
           data-testid="desktop-frame"
