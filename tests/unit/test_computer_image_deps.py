@@ -19,3 +19,13 @@ def test_dockerfile_installs_every_third_party_import():
     docker = (C / "Dockerfile").read_text().lower()
     missing = sorted(m for m in third if m not in docker)
     assert not missing, missing
+
+
+def test_stdlib_modules_used_as_attributes_are_imported():
+    """server.py once used asyncio.create_task without importing it, so the computer API never started."""
+    import re
+    for f in (C / "src").rglob("*.py"):
+        text = f.read_text()
+        for mod in ("asyncio", "json", "os", "time", "threading", "subprocess"):
+            if re.search(rf"(?<![\w.]){mod}\.\w+\(", text):
+                assert re.search(rf"^\s*(import {mod}\b|from {mod}\b)", text, re.M), f"{f.name} uses {mod} without importing it"

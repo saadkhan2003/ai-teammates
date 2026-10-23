@@ -1,6 +1,7 @@
 """Computer manager: desktops, browser, files, and a view-only/control VNC token map."""
 from __future__ import annotations
 
+import asyncio
 import json
 import importlib.util
 import base64
