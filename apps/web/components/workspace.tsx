@@ -324,28 +324,29 @@ export function Workspace({ botId }: { botId: string }) {
   return (
     <div className="flex h-full min-h-0">
       {teach.startedAt ? <RecordingBanner botName={bot?.name || "Teammate"} shape={bot?.avatarShape} color={bot?.avatarColor} startedAt={teach.startedAt} onCancel={() => void teach.cancel()} /> : null}
-      <section className="motion-fade flex min-w-0 flex-1 flex-col">
-        <header className="relative flex h-12 items-center justify-center border-b border-border px-3">
+      <section className="motion-fade relative flex min-w-0 flex-1 flex-col">
+        <div aria-hidden data-testid="chat-top-fade" className="pointer-events-none absolute inset-x-0 top-0 z-10 h-16 bg-gradient-to-b from-background/85 via-background/50 to-transparent" />
+        <header data-testid="chat-pill-bar" className="pointer-events-none absolute inset-x-0 top-0 z-20 flex h-12 items-center justify-center px-3 pt-2">
           <button
             type="button"
             data-testid="bot-name-button"
             aria-expanded={pane}
             aria-controls="info-pane"
             aria-label={`${bot?.name || "Teammate"} details`}
-            className="inline-flex max-w-[70%] items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-sm font-medium shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="pointer-events-auto inline-flex max-w-[70%] items-center gap-2 rounded-full border border-white/5 bg-black/75 px-3.5 py-1.5 text-sm font-medium shadow-md backdrop-blur focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onClick={() => togglePane()}
           >
             <BotAvatar animated botId={bot?.id} shape={bot?.avatarShape} color={bot?.avatarColor} size={20} primary={bot?.isPrimary} />
             <span className="truncate">{bot?.name || "Teammate"}</span>
           </button>
           {bot?.status ? (
-            <span className="absolute right-3">
+            <span className="pointer-events-auto absolute right-3 top-3">
               <StatusBadge status={bot.status} />
             </span>
           ) : null}
         </header>
         {workspaceError && !connection.failed ? (
-          <p role="alert" className="px-4 pt-3 text-sm text-destructive">
+          <p role="alert" className="relative z-30 mt-12 px-4 pt-1 text-sm text-destructive">
             Could not refresh the workspace. {workspaceError}
           </p>
         ) : null}

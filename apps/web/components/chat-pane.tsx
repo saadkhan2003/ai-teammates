@@ -345,7 +345,7 @@ export function ChatPane({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div ref={scrollRef} data-testid="chat-scroll" className="min-h-0 flex-1 overflow-y-auto" onScroll={() => {
+      <div ref={scrollRef} data-testid="chat-scroll" className="min-h-0 flex-1 overflow-y-auto pt-12" onScroll={() => {
         const node = scrollRef.current;
         if (!node) return;
         stickRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
