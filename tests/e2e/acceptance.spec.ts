@@ -144,7 +144,7 @@ async function expectDone(page: Page, botId: string, taskId: string, timeout = 1
   return task;
 }
 
-async function openPane(page: Page, tab: "Overview" | "Computer" | "Routines" | "Files/Media" | "Skills" | "Memory" | "Tasks") {
+async function openPane(page: Page, tab: "Overview" | "Computer" | "Files/Media" | "Skills" | "Memory" | "Tasks") {
   const pane = page.getByTestId("info-pane");
   const toggle = page.getByTestId("bot-name-button");
   await expect(toggle).toBeVisible();
@@ -399,12 +399,8 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
   });
 
   await test.step("11 routine fires with the workspace closed", async () => {
-    await openPane(page, "Routines");
-    await page.getByTestId("routine-name").fill("Hourly hello");
-    await page.getByTestId("routine-cron").fill("0 * * * *");
-    await page.getByTestId("routine-instruction").fill(HELLO);
-    await page.getByTestId("routine-create").click();
-    await expect(page.getByRole("tabpanel").getByText("Hourly hello", { exact: true })).toBeVisible();
+    const created = await page.request.post(`/api/bots/${botId}/routines`, { data: { name: "Hourly hello", cron: "0 * * * *", instruction: HELLO } });
+    expect(created.ok()).toBeTruthy();
     await shot(page, "routines");
     const listing = await page.request.get(`/api/bots/${botId}/routines`);
     expect(listing.ok()).toBeTruthy();
@@ -715,7 +711,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
   });
 
   await test.step("sidebar, info pane tabs, theme, and command palette", async () => {
-    const tabs = ["Overview", "Computer", "Routines", "Files/Media", "Skills", "Memory", "Tasks"] as const;
+    const tabs = ["Overview", "Computer", "Files/Media", "Skills", "Memory", "Tasks"] as const;
     await page.goto("/login");
     await shot(page, "dark-login");
     await page.goto("/");

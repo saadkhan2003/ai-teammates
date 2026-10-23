@@ -29,6 +29,7 @@ test("routines list shows schedule words and an accent-coloured switch that pers
     await expect(section.getByText("Every day at 8:00 AM")).toBeVisible();
     await expect(section.getByText("Every Sunday at 8:00 PM")).toBeVisible();
     await expect(section.getByText("Custom schedule")).toBeVisible();
+    await expect(section.getByText("No routines yet. Ask in chat to set one up.")).toHaveCount(0);
     const nameBox = await rows.first().locator("p").first().evaluate((el) => ({ overflow: getComputedStyle(el).textOverflow, clipped: el.scrollWidth > el.clientWidth }));
     expect(nameBox.overflow).toBe("ellipsis");
     expect(nameBox.clipped).toBe(true);
@@ -53,6 +54,38 @@ test("routines list shows schedule words and an accent-coloured switch that pers
       return Math.abs(c[0] - c[1]);
     }).toBeLessThan(40);
     await page.screenshot({ path: "/workspace/ai-teammates-live/shots/10-routines-off.png" });
+
+    await rows.first().getByRole("button", { name: /Open Morning brief/ }).click();
+    const drawer = page.getByTestId("routine-drawer");
+    await expect(drawer).toBeVisible();
+    await expect(drawer).toContainText("Run history");
+    await expect(drawer.getByText("No runs yet.")).toBeVisible();
+    await drawer.getByRole("button", { name: "Test" }).click();
+    await expect(page.getByText("Test run queued.")).toBeVisible();
+    await expect.poll(async () => {
+      const list = await (await page.request.get(`/api/bots/${botId}/routines`)).json() as Array<{ id: string; name: string }>;
+      const id = list.find((routine) => routine.name.startsWith("Morning brief"))?.id;
+      if (!id) return 0;
+      const detail = await (await page.request.get(`/api/routines/${id}`)).json() as { runs?: unknown[] };
+      return detail.runs?.length ?? 0;
+    }, { timeout: 30_000 }).toBeGreaterThan(0);
+    await drawer.getByRole("button", { name: "Close" }).click();
+    await rows.first().getByRole("button", { name: /Open Morning brief/ }).click();
+    await expect(drawer.getByTestId("routine-run").first()).toBeVisible();
+    await drawer.getByRole("button", { name: "Edit" }).click();
+    await expect(page.getByTestId("composer")).toHaveValue("Edit your routine: Morning brief with a very long name that must be truncated with an ellipsis");
+    await page.setViewportSize({ width: 360, height: 780 });
+    await rows.first().getByRole("button", { name: /Open Morning brief/ }).click();
+    await expect(drawer).toBeVisible();
+    expect(await drawer.evaluate((el) => el.getBoundingClientRect().right)).toBeLessThanOrEqual(360);
+    await drawer.getByRole("button", { name: "Pause" }).click();
+    await expect(drawer.getByTestId("routine-status")).toContainText("Paused");
+    await drawer.getByRole("button", { name: "Resume" }).click();
+    await expect(drawer.getByTestId("routine-status")).not.toContainText("Paused");
+    page.once("dialog", (dialog) => dialog.accept());
+    await drawer.getByRole("button", { name: "Delete" }).click();
+    await expect(drawer).toHaveCount(0);
+    await expect.poll(async () => (await page.request.get(`/api/bots/${botId}/routines`).then((r) => r.json()) as Array<{ name: string }>).some((r) => r.name.startsWith("Morning brief"))).toBe(false);
 
     await page.reload();
     await expect(page.getByTestId("routines-section").getByTestId("routine-row").nth(1).getByTestId("routine-toggle")).toHaveAttribute("aria-checked", "false");
@@ -81,6 +114,7 @@ test("routines section shows a skeleton, the empty state and a retryable error",
     fail = false;
     await page.getByTestId("routines-retry").click();
     await expect(page.getByTestId("routines-empty")).toContainText("No routines yet");
+    await expect(page.getByTestId("routine-name")).toHaveCount(0);
   } finally {
     await page.unroute(`**/api/bots/${botId}/routines`).catch(() => undefined);
     await page.request.delete(`/api/bots/${botId}`);

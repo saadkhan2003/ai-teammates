@@ -43,7 +43,9 @@ export function ChatPane({
   botThreads = [],
   hasOlder = false,
   onLoadOlder,
+  editRequest,
 }: {
+  editRequest?: { key: number; text: string };
   botId?: string;
   avatar?: { shape?: string; color?: string; primary?: boolean };
   taskTitle?: string;
@@ -96,6 +98,15 @@ export function ChatPane({
   const [error, setError] = useState<string | null>(null);
   const [dlp, setDlp] = useState(false);
   const [userName, setUserName] = useState("You");
+
+  useEffect(() => {
+    if (!editRequest) return;
+    const part = initialParts().find((item) => item.type === "text");
+    if (!part || part.type !== "text") return;
+    part.text = editRequest.text;
+    setParts([part]);
+    window.setTimeout(() => partRefs.current.get(part.id)?.focus(), 0);
+  }, [editRequest?.key]);
 
   useEffect(() => {
     let live = true;

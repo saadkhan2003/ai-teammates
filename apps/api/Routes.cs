@@ -666,6 +666,20 @@ public static class Routes
             return outcome.Ok ? Results.Json(outcome.Data) : Refused(outcome);
         });
 
+        app.MapPost("/api/routines/{id:guid}/test", async (HttpContext ctx, Guid id) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            var owner = await conn.ExecuteScalarAsync<bool?>("SELECT true FROM routines r JOIN bots b ON b.id=r.bot_id WHERE r.id=@id AND b.owner_id=@owner", new { id, owner = user.Value });
+            if (owner != true) return Results.NotFound();
+            if (await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM tasks WHERE routine_id=@id AND status IN ('queued','running','planning','waiting_approval','waiting_human')) OR EXISTS(SELECT 1 FROM routine_runs WHERE routine_id=@id AND status IN ('queued','running'))", new { id }))
+                return Results.Json(new { error = "routine_busy" }, statusCode: 409);
+            await conn.ExecuteAsync("UPDATE routines SET force_once=true, next_run_at=now(), nominal_next_at=now() WHERE id=@id", new { id });
+            await platform.Audit("user", "routine.test", null, null, new { routine = id });
+            return Results.Json(new { ok = true });
+        });
+
         app.MapDelete("/api/routines/{id:guid}", async (HttpContext ctx, Guid id) =>
         {
             var user = await RequireUser(ctx, platform);

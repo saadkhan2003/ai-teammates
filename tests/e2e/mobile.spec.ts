@@ -4,7 +4,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 const owner = process.env.OWNER_USERNAME ?? "saad";
 const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
-const tabs = ["Overview", "Computer", "Routines", "Files/Media", "Skills", "Memory", "Tasks", "Plugins"] as const;
+const tabs = ["Overview", "Computer", "Files/Media", "Skills", "Memory", "Tasks", "Plugins"] as const;
 const pages = ["/", "/settings", "/settings/secrets", "/settings/computer", "/settings/usage", "/system", "/invite"] as const;
 
 function psql(sql: string) {

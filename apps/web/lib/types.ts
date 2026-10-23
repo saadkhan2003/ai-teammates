@@ -147,6 +147,28 @@ export type Routine = {
   enabled?: boolean;
   watchKind?: string;
   watchRef?: string;
+  kind?: "recurring" | "once" | string;
+  runAt?: string;
+  timezone?: string;
+  pausedReason?: string | null;
+  failureStreak?: number;
+  quietRule?: string | null;
+  expiresAt?: string | null;
+  jitterSeconds?: number;
+  runs?: RoutineRun[];
+};
+
+export type RoutineRun = {
+  id: string;
+  taskId?: string | null;
+  status: string;
+  triggeredAt?: string;
+  finishedAt?: string | null;
+  scheduledFor?: string | null;
+  error?: string | null;
+  skipReason?: string | null;
+  summary?: string | null;
+  notified?: boolean;
 };
 
 export type Artifact = {

@@ -220,7 +220,7 @@ async function run() {
 
         const pane = await openPane(page, narrow);
         await shot(page, `${prefix}-info-pane`, rows);
-        for (const tab of ["Overview", "Computer", "Routines", "Files/Media", "Skills", "Memory", "Tasks", "Plugins"]) {
+        for (const tab of ["Overview", "Computer", "Files/Media", "Skills", "Memory", "Tasks", "Plugins"]) {
           const trigger = pane.getByRole("tab", { name: tab, exact: true });
           await trigger.scrollIntoViewIfNeeded();
           await trigger.click();
