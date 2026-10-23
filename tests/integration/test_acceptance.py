@@ -111,9 +111,11 @@ AUTO_ALLOW_ACTIONS = {"browser_open", "write_file", "edit_file"}
 def auto_allow_browser_opens(bot: str, stop: threading.Event) -> threading.Thread:
     """v0.4 asks for Allow once on every run that opens a new browser origin."""
     def loop() -> None:
-        helper_client = login()
+        helper_client = None
         while not stop.is_set():
             try:
+                # Login can be rate-limited late in a long run; keep trying instead of dying silently.
+                helper_client = helper_client or login()
                 status, workspace = helper_client.call("GET", f"/api/bots/{bot}/workspace")
                 if status == 200:
                     for item in workspace.get("approvals") or []:
