@@ -46,3 +46,10 @@ def test_role_is_still_available_when_memory_is_shadowed_and_empty_rules_are_omi
     assert "Role: Planner" in context
     assert "Standing rules from the user" not in context
 
+
+
+def test_rules_inject_in_shadow_but_not_when_off():
+    task = {"memoryMode": "shadow", "standingRules": [{"id": "r1", "content": "Always sign messages Saad."}]}
+    assert "Always sign messages Saad." in bot_owned_context(task)
+    assert "Always sign" not in bot_owned_context({**task, "memoryMode": "off"})
+    assert "Always sign" not in bot_owned_context({**task, "botMemoryMode": "off"})

@@ -1260,7 +1260,7 @@ public static class Routes
                 var botPrompt = await conn.QuerySingleAsync<(string Role, string Instructions)>("SELECT role, instructions FROM bots WHERE id=@id", new { id = task.BotId }, tx);
                 var memoryMode = await conn.ExecuteScalarAsync<string?>("SELECT mode FROM bot_memory_settings WHERE bot_id=@bot", new { bot = task.BotId }, tx) ?? "auto";
                 var notesFlag = (platform.Configuration["MEMORY_NOTES"] ?? platform.Configuration["Memory:Notes"] ?? "shadow").ToLowerInvariant();
-                var rules = notesFlag == "on" && memoryMode != "off"
+                var rules = notesFlag != "off" && memoryMode != "off"
                     ? (await conn.QueryAsync<(Guid Id, string Content)>("SELECT id, content FROM memories WHERE bot_id=@bot AND owner_id=(SELECT owner_id FROM bots WHERE id=@bot) AND kind='rule' AND status='active' AND deleted_at IS NULL AND sensitive=false AND author NOT IN ('peer','routine') AND (conversation_id IS NULL OR conversation_id=@conversation) ORDER BY created_at DESC", new { bot = task.BotId, conversation = task.ConversationId }, tx)).Select(r => new { id = r.Id, content = r.Content }).ToArray()
                     : [];
                 if (rules.Length > 0) await conn.ExecuteAsync("UPDATE memories SET last_used_at=now(),use_count=use_count+1 WHERE id=ANY(@ids)", new { ids = rules.Select(rule => rule.id).ToArray() }, tx);

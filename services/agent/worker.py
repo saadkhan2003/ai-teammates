@@ -62,7 +62,7 @@ def bot_owned_context(task: dict) -> str:
         return ""
     role = strip_text(str(task.get("role") or "").strip())[:600]
     instructions = strip_text(str(task.get("botInstructions") or task.get("bot_instructions") or "").strip())[:1200]
-    if task.get("memoryMode", task.get("memory_mode", "off")) != "on":
+    if task.get("memoryMode", task.get("memory_mode", "off")) == "off" or task.get("botMemoryMode") == "off":
         rules: list[dict] = []
     else:
         raw_rules = task.get("standingRules", task.get("standing_rules", []))
