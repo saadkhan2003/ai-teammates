@@ -40,6 +40,11 @@ export function toolLabel(tool: string, rawArgs?: unknown): string {
     case "update_bot": return "Updating a teammate";
     case "list_routines": return "Checking routines";
     case "create_routine": return "Scheduling a routine";
+    case "get_routine": return "Reading a routine";
+    case "update_routine": return "Updating a routine";
+    case "pause_routine": return "Pausing a routine";
+    case "resume_routine": return "Resuming a routine";
+    case "delete_routine": return "Deleting a routine";
     case "shell": return TEST_COMMAND.test(String(args.command ?? "")) ? "Running tests" : "Running a command";
     case "setup_env": return "Running a command";
     case "browser_open": case "browser_extract": case "browser_click": case "browser": return "Browsing the web";

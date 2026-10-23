@@ -16,8 +16,8 @@ public static class PeerLimits
     public const int MaxOpenPerPair = 2;
     public const int PingPong = 8;
     public const int BotSendsPerHour = 30;
-    public const int MinRoutineMinutes = 15;
-    public const int MaxRoutinesPerBot = 10;
+    public const int MinRoutineMinutes = RoutineService.MinMinutes;
+    public const int MaxRoutinesPerBot = RoutineService.MaxPerBot;
     public const int MaxTextChars = 4000;
     public const int NoticeMinutes = 10;
     public const int DelayedMinutes = 15;
@@ -123,7 +123,8 @@ public static class BotMessaging
 {
     public static readonly HashSet<string> Tools = new(StringComparer.Ordinal)
     {
-        "list_bots", "message_bot", "reply_to_bot", "thread_status", "create_bot", "update_bot", "list_routines", "create_routine"
+        "list_bots", "message_bot", "reply_to_bot", "thread_status", "create_bot", "update_bot", "list_routines", "create_routine",
+        "get_routine", "update_routine", "pause_routine", "resume_routine", "delete_routine"
     };
 
     public static bool IsTool(string tool) => Tools.Contains(tool);
@@ -149,6 +150,10 @@ public static class BotMessaging
             "update_bot" => await UpdateBot(platform, conn, ctx, args),
             "list_routines" => await ListRoutines(conn, ctx, args),
             "create_routine" => await CreateRoutine(platform, conn, ctx, args),
+            "get_routine" => await GetRoutine(conn, ctx, args),
+            "update_routine" => await UpdateRoutine(platform, conn, ctx, args),
+            "pause_routine" or "resume_routine" => await ToggleRoutine(platform, conn, ctx, tool, args),
+            "delete_routine" => await DeleteRoutine(platform, conn, ctx, args),
             _ => Fail("unknown_tool")
         };
     }
@@ -412,7 +417,7 @@ public static class BotMessaging
     private static async Task<string?> ManageLimit(Platform platform, NpgsqlConnection conn, PeerTask ctx)
     {
         if (PeerLimits.DepthExceeded(ctx.OriginDepth)) { await platform.Audit("bot", "botmsg.limit", ctx.BotId, ctx.TaskId, new { reason = "depth_limit" }); return "depth_limit"; }
-        var used = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM bot_manage_actions WHERE task_id=@t AND tool IN ('create_bot','create_routine','update_bot')", new { t = ctx.TaskId });
+        var used = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM bot_manage_actions WHERE task_id=@t AND tool IN ('create_bot','create_routine','update_bot','update_routine','resume_routine','delete_routine')", new { t = ctx.TaskId });
         if (used >= PeerLimits.MaxManagePerTask) return "task_limit";
         return null;
     }
@@ -520,38 +525,162 @@ public static class BotMessaging
             if (resolved.Id == null) return Fail("bot_not_found");
             target = resolved.Id.Value;
         }
-        var rows = await conn.QueryAsync("SELECT id, name, cron, enabled FROM routines WHERE bot_id=@id ORDER BY created_at", new { id = target });
-        return new { routines = rows.Select(r => new { id = (Guid)r.id, name = (string)r.name, cron = (string)r.cron, enabled = (bool)r.enabled }).ToList() };
+        return new { routines = await RoutineService.List(conn, target) };
     }
+
+    private static object RoutineFail(string code) => new { ok = false, error = code, message = RoutineService.Sentence(code) };
 
     private static async Task<object> CreateRoutine(Platform platform, NpgsqlConnection conn, PeerTask ctx, JsonElement args)
     {
         var begin = await Begin(conn, ctx, "create_routine", args);
         if (!begin.Ok) return begin.Replay!;
         if (await ManageLimit(platform, conn, ctx) is { } limit) return Fail(limit);
-        var resolved = await Resolve(conn, ctx.Owner, Arg(args, "bot"));
+        var resolved = Arg(args, "bot").Length == 0 ? (Id: (Guid?)ctx.BotId, Error: (string?)null, Candidates: (object?)null) : await Resolve(conn, ctx.Owner, Arg(args, "bot"));
         if (resolved.Id == null) return resolved.Error == "ambiguous" ? Fail("ambiguous", resolved.Candidates) : Fail("bot_not_found");
-        var cron = Arg(args, "cron").Trim();
-        var gap = PeerLimits.CronGapMinutes(cron);
-        if (gap == null) return Fail("invalid_cron");
-        if (gap < PeerLimits.MinRoutineMinutes) return Fail("interval_too_short");
-        var instruction = Arg(args, "instruction");
-        var name = Arg(args, "name").Trim();
-        if (Dlp.HasStrict(instruction + name)) return Fail("dlp_blocked");
-        if (await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM routines WHERE bot_id=@id", new { id = resolved.Id }) >= PeerLimits.MaxRoutinesPerBot) return Fail("routine_limit");
-        var zoneId = await RoutineTime.BotOwnerZoneId(conn, resolved.Id.Value);
-        var next = RoutineTime.Next(cron, DateTimeOffset.UtcNow, zoneId);
-        var routineId = await conn.ExecuteScalarAsync<Guid>(
-            "INSERT INTO routines (bot_id, name, cron, timezone, instruction, next_run_at, created_by_bot_id, origin_depth) VALUES (@bot, @name, @cron, @zoneId, @instruction, @next, @creator, @depth) RETURNING id",
-            new { bot = resolved.Id, name, cron, zoneId, instruction, next, creator = ctx.BotId, depth = ctx.OriginDepth + 1 });
+        var zoneId = Arg(args, "timezone").Length > 0 ? Arg(args, "timezone") : await RoutineTime.BotOwnerZoneId(conn, resolved.Id.Value);
+        if (!RoutineTime.TryZone(zoneId, out _)) return RoutineFail("unknown_timezone");
+        var spec = new RoutineSpec(Arg(args, "name"), Arg(args, "instruction"), Opt(args, "cron"), ParseWhen(Arg(args, "run_at"), zoneId), zoneId,
+            ParseWhen(Arg(args, "expires_at"), zoneId), Opt(args, "quiet"), Flag(args, "exact"));
+        var created = await RoutineService.Create(conn, resolved.Id.Value, ctx.Owner, spec, ctx.BotId, ctx.OriginDepth + 1);
+        if (!created.Ok) return RoutineFail(created.Error!);
+        var routineId = created.Id!.Value;
         var targetName = await conn.ExecuteScalarAsync<string>("SELECT name FROM bots WHERE id=@id", new { id = resolved.Id }) ?? "";
-        var result = new { ok = true, routineId, bot = targetName, nextRunAt = next };
+        var shaped = created.Data!;
+        var result = new { ok = true, routineId, bot = targetName, nextRunAt = shaped.GetType().GetProperty("nextRunAt")?.GetValue(shaped), schedule = shaped.GetType().GetProperty("human")?.GetValue(shaped) };
         await Done(conn, ctx, "create_routine", args, result);
         var own = await ConversationOf(conn, ctx.BotId);
-        if (own != null) await ActionRow(conn, own.Value, ctx.TaskId, "create_routine", resolved.Id, targetName, "Created routine " + name + " for " + targetName);
+        if (own != null) await ActionRow(conn, own.Value, ctx.TaskId, "create_routine", resolved.Id, targetName, "Created routine " + spec.Name + " for " + targetName);
         await platform.Audit("bot", "botmanage.create_routine", ctx.BotId, ctx.TaskId, new { routineId, target = resolved.Id });
         return result;
     }
+
+    private static string? Opt(JsonElement args, string name) => Arg(args, name) is { Length: > 0 } v ? v : null;
+    private static bool Flag(JsonElement args, string name) => args.ValueKind == JsonValueKind.Object && args.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
+
+    /// <summary>An ISO time with an offset is taken as given; one without is the owner's local time in the routine's zone.</summary>
+    private static DateTimeOffset? ParseWhen(string text, string zoneId)
+    {
+        if (text.Length == 0) return null;
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        if (!DateTimeOffset.TryParse(text, culture, System.Globalization.DateTimeStyles.AssumeUniversal, out var parsed)) return null;
+        var hasOffset = text.EndsWith('Z') || System.Text.RegularExpressions.Regex.IsMatch(text, @"[+-]\d\d:?\d\d$");
+        if (hasOffset) return parsed;
+        var zone = RoutineTime.Zone(zoneId);
+        var local = DateTime.SpecifyKind(parsed.DateTime, DateTimeKind.Unspecified);
+        return new DateTimeOffset(local, zone.GetUtcOffset(local));
+    }
+
+    private static JsonElement Json(object value) => JsonSerializer.SerializeToElement(value);
+
+    private static async Task<(Guid? Id, object? Error)> FindRoutine(NpgsqlConnection conn, PeerTask ctx, JsonElement args)
+    {
+        var key = Arg(args, "routine").Trim();
+        if (key.Length == 0) return (null, RoutineFail("routine_not_found"));
+        if (Guid.TryParse(key, out var id))
+            return await RoutineService.Load(conn, id, ctx.Owner) == null ? (null, RoutineFail("routine_not_found")) : (id, null);
+        var bot = ctx.BotId;
+        if (Arg(args, "bot").Length > 0)
+        {
+            var resolved = await Resolve(conn, ctx.Owner, Arg(args, "bot"));
+            if (resolved.Id == null) return (null, Fail("bot_not_found"));
+            bot = resolved.Id.Value;
+        }
+        var ids = (await conn.QueryAsync<Guid>("SELECT id FROM routines WHERE bot_id=@bot AND lower(name)=lower(@key)", new { bot, key })).ToList();
+        if (ids.Count == 1) return (ids[0], null);
+        return (null, ids.Count == 0 ? RoutineFail("routine_not_found") : Fail("ambiguous"));
+    }
+
+    private static async Task<object> GetRoutine(NpgsqlConnection conn, PeerTask ctx, JsonElement args)
+    {
+        var found = await FindRoutine(conn, ctx, args);
+        if (found.Id == null) return found.Error!;
+        var got = await RoutineService.Get(conn, found.Id.Value, ctx.Owner);
+        if (!got.Ok) return RoutineFail(got.Error!);
+        // update_routine checks this row: the bot must have read the saved text in this task before changing it.
+        var key = PeerLimits.ManageKey(ctx.TaskId, "get_routine", found.Id.Value.ToString());
+        await conn.ExecuteAsync("INSERT INTO bot_manage_actions (idempotency_key, owner_id, bot_id, task_id, tool, result) VALUES (@key, @owner, @bot, @task, 'get_routine', @result::jsonb) ON CONFLICT DO NOTHING",
+            new { key, owner = ctx.Owner, bot = ctx.BotId, task = ctx.TaskId, result = JsonSerializer.Serialize(new { routineId = found.Id }) });
+        var zone = await RoutineTime.BotOwnerZoneId(conn, ctx.BotId);
+        var now = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, RoutineTime.Zone(zone));
+        return new { ok = true, routine = got.Data, now = now.ToString("ddd d MMM yyyy HH:mm"), timezone = zone };
+    }
+
+    /// <summary>Before the user is asked about an edit: refuse it when the routine was not read in this task.</summary>
+    public static async Task<string?> UpdateBlocked(Platform platform, Guid owner, Guid botId, Guid taskId, JsonElement args, CancellationToken ct)
+    {
+        await using var conn = await platform.Data.OpenConnectionAsync(ct);
+        var ctx = new PeerTask(taskId, botId, owner, "", null, 0);
+        var found = await FindRoutine(conn, ctx, args);
+        if (found.Id == null) return null; // the tool itself reports an unknown routine
+        return await WasRead(conn, ctx, found.Id.Value) ? null : RoutineService.Sentence("get_routine_required");
+    }
+
+    private static async Task<bool> WasRead(NpgsqlConnection conn, PeerTask ctx, Guid routineId) =>
+        await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM bot_manage_actions WHERE task_id=@t AND tool='get_routine' AND result->>'routineId'=@id", new { t = ctx.TaskId, id = routineId.ToString() }) > 0;
+
+    private static async Task<object> UpdateRoutine(Platform platform, NpgsqlConnection conn, PeerTask ctx, JsonElement args)
+    {
+        var begin = await Begin(conn, ctx, "update_routine", args);
+        if (!begin.Ok) return begin.Replay!;
+        if (await ManageLimit(platform, conn, ctx) is { } limit) return Fail(limit);
+        var found = await FindRoutine(conn, ctx, args);
+        if (found.Id == null) return found.Error!;
+        var id = found.Id.Value;
+        if (!await WasRead(conn, ctx, id)) return RoutineFail("get_routine_required");
+        var zoneId = Arg(args, "timezone").Length > 0 ? Arg(args, "timezone") : await conn.ExecuteScalarAsync<string>("SELECT timezone FROM routines WHERE id=@id", new { id }) ?? "UTC";
+        var spec = new RoutineSpec(Opt(args, "name"), Opt(args, "instruction"), Opt(args, "cron"), ParseWhen(Arg(args, "run_at"), zoneId), Opt(args, "timezone"),
+            ParseWhen(Arg(args, "expires_at"), zoneId), Opt(args, "quiet"), Flag(args, "exact"));
+        var updated = await RoutineService.Update(conn, id, ctx.Owner, spec);
+        if (!updated.Ok) return RoutineFail(updated.Error!);
+        var after = Json(updated.Data!).GetProperty("after");
+        var routineName = after.GetProperty("name").GetString() ?? "";
+        var result = new { ok = true, routineId = id, routine = after, changed = Json(updated.Data!).GetProperty("before").GetProperty("human").GetString() + " -> " + after.GetProperty("human").GetString() };
+        await Done(conn, ctx, "update_routine", args, result);
+        await Note(platform, conn, ctx, "update_routine", id, routineName, "Updated routine " + routineName);
+        return result;
+    }
+
+    private static async Task<object> ToggleRoutine(Platform platform, NpgsqlConnection conn, PeerTask ctx, string tool, JsonElement args)
+    {
+        var begin = await Begin(conn, ctx, tool, args);
+        if (!begin.Ok) return begin.Replay!;
+        if (tool == "resume_routine" && await ManageLimit(platform, conn, ctx) is { } limit) return Fail(limit);
+        var found = await FindRoutine(conn, ctx, args);
+        if (found.Id == null) return found.Error!;
+        var enable = tool == "resume_routine";
+        var outcome = await RoutineService.SetEnabled(conn, found.Id.Value, ctx.Owner, enable, enable ? null : "bot");
+        if (!outcome.Ok) return RoutineFail(outcome.Error!);
+        var shaped = Json(outcome.Data!);
+        var routineName = shaped.GetProperty("name").GetString() ?? "";
+        var result = new { ok = true, routineId = found.Id, enabled = enable, nextRunAt = shaped.GetProperty("nextRunAt") };
+        await Done(conn, ctx, tool, args, result);
+        await Note(platform, conn, ctx, tool, found.Id.Value, routineName, (enable ? "Resumed routine " : "Paused routine ") + routineName);
+        return result;
+    }
+
+    private static async Task<object> DeleteRoutine(Platform platform, NpgsqlConnection conn, PeerTask ctx, JsonElement args)
+    {
+        var begin = await Begin(conn, ctx, "delete_routine", args);
+        if (!begin.Ok) return begin.Replay!;
+        if (await ManageLimit(platform, conn, ctx) is { } limit) return Fail(limit);
+        var found = await FindRoutine(conn, ctx, args);
+        if (found.Id == null) return found.Error!;
+        var routineName = await conn.ExecuteScalarAsync<string>("SELECT name FROM routines WHERE id=@id", new { id = found.Id }) ?? "";
+        var outcome = await RoutineService.Delete(conn, found.Id.Value, ctx.Owner);
+        if (!outcome.Ok) return RoutineFail(outcome.Error!);
+        var result = new { ok = true, routineId = found.Id, deleted = routineName };
+        await Done(conn, ctx, "delete_routine", args, result);
+        await Note(platform, conn, ctx, "delete_routine", found.Id.Value, routineName, "Deleted routine " + routineName);
+        return result;
+    }
+
+    private static async Task Note(Platform platform, NpgsqlConnection conn, PeerTask ctx, string tool, Guid routineId, string routineName, string sentence)
+    {
+        var own = await ConversationOf(conn, ctx.BotId);
+        if (own != null) await ActionRow(conn, own.Value, ctx.TaskId, tool, null, routineName, sentence);
+        await platform.Audit("bot", "botmanage." + tool, ctx.BotId, ctx.TaskId, new { routineId });
+    }
+
 
     // ---- delivery hooks (called from the task routes) ----
 

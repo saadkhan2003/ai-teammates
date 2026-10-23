@@ -98,7 +98,7 @@ public class BotMessagingTests
     }
 
     [Fact]
-    public void RoutineIntervalFloorIsFifteenMinutes()
+    public void RoutineIntervalFloorIsFiveMinutes()
     {
         Assert.Equal(60, PeerLimits.CronGapMinutes("0 * * * *"));
         Assert.True(PeerLimits.CronGapMinutes("* * * * *") < PeerLimits.MinRoutineMinutes);

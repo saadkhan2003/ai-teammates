@@ -159,7 +159,7 @@ public static class ActionClassifier
         "type_secret", "browser.type_secret", "save_memory", "search_memory", "save_artifact",
         "request_secret", "request_login", "react_to_message", "send_message", "external_post", "sign",
         "search_tools", "load_tool",
-        "list_bots", "message_bot", "reply_to_bot", "thread_status", "create_bot", "update_bot", "list_routines", "create_routine",
+        "list_bots", "message_bot", "reply_to_bot", "thread_status", "create_bot", "update_bot", "list_routines", "create_routine", "get_routine", "update_routine", "pause_routine", "resume_routine", "delete_routine",
         "plan_set", "plan_update", "git_status", "git_diff", "git_commit", "run_tests", "create_pr", "watch_ci", "spawn_child_task", "child_status"
     };
 
@@ -194,9 +194,10 @@ public static class ActionClassifier
             return args.ValueKind == JsonValueKind.Object && args.TryGetProperty("thread_id", out var thread) && thread.ValueKind == JsonValueKind.String && Guid.TryParse(thread.GetString(), out _)
                 ? ActionClasses.Write
                 : ActionClasses.BotMessage;
-        if (tool is "create_bot" or "create_routine" or "update_routine") return ActionClasses.BotManage;
+        if (tool is "create_bot" or "create_routine" or "update_routine" or "resume_routine" or "delete_routine") return ActionClasses.BotManage;
+        if (tool == "pause_routine") return ActionClasses.Write;
         if (tool == "update_bot") return SelfBioOnly(args) ? ActionClasses.Write : ActionClasses.BotManage;
-        if (tool is "list_bots" or "thread_status" or "list_routines") return ActionClasses.Read;
+        if (tool is "list_bots" or "thread_status" or "list_routines" or "get_routine") return ActionClasses.Read;
         if (tool is "send_message" or "send_email" or "send_sms") return ActionClasses.SendMessage;
         if (tool is "external_post" or "publish" or "post_message") return ActionClasses.ExternalPost;
         if (tool == "create_pr") return ActionClasses.ExternalPost;
@@ -439,7 +440,10 @@ public static class PolicyGate
             {
                 "create_bot" => $"Create teammate {Dlp.Redact(First(args, "name"))}".Trim(),
                 "update_bot" => $"Update teammate {Dlp.Redact(First(args, "bot", "name"))}".Trim(),
-                "create_routine" => $"Create routine {Dlp.Redact(First(args, "name"))} for {Dlp.Redact(First(args, "bot"))}".Trim(),
+                "create_routine" => RoutineSentence("Create routine", args),
+                "update_routine" => RoutineSentence("Update routine", args),
+                "resume_routine" => $"Resume routine {Dlp.Redact(First(args, "routine"))}".Trim(),
+                "delete_routine" => $"Delete routine {Dlp.Redact(First(args, "routine"))}".Trim(),
                 _ => $"Change {Dlp.Redact(First(args, "name", "bot"))}".Trim()
             },
             _ => $"Read {target}".Trim()
@@ -448,6 +452,20 @@ public static class PolicyGate
         if (string.IsNullOrWhiteSpace(target)) sentence = $"{risk} via {tool}";
         else sentence = $"{sentence} ({tool})";
         return sentence;
+    }
+
+    private static string RoutineSentence(string verb, JsonElement args)
+    {
+        var name = Dlp.Redact(First(args, "name", "routine"));
+        var bot = Dlp.Redact(First(args, "bot"));
+        var cron = First(args, "cron");
+        var when = cron.Length > 0 ? CronWords.Describe(cron) : First(args, "run_at");
+        var text = $"{verb} {name}".Trim();
+        if (bot.Length > 0) text += $" for {bot}";
+        if (when.Length > 0) text += $" - {when}" + (First(args, "timezone") is { Length: > 0 } zone ? $" ({zone})" : "");
+        var instruction = Dlp.Redact(First(args, "instruction"));
+        if (instruction.Length > 0) text += $": {(instruction.Length > 60 ? instruction[..60] + "..." : instruction)}";
+        return text.Trim();
     }
 
     private static int Rank(string mode) => mode switch

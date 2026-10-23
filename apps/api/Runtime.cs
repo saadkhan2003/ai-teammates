@@ -56,6 +56,8 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         if (!await HoldsLease(taskId, EpochOf(body), ct)) return Results.StatusCode(409);
         var tool = body.GetProperty("tool").GetString() ?? "";
         var args = body.GetProperty("args");
+        if (tool == "update_routine" && await BotMessaging.UpdateBlocked(platform, await OwnerOf(botId), botId, taskId, args, ct) is { } blocked)
+            return Results.Json(new { decision = "deny", ok = false, reason = blocked, riskClass = ActionClasses.BotManage });
         var gated = await Gate(botId, taskId, tool, args, false, ct);
         if (gated.Decision == PolicyEngine.Deny)
         {
@@ -91,6 +93,11 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
             return Results.Json(new { ok = false, status = "invalid", reason = invalid });
         }
         var owner = await OwnerOf(botId);
+        if (tool == "update_routine" && await BotMessaging.UpdateBlocked(platform, owner, botId, taskId, args, ct) is { } blocked)
+        {
+            await Step(taskId, tool, args, "deny", false, new { reason = blocked, riskClass = ActionClasses.BotManage });
+            return Results.Json(new { ok = false, status = "denied", reason = blocked, riskClass = ActionClasses.BotManage });
+        }
         var gated = await Gate(botId, taskId, tool, args, false, ct);
         var decision = gated.Decision;
         if (decision == PolicyEngine.Deny)
