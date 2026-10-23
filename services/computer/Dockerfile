@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         xdotool xterm procps \
         fonts-dejavu-core fonts-liberation \
         git ripgrep patch \
+        tmux \
         imagemagick librsvg2-bin \
         util-linux \
     && rm -rf /var/lib/apt/lists/*

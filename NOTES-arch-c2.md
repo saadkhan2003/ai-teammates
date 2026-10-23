@@ -1,11 +1,9 @@
 # Architecture chunk c2 report
 
-Implemented the row 9 file-transfer security work: request bodies are read with a 100 MiB cap, NUL/oversized path headers are rejected, file content types are sniffed from bytes, and text downloads are blocked by DLP when they contain seeded credential-shaped data. The computer workspace resolver now rejects NUL paths and retains realpath containment checks against symlink escapes.
+Completed row 9 terminal work alongside the previously completed file-transfer half. Added a per-window asyncio PTY WebSocket service with bounded binary/text framing, resize handling, tmux-backed reconnects, no idle timeout, and a plain-shell fallback. Added owner-only ticket issuance and an authenticated API WebSocket proxy, plus an xterm.js terminal component. The computer image now installs tmux.
 
-Files touched: `apps/api/BotFileTransfer.cs`, `apps/api/Routes.cs`, `services/computer/src/workspace.py`, `tests/unit/V03Tests.cs`, `tests/unit/test_workspace.py`, and this report.
+Files touched: `apps/api/Routes.cs`, `apps/api/TerminalTickets.cs`, `apps/web/components/Terminal.tsx`, `apps/web/package.json`, `apps/web/package-lock.json`, `services/computer/Dockerfile`, `services/computer/src/server.py`, `services/computer/src/pty.py`, `services/computer/src/tickets.py`, `tests/unit/TerminalTicketsTests.cs`, `tests/unit/test_terminal_tickets.py`, and this report. The earlier file-transfer files remain as previously committed.
 
-Tests added: one C# transfer bounds/sniff/DLP test and one Python NUL/symlink test. Focused checks passed (1 C# test, 2 Python tests). Full unit-suite results are recorded in the final report.
+Tests: 6 Python terminal/ticket tests and 2 C# issuer tests added. Full Python unit suite: 120 passed. Full C# unit suite: 209 passed. Web TypeScript check passed. The local tmux reconnect test ran and passed.
 
-Not implemented: PTY-per-window/tmux reconnect and xterm.js UI. The existing compute provider only exposes bounded exec and JSON control calls; it has no raw bidirectional PTY/WebSocket tunnel or API-to-computer ticket exchange. A ticket issued without that authenticated broker path would not provide user+bot+window binding, so this portion needs a transport/API contract first.
-
-Security notes: file request paths are bounded and NUL rejected; workspace realpath containment blocks traversal and symlink escape; uploads stop once they cross 100 MiB; DLP runs before text file responses. Upload staging still uses bounded in-memory buffering and the existing base64 computer exec transport.
+Security: tickets use HMAC-SHA256 with a per-computer key derived from the `COMPUTER_TOKEN` environment value, a 256-bit CSPRNG nonce, and a 60-second expiry. The PTY atomically consumes SHA-256 ticket hashes under a lock; ticket values travel only in the WebSocket subprotocol. Request and frame sizes are bounded. No live container/API/browser integration was run because Docker is unavailable in this environment.

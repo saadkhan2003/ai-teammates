@@ -630,6 +630,7 @@ public static class Routes
         });
 
         MapSecrets(app, platform);
+        TerminalTickets.Map(app, platform);
         PluginModel.Map(app, platform);
         PluginCatalog.Map(app, platform);
         Beta.Map(app, platform);
