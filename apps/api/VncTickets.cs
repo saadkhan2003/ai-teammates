@@ -96,7 +96,7 @@ public static class VncTicketRoutes
                 await platform.Audit(user.Value.ToString(), "desktop.lease.reject", id, null, new { reason = "epoch_conflict", suppliedEpoch = epoch, epoch = current?.Epoch });
                 return Results.Conflict(new { error = "lease_epoch_conflict", epoch = current?.Epoch ?? 0 });
             }
-            var dbNow = await conn.ExecuteScalarAsync<DateTimeOffset>(new CommandDefinition("SELECT clock_timestamp()", cancellationToken: ct));
+            var dbNow = await DbClock.NowAsync(conn, ct);
             if (action == "heartbeat" && !DesktopLeaseRepository.IsActiveFor(current, user.Value, tabId, epoch, dbNow))
             {
                 await platform.Audit(user.Value.ToString(), "desktop.lease.reject", id, null, new { reason = "lease_expired", epoch });
@@ -161,7 +161,7 @@ public static class VncTicketRoutes
                 // A second tab remains view-only unless it explicitly transfers control.
                 if (lease.HolderUserId != user.Value || lease.TabId != tabId) epoch = lease.Epoch;
             }
-            var dbNow = await conn.ExecuteScalarAsync<DateTimeOffset>(new CommandDefinition("SELECT clock_timestamp()", cancellationToken: ct));
+            var dbNow = await DbClock.NowAsync(conn, ct);
             if (role == "control" && !DesktopLeaseRepository.IsActiveFor(lease, user.Value, tabId, epoch, dbNow))
                 return Results.Conflict(new { error = "lease_not_held" });
             DesktopSession session;

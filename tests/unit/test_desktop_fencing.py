@@ -237,3 +237,13 @@ def test_new_computers_get_an_agent_lease_row_so_shell_is_not_reported_as_human_
     routes = (ROOT / "apps/api/Routes.cs").read_text()
     assert "INSERT INTO desktop_lease" in runtime and "ON CONFLICT (computer_id, display) DO NOTHING" in runtime
     assert "INSERT INTO desktop_lease" in routes and "'agent'" in routes
+
+
+def test_api_never_reads_db_clock_as_datetimeoffset():
+    """Npgsql returns timestamptz as DateTime; Dapper cannot cast it to DateTimeOffset (vnc-ticket 500)."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2] / "apps" / "api"
+    offenders = [p.name for p in root.glob("*.cs") if 'ExecuteScalarAsync<DateTimeOffset>' in p.read_text()]
+    assert offenders == []
+    assert "class DbClock" in (root / "DesktopLeases.cs").read_text()

@@ -470,7 +470,7 @@ public static class Routes
             var placement = await platform.PlacementForBot(id, ct);
             if (!Guid.TryParse(placement.Computer.Value, out var computerId)) return Results.Conflict(new { error = "computer unavailable" });
             var lease = await DesktopLeaseRepository.StateAsync(conn, computerId, 1, ct);
-            var dbNow = await conn.ExecuteScalarAsync<DateTimeOffset>(new CommandDefinition("SELECT clock_timestamp()", cancellationToken: ct));
+            var dbNow = await DbClock.NowAsync(conn, ct);
             if (!DesktopLeaseRepository.IsActiveFor(lease, user.Value, tabId, epoch, dbNow)) return Results.Json(new { error = "human control is not held" }, statusCode: 403);
             var selector = body.TryGetProperty("selector", out var sel) ? sel.GetString() : "#human-check";
             var target = body.TryGetProperty("targetId", out var tid) ? tid.GetString() : "";
@@ -707,7 +707,7 @@ public static class Routes
             {
                 await using var leaseConn = await platform.Data.OpenConnectionAsync(ctx.RequestAborted);
                 var lease = await DesktopLeaseRepository.StateAsync(leaseConn, ticket.LeaseId, 1, ctx.RequestAborted);
-                var dbNow = await leaseConn.ExecuteScalarAsync<DateTimeOffset>(new CommandDefinition("SELECT clock_timestamp()", cancellationToken: ctx.RequestAborted));
+                var dbNow = await DbClock.NowAsync(leaseConn, ctx.RequestAborted);
                 if (!DesktopLeaseRepository.IsActiveFor(lease, ticket.UserId, ticket.TabId, ticket.Epoch, dbNow))
                 { ctx.Response.StatusCode = 409; return; }
             }
@@ -733,7 +733,7 @@ public static class Routes
                     {
                         await using var leaseConn = await platform.Data.OpenConnectionAsync(ctx.RequestAborted);
                         var lease = await DesktopLeaseRepository.StateAsync(leaseConn, ticket.LeaseId, 1, ctx.RequestAborted);
-                        var dbNow = await leaseConn.ExecuteScalarAsync<DateTimeOffset>(new CommandDefinition("SELECT clock_timestamp()", cancellationToken: ctx.RequestAborted));
+                        var dbNow = await DbClock.NowAsync(leaseConn, ctx.RequestAborted);
                         if (!DesktopLeaseRepository.IsActiveFor(lease, ticket.UserId, ticket.TabId, ticket.Epoch, dbNow)) break;
                     }
                     var forwarded = filter?.Feed(buffer.AsSpan(0, result.Count)) ?? buffer.AsSpan(0, result.Count).ToArray();
@@ -758,7 +758,7 @@ public static class Routes
                     await DesktopRwConnections.HeartbeatAsync(platform.Data, ticket.LeaseId, ticket.Epoch, rwConnectionId, ctx.RequestAborted);
                     await using var leaseConn = await platform.Data.OpenConnectionAsync(ctx.RequestAborted);
                     var lease = await DesktopLeaseRepository.StateAsync(leaseConn, ticket.LeaseId, 1, ctx.RequestAborted);
-                    var dbNow = await leaseConn.ExecuteScalarAsync<DateTimeOffset>(new CommandDefinition("SELECT clock_timestamp()", cancellationToken: ctx.RequestAborted));
+                    var dbNow = await DbClock.NowAsync(leaseConn, ctx.RequestAborted);
                     if (!DesktopLeaseRepository.IsActiveFor(lease, ticket.UserId, ticket.TabId, ticket.Epoch, dbNow))
                     {
                         socket.Abort();

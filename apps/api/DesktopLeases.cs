@@ -6,6 +6,16 @@ namespace Teammates.Api;
 public sealed record DesktopLeaseRow(Guid ComputerId, int Display, string HolderKind, Guid? HolderUserId,
     string? TabId, long Epoch, DateTime ExpiresAt, DateTime UpdatedAt);
 
+/// <summary>Database wall clock; Npgsql hands timestamptz back as a UTC DateTime, which Dapper cannot cast to DateTimeOffset.</summary>
+public static class DbClock
+{
+    public static async Task<DateTimeOffset> NowAsync(NpgsqlConnection conn, CancellationToken ct)
+    {
+        var now = await conn.ExecuteScalarAsync<DateTime>(new CommandDefinition("SELECT clock_timestamp()", cancellationToken: ct));
+        return new DateTimeOffset(DateTime.SpecifyKind(now, DateTimeKind.Utc));
+    }
+}
+
 /// <summary>Postgres is the lease authority; mutations use DB time and epoch CAS.</summary>
 public static class DesktopLeaseRepository
 {

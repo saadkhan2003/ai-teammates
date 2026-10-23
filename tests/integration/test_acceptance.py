@@ -520,13 +520,18 @@ def test_acceptance_suite():
             break
         time.sleep(1)
     assert waiting and waiting["status"] == "waiting_human", waiting
-    status, taken = client.call("POST", f"/api/bots/{bot_id}/computer/take-control")
-    assert status == 200 and taken.get("token"), taken
-    status, clicked = client.call("POST", f"/api/bots/{bot_id}/computer/human-input", {"selector": "#human-check"})
+    # Legacy take-control is refused; control now needs a role ticket that carries the desktop lease.
+    status, legacy = client.call("POST", f"/api/bots/{bot_id}/computer/take-control")
+    assert status == 409 and legacy.get("error") == "control_requires_lease_ticket", legacy
+    tab = "acceptance-tab"
+    status, taken = client.call("POST", f"/api/computers/{bot_id}/vnc-ticket?role=control", headers={"X-Desktop-Tab": tab})
+    assert status == 200 and taken.get("token") and taken.get("role") == "control", taken
+    epoch = taken["epoch"]
+    status, clicked = client.call("POST", f"/api/bots/{bot_id}/computer/human-input", {"selector": "#human-check", "tabId": tab, "epoch": epoch})
     assert status == 200, clicked
     status, resolved = client.call("POST", f"/api/tasks/{captcha}/attention/resolve")
     assert status == 200, resolved
-    status, handed = client.call("POST", f"/api/bots/{bot_id}/computer/hand-back")
+    status, handed = client.call("POST", f"/api/bots/{bot_id}/computer/hand-back", {"tabId": tab, "epoch": epoch})
     assert status == 200, handed
     cleared = wait_task(client, bot_id, captcha, timeout=120)
     assert cleared["status"] == "completed", cleared
