@@ -42,6 +42,8 @@ test("library renders three groups, unknown type and per-group paging at phone a
     await expect(page.getByText("This week", { exact: true })).toBeVisible();
     await expect(page.getByText("Older", { exact: true })).toBeVisible();
     await expect(page.getByTestId("library-unknown-icon")).toBeVisible();
+    await page.getByTestId("library-group-today").scrollIntoViewIfNeeded();
+    await page.screenshot({ path: "/workspace/ai-teammates-live/shots/11-library-o3.png" });
     await page.getByRole("button", { name: "Photo.png", exact: true }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
     await expect(page.getByRole("dialog").locator(`img[alt="Photo.png"]`)).toBeVisible();
