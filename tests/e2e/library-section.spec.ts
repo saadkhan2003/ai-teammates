@@ -42,14 +42,14 @@ test("library renders three groups, unknown type and per-group paging at phone a
     await expect(page.getByText("This week", { exact: true })).toBeVisible();
     await expect(page.getByText("Older", { exact: true })).toBeVisible();
     await expect(page.getByTestId("library-unknown-icon")).toBeVisible();
-    await page.getByRole("button", { name: "Photo.png" }).click();
+    await page.getByRole("button", { name: "Photo.png", exact: true }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
-    await expect(page.getByRole("dialog").getByRole("img", { name: "Photo.png" })).toBeVisible();
+    await expect(page.getByRole("dialog").locator(`img[alt="Photo.png"]`)).toBeVisible();
     await page.keyboard.press("ArrowRight");
     await expect(page.getByRole("dialog")).toContainText("organize_documents.gs");
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog")).toHaveCount(0);
-    await page.getByRole("button", { name: "three.txt" }).click();
+    await page.getByRole("button", { name: "three.txt", exact: true }).click();
     await expect(page.getByRole("dialog")).toContainText("preview text");
     await page.keyboard.press("Escape");
     const rowActions = page.getByRole("button", { name: "Actions for Photo.png" });
@@ -57,7 +57,7 @@ test("library renders three groups, unknown type and per-group paging at phone a
     await expect(rowActions).toBeVisible();
     await rowActions.click();
     await page.getByRole("menuitem", { name: "Pin" }).click();
-    await expect(page.getByRole("button", { name: "Download Photo.png" })).toBeAttached();
+    await expect(page.getByRole("link", { name: "Download Photo.png" })).toBeAttached();
     await page.getByRole("button", { name: "Actions for Photo.png" }).click();
     await page.getByRole("menuitem", { name: "Delete…" }).click();
     await expect(page.getByRole("dialog")).toContainText("cannot be recovered after 30 days");
@@ -72,7 +72,7 @@ test("library renders three groups, unknown type and per-group paging at phone a
     await expect(page.getByRole("button", { name: "Show more" })).toHaveCount(0);
     await page.setViewportSize({ width: 1280, height: 900 });
     await expect(page.getByTestId("library-group-today")).toBeVisible();
-    await page.getByRole("button", { name: "Photo.png" }).hover();
+    await page.getByRole("button", { name: "Photo.png", exact: true }).hover();
     await expect(page.getByRole("button", { name: "Actions for Photo.png" })).toBeVisible();
   } finally {
     await page.unroute(`**/api/bots/${botId}/library**`).catch(() => undefined);

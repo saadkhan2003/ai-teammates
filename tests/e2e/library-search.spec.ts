@@ -32,7 +32,11 @@ test("library search, filters, share menu and keyboard work at phone and desktop
 
     for (const width of [360, 390, 1280]) {
       await page.setViewportSize({ width, height: 860 });
+      await expect(page.getByRole("dialog")).toHaveCount(0);
       const search = page.getByRole("textbox", { name: "Search library" });
+      const firstRow = page.locator("[data-library-item] button").first();
+      await firstRow.focus();
+      await expect(firstRow).toBeFocused();
       await page.keyboard.press("/");
       await expect(search).toBeFocused();
       await search.fill("report");
@@ -40,17 +44,21 @@ test("library search, filters, share menu and keyboard work at phone and desktop
       await expect(page.getByText("pdf", { exact: true })).toBeVisible();
       await expect(page.getByRole("button", { name: "Screenshots" })).toBeVisible();
       await page.getByRole("button", { name: "Uploaded" }).click();
-      await page.getByRole("button", { name: "report-results.pdf" }).focus();
+      await page.getByRole("button", { name: "report-results.pdf", exact: true }).focus();
       await page.keyboard.press("Enter");
       await expect(page.getByRole("dialog")).toBeVisible();
-      await page.keyboard.press("Escape");
+      await page.getByRole("dialog").press("Escape");
+      await expect(page.getByRole("dialog")).toHaveCount(0);
       const actions = page.getByRole("button", { name: "Actions for report-results.pdf" });
       await actions.focus();
       await actions.click();
-      await page.getByRole("menuitem", { name: "Share" }).click();
+      await page.getByRole("menuitem", { name: "Share", exact: true }).click();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
       await page.getByRole("button", { name: "Actions for report-results.pdf" }).click();
       await expect(page.getByRole("menuitem", { name: "Copy link" })).toBeVisible();
       await page.keyboard.press("Escape");
+      await expect(page.getByRole("menu")).toHaveCount(0);
+      await expect(page.getByRole("dialog")).toHaveCount(0);
     }
     await page.goto(`/s/${"a".repeat(64)}`);
     await expect(page.getByRole("heading", { name: item.name })).toBeVisible();
