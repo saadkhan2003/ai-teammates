@@ -172,7 +172,7 @@ def test_flushed_chain_refuses_start_until_rules_return():
     subprocess.check_call(["sudo", "bash", str(ROOT / "deploy/computer-isolation.sh")])
     assert _rules_present()
     guard = _isolation_name()
-    status, login, cookie = _api("POST", "/api/auth/login", "", {"username": "saad", "password": "teammates-dev"})
+    status, login, cookie = _api("POST", "/api/auth/login", "", {"username": "saad", "password": os.environ.get("OWNER_PASSWORD", "teammates-dev")})
     assert status == 200, login
     status, computer, cookie = _api("GET", "/api/computer", cookie)
     assert status == 200 and computer.get("computerId"), computer

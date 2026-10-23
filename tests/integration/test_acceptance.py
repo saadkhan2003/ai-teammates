@@ -95,6 +95,25 @@ def submit(client: Client, conversation: str, text: str, as_task=True) -> str:
     return body["taskId"]
 
 
+def auto_allow_browser_opens(bot: str, stop: threading.Event) -> threading.Thread:
+    """v0.4 asks for Allow once on every run that opens a new browser origin."""
+    def loop() -> None:
+        helper_client = login()
+        while not stop.is_set():
+            try:
+                status, workspace = helper_client.call("GET", f"/api/bots/{bot}/workspace")
+                if status == 200:
+                    for item in workspace.get("approvals") or []:
+                        if item.get("action") == "browser_open":
+                            helper_client.call("POST", f"/api/approvals/{item['id']}/decide", {"decision": "allow_once"})
+            except Exception:
+                pass
+            stop.wait(1)
+    thread = threading.Thread(target=loop, daemon=True)
+    thread.start()
+    return thread
+
+
 def approve(client: Client, bot: str, action: str, decision: str = "allow_once") -> None:
     deadline = time.time() + 90
     approval = None
@@ -360,6 +379,8 @@ def test_acceptance_suite():
     )
     assert status == 200, bot
     bot_id = bot["id"]
+    stop_browser_approvals = threading.Event()
+    auto_allow_browser_opens(bot_id, stop_browser_approvals)
     conversation = bot["conversationId"]
 
     started = time.time()
@@ -602,7 +623,7 @@ def test_acceptance_suite():
     assert status == 200 and any(item.get("event") == "secret.deleted" for item in after_delete)
 
     dump = subprocess.check_output(["sudo", "docker", "exec", "teammates-postgres-1", "pg_dump", "-U", "agent", "-d", "agent", "-Fc"], stderr=subprocess.DEVNULL)
-    master = open("/workspace/secrets/secrets_master_key", "rb").read()
+    master = open(os.environ.get("SECRETS_MASTER_KEY_PATH", os.path.join(os.path.dirname(__file__), "..", "..", "secrets", "secrets_master_key")), "rb").read()
     assert master not in dump
     subprocess.check_call(["sudo", "docker", "exec", "-i", "teammates-postgres-1", "psql", "-U", "agent", "-d", "postgres", "-c", "DROP DATABASE IF EXISTS agent_restore"])
     subprocess.check_call(["sudo", "docker", "exec", "-i", "teammates-postgres-1", "psql", "-U", "agent", "-d", "postgres", "-c", "CREATE DATABASE agent_restore"])
