@@ -179,16 +179,17 @@ public static class LibraryRoutes
             return Results.Empty;
         });
 
-        app.MapGet("/api/bots/{id:guid}/library/{item:guid}/content", async (HttpContext ctx, Guid id, Guid item, bool? inline, bool? confirm, CancellationToken ct) =>
+        app.MapGet("/api/bots/{id:guid}/library/{item:guid}/content", async (HttpContext ctx, Guid id, Guid item, string? inline, string? confirm, CancellationToken ct) =>
         {
+            var wantInline = inline is "1" or "true"; var wantConfirm = confirm is "1" or "true";
             var owner = await Routes.RequireUser(ctx, platform);
             if (owner == null) return Results.Unauthorized();
             await using var conn = await platform.Data.OpenConnectionAsync(ct);
             var row = await conn.QuerySingleOrDefaultAsync<(string Name, string Ext, string Kind, string Sha, string Dlp, string Key, long Size, Guid? Artifact)>("SELECT li.name,li.ext,li.kind,li.sha256,li.dlp_state,a.object_key,a.size_bytes,li.artifact_id FROM library_items li JOIN bots b ON b.id=li.bot_id LEFT JOIN artifacts a ON a.id=li.artifact_id WHERE li.id=@item AND li.bot_id=@bot AND b.owner_id=@owner AND li.deleted_at IS NULL", new { item, bot = id, owner });
             if (string.IsNullOrEmpty(row.Key) || row.Artifact == null) return Results.NotFound();
-            if (row.Dlp == "redacted" && inline != true && confirm != true) return Results.Json(new { error = "confirmation_required" }, statusCode: 409);
+            if (row.Dlp == "redacted" && !wantInline && !wantConfirm) return Results.Json(new { error = "confirmation_required" }, statusCode: 409);
             var mime = LibraryKinds.ContentMime(row.Ext, row.Kind);
-            var inlineSafe = inline == true && LibraryKinds.InlineSafe(row.Ext, row.Kind);
+            var inlineSafe = wantInline && LibraryKinds.InlineSafe(row.Ext, row.Kind);
             var start = 0L; var end = row.Size - 1;
             var range = ctx.Request.Headers.Range.ToString();
             var partial = false;
@@ -204,7 +205,7 @@ public static class LibraryRoutes
                 { start = Math.Max(0, row.Size - suffix); end = row.Size - 1; partial = true; }
                 else { ctx.Response.StatusCode = 416; ctx.Response.Headers["Content-Range"] = $"bytes */{row.Size}"; return Results.Empty; }
             }
-            if (row.Dlp == "redacted" && inline == true && row.Size <= 2_000_000)
+            if (row.Dlp == "redacted" && wantInline && row.Size <= 2_000_000)
             {
                 using var stored = await platform.S3.GetObjectAsync(platform.Bucket, row.Key, ct);
                 using var buffer = new MemoryStream(); await stored.ResponseStream.CopyToAsync(buffer, ct);

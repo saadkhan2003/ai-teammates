@@ -71,7 +71,7 @@ public static class LibraryIngest
                 var mime = LibraryKinds.SniffMime(bytes, name);
                 var key = $"artifacts/{botId}/{Guid.NewGuid():n}/{name}";
                 await using var stream = new MemoryStream(bytes, writable: false);
-                await platform.S3.PutObjectAsync(new Amazon.S3.Model.PutObjectRequest { BucketName = platform.Bucket, Key = key, InputStream = stream, ContentType = mime }, ct);
+                await platform.S3.PutObjectAsync(new Amazon.S3.Model.PutObjectRequest { BucketName = platform.Bucket, Key = key, InputStream = stream, ContentType = mime, UseChunkEncoding = false }, ct);
                 Guid artifactId;
                 await using (var conn = await platform.Data.OpenConnectionAsync(ct))
                 {

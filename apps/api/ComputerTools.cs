@@ -100,7 +100,7 @@ public static class ComputerTools
         if (bytes.Length > MaxArtifactBytes) throw new ToolHalt("invalid", "artifact exceeds 50 MB limit");
         var key = $"artifacts/{botId}/{Guid.NewGuid():n}/{Path.GetFileName(name)}";
         using var input = new MemoryStream(bytes);
-        await platform.S3.PutObjectAsync(new PutObjectRequest { BucketName = platform.Bucket, Key = key, InputStream = input, ContentType = mime }, ct);
+        await platform.S3.PutObjectAsync(new PutObjectRequest { BucketName = platform.Bucket, Key = key, InputStream = input, ContentType = mime, UseChunkEncoding = false }, ct);
         var sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
         await using var conn = await platform.Data.OpenConnectionAsync(ct);
         var id = await conn.ExecuteScalarAsync<Guid>(
