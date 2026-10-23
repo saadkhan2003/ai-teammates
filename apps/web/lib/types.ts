@@ -5,6 +5,8 @@ export type Bot = {
   instructions: string;
   status?: string;
   avatarShape?: string;
+  isPrimary?: boolean;
+  bio?: string;
   avatarColor?: string;
   avatar?: string;
   model?: string;
@@ -38,7 +40,20 @@ export type ChatMessage = {
   content: string;
   createdAt?: string;
   reactions?: Reaction[];
+  parts?: MessagePartView[] | null;
+  skill?: { id: string; label: string } | null;
+  attachments?: Array<{ path: string; name: string; mime?: string }> | null;
+  deleted?: boolean;
+  requestId?: string | null;
+  taskStatus?: string | null;
+  replyToMessageId?: string | null;
+  kind?: string;
 };
+
+export type MessagePartView =
+  | { type: "text"; text: string }
+  | { type: "quote"; text: string; sourceMessageId?: string | null }
+  | { type: "reply"; messageId: string; author?: string; excerpt?: string };
 
 export type Approval = {
   id: string;

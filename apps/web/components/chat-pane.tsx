@@ -1,21 +1,25 @@
 "use client";
 
-import { FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Markdown } from "@/components/markdown";
 import { RefreshNotice } from "@/components/refresh-notice";
 import type { AgentEvent } from "@/lib/events";
-import { Notebook } from "lucide-react";
+import { Notebook, Plus, X as XIcon, Quote } from "lucide-react";
+import { BotAvatar } from "@/components/bot-avatar";
+import { MessageBody, MessageItem, plainTextOf } from "@/components/message-item";
+import { ShimmerText, workingStatus } from "@/components/shimmer-text";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { type ComposerPart, addQuote, canSend, hasBlocks, initialParts, normalizeSelection, pillPosition, removePart, setReply, toPayload } from "@/lib/chat-parts";
+import { setAvatarMode } from "@/lib/avatar-motion";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { ApiError, api } from "@/lib/api";
+import { ApiError, api, apiFetch } from "@/lib/api";
 import { messageBlocks, type FormField, type QuestionOption } from "@/lib/message-blocks";
 import type { ChatMessage } from "@/lib/types";
 import { errorMessage, formatWhen } from "@/lib/utils";
-
-const QUICK_REACTIONS = ["👍", "❤️", "🎉", "😂", "✅"];
 
 export function ChatPane({
   conversationId,
@@ -26,7 +30,13 @@ export function ChatPane({
   working = false,
   events = [],
   onStop,
+  botId,
+  avatar,
+  taskTitle,
 }: {
+  botId?: string;
+  avatar?: { shape?: string; color?: string; primary?: boolean };
+  taskTitle?: string;
   conversationId?: string;
   messages: ChatMessage[];
   botName: string;
@@ -37,15 +47,21 @@ export function ChatPane({
   onStop?: () => Promise<void>;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const composerRef = useRef<HTMLTextAreaElement>(null);
   const stickRef = useRef(true);
+  useEffect(() => { setAvatarMode(working ? "working" : "idle"); return () => setAvatarMode("idle"); }, [working]);
   const [scrolledUp, setScrolledUp] = useState(false);
   const [stopping, setStopping] = useState(false);
-  const [content, setContent] = useState("");
+  const [parts, setParts] = useState<ComposerPart[]>(initialParts);
+  const partRefs = useRef(new Map<string, HTMLTextAreaElement>());
+  const listRef = useRef<HTMLDivElement>(null);
+  const [live, setLive] = useState("");
+  const [pill, setPill] = useState<{ x: number; y: number; text: string; source?: string } | null>(null);
+  const pillRef = useRef<HTMLButtonElement>(null);
+  const draftsRef = useRef(new Map<string, ComposerPart[]>());
+  const fileRef = useRef<HTMLInputElement>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dlp, setDlp] = useState(false);
-  const [customEmoji, setCustomEmoji] = useState("");
   const [userName, setUserName] = useState("You");
 
   useEffect(() => {
@@ -63,36 +79,145 @@ export function ChatPane({
   useEffect(() => {
     if (stickRef.current) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, events, working]);
+  const lastTextId = parts[parts.length - 1]?.id;
   useEffect(() => {
-    const node = composerRef.current;
-    if (node) { node.style.height = "auto"; node.style.height = `${Math.min(node.scrollHeight, 180)}px`; }
-  }, [content]);
+    for (const node of partRefs.current.values()) { node.style.height = "auto"; node.style.height = `${Math.min(node.scrollHeight, 180)}px`; }
+  }, [parts]);
+
+  // keep a draft per conversation in memory
+  const prevConv = useRef(conversationId);
+  useEffect(() => {
+    if (prevConv.current !== conversationId) {
+      if (prevConv.current) draftsRef.current.set(prevConv.current, parts);
+      setParts(draftsRef.current.get(conversationId ?? "") ?? initialParts());
+      prevConv.current = conversationId;
+    }
+  }, [conversationId, parts]);
+
   async function stop() {
     setStopping(true);
     try { await onStop?.(); } catch (caught) { setError(errorMessage(caught, "Could not stop this run.")); }
     finally { setStopping(false); }
   }
   const initial = userName.trim().charAt(0).toUpperCase() || "Y";
+  const byId = new Map(messages.map(m => [m.id, m]));
+
+  function announce(text: string) { setLive(""); window.setTimeout(() => setLive(text), 30); }
+  function focusComposer() { window.setTimeout(() => { const node = lastTextId ? partRefs.current.get(lastTextId) : null; (node ?? Array.from(partRefs.current.values()).pop())?.focus(); }, 0); }
+
+  const addQuoteText = useCallback((raw: string, source?: string) => {
+    const { text, truncated } = normalizeSelection(raw);
+    let outcome: ReturnType<typeof addQuote> | null = null;
+    setParts(current => { outcome = addQuote(current, text, source); return outcome.parts; });
+    window.setTimeout(() => {
+      const result = outcome as ReturnType<typeof addQuote> | null;
+      if (!result) return;
+      if (result.added) { announce("Quote added"); if (truncated) toast.info("Quote cut to 4,000 characters."); window.getSelection()?.removeAllRanges(); setPill(null); const nodes = Array.from(partRefs.current.values()); nodes[nodes.length - 1]?.focus(); }
+      else if (result.reason === "limit") toast.error("You can add up to 10 quotes (12,000 characters).");
+      else if (result.reason === "duplicate") toast.info("That quote is already added.");
+    }, 0);
+  }, []);
+
+  function startReply(message: ChatMessage) {
+    const text = plainTextOf(message).replace(/\s+/g, " ").trim();
+    setParts(current => setReply(current, { messageId: message.id, author: message.role === "user" ? "You" : botName, excerpt: text.slice(0, 200) }));
+    announce("Reply added");
+    focusComposer();
+  }
+  function jumpTo(id: string) {
+    const node = document.getElementById(`msg-${id}`);
+    if (!node) return;
+    node.scrollIntoView({ block: "center", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    node.animate?.([{ backgroundColor: "var(--bot-accent-soft)" }, { backgroundColor: "transparent" }], { duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 1 : 1200 });
+  }
+  function focusSibling(from: HTMLElement, delta: number) {
+    const all = Array.from(listRef.current?.querySelectorAll<HTMLElement>("article[data-testid='message-item']") ?? []);
+    all[all.indexOf(from) + delta]?.focus();
+  }
+
+  // Add to chat: floating pill on a text selection inside the message list
+  useEffect(() => {
+    let timer = 0;
+    const touch = () => window.matchMedia?.("(pointer: coarse)").matches;
+    function evaluate() {
+      const sel = window.getSelection();
+      const list = listRef.current;
+      if (!sel || sel.isCollapsed || !list || !sel.anchorNode || !sel.focusNode) { setPill(null); return; }
+      const inside = (n: Node) => list.contains(n.nodeType === 3 ? n.parentNode : n);
+      const bad = (n: Node) => !!(n.nodeType === 3 ? n.parentElement : (n as Element))?.closest("button, input, textarea, [data-no-quote]");
+      if (!inside(sel.anchorNode) || !inside(sel.focusNode) || bad(sel.anchorNode) || bad(sel.focusNode)) { setPill(null); return; }
+      const text = sel.toString();
+      if (!text.trim()) { setPill(null); return; }
+      const range = sel.getRangeAt(0);
+      const rects = range.getClientRects();
+      const rect = rects.length ? rects[rects.length - 1] : range.getBoundingClientRect();
+      const host = (sel.anchorNode.nodeType === 3 ? sel.anchorNode.parentElement : (sel.anchorNode as Element))?.closest<HTMLElement>("[data-message-id]");
+      const pos = pillPosition(rect, { w: 124, h: 32 }, window.innerWidth, window.innerHeight, !!touch());
+      setPill({ ...pos, text, source: host?.dataset.messageId });
+    }
+    const schedule = () => { window.clearTimeout(timer); timer = window.setTimeout(evaluate, 100); };
+    const hide = () => setPill(null);
+    const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === "Escape") setPill(null); else schedule(); };
+    document.addEventListener("selectionchange", schedule);
+    document.addEventListener("mouseup", schedule);
+    document.addEventListener("touchend", schedule);
+    document.addEventListener("keyup", onKey);
+    window.addEventListener("resize", hide);
+    window.addEventListener("blur", hide);
+    const scroller = scrollRef.current;
+    scroller?.addEventListener("scroll", hide, { passive: true });
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("selectionchange", schedule); document.removeEventListener("mouseup", schedule);
+      document.removeEventListener("touchend", schedule); document.removeEventListener("keyup", onKey);
+      window.removeEventListener("resize", hide); window.removeEventListener("blur", hide);
+      scroller?.removeEventListener("scroll", hide);
+    };
+  }, []);
+
+  // Ctrl/Cmd L uses the same function (dispatched by the app shell)
+  useEffect(() => {
+    const onAdd = () => {
+      const sel = window.getSelection();
+      const text = sel?.toString() ?? "";
+      if (!text.trim()) return;
+      const host = (sel?.anchorNode?.nodeType === 3 ? sel.anchorNode.parentElement : (sel?.anchorNode as Element | null))?.closest<HTMLElement>("[data-message-id]");
+      addQuoteText(text, host?.dataset.messageId);
+    };
+    window.addEventListener("teammates-add-selection", onAdd);
+    return () => window.removeEventListener("teammates-add-selection", onAdd);
+  }, [addQuoteText]);
 
   async function react(messageId: string, emoji: string) {
     const glyph = emoji.trim();
     if (!glyph) return;
     setError(null);
     try {
-      await api(`/api/messages/${messageId}/reactions`, {
-        method: "POST",
-        body: JSON.stringify({ emoji: glyph }),
-      });
-      setCustomEmoji("");
+      await api(`/api/messages/${messageId}/reactions`, { method: "POST", body: JSON.stringify({ emoji: glyph }) });
       onSent();
     } catch (caught) {
       setError(errorMessage(caught, "Could not update that reaction."));
     }
   }
 
-  async function send(asTask: boolean, text = content.trim()) {
+  async function attach(list: FileList | null) {
+    if (!list || !botId) return;
+    for (const file of Array.from(list)) {
+      const target = `/workspace/uploads/${file.name.replace(/[^\w.\- ]+/g, "_")}`;
+      try {
+        const response = await apiFetch(`/api/bots/${botId}/files`, { method: "PUT", headers: { "x-path": target, "Content-Type": "application/octet-stream" }, body: file });
+        if (!response.ok) throw new ApiError(response.status, `Upload failed (${response.status}).`);
+        setParts(current => current.map((p, i) => i === current.length - 1 && p.type === "text" ? { ...p, text: `${p.text}${p.text && !p.text.endsWith("\n") ? "\n" : ""}[attached: ${target}]` } : p));
+        announce(`Attached ${file.name}`);
+      } catch (caught) { setError(errorMessage(caught, "Could not attach that file.")); }
+    }
+    if (fileRef.current) fileRef.current.value = "";
+    focusComposer();
+  }
+
+  async function send(asTask: boolean) {
     if (sending) return;
-    if (!text) {
+    if (!canSend(parts)) {
       setError("Write a message first.");
       return;
     }
@@ -103,12 +228,15 @@ export function ChatPane({
     setSending(true);
     setError(null);
     setDlp(false);
+    const rich = hasBlocks(parts);
+    const text = parts.filter(p => p.type === "text").map(p => (p as { text: string }).text).join("\n").trim();
     try {
       await api(`/api/conversations/${conversationId}/messages`, {
         method: "POST",
-        body: JSON.stringify({ content: text, asTask }),
+        body: JSON.stringify(rich ? { parts: toPayload(parts), asTask } : { content: text, asTask }),
       });
-      if (text === content.trim()) setContent("");
+      setParts(initialParts());
+      draftsRef.current.delete(conversationId);
       onSent();
     } catch (caught) {
       const message = errorMessage(caught, asTask ? "Could not assign that work." : "Could not send that message.");
@@ -148,7 +276,7 @@ export function ChatPane({
         stickRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
         setScrolledUp(!stickRef.current);
       }}>
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 py-4">
+        <div ref={listRef} className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 py-4">
           {extras}
           {messages.length === 0 ? <div data-testid="chat-empty" className="py-12 text-center"><p className="font-medium">Start a conversation with {botName}</p><p className="mt-2 text-sm text-muted-foreground">Ask a question, share an idea, or assign some work.</p></div> : null}
           {messages.map((message) => {
@@ -180,84 +308,48 @@ export function ChatPane({
             }
             const mine = message.role === "user";
             return (
-              <article
+              <MessageItem
                 key={message.id}
-                data-testid="message-item"
-                data-role={message.role}
-                className={mine ? "group ml-auto min-w-0 max-w-[85%] sm:max-w-[75%]" : "group mr-auto min-w-0 max-w-[85%] sm:max-w-[75%]"}
+                message={message}
+                mine={mine}
+                botName={botName}
+                botId={botId}
+                bot={{ id: botId, shape: avatar?.shape, color: avatar?.color, primary: avatar?.primary }}
+                byId={byId}
+                onReact={(id, emoji) => void react(id, emoji)}
+                onReply={startReply}
+                onQuote={() => window.dispatchEvent(new Event("teammates-add-selection"))}
+                onChanged={onSent}
+                announce={announce}
+                focusSibling={focusSibling}
               >
-                {!mine ? <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground"><img src="/favicon.svg" alt="" className="h-5 w-5 rounded-sm" />{botName}</div> : null}
-                <div
-                  className={
-                    mine
-                      ? "space-y-2 rounded-bubble bg-user-bubble px-3.5 py-2 text-sm text-user-bubble-foreground"
-                      : "space-y-2 rounded-bubble bg-assistant-bubble px-3.5 py-2 text-sm text-assistant-bubble-foreground"
-                  }
-                >
-                  {blocks.map((block, index) => (
-                    <MessageBlockView key={`${message.id}-${index}`} block={block} />
-                  ))}
-                </div>
-                {(message.reactions ?? []).length > 0 ? (
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {message.reactions?.map((reaction) => (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        key={reaction.id ?? `${reaction.actorType}-${reaction.emoji}`}
-                        type="button"
-                        data-testid="reaction-pill"
-                        data-emoji={reaction.emoji}
-                        data-actor={reaction.actorType}
-                        title={reaction.actorType === "bot" ? botName : "You"}
-                        className="rounded-md border border-border bg-card px-2 py-0.5 text-sm"
-                        onClick={() => {
-                          if (reaction.actorType === "user") void react(message.id, reaction.emoji);
-                        }}
-                      >
-                        {reaction.emoji}
-                      </Button>
-                    ))}
-                  </div>
-                ) : null}
-                {message.role === "assistant" ? (
-                  <div className="mt-1 flex flex-wrap items-center gap-1" data-testid="reaction-picker">
-                    {QUICK_REACTIONS.map((emoji) => (
-                      <Button key={emoji} variant="ghost" size="sm" type="button" className="rounded-md px-1.5 py-0.5 text-sm hover:bg-accent" onClick={() => void react(message.id, emoji)}>
-                        {emoji}
-                      </Button>
-                    ))}
-                    <input
-                      data-testid="reaction-custom"
-                      value={customEmoji}
-                      onChange={(event) => setCustomEmoji(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          void react(message.id, customEmoji);
-                        }
-                      }}
-                      placeholder="Emoji"
-                      className="w-16 rounded-md border border-border bg-card px-2 py-0.5 text-xs"
-                      aria-label="Custom emoji"
-                    />
-                  </div>
-                ) : null}
-                <time className="mt-1 block px-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{formatWhen(message.createdAt)}</time>
-              </article>
+                <MessageBody
+                  message={message}
+                  mine={mine}
+                  byId={byId}
+                  onJump={jumpTo}
+                  fallback={blocks.map((block, index) => <MessageBlockView key={`${message.id}-${index}`} block={block} />)}
+                />
+              </MessageItem>
             );
           })}
           {events.filter(event => !["delta", "message.delta", "text_delta"].includes(event.type)).map((event, i) => <EventCard key={`${conversationId}-${i}`} event={event} />)}
           {working && events.some(event => ["delta", "message.delta", "text_delta"].includes(event.type)) ? <div data-testid="streaming-text" className="rounded-md bg-assistant-bubble p-3 text-sm"><Markdown text={events.filter(event => ["delta", "message.delta", "text_delta"].includes(event.type)).map(event => String(event.delta ?? event.text ?? "")).join("")} /><span aria-hidden className="inline-block h-4 w-1 animate-pulse bg-foreground" /></div> : null}
           {working ? (
-            <p className="flex items-center gap-2 text-sm text-muted-foreground">
-              <img src="/favicon.svg" alt="" className="h-4 w-4 rounded-sm" />
-              {botName} is working
-            </p>
+            <div data-testid="working-row" role="status" className="flex items-center gap-2 px-1 py-1 text-sm">
+              <BotAvatar animated size={22} botId={botId} shape={avatar?.shape} color={avatar?.color} />
+              <ShimmerText text={workingStatus(events, events.some(event => ["delta", "message.delta", "text_delta"].includes(event.type)), taskTitle)} />
+            </div>
           ) : null}
           <RefreshNotice variant="chat" />
         </div>
       </div>
+      <div role="status" aria-live="polite" data-testid="chat-live" className="sr-only">{live}</div>
+      {pill ? <button ref={pillRef} type="button" data-testid="add-to-chat" aria-label="Add selection to chat"
+        style={{ position: "fixed", left: pill.x, top: pill.y }}
+        onMouseDown={event => event.preventDefault()}
+        onClick={() => addQuoteText(pill.text, pill.source)}
+        className="z-50 inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-popover px-3 text-xs font-medium text-popover-foreground shadow-md hover:bg-bot-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11"><Quote className="h-3.5 w-3.5" aria-hidden />Add to chat</button> : null}
       {scrolledUp ? <Button data-testid="jump-to-latest" variant="secondary" className="mx-auto my-2" onClick={() => { stickRef.current = true; setScrolledUp(false); scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }}>Jump to latest ↓</Button> : null}
       <form
         data-testid="composer-bar"
@@ -265,30 +357,68 @@ export function ChatPane({
         onSubmit={onSubmit}
       >
         <div className="rounded-md border border-border bg-card px-3 py-2 shadow-sm">
-          <Textarea
-            ref={composerRef}
-            aria-label={`Message ${botName}`}
-            data-testid="composer"
-            value={content}
-            onChange={(event) => setContent(event.target.value)}
-            placeholder={`Message ${botName}`}
-            className="min-h-10 resize-none border-0 bg-transparent px-1 py-1 shadow-none focus-visible:ring-0"
-            onKeyDown={(event) => {
-              if (event.key === "Escape") { setError(null); composerRef.current?.blur(); }
-              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-                event.preventDefault();
-                void send(false);
-              }
-            }}
-          />
-          <div className="flex items-center justify-end gap-2">
+          {parts.map((part, index) => {
+            if (part.type === "quote" || part.type === "reply") {
+              const isReply = part.type === "reply";
+              return (
+                <blockquote key={part.id} data-testid={isReply ? "composer-reply" : "composer-quote"} className="mb-1 flex items-start gap-2 border-l-2 border-bot-border bg-bot-soft px-2 py-1 text-[13px] text-muted-foreground">
+                  <span className="sr-only">{isReply ? "Replying to" : "Quoted text"}</span>
+                  <span className="min-w-0 flex-1">
+                    {isReply ? <span className="block text-[10px] font-semibold uppercase tracking-wide">{part.author}</span> : null}
+                    <span className={isReply ? "line-clamp-2" : "line-clamp-4 whitespace-pre-wrap"}>{isReply ? part.excerpt : part.text}</span>
+                  </span>
+                  <button type="button" aria-label={isReply ? "Remove reply" : "Remove quote"} data-testid="remove-quote" className="grid h-6 w-6 shrink-0 place-items-center rounded-md hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" onClick={() => { setParts(current => removePart(current, part.id)); focusComposer(); }}><XIcon className="h-3.5 w-3.5" /></button>
+                </blockquote>
+              );
+            }
+            const last = index === parts.length - 1;
+            return (
+              <Textarea
+                key={part.id}
+                ref={node => { if (node) partRefs.current.set(part.id, node); else partRefs.current.delete(part.id); }}
+                aria-label={last ? `Message ${botName}` : "Comment"}
+                data-testid={last ? "composer" : "composer-segment"}
+                value={part.text}
+                onChange={(event) => { const value = event.target.value; setParts(current => current.map(p => p.id === part.id ? { ...p, text: value } as ComposerPart : p)); }}
+                placeholder={last && parts.length === 1 ? `Message ${botName}` : last ? "Add a comment" : ""}
+                rows={1}
+                className="min-h-10 resize-none border-0 bg-transparent px-1 py-1 shadow-none focus-visible:ring-0"
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") { setError(null); (event.currentTarget as HTMLTextAreaElement).blur(); }
+                  if (event.key === "Backspace" && part.text === "" && index > 0 && parts[index - 1].type !== "text") {
+                    event.preventDefault();
+                    const above = parts[index - 1];
+                    setParts(current => removePart(current, above.id));
+                    focusComposer();
+                  }
+                  if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && last) {
+                    event.preventDefault();
+                    void send(false);
+                  }
+                }}
+              />
+            );
+          })}
+          <div className="flex items-center gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="ghost" size="icon" data-testid="composer-plus" aria-label="More options" className="h-9 w-9 rounded-full border border-border [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"><Plus className="h-4 w-4" /></Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" onCloseAutoFocus={event => { event.preventDefault(); focusComposer(); }}>
+                <DropdownMenuItem data-testid="plus-attach" onSelect={() => fileRef.current?.click()}>Attach files</DropdownMenuItem>
+                <DropdownMenuItem data-testid="plus-quote" onSelect={() => window.dispatchEvent(new Event("teammates-add-selection"))}><Quote className="h-4 w-4" />Add selection to chat</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <input ref={fileRef} type="file" multiple hidden data-testid="composer-file" onChange={event => void attach(event.target.files)} />
+            <div className="ml-auto flex items-center gap-2">
             {working && onStop ? <Button type="button" data-testid="stop-run" variant="destructive" disabled={stopping} onClick={() => void stop()}>{stopping ? "Stopping…" : "Stop"}</Button> : null}
-            <Button data-testid="send-chat" type="submit" variant="secondary" className="min-h-11 rounded-md" disabled={sending || !conversationId}>
+            <Button data-testid="send-chat" type="submit" variant="secondary" className="min-h-11 rounded-md bg-bot text-bot-foreground hover:bg-bot/90" disabled={sending || !conversationId}>
               Send
             </Button>
             <Button data-testid="assign-task" className="min-h-11 rounded-md" disabled={sending || !conversationId} onClick={() => void send(true)}>
               Assign work
             </Button>
+            </div>
           </div>
         </div>
         {error ? (
