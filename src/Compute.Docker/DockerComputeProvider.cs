@@ -882,6 +882,8 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
             DNS = _options.DnsServers().ToList(),
             ShmSize = 64L * 1024 * 1024,
             SecurityOpt = security,
+            CapDrop = new List<string> { "ALL" },
+            PidsLimit = 256,
             ExtraHosts = new List<string>
             {
                 "portal.example.edu:127.0.0.1",
@@ -892,6 +894,7 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
             Memory = spec.Limits.MemoryBytes > 0 ? (long)spec.Limits.MemoryBytes : _options.MemoryBytes,
             NanoCPUs = spec.Limits.VcpuMillis > 0 ? spec.Limits.VcpuMillis * 1_000_000L : _options.NanoCpus
         };
+        if (!security.Contains("no-new-privileges:true")) security.Add("no-new-privileges:true");
         host.MemorySwap = host.Memory;
         if (!string.IsNullOrWhiteSpace(_options.CgroupParent)) host.CgroupParent = _options.CgroupParent;
         if (loopDisk && quotaBytes > 0 && StorageOptSize())
@@ -905,6 +908,7 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
             {
                 "COMPUTER_ID=" + spec.Id.Value,
                 "COMPUTER_TOKEN=" + _options.ComputerToken,
+                "EGRESS_API_URL=http://api:8080",
                 "COMPUTER_NAME=" + (spec.Labels.TryGetValue("name", out var label) ? label : "Teammate"),
                 "DISPLAY_NUM=1",
                 "COMPUTER_SECOND_DISPLAY=" + (_options.SecondDisplay ? "true" : "false"),
@@ -914,7 +918,13 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
                 "VNC_RW_PORT=6900",
                 "DISPLAY_GEOMETRY=" + _options.DisplayGeometry,
                 "DISPLAY_DEPTH=" + _options.DisplayDepth,
-                "HOME=/data/home/desk"
+                "HOME=/data/home/desk",
+                $"HTTP_PROXY=http://127.0.0.1:{_options.EgressProxyPort}",
+                $"HTTPS_PROXY=http://127.0.0.1:{_options.EgressProxyPort}",
+                $"ALL_PROXY=http://127.0.0.1:{_options.EgressProxyPort}",
+                $"http_proxy=http://127.0.0.1:{_options.EgressProxyPort}",
+                $"https_proxy=http://127.0.0.1:{_options.EgressProxyPort}",
+                $"all_proxy=http://127.0.0.1:{_options.EgressProxyPort}"
             },
             Labels = stamped,
             ExposedPorts = new Dictionary<string, EmptyStruct>

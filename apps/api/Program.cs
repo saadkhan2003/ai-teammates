@@ -56,6 +56,7 @@ var compute = new DockerComputeProvider(new DockerComputeOptions
     CgroupParent = string.IsNullOrWhiteSpace(config["CGROUP_PARENT"]) ? null : config["CGROUP_PARENT"],
     CgroupRoot = string.IsNullOrWhiteSpace(config["CGROUP_ROOT"]) ? "/sys/fs/cgroup" : config["CGROUP_ROOT"]!,
     IdlePower = ComputerPower.ParseMode(config["IDLE_POWER"]),
+    EgressProxyPort = BoxContract.EgressProxy,
     IdleSuspend = int.TryParse(config["IDLE_SUSPEND_MINUTES"], out var suspendMinutes) && suspendMinutes >= 0 ? TimeSpan.FromMinutes(suspendMinutes) : TimeSpan.FromMinutes(10),
     IdleHibernate = int.TryParse(config["IDLE_HIBERNATE_MINUTES"], out var hibernateMinutes) && hibernateMinutes > 0 ? TimeSpan.FromMinutes(hibernateMinutes) : TimeSpan.FromMinutes(30),
     ResumeTarget = int.TryParse(config["IDLE_RESUME_TARGET_SECONDS"], out var resumeSeconds) && resumeSeconds > 0 ? TimeSpan.FromSeconds(resumeSeconds) : TimeSpan.FromSeconds(15)
@@ -142,6 +143,9 @@ SecurityRoutes.Map(app, platform, loginFlow);
 WebBotAuthRoutes.Map(app, platform);
 BotMessaging.Map(app, platform);
 Devices.Map(app, platform);
+app.MapNetworkPolicyRoutes(platform);
+EgressRelay.Map(app, platform);
+app.MapEgressControlRoutes(platform);
 Feedback.Map(app, platform);
 app.Run();
 

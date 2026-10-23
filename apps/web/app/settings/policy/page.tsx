@@ -26,6 +26,8 @@ type DenyRule = {
   builtin?: boolean;
 };
 
+type NetworkPolicyResponse = { mode?: "allow_all" | "defaults_with_team" | "team_only"; entries?: string[]; groups?: string[]; locked?: boolean; failClosed?: boolean };
+
 export default function PolicySettingsPage() {
   const [classes, setClasses] = useState<Record<string, string>>({});
   const [assist, setAssist] = useState(false);
@@ -35,9 +37,20 @@ export default function PolicySettingsPage() {
   const [pattern, setPattern] = useState("");
   const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [networkMode, setNetworkMode] = useState<"allow_all" | "defaults_with_team" | "team_only">("team_only");
+  const [networkEntries, setNetworkEntries] = useState("");
+  const [networkGroups, setNetworkGroups] = useState("");
+  const [networkLocked, setNetworkLocked] = useState(false);
+  const [networkFailClosed, setNetworkFailClosed] = useState(false);
 
   async function load() {
     const policy = await api<PolicyResponse>("/api/policy");
+    const network = await api<NetworkPolicyResponse>("/api/network-policy");
+    setNetworkMode(network.mode ?? "team_only");
+    setNetworkEntries((network.entries ?? []).join("\n"));
+    setNetworkGroups((network.groups ?? []).join("\n"));
+    setNetworkLocked(Boolean(network.locked));
+    setNetworkFailClosed(Boolean(network.failClosed));
     setClasses(policy.classes ?? {});
     setAssist(Boolean(policy.modelAssist));
     const me = await api<{ role?: string }>("/api/auth/me");
@@ -63,6 +76,26 @@ export default function PolicySettingsPage() {
       toast.success("Policy saved.");
     } catch (caught) {
       setError(errorMessage(caught, "Could not save policy."));
+    }
+  }
+
+  async function saveNetwork(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    try {
+      await api("/api/network-policy", {
+        method: "PUT",
+        body: JSON.stringify({
+          mode: networkMode,
+          entries: networkEntries.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
+          groups: networkGroups.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
+          locked: networkLocked,
+          failClosed: networkFailClosed,
+        }),
+      });
+      toast.success("Network policy saved.");
+    } catch (caught) {
+      setError(errorMessage(caught, "Could not save network policy."));
     }
   }
 
@@ -125,6 +158,43 @@ export default function PolicySettingsPage() {
         <Button type="submit" size="sm" className="w-fit rounded-md">
           Save policy
         </Button>
+      </form>
+      <form className="flex flex-col gap-4" onSubmit={(event) => void saveNetwork(event)}>
+        <Card>
+          <CardHeader className="p-4">
+            <CardTitle className="text-sm">Network policy</CardTitle>
+            <CardDescription>Controls outbound hosts for this account. Entries accept domains, *.domain, IP/CIDR, and host:port.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3 p-4 pt-0">
+            <Select value={networkMode} onValueChange={(value) => setNetworkMode(value as typeof networkMode)}>
+              <SelectTrigger aria-label="Network policy mode"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="allow_all">Allow all</SelectItem>
+                <SelectItem value="defaults_with_team">Defaults plus team entries</SelectItem>
+                <SelectItem value="team_only">Team entries only</SelectItem>
+              </SelectContent>
+            </Select>
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="grid gap-1.5">
+                <Label htmlFor="network-entries">Entries (one per line)</Label>
+                <textarea id="network-entries" className="min-h-32 rounded-md border border-border bg-background p-2 text-sm" value={networkEntries} onChange={(event) => setNetworkEntries(event.target.value)} />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="network-groups">Group entries (one per line)</Label>
+                <textarea id="network-groups" className="min-h-32 rounded-md border border-border bg-background p-2 text-sm" value={networkGroups} onChange={(event) => setNetworkGroups(event.target.value)} />
+              </div>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
+              <div><p className="text-sm">Lock policy</p><p className="text-xs text-muted-foreground">When locked, group entries are ignored.</p></div>
+              <Switch checked={networkLocked} onCheckedChange={setNetworkLocked} aria-label="Lock network policy" />
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
+              <div><p className="text-sm">Fail closed when desktop route is lost</p><p className="text-xs text-muted-foreground">After the 90 second reconnect grace period, block outbound traffic instead of using the server route.</p></div>
+              <Switch checked={networkFailClosed} onCheckedChange={setNetworkFailClosed} aria-label="Fail closed for egress" />
+            </div>
+          </CardContent>
+        </Card>
+        <Button type="submit" size="sm" className="w-fit rounded-md">Save network policy</Button>
       </form>
       {staff ? (
         <Card>
