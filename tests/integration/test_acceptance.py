@@ -341,6 +341,10 @@ def exercise_reactions(client: Client, bot_id: str, conversation: str, hello_tas
         item["role"] == "assistant" and not (item.get("content") or "").strip()
         for item in after_thanks["messages"]
     )
+    # Feedback is consumed asynchronously by the next turn; poll instead of racing it.
+    feedback_deadline = time.time() + 20
+    while time.time() < feedback_deadline and int(_psql("SELECT count(*) FROM task_transcript WHERE content LIKE '%Hidden feedback%'")) < 1:
+        time.sleep(0.5)
     assert int(_psql("SELECT count(*) FROM task_transcript WHERE content LIKE '%Hidden feedback%'")) >= 1
     assert int(_psql("SELECT count(*) FROM bot_feedback WHERE consumed_at IS NOT NULL")) >= 1
 

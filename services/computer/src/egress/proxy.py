@@ -189,8 +189,13 @@ class ConnectProxy:
                 await self._reply(client_writer, 502, "upstream unavailable")
                 return
             await self.decision(host, port, True)
-            client_writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n" if is_connect else forward_header)
-            await client_writer.drain()
+            if is_connect:
+                client_writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                await client_writer.drain()
+            else:
+                # Plain HTTP: the rewritten request goes to the upstream, never back to the client.
+                upstream_writer.write(forward_header)
+                await upstream_writer.drain()
             await asyncio.gather(_copy(client_reader, upstream_writer), _copy(upstream_reader, client_writer))
             upstream_writer.close()
             await upstream_writer.wait_closed()

@@ -55,3 +55,42 @@ def test_proxy_denies_private_destination_and_policy_decision(tmp_path, monkeypa
     assert b"403" in denied and b"blocked by policy: add example.test" in denied
     audit = (tmp_path / "audit.jsonl").read_text()
     assert '"allowed":false' in audit
+
+
+def test_plain_http_request_is_forwarded_upstream_not_echoed_to_the_client(tmp_path, monkeypatch):
+    import socket
+    from egress import proxy as proxy_module
+    monkeypatch.setenv("EGRESS_AUDIT_PATH", str(tmp_path / "audit.jsonl"))
+
+    async def run():
+        seen = []
+
+        async def upstream(reader, writer):
+            seen.append(await reader.readuntil(b"\r\n\r\n"))
+            writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+            await writer.drain()
+            writer.close()
+
+        upstream_server = await asyncio.start_server(upstream, "127.0.0.1", 0)
+        up_port = upstream_server.sockets[0].getsockname()[1]
+
+        async def fake_resolve(host, port):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", up_port))]
+
+        monkeypatch.setattr(proxy_module, "resolve_public", fake_resolve)
+        authority = f"site.test:{up_port}"
+        proxy = ConnectProxy(policy.NetworkPolicy("team_only", [authority]))
+        server = await asyncio.start_server(proxy.handle, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.write(f"GET http://{authority}/a.html?q=1 HTTP/1.1\r\nHost: {authority}\r\n\r\n".encode())
+        await writer.drain()
+        response = await asyncio.wait_for(reader.read(4096), 5)
+        writer.close()
+        server.close()
+        upstream_server.close()
+        return response, seen
+
+    response, seen = asyncio.run(run())
+    assert response.endswith(b"ok") and b"200 OK" in response
+    assert seen and seen[0].startswith(b"GET /a.html?q=1 HTTP/1.1\r\n")
