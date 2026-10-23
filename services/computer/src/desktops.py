@@ -345,24 +345,33 @@ class DesktopManager:
         asyncio.get_running_loop().create_task(self._hide_when_idle(desk))
 
     async def _hide_when_idle(self, desk: Desktop) -> None:
-        # Chromium re-raises itself once its first page loads, so hide it a few times early on.
-        for delay in (0, 5, 12):
-            if delay:
-                await asyncio.sleep(delay)
+        # Wait for the window, then hide it a few times: Chromium re-raises itself once its first
+        # page loads. Every pass checks `desk.hidden`, so a bot that starts using the browser
+        # first is never hidden again.
+        for _ in range(60):
+            if not desk.hidden:
+                return
+            if await self._browser_window(desk.display, "hide") == 0:
+                break
+            await asyncio.sleep(0.5)
+        else:
+            return
+        for delay in (5, 7):
+            await asyncio.sleep(delay)
             if not desk.hidden:
                 return
             await self._browser_window(desk.display, "hide")
 
-    async def _browser_window(self, n: int, action: str) -> None:
+    async def _browser_window(self, n: int, action: str) -> int:
         env = dict(os.environ, DISPLAY=f":{n}")
         try:
             proc = await asyncio.create_subprocess_exec(
                 "/opt/desk/bin/browser-window", action, env=env,
                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
             )
-            await asyncio.wait_for(proc.wait(), timeout=40)
+            return await asyncio.wait_for(proc.wait(), timeout=40)
         except Exception:
-            pass
+            return 1
 
     async def show_browser(self, bot_id: str) -> None:
         desk = self.desktops.get(bot_id)

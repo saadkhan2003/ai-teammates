@@ -17,6 +17,6 @@ await page.getByTestId("bot-name-button").waitFor();
 if ((await page.getByTestId("bot-name-button").getAttribute("aria-expanded")) !== "true") await page.getByTestId("bot-name-button").click();
 await page.getByTestId("desktop-frame").click();
 await page.getByTestId("computer-topbar").waitFor();
-await page.waitForTimeout(8000);
+await page.waitForTimeout(20000);
 await page.screenshot({ path: `${out}/9-computer-web.png` });
 await browser.close();

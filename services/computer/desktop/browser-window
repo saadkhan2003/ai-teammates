@@ -1,10 +1,10 @@
 #!/bin/sh
 # browser-window hide|show: iconify or restore the main Chromium window of this display.
+# hide: one pass, exit 3 when no window was found yet (the caller retries).
 # The desktop idles on the wallpaper and dock; the window comes back when the bot uses the browser.
 export DISPLAY="${DISPLAY:-:1}"
 action="${1:-show}"
 tries=1
-[ "$action" = hide ] && tries=60
 i=0
 while [ "$i" -lt "$tries" ]; do
   found=0
@@ -21,8 +21,9 @@ while [ "$i" -lt "$tries" ]; do
       xdotool windowactivate "$id" >/dev/null 2>&1 || true
     fi
   done
-  [ "$found" = 1 ] && [ "$action" = hide ] && { sleep 1; exit 0; }
+  [ "$found" = 1 ] && [ "$action" = hide ] && exit 0
   [ "$action" = show ] && exit 0
   i=$((i+1)); sleep 0.5
 done
+[ "$action" = hide ] && exit 3
 exit 0

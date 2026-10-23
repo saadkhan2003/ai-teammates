@@ -188,6 +188,7 @@ class BrowserHub:
         }
 
     async def type_secret(self, bot_id: str, target_id: str, selector: str, value: str, expected_origin: str) -> dict:
+        await self.desks.show_browser(bot_id)
         page = self._page(bot_id, target_id)
         locator = page.locator(selector).first
         try:
@@ -219,6 +220,7 @@ class BrowserHub:
         return {"ok": True}
 
     async def fill_login(self, bot_id: str, target_id: str, fields: list, expected_origin: str, submit_selector: str) -> dict:
+        await self.desks.show_browser(bot_id)
         """Type login fields only when the live frame matches the requested origin. Values are not returned."""
         await self.list_pages(bot_id)
         try:
@@ -273,11 +275,13 @@ class BrowserHub:
             typed.clear()
 
     async def click(self, bot_id: str, target_id: str, selector: str) -> dict:
+        await self.desks.show_browser(bot_id)
         page = self._page(bot_id, target_id)
         await page.locator(selector).first.click(timeout=5000)
         return {"ok": True, "url": page.url}
 
     async def human_click(self, bot_id: str, target_id: str, selector: str) -> dict:
+        await self.desks.show_browser(bot_id)
         desk = self.desks.desktops[bot_id]
         if desk.holder != "human":
             return {"ok": False, "reason": "not_holder"}
