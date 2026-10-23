@@ -2,6 +2,12 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Mapping
+
+try:
+    from .web_bot_auth import CURRENT_AUTH_CONFIG, WebBotAuthHook, apply_geo_settings
+except ImportError:  # worker executes this module as a top-level script package
+    from web_bot_auth import CURRENT_AUTH_CONFIG, WebBotAuthHook, apply_geo_settings
 
 ATTENTION_PHRASES = (
     "please complete the captcha",
@@ -21,7 +27,7 @@ def attention_of(text: str) -> str | None:
 
 
 class BrowserHub:
-    def __init__(self) -> None:
+    def __init__(self, web_bot_auth: Mapping | None = None) -> None:
         self._playwright = None
         self._playwright_lock = asyncio.Lock()
         self._browsers: dict = {}
@@ -29,6 +35,8 @@ class BrowserHub:
         self._guard = asyncio.Lock()
         self._pages: dict[str, dict[str, object]] = {}
         self._last: dict[str, str] = {}
+        self._web_bot_auth = web_bot_auth
+        self._auth_hooks: dict[int, WebBotAuthHook] = {}
 
     async def aclose(self) -> None:
         for browser in list(self._browsers.values()):
@@ -37,6 +45,7 @@ class BrowserHub:
             except Exception:
                 pass
         self._browsers.clear()
+        self._auth_hooks.clear()
         if self._playwright is not None:
             await self._playwright.stop()
             self._playwright = None
@@ -99,6 +108,7 @@ class BrowserHub:
         browser = await self.connect(cdp_url)
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
         page = await context.new_page()
+        await self._install_web_bot_auth(page)
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=20000)
         except Exception:
@@ -112,6 +122,25 @@ class BrowserHub:
         target_id = await _target_id(context, page)
         self._remember(cdp_url, target_id, page)
         return await self._snapshot(page, target_id, attention=False)
+
+    async def _install_web_bot_auth(self, page) -> None:
+        config = CURRENT_AUTH_CONFIG.get() or self._web_bot_auth
+        if not config:
+            return
+        existing = self._auth_hooks.get(id(page))
+        if existing is not None:
+            existing.update_config(config)
+            return
+        session = await page.context.new_cdp_session(page)
+        if config.get("geo_settings"):
+            await apply_geo_settings(session, config["geo_settings"])
+            await session.send("Network.setExtraHTTPHeaders", {"headers": {"Accept-Language": config.get("accept_language", "en")}})
+            user_agent = config.get("user_agent")
+            if user_agent and user_agent != "native":
+                await session.send("Network.setUserAgentOverride", {"userAgent": user_agent, "acceptLanguage": config.get("accept_language", "en")})
+        hook = WebBotAuthHook(session, config.get("allowed_hosts", ()), config.get("signature_agent", ""), config.get("signer"), blocked_hosts=config.get("blocked_hosts", ()))
+        await hook.enable()
+        self._auth_hooks[id(page)] = hook
 
     async def browser_extract(self, cdp_url: str, args: dict) -> dict:
         page, target_id = await self._resolve(cdp_url, _target(args))
@@ -149,13 +178,19 @@ class BrowserHub:
         await self.connect(cdp_url)
         pages = self._pages.get(cdp_url) or {}
         if target_id and target_id in pages:
-            return pages[target_id], target_id
+            page = pages[target_id]
+            await self._install_web_bot_auth(page)
+            return page, target_id
         last = self._last.get(cdp_url)
         if last and last in pages:
-            return pages[last], last
+            page = pages[last]
+            await self._install_web_bot_auth(page)
+            return page, last
         if pages:
             found = next(reversed(pages))
-            return pages[found], found
+            page = pages[found]
+            await self._install_web_bot_auth(page)
+            return page, found
         raise RuntimeError("no browser page")
 
     def _remember(self, cdp_url: str, target_id: str, page) -> None:

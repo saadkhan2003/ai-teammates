@@ -16,7 +16,7 @@ public static partial class SecurityRoutes
             var user = await User(ctx, platform);
             if (user == null) return Results.Unauthorized();
             var policy = await Load(platform, user.Value);
-            return Results.Json(new { classes = policy.Classes, modelAssist = policy.ModelAssist, risky = ActionClasses.All.Where(name => ActionClasses.Defaults[name] != PolicyEngine.Allow).ToArray() });
+            return Results.Json(new { classes = policy.Classes, modelAssist = policy.ModelAssist, privateHosts = policy.PrivateHosts, risky = ActionClasses.All.Where(name => ActionClasses.Defaults[name] != PolicyEngine.Allow).ToArray() });
         });
 
         app.MapPut("/api/policy", async (HttpContext ctx, JsonElement body) =>
@@ -31,16 +31,24 @@ public static partial class SecurityRoutes
                     if (!ActionClasses.All.Contains(prop.Name)) return Results.BadRequest(new { error = "unknown class" });
                 }
             }
+            try
+            {
+                await PrivateHosts.PropagateAsync(platform, user.Value, policy.PrivateHosts, ctx.RequestAborted);
+            }
+            catch
+            {
+                return Results.Json(new { error = "private host policy could not be applied" }, statusCode: 503);
+            }
             await using var conn = await platform.Data.OpenConnectionAsync();
-            var json = JsonSerializer.Serialize(new { classes = policy.Classes, modelAssist = policy.ModelAssist });
+            var json = JsonSerializer.Serialize(new { classes = policy.Classes, modelAssist = policy.ModelAssist, privateHosts = policy.PrivateHosts });
             await conn.ExecuteAsync(
                 """
                 INSERT INTO user_policies (user_id, settings, updated_at) VALUES (@id, @settings::jsonb, now())
                 ON CONFLICT (user_id) DO UPDATE SET settings=EXCLUDED.settings, updated_at=now()
                 """,
                 new { id = user, settings = json });
-            await platform.Audit(user.Value.ToString(), "policy.updated", null, null, new { classes = policy.Classes, modelAssist = policy.ModelAssist });
-            return Results.Json(new { ok = true, classes = policy.Classes, modelAssist = policy.ModelAssist });
+            await platform.Audit(user.Value.ToString(), "policy.updated", null, null, new { classes = policy.Classes, modelAssist = policy.ModelAssist, privateHosts = policy.PrivateHosts });
+            return Results.Json(new { ok = true, classes = policy.Classes, modelAssist = policy.ModelAssist, privateHosts = policy.PrivateHosts });
         });
 
         app.MapGet("/api/admin/policy/deny-list", async (HttpContext ctx) =>

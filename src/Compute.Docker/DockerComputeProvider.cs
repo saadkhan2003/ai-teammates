@@ -874,7 +874,11 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
             Binds = loopDisk
                 ? new List<string> { profile + ":/data" }
                 : new List<string> { workspace + ":/data/workspace", profile + ":/data/profiles" },
-            Tmpfs = new Dictionary<string, string> { ["/tmp"] = "rw,nosuid,nodev,size=64m" },
+            Tmpfs = new Dictionary<string, string>
+            {
+                ["/tmp"] = "rw,nosuid,nodev,size=64m",
+                ["/home/box/private"] = "rw,nosuid,nodev,noexec,size=64m"
+            },
             DNS = _options.DnsServers().ToList(),
             ShmSize = 64L * 1024 * 1024,
             SecurityOpt = security,

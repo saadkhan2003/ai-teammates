@@ -349,4 +349,15 @@ public class PolicyTests
         untrusted.Request.Headers["X-Forwarded-For"] = "198.51.100.4";
         Assert.Equal("203.0.113.8", ClientAddress.From(untrusted));
     }
+    [Fact]
+    public void PrivateHostPolicyParsesBoundedSuffixesAndMatchesBoundaries()
+    {
+        var policy = UserPolicy.Parse("""{"privateHosts":["corp.example","*.internal.test","bad/path","too."],"classes":{}}""");
+        Assert.True(policy.IsPrivateHost("git.corp.example"));
+        Assert.True(policy.IsPrivateHost("corp.example"));
+        Assert.True(policy.IsPrivateHost("vpn.internal.test"));
+        Assert.False(policy.IsPrivateHost("evilcorp.example"));
+        Assert.False(policy.IsPrivateHost("internal.test.attacker"));
+        Assert.False(policy.IsPrivateHost("public.example"));
+    }
 }

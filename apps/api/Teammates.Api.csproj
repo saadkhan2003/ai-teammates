@@ -16,5 +16,6 @@
     <PackageReference Include="Npgsql" Version="10.0.3" />
     <PackageReference Include="Dapper" Version="2.1.89" />
     <PackageReference Include="AWSSDK.S3" Version="3.7.511.8" />
+    <PackageReference Include="NSec.Cryptography" Version="24.4.0" />
   </ItemGroup>
 </Project>
