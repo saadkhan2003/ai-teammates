@@ -156,7 +156,7 @@ public static class ActionClassifier
         "browser_open", "browser_extract", "browser_click", "browser_screenshot",
         "computer_screenshot", "computer_click", "computer_type", "computer_key", "computer_scroll", "record_start", "record_stop",
         "write_file", "read_file", "edit_file", "delete_file", "shell", "setup_env",
-        "type_secret", "browser.type_secret", "save_memory", "search_memory", "save_artifact",
+        "type_secret", "browser.type_secret", "save_memory", "update_memory", "forget_memory", "search_memory", "save_artifact",
         "request_secret", "request_login", "react_to_message", "send_message", "external_post", "sign",
         "search_tools", "load_tool",
         "list_bots", "message_bot", "reply_to_bot", "thread_status", "create_bot", "update_bot", "list_routines", "create_routine", "get_routine", "update_routine", "pause_routine", "resume_routine", "delete_routine",
@@ -232,6 +232,8 @@ public static class ActionClassifier
             case "edit_file":
             case "shell":
             case "save_memory":
+            case "update_memory":
+            case "forget_memory":
             case "save_artifact":
             case "react_to_message":
                 return ActionClasses.Write;
