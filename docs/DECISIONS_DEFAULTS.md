@@ -28,4 +28,6 @@ Saad approved building the long-run resume and memory-notes designs in full. Whe
 
 ## Flags and spend
 - Memory flags ship `MEMORY_NOTES=shadow`, `MEMORY_PASS=off`, `MEMORY_EMBED=off`. The mock stack turns notes `on` for tests.
+- Standing rules (`kind=rule`) are injected in `shadow` mode too, so rules work in the default release; only `MEMORY_NOTES=off` or a bot memory mode of `off` stops them. Rules never loosen approval gates.
+- Migrations: 027 memory notes, 028 is reserved by long-run resume, 030 approval rules, 031 rule scope (029 left free).
 - Live-model evals: total cap $0.50, hard stop at $0.40. None are run unless the key is present and the spend script says there is room.
