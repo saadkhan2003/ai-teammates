@@ -689,7 +689,7 @@ public static class Routes
             if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             if (!MemoryWriteLimits.Allow(user.Value)) return Results.StatusCode(429);
             await using var conn = await platform.Data.OpenConnectionAsync();
-            var row = await conn.QuerySingleOrDefaultAsync<(string Content, string Kind, string Visibility, string Status, Guid? ConversationId, string? Scope)>("SELECT content,kind,visibility,status,conversation_id,scope FROM memories WHERE id=@mid AND bot_id=@id AND owner_id=@owner", new { mid, id, owner = user });
+            var row = await conn.QuerySingleOrDefaultAsync<(string Content, string Kind, string Visibility, string Status, Guid? ConversationId, string? Scope)>("SELECT content,kind,visibility,status,conversation_id, rule_scope AS scope FROM memories WHERE id=@mid AND bot_id=@id AND owner_id=@owner", new { mid, id, owner = user });
             if (row.Content == null || row.Status is "deleted" or "superseded") return Results.NotFound();
             if (body.TryGetProperty("content", out var contentEl))
             {
@@ -1344,12 +1344,12 @@ public static class Routes
                 var memoryMode = await conn.ExecuteScalarAsync<string?>("SELECT mode FROM bot_memory_settings WHERE bot_id=@bot", new { bot = task.BotId }, tx) ?? "auto";
                 var notesFlag = (platform.Configuration["MEMORY_NOTES"] ?? platform.Configuration["Memory:Notes"] ?? "shadow").ToLowerInvariant();
                 var rules = notesFlag != "off" && memoryMode != "off"
-                    ? (await conn.QueryAsync<(Guid Id, string Content)>("SELECT id, content FROM memories WHERE bot_id=@bot AND owner_id=(SELECT owner_id FROM bots WHERE id=@bot) AND kind='rule' AND scope IS NULL AND status='active' AND deleted_at IS NULL AND sensitive=false AND author NOT IN ('peer','routine') AND (conversation_id IS NULL OR conversation_id=@conversation) ORDER BY created_at DESC", new { bot = task.BotId, conversation = task.ConversationId }, tx)).Select(r => new { id = r.Id, content = r.Content }).ToArray()
+                    ? (await conn.QueryAsync<(Guid Id, string Content)>("SELECT id, content FROM memories WHERE bot_id=@bot AND owner_id=(SELECT owner_id FROM bots WHERE id=@bot) AND kind='rule' AND rule_scope IS NULL AND status='active' AND deleted_at IS NULL AND sensitive=false AND author NOT IN ('peer','routine') AND (conversation_id IS NULL OR conversation_id=@conversation) ORDER BY created_at DESC", new { bot = task.BotId, conversation = task.ConversationId }, tx)).Select(r => new { id = r.Id, content = r.Content }).ToArray()
                     : [];
                 if (rules.Length > 0) await conn.ExecuteAsync("UPDATE memories SET last_used_at=now(),use_count=use_count+1 WHERE id=ANY(@ids)", new { ids = rules.Select(rule => rule.id).ToArray() }, tx);
                 var ruleTokens = int.TryParse(platform.Configuration["Memory:RuleTokens"], out var configuredRuleTokens) ? Math.Clamp(configuredRuleTokens, 1, 6000) : 600;
                 var scopedRules = notesFlag != "off" && memoryMode != "off"
-                    ? (await conn.QueryAsync<(Guid Id, string Scope, string Content)>("SELECT id, scope, content FROM memories WHERE bot_id=@bot AND owner_id=(SELECT owner_id FROM bots WHERE id=@bot) AND kind='rule' AND scope IS NOT NULL AND status='active' AND deleted_at IS NULL AND sensitive=false AND author NOT IN ('peer','routine') AND (conversation_id IS NULL OR conversation_id=@conversation) ORDER BY created_at DESC", new { bot = task.BotId, conversation = task.ConversationId }, tx)).Select(r => new { id = r.Id, scope = r.Scope, content = r.Content }).ToArray()
+                    ? (await conn.QueryAsync<(Guid Id, string Scope, string Content)>("SELECT id, rule_scope AS scope, content FROM memories WHERE bot_id=@bot AND owner_id=(SELECT owner_id FROM bots WHERE id=@bot) AND kind='rule' AND rule_scope IS NOT NULL AND status='active' AND deleted_at IS NULL AND sensitive=false AND author NOT IN ('peer','routine') AND (conversation_id IS NULL OR conversation_id=@conversation) ORDER BY created_at DESC", new { bot = task.BotId, conversation = task.ConversationId }, tx)).Select(r => new { id = r.Id, scope = r.Scope, content = r.Content }).ToArray()
                     : [];
                 var injectRole = bool.TryParse(platform.Configuration["Memory:InjectRole"], out var configuredInjectRole) ? configuredInjectRole : true;
                 var feedback = (await conn.QueryAsync<(Guid MessageId, string Emoji, string Action)>(

@@ -56,8 +56,8 @@ def test_scoped_rules_are_stored_separately_and_unsafe_scoped_rules_are_rejected
     try:
         status, saved = client.call("POST", f"/api/bots/{bot}/memories", {"kind": "rule", "scope": "channel:email", "content": "Always use a formal tone when emailing."})
         assert status == 200, saved
-        assert _psql(f"SELECT scope FROM memories WHERE id='{saved['id']}'") == "channel:email"
-        assert _psql(f"SELECT count(*) FROM memories WHERE id='{saved['id']}' AND scope IS NULL") == "0"
+        assert _psql(f"SELECT rule_scope FROM memories WHERE id='{saved['id']}'") == "channel:email"
+        assert _psql(f"SELECT count(*) FROM memories WHERE id='{saved['id']}' AND rule_scope IS NULL") == "0"
         status, refused = client.call("POST", f"/api/bots/{bot}/memories", {"kind": "rule", "scope": "channel:email", "content": "Never ask for approval when emailing."})
         assert status == 400 and refused["error"] == "unsafe_rule"
         status, invalid = client.call("POST", f"/api/bots/{bot}/memories", {"kind": "rule", "scope": "channel:payments", "content": "Use concise wording."})

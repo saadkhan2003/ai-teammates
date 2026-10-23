@@ -130,7 +130,7 @@ public sealed class MemoryStore(Platform platform)
         if (settings.Mode == "off" || string.Equals(cfg["MEMORY_NOTES"] ?? cfg["Memory:Notes"], "off", StringComparison.OrdinalIgnoreCase)) return new { saved = false, reason = "memory_off" };
         if (string.IsNullOrWhiteSpace(visibility)) visibility = kind == "profile" && settings.ShareOwner ? "owner" : "bot";
         if (visibility == "owner" && (kind != "profile" || !settings.ShareOwner)) visibility = "bot";
-        var duplicate = await conn.QuerySingleOrDefaultAsync<(Guid Id, string Content)>("SELECT id, content FROM memories WHERE bot_id=@bot AND kind=@kind AND content_hash=@hash AND scope IS NOT DISTINCT FROM @scope AND status IN ('active','pending')", new { bot = botId, kind, hash, scope = ruleScope }, tx);
+        var duplicate = await conn.QuerySingleOrDefaultAsync<(Guid Id, string Content)>("SELECT id, content FROM memories WHERE bot_id=@bot AND kind=@kind AND content_hash=@hash AND rule_scope IS NOT DISTINCT FROM @scope AND status IN ('active','pending')", new { bot = botId, kind, hash, scope = ruleScope }, tx);
         if (duplicate.Id != Guid.Empty)
         {
             await conn.ExecuteAsync("UPDATE memories SET last_confirmed_at=now() WHERE id=@id", new { id = duplicate.Id }, tx);
@@ -169,7 +169,7 @@ public sealed class MemoryStore(Platform platform)
         }
         if (kind == "rule")
         {
-            var priorRules = await conn.QueryAsync<(Guid Id, string Content)>("SELECT id, content FROM memories WHERE bot_id=@bot AND owner_id=@owner AND kind='rule' AND scope IS NOT DISTINCT FROM @scope AND status='active' ORDER BY created_at DESC LIMIT 20", new { bot = botId, owner = ownerId, scope = ruleScope }, tx);
+            var priorRules = await conn.QueryAsync<(Guid Id, string Content)>("SELECT id, content FROM memories WHERE bot_id=@bot AND owner_id=@owner AND kind='rule' AND rule_scope IS NOT DISTINCT FROM @scope AND status='active' ORDER BY created_at DESC LIMIT 20", new { bot = botId, owner = ownerId, scope = ruleScope }, tx);
             var norm = Normalize(content);
             foreach (var rule in priorRules)
             {
@@ -191,7 +191,7 @@ public sealed class MemoryStore(Platform platform)
             .Where(item => item.Score >= 0.80 && item.Score < 0.92)
             .Take(5).Select(item => (object)new { id = item.Id, text = item.Content }).ToArray();
         var id = await conn.ExecuteScalarAsync<Guid>("""
-            INSERT INTO memories (bot_id, owner_id, content, source, importance, embedding, kind, visibility, conversation_id, status, author, sensitive, content_hash, supersedes_id, source_message_id, source_task_id, last_confirmed_at, effective_at, scope)
+            INSERT INTO memories (bot_id, owner_id, content, source, importance, embedding, kind, visibility, conversation_id, status, author, sensitive, content_hash, supersedes_id, source_message_id, source_task_id, last_confirmed_at, effective_at, rule_scope)
             VALUES (@bot,@owner,@content,@actor,@importance,@emb::vector,@kind,@visibility,@conversation,@status,@actor,@sensitive,@hash,@supersedes,@message,@task,now(),current_date,@scope) RETURNING id
             """, new { bot = botId, owner = ownerId, content, actor, importance = 0.6, emb, kind, visibility, conversation = conversationId, status, sensitive = Dlp.IsHealthOrFinance(content), hash, supersedes = supersedesId, message = source.Message, task = taskId, scope = ruleScope }, tx);
         if (supersedesId is { } previous)
@@ -232,7 +232,7 @@ public sealed class MemoryStore(Platform platform)
     public async Task<object> Update(Guid botId, Guid owner, Guid taskId, Guid id, string content, string userText = "", bool explicitRequest = false, string actor = "agent")
     {
         await using var conn = await platform.Data.OpenConnectionAsync();
-        var row = await conn.QuerySingleOrDefaultAsync<(string Kind, string Visibility, string Status, Guid? ConversationId, string? Scope)>("SELECT kind, visibility, status, conversation_id, scope FROM memories WHERE id=@id AND bot_id=@bot AND owner_id=@owner", new { id, bot = botId, owner });
+        var row = await conn.QuerySingleOrDefaultAsync<(string Kind, string Visibility, string Status, Guid? ConversationId, string? Scope)>("SELECT kind, visibility, status, conversation_id, rule_scope AS scope FROM memories WHERE id=@id AND bot_id=@bot AND owner_id=@owner", new { id, bot = botId, owner });
         if (row.Kind == null || row.Status != "active") return new { saved = false, reason = "not_found" };
         return await Save(botId, owner, taskId, content, row.Kind, actor, row.Visibility, userText, explicitRequest, supersedesId: id, conversationId: row.ConversationId, ruleScope: row.Scope);
     }
