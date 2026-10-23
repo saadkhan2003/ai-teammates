@@ -933,7 +933,11 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
                 $"ALL_PROXY=http://127.0.0.1:{_options.EgressProxyPort}",
                 $"http_proxy=http://127.0.0.1:{_options.EgressProxyPort}",
                 $"https_proxy=http://127.0.0.1:{_options.EgressProxyPort}",
-                $"all_proxy=http://127.0.0.1:{_options.EgressProxyPort}"
+                $"all_proxy=http://127.0.0.1:{_options.EgressProxyPort}",
+                // Loopback services (Chrome CDP, the control API) must never be sent through the egress proxy:
+                // its default-deny policy answers 403 and the computer cannot reconnect to its own browser.
+                "NO_PROXY=localhost,127.0.0.1,::1",
+                "no_proxy=localhost,127.0.0.1,::1"
             },
             Labels = stamped,
             ExposedPorts = new Dictionary<string, EmptyStruct>

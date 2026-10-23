@@ -533,6 +533,9 @@ def test_acceptance_suite():
     assert status == 200, resolved
     status, handed = client.call("POST", f"/api/bots/{bot_id}/computer/hand-back", {"tabId": tab, "epoch": epoch})
     assert status == 200, handed
+    # Hand-back leaves the desktop unowned and the task parked until the user explicitly continues.
+    status, resumed = client.call("POST", f"/api/computers/{bot_id}/continue")
+    assert status == 200 and resumed.get("ok"), resumed
     cleared = wait_task(client, bot_id, captcha, timeout=120)
     assert cleared["status"] == "completed", cleared
     assert "captcha" not in result_text(cleared).lower()

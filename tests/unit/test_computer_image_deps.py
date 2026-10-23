@@ -49,3 +49,11 @@ def test_computer_pids_limit_leaves_room_for_chromium_threads():
     source = (Path(__file__).resolve().parents[2] / "src" / "Compute.Docker" / "DockerComputeProvider.cs").read_text()
     limit = int(re.search(r"PidsLimit = (\d+),", source).group(1))
     assert limit >= 768  # pids cgroup counts threads; 256 starved Chromium with ~8 tabs
+
+
+def test_computer_container_bypasses_egress_proxy_for_loopback():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[2] / "src" / "Compute.Docker" / "DockerComputeProvider.cs").read_text()
+    assert '"NO_PROXY=localhost,127.0.0.1,::1"' in source
+    assert '"no_proxy=localhost,127.0.0.1,::1"' in source
