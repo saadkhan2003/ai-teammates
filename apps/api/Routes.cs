@@ -625,35 +625,53 @@ public static class Routes
             return Results.Json(new { taskId, status = "queued" });
         });
 
+        static string? Str(JsonElement body, string name) =>
+            body.ValueKind == JsonValueKind.Object && body.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.String ? el.GetString() : null;
+        static DateTimeOffset? When(JsonElement body, string name) =>
+            Str(body, name) is { } text && DateTimeOffset.TryParse(text, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out var parsed) ? parsed : null;
+        static RoutineSpec SpecOf(JsonElement body) => new(
+            Str(body, "name"), Str(body, "instruction"), Str(body, "cron"), When(body, "runAt"), Str(body, "timezone"), When(body, "expiresAt"),
+            Str(body, "quietRule"), body.ValueKind == JsonValueKind.Object && body.TryGetProperty("exact", out var exact) && exact.ValueKind == JsonValueKind.True, Str(body, "watchKind"), Str(body, "watchRef"));
+        static IResult Refused(RoutineOutcome outcome) =>
+            Results.Json(new { error = outcome.Error, message = RoutineService.Sentence(outcome.Error ?? "") }, statusCode: outcome.Error == "routine_not_found" ? 404 : 400);
+
         app.MapGet("/api/bots/{id:guid}/routines", async (HttpContext ctx, Guid id) =>
         {
             var user = await RequireUser(ctx, platform);
             if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
             await using var conn = await platform.Data.OpenConnectionAsync();
-            var rows = await conn.QueryAsync("SELECT id, name, cron, instruction, next_run_at, enabled, watch_kind, watch_ref FROM routines WHERE bot_id=@id ORDER BY created_at", new { id });
-            return Results.Json(rows.Select(Platform.ToDict));
+            return Results.Json(await RoutineService.List(conn, id));
         });
 
         app.MapPost("/api/bots/{id:guid}/routines", async (HttpContext ctx, Guid id, JsonElement body) =>
         {
             var user = await RequireUser(ctx, platform);
             if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
-            var name = body.GetProperty("name").GetString() ?? "Routine";
-            var cron = body.GetProperty("cron").GetString() ?? "0 * * * *";
-            var instruction = body.GetProperty("instruction").GetString() ?? "";
-            var watchKind = body.TryGetProperty("watchKind", out var watchKindEl) && watchKindEl.ValueKind == JsonValueKind.String ? watchKindEl.GetString() ?? "" : "";
-            var watchRef = body.TryGetProperty("watchRef", out var watchRefEl) && watchRefEl.ValueKind == JsonValueKind.String ? watchRefEl.GetString() ?? "" : "";
-            if (watchKind is not ("" or "http" or "memory")) watchKind = "";
-            if (watchRef.Length > 500) watchRef = watchRef[..500];
             await using var conn = await platform.Data.OpenConnectionAsync();
-            var zoneId = body.TryGetProperty("timezone", out var zoneEl) && zoneEl.ValueKind == JsonValueKind.String && RoutineTime.TryZone(zoneEl.GetString(), out _)
-                ? zoneEl.GetString()!.Trim()
-                : await RoutineTime.OwnerZoneId(conn, user.Value);
-            DateTimeOffset next;
-            try { next = RoutineTime.Next(cron, DateTimeOffset.UtcNow, zoneId); }
-            catch (Exception) { return Results.BadRequest(new { error = "invalid_cron" }); }
-            var routineId = await conn.ExecuteScalarAsync<Guid>("INSERT INTO routines (bot_id, name, cron, timezone, instruction, next_run_at, watch_kind, watch_ref) VALUES (@id, @name, @cron, @zoneId, @instruction, @next, @watchKind, @watchRef) RETURNING id", new { id, name, cron, zoneId, instruction, next, watchKind, watchRef });
-            return Results.Json(new { id = routineId, nextRunAt = next });
+            var spec = SpecOf(body);
+            var outcome = await RoutineService.Create(conn, id, user.Value, spec with { Name = spec.Name ?? "Routine" });
+            if (!outcome.Ok) return Refused(outcome);
+            var shaped = outcome.Data!;
+            return Results.Json(new { id = outcome.Id, nextRunAt = shaped.GetType().GetProperty("nextRunAt")?.GetValue(shaped), routine = shaped });
+        });
+
+        app.MapGet("/api/routines/{id:guid}", async (HttpContext ctx, Guid id) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            var outcome = await RoutineService.Get(conn, id, user.Value);
+            return outcome.Ok ? Results.Json(outcome.Data) : Refused(outcome);
+        });
+
+        app.MapDelete("/api/routines/{id:guid}", async (HttpContext ctx, Guid id) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            var outcome = await RoutineService.Delete(conn, id, user.Value);
+            if (outcome.Ok) await platform.Audit("user", "routine.delete", null, null, new { routine = id });
+            return outcome.Ok ? Results.Json(new { ok = true }) : Refused(outcome);
         });
 
         app.MapPatch("/api/routines/{id:guid}", async (HttpContext ctx, Guid id, JsonElement body) =>
@@ -662,15 +680,20 @@ public static class Routes
             if (user == null) return Results.Unauthorized();
             await using var conn = await platform.Data.OpenConnectionAsync();
             if (body.TryGetProperty("nextRunAt", out var next))
-                await conn.ExecuteAsync("UPDATE routines SET next_run_at=@next FROM bots b WHERE routines.id=@id AND routines.bot_id=b.id AND b.owner_id=@owner", new { id, owner = user, next = next.GetDateTimeOffset() });
+                await conn.ExecuteAsync("UPDATE routines SET next_run_at=@next, nominal_next_at=@next FROM bots b WHERE routines.id=@id AND routines.bot_id=b.id AND b.owner_id=@owner", new { id, owner = user, next = next.GetDateTimeOffset() });
             if (body.TryGetProperty("enabled", out var enabledEl) && enabledEl.ValueKind is JsonValueKind.True or JsonValueKind.False)
             {
                 var enabled = enabledEl.GetBoolean();
-                var found = await conn.QuerySingleOrDefaultAsync<(string Cron, string Timezone)?>("SELECT r.cron, r.timezone FROM routines r JOIN bots b ON b.id=r.bot_id WHERE r.id=@id AND b.owner_id=@owner", new { id, owner = user });
-                if (found == null) return Results.NotFound();
-                var nextAt = enabled ? RoutineToggle.NextAfterEnable(found.Value.Cron, DateTimeOffset.UtcNow, found.Value.Timezone) : (DateTimeOffset?)null;
-                await conn.ExecuteAsync("UPDATE routines SET enabled=@enabled, next_run_at=@nextAt WHERE id=@id", new { id, enabled, nextAt });
-                return Results.Json(new { ok = true, enabled, nextRunAt = nextAt });
+                var outcome = await RoutineService.SetEnabled(conn, id, user.Value, enabled);
+                if (!outcome.Ok) return Refused(outcome);
+                var shaped = outcome.Data!;
+                return Results.Json(new { ok = true, enabled, nextRunAt = shaped.GetType().GetProperty("nextRunAt")?.GetValue(shaped) });
+            }
+            var spec = SpecOf(body);
+            if (spec.Name != null || spec.Instruction != null || spec.Cron != null || spec.RunAt != null || spec.Timezone != null || spec.QuietRule != null || spec.ExpiresAt != null)
+            {
+                var outcome = await RoutineService.Update(conn, id, user.Value, spec);
+                return outcome.Ok ? Results.Json(new { ok = true, routine = outcome.Data }) : Refused(outcome);
             }
             return Results.Json(new { ok = true });
         });

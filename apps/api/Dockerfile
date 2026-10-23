@@ -33,6 +33,7 @@ COPY db/018_bio.sql /migrations/018_bio.sql
 COPY db/019_coding_work.sql /migrations/019_coding_work.sql
 COPY db/020_coding_items.sql /migrations/020_coding_items.sql
 COPY db/021_routine_timezone.sql /migrations/021_routine_timezone.sql
+COPY db/022_routines_v2.sql /migrations/022_routines_v2.sql
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
     DOTNET_gcServer=0 \
     DOTNET_GCHeapHardLimit=0x10000000
