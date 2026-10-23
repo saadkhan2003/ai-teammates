@@ -8,7 +8,7 @@ The app keeps ONE outbound WebSocket to the server. The server sends a command; 
 ## 2. Parts
 - `apps/companion/core` (Rust crate `companion-core`, no GUI deps): protocol types, pairing client, WS session loop, permission/decision logic, command runner, audit log, credential store, version check. All tests run headless.
 - `apps/companion/src-tauri` (Tauri v2 tray shell): tray menu (status, Pause, Manage devices link, Quit), approval window, update banner. Thin: it calls `companion-core` and shows a prompt through a `Prompter` trait.
-- Server (C#, `apps/api/DeviceCommands.cs`, migration `029_device_commands.sql`): WS endpoint, command request API, approval/result bookkeeping, audit entries.
+- Server (C#, `apps/api/DeviceCommands.cs`, migration `032_device_commands.sql` (029-031 are taken by other branches)): WS endpoint, command request API, approval/result bookkeeping, audit entries.
 
 ## 3. Pairing and registration (existing, v0.4)
 Owner clicks Settings → Computer → Add a device → `POST /api/devices/pair` returns a 12-char code (10 min, single use, SHA-256 stored). App calls `POST /api/devices/pair/complete {code,name,os,version}` and receives `{id, deviceToken}` once. Token goes in the OS credential store (Keychain / Credential Manager / Secret Service); headless fallback is a 0600 file. Server keeps only the token hash.
