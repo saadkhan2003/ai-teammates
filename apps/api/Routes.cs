@@ -1149,7 +1149,10 @@ public static class Routes
             var conversation = completed.ConversationId;
             var taskKind = await conn.ExecuteScalarAsync<string>("SELECT kind FROM tasks WHERE id=@id", new { id });
             // A peer task's answer is the reply on the thread, not a chat message in the receiver's own chat.
-            if (conversation != null && !string.IsNullOrWhiteSpace(text) && taskKind != "peer")
+            var quiet = taskKind != "peer" && await RoutineRuns.IsQuiet(conn, id, text);
+            try { await RoutineRuns.Finish(platform, conn, id, true, text, null, quiet); }
+            catch (Exception) { /* run history must not fail the task */ }
+            if (conversation != null && !string.IsNullOrWhiteSpace(text) && taskKind != "peer" && !quiet)
                 await conn.ExecuteAsync("INSERT INTO messages (conversation_id, role, content, task_id) VALUES (@conversation, 'assistant', @text, @id)", new { conversation, text, id });
             if (taskKind == "peer")
             {
@@ -1157,7 +1160,7 @@ public static class Routes
                 catch (Exception) { /* the reply is retried by the sweeper; completion itself must not fail */ }
             }
             var owner = await conn.ExecuteScalarAsync<Guid?>("SELECT b.owner_id FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE t.id=@id", new { id });
-            if (owner != null) await platform.Notify(owner.Value, "task.complete", "Task finished", text ?? "");
+            if (owner != null && !quiet) await platform.Notify(owner.Value, "task.complete", "Task finished", text ?? "");
             await platform.Publish(new { type = "task", taskId = id, status = "completed" });
             return Results.Json(new { ok = true });
         });
@@ -1172,6 +1175,11 @@ public static class Routes
             var epoch = body.TryGetProperty("epoch", out var epochEl) ? epochEl.GetInt32() : -1;
             var n = await conn.ExecuteAsync("UPDATE tasks SET status='failed', error=@error, error_code=@errorCode, finished_at=now(), lease_owner=NULL, updated_at=now() WHERE id=@id AND status='running' AND lease_epoch=@epoch", new { id, error, errorCode, epoch });
             if (n > 0) await Reliability.Event(platform, id, "error", new { error_code = errorCode, error });
+            if (n > 0)
+            {
+                try { await RoutineRuns.Finish(platform, conn, id, false, null, error, false); }
+                catch (Exception) { /* run history must not fail the task */ }
+            }
             if (n > 0)
             {
                 try { await BotMessaging.OnTaskFailed(platform, id, errorCode); }

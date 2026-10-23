@@ -240,45 +240,8 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
                         logger.LogError("computer isolation alert: {Message}", OutputRedactor.Redact(ex.Message));
                     }
                 }
-                // Routines whose schedule was cleared (timezone migration) get a fresh next run in their own zone.
-                var unscheduled = await conn.QueryAsync<(Guid Id, string Cron, string Timezone)>("SELECT id, cron, timezone FROM routines WHERE enabled AND next_run_at IS NULL AND cron IS NOT NULL");
-                foreach (var item in unscheduled)
-                {
-                    var fresh = RoutineTime.NextOrNull(item.Cron, DateTimeOffset.UtcNow, item.Timezone);
-                    if (fresh != null) await conn.ExecuteAsync("UPDATE routines SET next_run_at=@fresh WHERE id=@id AND next_run_at IS NULL", new { id = item.Id, fresh });
-                }
-                var due = await conn.QueryAsync<(Guid Id, Guid BotId, string Instruction, string Name, string WatchKind, string WatchRef, string WatchFingerprint)>(
-                    "SELECT id, bot_id, instruction, name, coalesce(watch_kind,''), coalesce(watch_ref,''), coalesce(watch_fingerprint,'') FROM routines WHERE enabled AND next_run_at IS NOT NULL AND next_run_at <= now()");
-                foreach (var routine in due)
-                {
-                    var skipModel = false;
-                    if (routine.WatchKind is "http" or "memory")
-                    {
-                        var material = routine.WatchKind == "http"
-                            ? await WatchHttp(routine.WatchRef, stoppingToken)
-                            : await WatchMemory(conn, routine.BotId);
-                        if (material == null || !RoutineWatch.Changed(routine.WatchFingerprint, RoutineWatch.Fingerprint(material)))
-                        {
-                            skipModel = true;
-                            await conn.ExecuteAsync("INSERT INTO routine_runs (routine_id, status) VALUES (@routine, 'skipped')", new { routine = routine.Id });
-                        }
-                        else
-                        {
-                            await conn.ExecuteAsync("UPDATE routines SET watch_fingerprint=@fp WHERE id=@id", new { id = routine.Id, fp = RoutineWatch.Fingerprint(material) });
-                        }
-                    }
-                    var running = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM tasks WHERE routine_id=@id AND status IN ('queued','running','planning')", new { id = routine.Id });
-                    if (running == 0 && !skipModel)
-                    {
-                        var conversation = await conn.ExecuteScalarAsync<Guid>("SELECT id FROM conversations WHERE bot_id=@id ORDER BY created_at LIMIT 1", new { id = routine.BotId });
-                        var task = await conn.ExecuteScalarAsync<Guid>("INSERT INTO tasks (bot_id, conversation_id, title, instruction, kind, routine_id, status, origin_depth) VALUES (@bot, @conversation, @title, @instruction, 'work', @routine, 'queued', COALESCE((SELECT origin_depth FROM routines WHERE id=@routine),0)) RETURNING id", new { bot = routine.BotId, conversation, title = routine.Name, instruction = routine.Instruction, routine = routine.Id });
-                        await conn.ExecuteAsync("INSERT INTO routine_runs (routine_id, task_id, status) VALUES (@routine, @task, 'queued')", new { routine = routine.Id, task });
-                        platform.Tasks.Pulse();
-                    }
-                    var sched = await conn.QuerySingleOrDefaultAsync<(string Cron, string Timezone)?>("SELECT cron, timezone FROM routines WHERE id=@id", new { id = routine.Id });
-                    var next = RoutineTime.NextOrNull(sched?.Cron ?? "0 * * * *", DateTimeOffset.UtcNow, sched?.Timezone) ?? DateTimeOffset.UtcNow.AddHours(1);
-                    await conn.ExecuteAsync("UPDATE routines SET last_run_at=now(), next_run_at=@next WHERE id=@id", new { id = routine.Id, next });
-                }
+                await RoutineRuns.Tick(platform, conn, DateTimeOffset.UtcNow, async (kind, reference, botId, token) =>
+                    kind == "http" ? await WatchHttp(reference, token) : await WatchMemory(conn, botId), stoppingToken);
             }
             catch (Exception ex)
             {

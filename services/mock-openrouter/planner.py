@@ -1,6 +1,7 @@
 """Deterministic stand-in for an OpenAI chat completion planner."""
 from __future__ import annotations
 
+import datetime
 import json
 import re
 from collections.abc import Callable
@@ -36,6 +37,13 @@ def plan(messages: list) -> dict:
 
 def _steps(text: str, messages: list) -> list[Step]:
     stripped = text.strip()
+    if stripped.startswith("This is a scheduled run, not a user message.") and "\n\n" in stripped:
+        inner = stripped.split("\n\n", 1)[1].strip()
+        if "NOTHING_NEW test" in inner:
+            return [("final", "NOTHING_NEW")]
+        if inner.lower().startswith("say hi"):
+            return [("final", "Hi from the routine.")]
+        return _steps(inner, messages)
     if "PLAN DEMO" in text:
         return [
             ("tool", "plan_set", {"items": ["Inspect the project", "Make the change", "Run the tests"]}),
@@ -351,6 +359,29 @@ def _peer_steps(stripped: str, messages: list) -> list[Step] | None:
         return [
             ("tool", "create_routine", {"bot": found.group(1), "name": "Hourly", "cron": "0 * * * *", "instruction": found.group(2).strip()}),
             ("final", "Scheduled " + found.group(1) + "."),
+        ]
+    found = re.match(r"Reschedule routine (\S+) to (\d+ \d+ \* \* \*)$", stripped)
+    if found:
+        return [
+            ("tool", "get_routine", {"routine": found.group(1)}),
+            ("tool", "update_routine", {"routine": found.group(1), "cron": found.group(2)}),
+            ("final", "Rescheduled " + found.group(1) + "."),
+        ]
+    found = re.match(r"Reschedule routine (\S+) blind to (\d+ \d+ \* \* \*)$", stripped)
+    if found:
+        return [
+            ("tool", "update_routine", {"routine": found.group(1), "cron": found.group(2)}),
+            ("final", "Tried to reschedule " + found.group(1) + "."),
+        ]
+    found = re.match(r"(Pause|Resume|Delete) routine (\S+)$", stripped)
+    if found:
+        verb = found.group(1).lower()
+        return [("tool", verb + "_routine", {"routine": found.group(2)}), ("final", found.group(1) + "d " + found.group(2) + ".")]
+    found = re.match(r"Remind me in (\d+) minutes to (.+)", stripped)
+    if found:
+        return [
+            ("tool", "create_routine", {"name": "Reminder", "run_at": (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=int(found.group(1)))).strftime("%Y-%m-%dT%H:%M:%SZ"), "instruction": found.group(2).strip()}),
+            ("final", "I will remind you."),
         ]
     if stripped.startswith("Who are my teammates"):
         return [("tool", "list_bots", {}), ("final", "Listed my teammates.")]
