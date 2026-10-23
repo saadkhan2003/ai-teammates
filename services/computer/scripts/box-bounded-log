@@ -1,0 +1,54 @@
+#!/opt/desk/venv/bin/python
+"""Trim regular log files to a bounded aggregate size, oldest first."""
+import os
+import stat
+import sys
+import time
+from pathlib import Path
+
+
+def enforce(directory: Path, limit: int) -> int:
+    directory = directory.resolve(strict=True)
+    rows = []
+    for path in directory.rglob("*"):
+        try:
+            info = path.lstat()
+        except OSError:
+            continue
+        if stat.S_ISREG(info.st_mode):
+            rows.append((info.st_mtime, path, info.st_size))
+    total = sum(size for _, _, size in rows)
+    for _, path, size in sorted(rows):
+        if total <= limit:
+            break
+        excess = min(size, total - limit)
+        try:
+            fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
+            with os.fdopen(fd, "r+b") as stream:
+                current = os.fstat(stream.fileno())
+                if not stat.S_ISREG(current.st_mode):
+                    continue
+                keep = max(0, current.st_size - excess)
+                stream.seek(max(0, current.st_size - keep))
+                tail = stream.read(keep)
+                stream.seek(0)
+                stream.write(tail)
+                stream.truncate(len(tail))
+            total -= excess
+        except OSError:
+            continue
+    return total
+
+
+if __name__ == "__main__":
+    folder = Path(os.environ.get("BOX_LOG_DIR", "/data/log"))
+    cap = int(os.environ.get("BOX_LOG_CAP_BYTES", str(64 * 1024 * 1024)))
+    if cap < 1 or len(sys.argv) > 2:
+        raise SystemExit(2)
+    folder.mkdir(mode=0o750, parents=True, exist_ok=True)
+    while True:
+        try:
+            enforce(folder, cap)
+        except OSError:
+            pass
+        time.sleep(5)

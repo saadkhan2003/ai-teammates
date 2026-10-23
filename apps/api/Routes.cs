@@ -626,6 +626,8 @@ public static class Routes
         Beta.Map(app, platform);
         Templates.Map(app, platform);
         MapInternal(app, platform, runtime);
+        Reliability.MapComputerDoctor(app, platform);
+        ComputerWindows.Map(app, platform);
 
         app.Map("/vnc/websockify", async (HttpContext ctx) =>
         {

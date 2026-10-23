@@ -16,6 +16,35 @@ public static class TaskErrors
 
 public static class Reliability
 {
+    public static void MapComputerDoctor(WebApplication app, Platform platform)
+    {
+        app.MapGet("/internal/computer/{id:guid}/doctor", async (HttpContext ctx, Guid id, CancellationToken ct) =>
+        {
+            var expected = System.Text.Encoding.UTF8.GetBytes(platform.WorkerToken);
+            var authorization = ctx.Request.Headers.Authorization.ToString();
+            var presented = authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+                ? System.Text.Encoding.UTF8.GetBytes(authorization[7..].Trim()) : Array.Empty<byte>();
+            var valid = expected.Length > 0 && expected.Length == presented.Length &&
+                System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(expected, presented);
+            System.Security.Cryptography.CryptographicOperations.ZeroMemory(expected);
+            System.Security.Cryptography.CryptographicOperations.ZeroMemory(presented);
+            if (!valid) return Results.Unauthorized();
+            try
+            {
+                var json = await platform.Compute.ControlAsync(new Teammates.Compute.ComputerId(id.ToString()), "/doctor", "{}", ct);
+                using var document = System.Text.Json.JsonDocument.Parse(json);
+                var root = document.RootElement;
+                var checks = root.TryGetProperty("checks", out var rows) ? rows.Clone() : root.Clone();
+                var ok = !root.TryGetProperty("ok", out var status) || status.GetBoolean();
+                return Results.Json(new { ok, checks });
+            }
+            catch
+            {
+                return Results.Json(new { ok = false, checks = new { computer = new { ok = false, value = (string?)null } } });
+            }
+        });
+    }
+
     public static bool WaitsForKey(string? status, string? reason) => status == "waiting_resource" && reason is "connect_openrouter" or "no_openrouter_key";
 
     public static async Task ResumeKeyWaiters(Platform platform, Guid owner)
