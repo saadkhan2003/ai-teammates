@@ -115,6 +115,49 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
             return Results.Json(new { ok = false, status = "waiting_approval", riskClass = gated.RiskClass, summary = gated.Summary });
         }
         if (decision == PolicyEngine.Ask) decision = PolicyEngine.Allow;
+        var idempotencyKey = body.TryGetProperty("idempotencyKey", out var keyElement) && keyElement.ValueKind == JsonValueKind.String
+            ? keyElement.GetString()
+            : null;
+        var dedupe = ToolDedupe.Applies(tool, idempotencyKey);
+        if (dedupe)
+        {
+            await using var conn = await platform.Data.OpenConnectionAsync(ct);
+            var claimed = await conn.ExecuteScalarAsync<int>("""
+                INSERT INTO tool_execution_dedupe (task_id, idempotency_key, tool, status)
+                VALUES (@taskId, @key, @tool, 'in_progress')
+                ON CONFLICT (task_id, idempotency_key) DO NOTHING
+                RETURNING 1
+                """, new { taskId, key = idempotencyKey, tool });
+            if (claimed == 0)
+            {
+                var prior = await conn.QuerySingleAsync<(string Status, string? Result, double AgeSeconds)>(
+                    "SELECT status, result::text, EXTRACT(EPOCH FROM (now()-created_at))::float8 AS AgeSeconds FROM tool_execution_dedupe WHERE task_id=@taskId AND idempotency_key=@key",
+                    new { taskId, key = idempotencyKey });
+                var priorDecision = ToolDedupe.Decide(prior.Status, prior.AgeSeconds);
+                if (priorDecision == "execute" && prior.Status == "in_progress")
+                {
+                    await conn.ExecuteAsync("DELETE FROM tool_execution_dedupe WHERE task_id=@taskId AND idempotency_key=@key AND status='in_progress' AND created_at < now() - interval '5 minutes'", new { taskId, key = idempotencyKey });
+                    claimed = await conn.ExecuteScalarAsync<int>("""
+                        INSERT INTO tool_execution_dedupe (task_id, idempotency_key, tool, status)
+                        VALUES (@taskId, @key, @tool, 'in_progress')
+                        ON CONFLICT (task_id, idempotency_key) DO NOTHING
+                        RETURNING 1
+                        """, new { taskId, key = idempotencyKey, tool });
+                    if (claimed == 0)
+                        return Results.Json(new { ok = false, status = "in_progress" }, statusCode: 409);
+                    priorDecision = "execute";
+                }
+                switch (claimed == 1 ? "execute" : priorDecision)
+                {
+                    case "replay":
+                        var stored = InjectionFilter.ScrubJson(prior.Result ?? "null");
+                        return Results.Text("{\"ok\":true,\"output\":" + stored + ",\"deduped\":true}", "application/json");
+                    case "in_progress":
+                        return Results.Json(new { ok = false, status = "in_progress" }, statusCode: 409);
+                }
+            }
+        }
+        var completed = false;
         try
         {
             var output = await Dispatch(owner, botId, taskId, tool, args, ct);
@@ -136,6 +179,16 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
                 return Results.Json(output);
             }
             await Step(taskId, tool, args, decision, true, output, EpochOf(body));
+            if (dedupe)
+            {
+                var safeResult = InjectionFilter.ScrubJson(JsonSerializer.Serialize(output));
+                await using var conn = await platform.Data.OpenConnectionAsync(ct);
+                var updated = await conn.ExecuteAsync("""
+                    UPDATE tool_execution_dedupe SET status='completed', result=CAST(@result AS jsonb), completed_at=now()
+                    WHERE task_id=@taskId AND idempotency_key=@key AND status='in_progress'
+                    """, new { taskId, key = idempotencyKey, result = safeResult });
+                completed = updated == 1;
+            }
             return Results.Json(new { ok = true, output });
         }
         catch (ToolHalt halt)
@@ -151,6 +204,14 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         {
             await Step(taskId, tool, args, decision, false, new { reason = ex.Message }, EpochOf(body));
             return Results.Json(new { ok = false, status = "denied", reason = ex.Message });
+        }
+        finally
+        {
+            if (dedupe && !completed)
+            {
+                await using var conn = await platform.Data.OpenConnectionAsync(CancellationToken.None);
+                await conn.ExecuteAsync("DELETE FROM tool_execution_dedupe WHERE task_id=@taskId AND idempotency_key=@key AND status='in_progress'", new { taskId, key = idempotencyKey });
+            }
         }
     }
 
