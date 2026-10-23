@@ -1,4 +1,11 @@
 export const GROUPS = [{ key: "today", label: "Today" }, { key: "week", label: "This week" }, { key: "older", label: "Older" }];
+export const LIBRARY_FILTERS = ["All", "Images", "Documents", "Spreadsheets", "PDFs", "Video", "Code", "Screenshots", "Pages"];
+export function libraryTypeParam(label) {
+  return ({ All: "all", Images: "images", Documents: "documents", Spreadsheets: "spreadsheets", PDFs: "pdfs", Video: "video", Code: "code", Screenshots: "screenshots", Pages: "pages" })[label] ?? "all";
+}
+export function nextLibraryRowIndex(current, offset, length) {
+  return length <= 0 ? -1 : Math.max(0, Math.min(length - 1, current + offset));
+}
 
 const extensionKinds = { png:"image", jpg:"image", jpeg:"image", gif:"image", webp:"image", mp4:"video", webm:"video", mp3:"audio", wav:"audio", pdf:"pdf", txt:"text", md:"markdown", csv:"sheet", xlsx:"sheet", docx:"doc", zip:"archive", html:"code", js:"code", ts:"code", py:"code", json:"code" };
 export function detectKind(name, mime = "") {

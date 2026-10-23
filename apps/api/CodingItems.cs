@@ -60,7 +60,9 @@ public static class CodingItems
                 {
                     var names = await run(["git", "-C", root, "diff", "--name-only"]);
                     var files = CodingStatus.Files(names.Stdout);
-                    await Save(conn, taskId, files, Str(json, "diff"));
+                    var diff = Redact(Str(json, "diff"));
+                    await Save(conn, taskId, files, diff);
+                    await LibraryIngest.IndexTextExport(platform, botId, taskId, $"diff-{taskId:N}.diff", diff, ct);
                     break;
                 }
                 case "git_commit":
@@ -68,7 +70,9 @@ public static class CodingItems
                     if (Code(json) != 0) break;
                     var names = await run(["git", "-C", root, "diff", "--name-only", "HEAD~1", "HEAD"]);
                     var diff = await run(["git", "-C", root, "diff", "HEAD~1", "HEAD"]);
-                    await Save(conn, taskId, CodingStatus.Files(names.Stdout), Redact(diff.Stdout));
+                    var redactedDiff = Redact(diff.Stdout);
+                    await Save(conn, taskId, CodingStatus.Files(names.Stdout), redactedDiff);
+                    await LibraryIngest.IndexTextExport(platform, botId, taskId, $"diff-{taskId:N}.diff", redactedDiff, ct);
                     await conn.ExecuteAsync("UPDATE coding_items SET branch=@branch WHERE task_id=@task AND @branch<>''", new { task = taskId, branch });
                     break;
                 }

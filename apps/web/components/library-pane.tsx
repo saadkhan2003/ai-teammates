@@ -1,16 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { AudioLines, Copy, Download, FileArchive, FileCode, FileQuestion, FileText, FileType, Film, Image as ImageIcon, Link as LinkIcon, Loader2, MoreHorizontal, Table, LayoutPanelTop, Star, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AudioLines, Copy, Download, FileArchive, FileCode, FileQuestion, FileText, FileType, Film, Image as ImageIcon, Link as LinkIcon, Loader2, MoreHorizontal, Table, LayoutPanelTop, Search, Star, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { api, apiFetch } from "@/lib/api";
-import { formatAge, type LibraryGroup, type LibraryItem, type LibraryResponse } from "@/lib/library";
+import { formatAge, LIBRARY_FILTERS, libraryTypeParam, nextLibraryRowIndex, type LibraryFilter, type LibraryGroup, type LibraryItem, type LibraryResponse } from "@/lib/library";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { BotAvatar } from "@/components/bot-avatar";
 import { Markdown } from "@/components/markdown";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import type { KeyboardEvent } from "react";
 
 const initial: LibraryResponse = { pinned: [], groups: [
   { key: "today", label: "Today", total: 0, items: [], nextCursor: null },
@@ -47,10 +49,19 @@ export function LibraryPane({ botId, botName, botShape, botColor }: { botId: str
   const [content, setContent] = useState<string | null>(null);
   const [contentError, setContentError] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [activeType, setActiveType] = useState<LibraryFilter>("All");
+  const [direction, setDirection] = useState<"all" | "in" | "out">("all");
+  const [searchItems, setSearchItems] = useState<LibraryItem[] | null>(null);
+  const [shareInfo, setShareInfo] = useState<Record<string, { id: string; url?: string }[]>>({});
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async (keepData = true) => {
     try {
-      const response = await api<LibraryResponse>(`/api/bots/${botId}/library?limit=5`);
+      const params = new URLSearchParams({ limit: "5", type: libraryTypeParam(activeType) });
+      if (direction !== "all") params.set("direction", direction);
+      const response = await api<LibraryResponse>(`/api/bots/${botId}/library?${params}`);
       setData(response);
       setError(false);
       setLoaded(true);
@@ -58,7 +69,21 @@ export function LibraryPane({ botId, botName, botShape, botColor }: { botId: str
       setError(true);
       if (!keepData) setLoaded(true);
     }
-  }, [botId]);
+  }, [botId, activeType, direction]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+
+  useEffect(() => {
+    if (!debouncedQuery) { setSearchItems(null); return; }
+    let active = true;
+    const params = new URLSearchParams({ q: debouncedQuery, type: libraryTypeParam(activeType) });
+    if (direction !== "all") params.set("direction", direction);
+    void api<{ items: LibraryItem[] }>(`/api/bots/${botId}/library?${params}`).then(result => { if (active) { setSearchItems(result.items); setLoaded(true); setError(false); } }).catch(() => { if (active) setError(true); });
+    return () => { active = false; };
+  }, [botId, debouncedQuery, activeType, direction]);
 
   useEffect(() => { void load(false); }, [load]);
   useEffect(() => {
@@ -129,24 +154,77 @@ export function LibraryPane({ botId, botName, botShape, botColor }: { botId: str
     try { await api(`/api/bots/${botId}/library/${deleteTarget.id}`, { method: "DELETE" }); setPreview(current => current?.id === deleteTarget.id ? null : current); setDeleteTarget(null); await load(); toast.success("Removed from Library."); }
     catch { toast.error("Could not delete this item."); }
   };
+  const loadShares = async (item: LibraryItem) => {
+    try {
+      const result = await api<{ shares: { id: string; expiresAt: string; revokedAt: string | null }[] }>(`/api/bots/${botId}/library/${item.id}/share`);
+      setShareInfo(current => ({ ...current, [item.id]: result.shares.filter(share => !share.revokedAt && new Date(share.expiresAt) > new Date()).map(share => ({ id: share.id, url: current[item.id]?.find(existing => existing.id === share.id)?.url })) }));
+    } catch { /* menu remains usable for creating a new link */ }
+  };
+  const createShare = async (item: LibraryItem) => {
+    try {
+      const result = await api<{ url: string }>(`/api/bots/${botId}/library/${item.id}/share`, { method: "POST", body: JSON.stringify({ expiresInDays: 7 }) });
+      const listed = await api<{ shares: { id: string; expiresAt: string; revokedAt: string | null }[] }>(`/api/bots/${botId}/library/${item.id}/share`);
+      const latest = listed.shares.find(share => !share.revokedAt);
+      setShareInfo(current => {
+        if (!latest) return current;
+        const shares = current[item.id] ?? [];
+        const next = shares.some(share => share.id === latest.id)
+          ? shares.map(share => share.id === latest.id ? { ...share, url: result.url } : share)
+          : [...shares, { id: latest.id, url: result.url }];
+        return { ...current, [item.id]: next };
+      });
+      await navigator.clipboard.writeText(result.url);
+      toast.success("Share link copied.");
+    } catch { toast.error("Could not create a share link."); }
+  };
+  const revokeShare = async (item: LibraryItem, shareId: string) => {
+    try {
+      await api(`/api/bots/${botId}/library/${item.id}/share/${shareId}`, { method: "DELETE" });
+      setShareInfo(current => ({ ...current, [item.id]: (current[item.id] ?? []).filter(share => share.id !== shareId) }));
+      toast.success("Share link revoked.");
+    } catch { toast.error("Could not revoke the share link."); }
+  };
   const renderRow = (item: LibraryItem) => {
     const Icon = icons[item.kind] ?? FileQuestion;
     const href = itemUrl(item);
     const image = item.kind === "image" || item.kind === "screenshots";
-    return <li key={item.id} className="group relative flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-[var(--bot-accent-soft)] focus-within:bg-[var(--bot-accent-soft)] motion-reduce:transition-none" onMouseEnter={() => setPreview(item)} onMouseLeave={() => setPreview(null)} onFocus={() => setPreview(item)}>
+    return <li key={item.id} data-library-item={item.id} className="group relative flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-[var(--bot-accent-soft)] focus-within:bg-[var(--bot-accent-soft)] motion-reduce:transition-none" onMouseEnter={() => setPreview(item)} onMouseLeave={() => setPreview(null)} onFocus={() => setPreview(item)}>
       <span data-testid={item.kind === "unknown" ? "library-unknown-icon" : undefined} data-kind={item.kind} className={`relative grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-md border border-border bg-background ${item.kind === "unknown" ? "text-muted-foreground" : "text-foreground"}`}>
         {image && item.thumbUrl ? <><Icon aria-hidden="true" className="absolute h-4 w-4 text-muted-foreground" /><img className="relative h-full w-full object-cover opacity-0 transition-opacity duration-300 motion-reduce:transition-none" onLoad={event => event.currentTarget.classList.replace("opacity-0", "opacity-100")} src={item.thumbUrl} alt="" loading="lazy" /></> : <Icon aria-hidden="true" className={`h-4 w-4 ${item.kind === "unknown" ? "text-muted-foreground" : "text-muted-foreground"}`} />}
         {item.kind === "pdf" && <span aria-hidden="true" className="absolute inset-x-0 bottom-0 h-1 bg-red-500" />}
       </span>
       <button type="button" className="min-w-0 flex-1 truncate text-left text-sm outline-none focus-visible:ring-1 focus-visible:ring-[var(--bot-accent-ring)]" title={item.name} onClick={() => setPreview(item)}>{item.name}</button>
       <a href={href} download={item.name} aria-label={`Download ${item.name}`} className="grid h-7 w-7 shrink-0 place-items-center rounded-sm text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"><Download className="h-4 w-4" /></a>
-      <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100" aria-label={`Actions for ${item.name}`}><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => setPreview(item)}>Open</DropdownMenuItem><DropdownMenuItem asChild><a href={href} download={item.name}><Download />Download</a></DropdownMenuItem><DropdownMenuItem onSelect={() => void togglePin(item)}><Star />{item.pinned ? "Unpin" : "Pin"}</DropdownMenuItem><DropdownMenuItem onSelect={() => setDeleteTarget(item)} className="text-destructive"><Trash2 />Delete…</DropdownMenuItem><DropdownMenuItem onSelect={() => { void navigator.clipboard?.writeText(item.name); toast.success("Name copied."); }}><Copy />Copy name</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
+      <DropdownMenu onOpenChange={open => { if (open) void loadShares(item); }}><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100" aria-label={`Actions for ${item.name}`}><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => setPreview(item)}>Open</DropdownMenuItem><DropdownMenuItem asChild><a href={href} download={item.name}><Download />Download</a></DropdownMenuItem><DropdownMenuItem onSelect={() => void togglePin(item)}><Star />{item.pinned ? "Unpin" : "Pin"}</DropdownMenuItem><DropdownMenuItem onSelect={() => void createShare(item)}><Copy />Share</DropdownMenuItem>{(shareInfo[item.id] ?? []).filter(share => share.url).map(share => <DropdownMenuItem key={share.id} onSelect={() => { void navigator.clipboard.writeText(share.url!); toast.success("Share link copied."); }}><Copy />Copy link</DropdownMenuItem>)}{(shareInfo[item.id] ?? []).map(share => <DropdownMenuItem key={`revoke-${share.id}`} onSelect={() => void revokeShare(item, share.id)} className="text-destructive">Revoke share link</DropdownMenuItem>)}<DropdownMenuItem onSelect={() => setDeleteTarget(item)} className="text-destructive"><Trash2 />Delete…</DropdownMenuItem><DropdownMenuItem onSelect={() => { void navigator.clipboard?.writeText(item.name); toast.success("Name copied."); }}><Copy />Copy name</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
       {preview?.id === item.id && <div role="tooltip" className="pointer-events-none absolute left-8 top-9 z-20 hidden w-64 rounded-md border border-border bg-popover p-3 shadow-md group-hover:block group-focus-within:block"><div className="mb-2 grid h-32 place-items-center overflow-hidden rounded border border-border bg-card">{image && item.thumbUrl ? <img src={item.thumbUrl} alt="" className="h-full w-full object-contain" /> : <Icon className="h-8 w-8 text-muted-foreground" />}</div><p className="truncate text-sm font-medium">{item.name}</p><p className="mt-2 flex items-center gap-2 text-xs text-muted-foreground"><BotAvatar shape={botShape} color={botColor} size={18} />{item.direction === "in" ? "You" : botName} · {item.createdAt ? new Date(item.createdAt).toLocaleString() : formatAge()}</p></div>}
     </li>;
   };
 
-  return <div className="space-y-4">
+  const keyNav = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "/" && !["INPUT", "TEXTAREA"].includes((event.target as HTMLElement).tagName)) { event.preventDefault(); searchRef.current?.focus(); return; }
+    const row = (event.target as HTMLElement).closest<HTMLElement>("[data-library-item]");
+    if (!row) return;
+    const rows = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("[data-library-item]"));
+    const index = rows.indexOf(row);
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); rows[nextLibraryRowIndex(index, event.key === "ArrowDown" ? 1 : -1, rows.length)]?.querySelector<HTMLElement>("button")?.focus(); }
+    if (event.key === "Enter") { event.preventDefault(); const item = [...(searchItems ?? []), ...allItems].find(candidate => candidate.id === row.dataset.libraryItem); if (item) setPreview(item); }
+    if (event.key === "Delete") { event.preventDefault(); const item = [...(searchItems ?? []), ...allItems].find(candidate => candidate.id === row.dataset.libraryItem); if (item) setDeleteTarget(item); }
+  };
+
+  return <div className="space-y-4" onKeyDown={keyNav}>
+    <div className="space-y-2">
+      <label className="sr-only" htmlFor="library-search">Search library</label>
+      <div className="relative"><Search aria-hidden="true" className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input id="library-search" ref={searchRef} value={query} onChange={event => setQuery(event.target.value)} placeholder="Search library" className="pl-9" /></div>
+      <div aria-label="Filter library by type" className="flex flex-wrap gap-1.5">
+        {LIBRARY_FILTERS.map(label => <button type="button" key={label} aria-pressed={activeType === label} onClick={() => setActiveType(label)} className={`rounded-md border px-2 py-1 text-xs transition-colors ${activeType === label ? "border-[var(--bot-accent-border)] bg-[var(--bot-accent-soft)] text-[var(--bot-accent-text)]" : "border-border bg-card text-muted-foreground hover:text-foreground"}`}>{label}</button>)}
+      </div>
+      <div role="group" aria-label="Filter library direction" className="flex gap-1.5">
+        {[{ key: "all", label: "All" }, { key: "in", label: "Uploaded" }, { key: "out", label: "Generated" }].map(option => <button type="button" key={option.key} aria-pressed={direction === option.key} onClick={() => setDirection(option.key as "all" | "in" | "out")} className={`rounded-md border px-2 py-1 text-xs ${direction === option.key ? "border-[var(--bot-accent-border)] bg-[var(--bot-accent-soft)] text-[var(--bot-accent-text)]" : "border-border bg-card text-muted-foreground"}`}>{option.label}</button>)}
+      </div>
+    </div>
     {error && <div role="alert" data-testid="library-error" className="rounded-lg border border-destructive/40 bg-card p-3 text-sm"><p>Could not load the library.</p><Button variant="link" className="mt-1 h-auto p-0 text-[var(--bot-accent-text)]" onClick={() => void load()}>Try again</Button></div>}
+    {searchItems !== null ? searchItems.length ? <section aria-label="Search results" className="space-y-1 rounded-xl border border-border bg-card p-2">{searchItems.map(item => <div key={item.id}><ul>{renderRow(item)}</ul><span className="ml-12 inline-block rounded-sm border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">{item.kind}</span></div>)}</section> : <div role="status" className="py-6 text-center text-sm text-muted-foreground"><p>No matches</p><Button variant="link" className="text-[var(--bot-accent-text)]" onClick={() => setQuery("")}>Clear search</Button></div> : null}
+    {searchItems === null && <>
     {data.pinned.length > 0 && <section><h3 className="mb-2 text-xs font-medium text-muted-foreground">Pinned</h3><ul className="space-y-1 rounded-xl border border-border bg-card p-2">{data.pinned.map(renderRow)}</ul></section>}
     {visibleGroups.map(group => <section key={group.key} data-testid={`library-group-${group.key}`}>
       <h3 className="mb-2 text-xs font-medium text-muted-foreground">{group.label}</h3>
@@ -173,5 +251,6 @@ export function LibraryPane({ botId, botName, botShape, botColor }: { botId: str
     <Dialog open={!!deleteTarget} onOpenChange={open => { if (!open) setDeleteTarget(null); }}>
       <DialogContent className="max-w-md"><DialogHeader><DialogTitle>Delete {deleteTarget?.name}?</DialogTitle><DialogDescription>The file is removed from Library and cannot be recovered after 30 days.</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" autoFocus onClick={() => setDeleteTarget(null)}>Cancel</Button><Button variant="destructive" onClick={() => void deleteItem()}>Delete</Button></DialogFooter></DialogContent>
     </Dialog>
+    </>}
   </div>;
 }

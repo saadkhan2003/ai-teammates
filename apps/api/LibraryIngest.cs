@@ -16,6 +16,25 @@ public static class LibraryIngest
         return LibraryKinds.IsDeniedName(path) || LibraryKinds.IsDeniedName(Path.GetFileName(path)) || path.Contains("/../", StringComparison.Ordinal) || path.EndsWith("/..", StringComparison.Ordinal);
     });
 
+    public static async Task IndexTextExport(Platform platform, Guid botId, Guid taskId, string name, string content, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(content) || LibraryKinds.IsDeniedName(name)) return;
+        var safeName = LibraryKinds.SanitizeName(name);
+        var bytes = Encoding.UTF8.GetBytes(content);
+        var sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        await using var conn = await platform.Data.OpenConnectionAsync(ct);
+        var exists = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM library_items WHERE bot_id=@bot AND name=@name AND sha256=@sha AND deleted_at IS NULL", new { bot = botId, name = safeName, sha });
+        if (exists > 0) return;
+        var key = $"artifacts/{botId}/library/{sha}/{safeName}";
+        await using var stream = new MemoryStream(bytes, writable: false);
+        await platform.S3.PutObjectAsync(new Amazon.S3.Model.PutObjectRequest { BucketName = platform.Bucket, Key = key, InputStream = stream, ContentType = "text/plain; charset=utf-8" }, ct);
+        var artifact = await conn.ExecuteScalarAsync<Guid>("INSERT INTO artifacts(bot_id,task_id,name,mime,size_bytes,sha256,object_key) VALUES(@bot,@task,@name,'text/plain; charset=utf-8',@size,@sha,@key) RETURNING id", new { bot = botId, task = taskId, name = safeName, size = bytes.LongLength, sha, key });
+        var dlp = bytes.Length <= 2_000_000 && Dlp.HasStrict(content) ? "redacted" : "clean";
+        await Upsert(conn, botId, "pr_export", "out", safeName, "text/plain; charset=utf-8", bytes.LongLength, sha, artifact, null, taskId, DateTime.UtcNow, dlp);
+        var owner = await conn.ExecuteScalarAsync<Guid?>("SELECT owner_id FROM bots WHERE id=@bot", new { bot = botId });
+        if (owner != null) await platform.Audit(owner.Value.ToString(), "library.exported", botId, taskId, new { itemNameHash = sha, sizeBytes = bytes.LongLength });
+    }
+
     public static async Task IndexArtifact(Platform platform, Guid botId, Guid artifactId, string source = "artifact", string direction = "out", Guid? messageId = null, CancellationToken ct = default)
     {
         await using var conn = await platform.Data.OpenConnectionAsync(ct);

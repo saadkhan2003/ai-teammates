@@ -10,7 +10,7 @@ public static class LibraryKinds
         ["mp4"]="video", ["webm"]="video", ["mov"]="video", ["mkv"]="video", ["mp3"]="audio", ["wav"]="audio", ["ogg"]="audio", ["m4a"]="audio",
         ["pdf"]="pdf", ["txt"]="text", ["log"]="text", ["csv"]="sheet", ["tsv"]="sheet", ["xlsx"]="sheet", ["xls"]="sheet", ["ods"]="sheet",
         ["md"]="markdown", ["markdown"]="markdown", ["html"]="code", ["htm"]="code", ["css"]="code", ["js"]="code", ["mjs"]="code", ["ts"]="code", ["tsx"]="code", ["jsx"]="code", ["py"]="code", ["cs"]="code", ["json"]="code", ["xml"]="code", ["yaml"]="code", ["yml"]="code", ["sh"]="code", ["sql"]="code",
-        ["doc"]="doc", ["docx"]="doc", ["odt"]="doc", ["ppt"]="doc", ["pptx"]="doc", ["zip"]="archive", ["tar"]="archive", ["gz"]="archive", ["7z"]="archive", ["rar"]="archive"
+        ["doc"]="doc", ["docx"]="doc", ["odt"]="doc", ["ppt"]="doc", ["pptx"]="doc", ["zip"]="archive", ["tar"]="archive", ["gz"]="archive", ["7z"]="archive", ["rar"]="archive", ["diff"]="code"
     };
 
     private static readonly IReadOnlyDictionary<string, string> Mimes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -77,10 +77,10 @@ public static class LibraryKinds
     {
         "png" => "image/png", "jpg" or "jpeg" => "image/jpeg", "gif" => "image/gif", "webp" => "image/webp",
         "pdf" => "application/pdf", "mp4" => "video/mp4", "webm" => "video/webm", "mp3" => "audio/mpeg", "wav" => "audio/wav",
-        "txt" or "log" or "md" or "markdown" or "csv" or "tsv" or "json" or "py" or "cs" or "js" or "ts" or "tsx" or "jsx" or "css" or "sh" or "sql" or "yaml" or "yml" => "text/plain; charset=utf-8",
+        "txt" or "log" or "md" or "markdown" or "diff" or "csv" or "tsv" or "json" or "py" or "cs" or "js" or "ts" or "tsx" or "jsx" or "css" or "sh" or "sql" or "yaml" or "yml" => "text/plain; charset=utf-8",
         "html" or "htm" => "text/html", "svg" => "image/svg+xml", "xml" => "application/xml",
         _ when kind == "image" => "application/octet-stream", _ => "application/octet-stream"
     };
 
-    public static bool InlineSafe(string ext, string kind) => ext.ToLowerInvariant() is "png" or "jpg" or "jpeg" or "webp" or "gif" or "pdf" or "mp4" or "webm" or "mp3" or "wav" or "txt" or "md" or "markdown" or "json" or "csv" or "tsv" or "py" or "cs" or "js" or "ts" or "tsx" or "jsx" or "css" or "sh" or "sql" or "yaml" or "yml";
+    public static bool InlineSafe(string ext, string kind) => ext.ToLowerInvariant() is "png" or "jpg" or "jpeg" or "webp" or "gif" or "pdf" or "mp4" or "webm" or "mp3" or "wav" or "txt" or "md" or "markdown" or "diff" or "json" or "csv" or "tsv" or "py" or "cs" or "js" or "ts" or "tsx" or "jsx" or "css" or "sh" or "sql" or "yaml" or "yml";
 }

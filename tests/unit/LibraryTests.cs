@@ -77,4 +77,49 @@ public class LibraryTests
         Assert.Equal(at, decodedAt);
         Assert.Equal(id, decodedId);
     }
+
+    [Theory]
+    [InlineData("all", "TRUE")]
+    [InlineData("images", "kind IN ('image','screenshots')")]
+    [InlineData("screenshots", "source = 'screenshot'")]
+    [InlineData("pages", "kind = 'page'")]
+    public void SearchTypeFiltersUseOnlyKnownPredicates(string type, string expected) => Assert.Equal(expected, LibraryFilters.TypePredicate(type));
+
+    [Fact]
+    public void SearchTypeFilterRejectsUnknownValues() => Assert.Null(LibraryFilters.TypePredicate("anything"));
+
+    [Fact]
+    public void ShareTokensAreRandomAndOnlyTheirHashIsStored()
+    {
+        var first = LibraryShareTokens.Create();
+        var second = LibraryShareTokens.Create();
+        var hash = LibraryShareTokens.Hash(first);
+        Assert.Equal(64, first.Length);
+        Assert.NotEqual(first, second);
+        Assert.NotEqual(first, hash);
+        Assert.True(LibraryShareTokens.Matches(first, hash));
+        Assert.False(LibraryShareTokens.Matches(second, hash));
+        Assert.False(LibraryShareTokens.Matches("bad", hash));
+    }
+
+    [Fact]
+    public void OfficeAndDiffFilesHaveUsefulKinds()
+    {
+        Assert.Equal("doc", LibraryKinds.Detect("report.docx", "application/octet-stream"));
+        Assert.Equal("sheet", LibraryKinds.Detect("budget.xlsx", "application/octet-stream"));
+        Assert.Equal("doc", LibraryKinds.Detect("slides.pptx", "application/octet-stream"));
+        Assert.Equal("code", LibraryKinds.Detect("change.diff", "text/plain"));
+    }
+
+    [Theory]
+    [InlineData("bytes=2-5", 2, 5, true, true)]
+    [InlineData("bytes=8-", 8, 9, true, true)]
+    [InlineData("bytes=-3", 7, 9, true, true)]
+    [InlineData("bytes=10-", 0, 9, false, false)]
+    [InlineData("bytes=1-2,4-5", 0, 9, false, false)]
+    public void SharedContentRangesAreValidated(string header, long start, long end, bool partial, bool valid)
+    {
+        var range = LibraryContentRange.Resolve(header, 10);
+        Assert.Equal((start, end, partial, valid), range);
+    }
 }

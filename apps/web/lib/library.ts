@@ -9,6 +9,17 @@ export const GROUPS = [
   { key: "older", label: "Older" },
 ] as const;
 
+export const LIBRARY_FILTERS = ["All", "Images", "Documents", "Spreadsheets", "PDFs", "Video", "Code", "Screenshots", "Pages"] as const;
+export type LibraryFilter = typeof LIBRARY_FILTERS[number];
+
+export function libraryTypeParam(label: LibraryFilter): string {
+  return ({ All: "all", Images: "images", Documents: "documents", Spreadsheets: "spreadsheets", PDFs: "pdfs", Video: "video", Code: "code", Screenshots: "screenshots", Pages: "pages" } as const)[label];
+}
+
+export function nextLibraryRowIndex(current: number, offset: number, length: number): number {
+  return length <= 0 ? -1 : Math.max(0, Math.min(length - 1, current + offset));
+}
+
 const extensionKinds: Record<string, LibraryKind> = {
   png: "image", jpg: "image", jpeg: "image", gif: "image", webp: "image", bmp: "image", heic: "image",
   mp4: "video", webm: "video", mov: "video", mp3: "audio", wav: "audio", pdf: "pdf", txt: "text", log: "text",

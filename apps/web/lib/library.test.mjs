@@ -1,6 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { detectKind, formatAge, groupForTimestamp, sanitizeName } from "./library.mjs";
+import { detectKind, formatAge, groupForTimestamp, LIBRARY_FILTERS, libraryTypeParam, nextLibraryRowIndex, sanitizeName } from "./library.mjs";
+
+test("library filter chips map to API types and keyboard arrows stay in the visible rows", () => {
+  assert.deepEqual(LIBRARY_FILTERS, ["All", "Images", "Documents", "Spreadsheets", "PDFs", "Video", "Code", "Screenshots", "Pages"]);
+  assert.equal(libraryTypeParam("Screenshots"), "screenshots");
+  assert.equal(libraryTypeParam("Spreadsheets"), "spreadsheets");
+  assert.equal(nextLibraryRowIndex(0, -1, 3), 0);
+  assert.equal(nextLibraryRowIndex(1, 1, 3), 2);
+  assert.equal(nextLibraryRowIndex(0, 1, 0), -1);
+});
 
 test("detects known extensions before mime and falls back to mime for unknown extensions", () => {
   assert.equal(detectKind("photo.png", "text/plain"), "image");
