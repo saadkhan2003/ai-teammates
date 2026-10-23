@@ -59,6 +59,7 @@ class Recorder:
         self.clock = clock or time.monotonic
         self._lock = threading.RLock()
         self._active: dict | None = None
+        self._completed: dict[str, dict] = {}
 
     @staticmethod
     def _utc_now() -> str:
@@ -106,6 +107,10 @@ class Recorder:
     def stop(self, session_id: str | None = None, *, reason: str = "user_stop") -> dict:
         with self._lock:
             session = self._active
+            if session is None and session_id is not None:
+                completed = self._completed.pop(session_id, None)
+                if completed is not None:
+                    return {"id": completed["id"], "videoPath": str(completed["video"]), "metadata": dict(completed["metadata"])}
             if session is None or (session_id is not None and session["id"] != session_id):
                 raise KeyError("recording session not found")
             process = session["process"]
@@ -128,6 +133,8 @@ class Recorder:
             session["metadata"].update(status="finished", endedAt=self._utc_now(), endReason=reason)
             self._write(session)
             self._active = None
+            if reason == "max_duration":
+                self._completed[session["id"]] = session
             return {"id": session["id"], "videoPath": str(session["video"]), "metadata": dict(session["metadata"])}
 
     def reap(self) -> list[str]:

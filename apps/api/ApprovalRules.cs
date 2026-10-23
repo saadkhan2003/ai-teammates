@@ -7,6 +7,10 @@ namespace Teammates.Api;
 /// <summary>Exact, narrow remembered approvals for shell command shapes.</summary>
 public static class ApprovalRules
 {
+    private static readonly char[] ShellSyntax = [';', '|', '&', '<', '>', '$', '`', '(', ')', '\\', '\'', '"', '*', '?', '[', ']', '{', '}', '~', '#', '!', '\r', '\n'];
+
+    public static bool MayOverrideReviewerAsk(string personalMode) => !string.Equals(personalMode, PolicyEngine.Ask, StringComparison.Ordinal);
+
     public static string? CommandShapeHash(string tool, JsonElement args)
     {
         if (tool != "shell" || args.ValueKind != JsonValueKind.Object) return null;
@@ -27,6 +31,9 @@ public static class ApprovalRules
         }
         if (argv.Count is < 1 or > 128 || argv.Any(x => string.IsNullOrWhiteSpace(x) || x.Length > 4096 || x.Contains('\0')))
             return null;
+        // Remembered approvals are for direct, inert command shapes only. Shell syntax,
+        // quoting and expansions are never eligible for persistent allow rules.
+        if (argv.Any(x => x.IndexOfAny(ShellSyntax) >= 0)) return null;
         argv = argv.Select(x => x.Trim()).ToList();
         if (argv.Sum(x => x.Length) > 16384) return null;
         var canonical = JsonSerializer.Serialize(argv);

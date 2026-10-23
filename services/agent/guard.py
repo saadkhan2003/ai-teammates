@@ -173,7 +173,11 @@ def scrub(value):
     return value
 
 
-RISKY_PREEXEC_TOOLS = {"shell", "setup_env", "write_file", "edit_file", "delete_file", "external_post", "send_message", "sign", "computer_use", "delegate"}
+RISKY_PREEXEC_TOOLS = {
+    "shell", "setup_env", "write_file", "edit_file", "delete_file", "external_post", "send_message", "sign",
+    "browser_click", "computer_click", "computer_type", "computer_key", "computer_use", "launch_app", "open_app",
+    "automation_write", "delegate", "message_bot", "create_routine", "update_routine",
+}
 
 
 def normalize_argv(argv) -> list[str]:
@@ -214,7 +218,7 @@ def preexec_decision(tool: str, args: dict, request, *, endpoint: str = "/intern
         if getattr(response, "status_code", 500) != 200:
             return "deny"
         result = response.json()
-        if not isinstance(result, dict) or result.get("decision") not in {"allow", "deny"}:
+        if not isinstance(result, dict) or result.get("decision") not in {"allow", "ask", "deny"}:
             return "deny"
         return result["decision"]
     except Exception:

@@ -91,6 +91,12 @@ def test_preexec_gate_fails_closed_for_risky_calls():
         def json(self):
             return {"decision": "deny"}
     assert preexec_decision("shell", {"command": "rm -rf /tmp/demo"}, lambda *_, **__: Denied()) == "deny"
+    assert preexec_decision("browser_click", {"selector": "#submit"}, lambda *_, **__: Denied()) == "deny"
+    class Asked:
+        status_code = 200
+        def json(self):
+            return {"decision": "ask", "status": "waiting_approval"}
+    assert preexec_decision("shell", {"command": "rm -rf /tmp/demo"}, lambda *_, **__: Asked()) == "ask"
 
 
 def test_shell_shape_uses_normalized_argv_without_substring_matching():

@@ -137,6 +137,7 @@ catch (Exception ex)
     app.Logger.LogError("computer isolation alert: computers will not start ({Message})", ex.Message);
 }
 Routes.Map(app, platform, runtime);
+TeachRoutes.Map(app, platform);
 SecurityRoutes.Map(app, platform, loginFlow);
 BotMessaging.Map(app, platform);
 Devices.Map(app, platform);

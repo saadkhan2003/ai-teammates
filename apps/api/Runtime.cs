@@ -69,6 +69,8 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
                 return Results.StatusCode(409);
             return Results.Json(new { decision = "ask", status = "waiting_approval", riskClass = gated.RiskClass, summary = gated.Summary });
         }
+        await platform.Audit("policy", "tool.allowed", botId, taskId,
+            new { tool, reason = gated.Reason, riskClass = gated.RiskClass });
         if (tool == "browser_open" && Uri.TryCreate(Arg(args, "url"), UriKind.Absolute, out var uri))
         {
             await using var conn = await platform.Data.OpenConnectionAsync(ct);
@@ -99,6 +101,8 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
                 return Results.StatusCode(409);
             return Results.Json(new { decision = "ask", status = "waiting_approval", riskClass = gated.RiskClass, summary = gated.Summary });
         }
+        await platform.Audit("policy", "tool.allowed", botId, taskId,
+            new { tool, reason = gated.Reason, riskClass = gated.RiskClass });
         return Results.Json(new { decision = "allow" });
     }
 
@@ -647,7 +651,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         var decision = PolicyGate.Evaluate(tool, args, seen, policy, rules, instruction, approved, grants, hint, peerOrigin);
         if (decision.Decision != PolicyEngine.Deny && !decision.HardDeny && await _reviewer.ReviewAsync(tool, args, ct) == "ask")
             decision = decision with { Decision = PolicyEngine.Ask, Reason = "review_required" };
-        if (decision.Decision == PolicyEngine.Ask && !decision.HardDeny && policy.Mode(decision.RiskClass) != PolicyEngine.Ask
+        if (decision.Decision == PolicyEngine.Ask && !decision.HardDeny && ApprovalRules.MayOverrideReviewerAsk(policy.Mode(decision.RiskClass))
             && ApprovalRules.CommandShapeHash(tool, args) is { } shape)
         {
             var remembered = await conn.ExecuteScalarAsync<int>(
@@ -759,6 +763,8 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         await conn.ExecuteAsync(
             "INSERT INTO approvals (bot_id, task_id, action, target, proposed, reason, risk_class, summary) VALUES (@bot, @task, @tool, @target, @proposed::jsonb, @reason, @risk, @summary)",
             new { bot = botId, task = taskId, tool, target, proposed, reason, risk = riskClass, summary });
+        await platform.Audit("policy", "approval.required", botId, taskId,
+            new { tool, riskClass, decision = "ask" });
         var owner = await conn.ExecuteScalarAsync<Guid?>("SELECT owner_id FROM bots WHERE id=@id", new { id = botId });
         if (owner != null) await platform.Notify(owner.Value, "approval", "Approval needed", $"{tool} {target}".Trim());
         if (!await SetTask(taskId, "waiting_approval", tool, clearLease: true, epoch, ct))

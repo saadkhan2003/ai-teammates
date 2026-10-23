@@ -68,6 +68,9 @@ def test_teach_auto_stops_at_cap_and_writes_metadata(tmp_path):
     assert metadata["endReason"] == "max_duration"
     assert metadata["maxDurationMs"] == 600000
     assert runner.process.terminated
+    completed = recorder.stop(session["id"])
+    assert completed["metadata"]["status"] == "finished"
+    assert completed["metadata"]["endReason"] == "max_duration"
 
 
 def test_killed_ffmpeg_marks_failed_and_cleans_partial_video(tmp_path):
