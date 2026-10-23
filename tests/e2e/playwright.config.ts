@@ -14,7 +14,7 @@ export default defineConfig({
   },
   workers: 1,
   projects: [
-    { name: "desktop", testMatch: /(?:acceptance|security|links|vnc-lifecycle|computer-view|question-card|plugins|new-teammate-form|create-bot|about|account-menu|settings-modal|shortcuts|settings-computer|chat-polish|events|refresh-notice|library-share|library-section|library-search|chat-features|teach-task|bot-messaging|reply-ux|routines-section|coding-section|computer-card|chat-pill)\.spec\.ts/, use: { ...devices["Desktop Chrome"] } },
+    { name: "desktop", testMatch: /(?:acceptance|security|links|vnc-lifecycle|computer-view|question-card|memory-notes|plugins|new-teammate-form|create-bot|about|account-menu|settings-modal|shortcuts|settings-computer|chat-polish|events|refresh-notice|library-share|library-section|library-search|chat-features|teach-task|bot-messaging|reply-ux|routines-section|coding-section|computer-card|chat-pill)\.spec\.ts/, use: { ...devices["Desktop Chrome"] } },
     {
       name: "iphone-13",
       testMatch: /mobile\.spec\.ts|question-card\.spec\.ts|plugins\.spec\.ts/,

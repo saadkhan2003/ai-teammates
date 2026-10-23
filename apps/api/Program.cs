@@ -279,12 +279,8 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
 
     private static async Task<string?> WatchMemory(NpgsqlConnection conn, Guid botId)
     {
-        var rows = await conn.QueryAsync<string>("SELECT content FROM memories WHERE bot_id=@id ORDER BY updated_at DESC LIMIT 50", new { id = botId });
-        return string.Join('\n', rows.Select(row =>
-        {
-            var text = row ?? "";
-            return text.Length > 500 ? text[..500] : text;
-        }));
+        var rows = await conn.QueryAsync<(Guid Id, DateTime UpdatedAt)>("SELECT id, updated_at FROM memories WHERE bot_id=@id AND status='active' AND deleted_at IS NULL AND author NOT IN ('routine','peer') ORDER BY updated_at DESC LIMIT 50", new { id = botId });
+        return string.Join('\n', rows.Select(row => row.Id.ToString("N") + ":" + row.UpdatedAt.ToUniversalTime().Ticks));
     }
 
     private async Task ResumeRecoveredComputers(CancellationToken ct)
