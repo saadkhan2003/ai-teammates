@@ -161,6 +161,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
             }
         }
         var completed = false;
+        object? snapshot = null;
         try
         {
             var output = await Dispatch(owner, botId, taskId, tool, args, ct);
@@ -182,6 +183,8 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
                 return Results.Json(output);
             }
             await Step(taskId, tool, args, decision, true, output, EpochOf(body));
+            if ((tool is "write_file" or "edit_file" or "git_commit" or "shell") && SuccessfulMutation(tool, output))
+                snapshot = await TrySnapshot(botId, taskId, EpochOf(body), tool, args, ct);
             if (dedupe)
             {
                 var safeResult = InjectionFilter.ScrubJson(JsonSerializer.Serialize(output));
@@ -192,7 +195,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
                     """, new { taskId, key = idempotencyKey, result = safeResult });
                 completed = updated == 1;
             }
-            return Results.Json(new { ok = true, output });
+            return Results.Json(new { ok = true, output, snapshot });
         }
         catch (ToolHalt halt)
         {
@@ -215,6 +218,78 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
                 await using var conn = await platform.Data.OpenConnectionAsync(CancellationToken.None);
                 await conn.ExecuteAsync("DELETE FROM tool_execution_dedupe WHERE task_id=@taskId AND idempotency_key=@key AND status='in_progress'", new { taskId, key = idempotencyKey });
             }
+        }
+    }
+
+    private static bool SuccessfulMutation(string tool, object output)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(JsonSerializer.Serialize(output));
+            var root = doc.RootElement;
+            if (root.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.False) return false;
+            return !root.TryGetProperty("exitCode", out var code) || code.GetInt32() == 0;
+        }
+        catch { return false; }
+    }
+
+    private async Task<object?> TrySnapshot(Guid botId, Guid taskId, int epoch, string tool, JsonElement args, CancellationToken ct)
+    {
+        try
+        {
+            await using var conn = await platform.Data.OpenConnectionAsync(ct);
+            var checkpoint = await conn.ExecuteScalarAsync<string>("SELECT checkpoint::text FROM tasks WHERE id=@task", new { task = taskId });
+            var ledger = TaskCheckpoint.Read(checkpoint);
+            var interval = int.TryParse(Environment.GetEnvironmentVariable("SNAPSHOT_MIN_INTERVAL_SECONDS"), out var configured) ? Math.Clamp(configured, 30, 86400) : 300;
+            if (DateTimeOffset.TryParse((string?)ledger["snapshotAt"], out var previous) && DateTimeOffset.UtcNow - previous < TimeSpan.FromSeconds(interval)) return null;
+            var candidates = new List<string>();
+            if (args.TryGetProperty("repo", out var repoEl))
+            {
+                var repo = CodingTools.Repo(repoEl.GetString() ?? ".");
+                if (repo == null) return null;
+                candidates.Add(repo);
+            }
+            else if ((tool is "write_file" or "edit_file") && args.TryGetProperty("path", out var fileEl))
+            {
+                var file = fileEl.GetString() ?? "";
+                if (file.StartsWith("/workspace/", StringComparison.Ordinal)) file = file[11..];
+                if (file.StartsWith('/') || file.Split('/').Contains("..")) return null;
+                var parts = file.Split('/', StringSplitOptions.RemoveEmptyEntries).ToList();
+                if (parts.Count > 0) parts.RemoveAt(parts.Count - 1);
+                while (parts.Count > 0) { candidates.Add(string.Join('/', parts)); parts.RemoveAt(parts.Count - 1); }
+                candidates.Add(".");
+            }
+            else candidates.Add(".");
+            var placement = await platform.PlacementForBot(botId, ct);
+            string? path = null;
+            foreach (var candidate in candidates)
+            {
+                var candidatePath = BotFs.Root(botId) + (candidate == "." ? "" : "/" + candidate);
+                var (checkCode, _, _) = await Run(placement.Computer, botId, ["git", "-C", candidatePath, "rev-parse", "--git-dir"], null, ct);
+                if (checkCode == 0) { path = candidatePath; break; }
+            }
+            if (path == null) return null;
+            if (tool == "shell")
+            {
+                var (statusCode, status, _) = await Run(placement.Computer, botId, ["git", "-C", path, "status", "--porcelain"], null, ct);
+                if (statusCode != 0 || string.IsNullOrWhiteSpace(status)) return null;
+            }
+            var (stashCode, sha, _) = await Run(placement.Computer, botId, ["git", "-C", path, "stash", "create"], null, ct);
+            sha = sha.Trim();
+            if (stashCode != 0 || sha.Length != 40) return null;
+            var reference = "refs/teammates/checkpoints/" + taskId.ToString("N")[..8];
+            var (refCode, _, _) = await Run(placement.Computer, botId, ["git", "-C", path, "update-ref", reference, sha], null, ct);
+            if (refCode != 0) return null;
+            var at = DateTimeOffset.UtcNow;
+            ledger["snapshotRef"] = reference;
+            ledger["snapshotAt"] = at.ToString("O");
+            await conn.ExecuteAsync("UPDATE tasks SET checkpoint=@checkpoint::jsonb WHERE id=@task AND status='running' AND lease_epoch=@epoch", new { task = taskId, epoch, checkpoint = TaskCheckpoint.Bounded(ledger) });
+            return new { snapshotRef = reference, snapshotAt = at.ToString("O") };
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.TraceWarning("git snapshot skipped ({0})", ex.GetType().Name);
+            return null;
         }
     }
 

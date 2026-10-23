@@ -23,7 +23,7 @@ public static class TaskCheckpoint
         json = ledger.ToJsonString();
         if (System.Text.Encoding.UTF8.GetByteCount(json) <= MaxBytes) return json;
         var keep = new JsonObject { ["v"] = 1 };
-        foreach (var key in new[] { "stepsUsed", "secondsUsed", "secondsBeforeAttempt", "attemptStepsAtStart", "modelRounds", "attempts", "lastToolCallId", "lastProgressAt", "attemptStartedAt", "lastLeaseAt", "lastAttemptProgress" })
+        foreach (var key in new[] { "stepsUsed", "secondsUsed", "secondsBeforeAttempt", "attemptStepsAtStart", "modelRounds", "attempts", "lastToolCallId", "lastProgressAt", "attemptStartedAt", "lastLeaseAt", "lastAttemptProgress", "snapshotRef", "snapshotAt", "inFlightToolStartedAt", "inFlightToolTimeoutSeconds", "compactions", "lastCompactionAt", "compactionsWithoutRelief" })
             if (ledger[key] is { } value) keep[key] = value.DeepClone();
         return keep.ToJsonString();
     }

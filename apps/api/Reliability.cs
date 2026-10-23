@@ -23,7 +23,7 @@ public static class Reliability
     public static int BackoffSeconds(int consecutiveNoProgressResumes) => Math.Min(60, 2 * (1 << Math.Clamp(consecutiveNoProgressResumes - 1, 0, 5)));
 
     public static bool IsExcluded(string? status) => status is "waiting_approval" or "waiting_human" or "cancelled";
-    public static bool IsAutoResumeReason(string? reason) => reason is "lease_expired" or "computer_recovered" or "network_interrupted" or "attempt_limit";
+    public static bool IsAutoResumeReason(string? reason) => reason is "lease_expired" or "computer_recovered" or "network_interrupted" or "attempt_limit" or "stalled";
     public static int RecentAutoResumes(JsonArray attempts, DateTimeOffset now) => attempts
         .OfType<JsonObject>()
         .Count(x => DateTimeOffset.TryParse((string?)x["endedAt"], out var end) && end >= now.AddHours(-1) && IsAutoResumeReason((string?)x["endReason"]));
@@ -33,7 +33,7 @@ public static class Reliability
         var count = 0;
         foreach (var item in attempts.OfType<JsonObject>().Reverse())
         {
-            if ((string?)item["endReason"] is not ("lease_expired" or "computer_recovered" or "network_interrupted")) continue;
+            if ((string?)item["endReason"] is not ("lease_expired" or "computer_recovered" or "network_interrupted" or "stalled")) continue;
             if ((bool?)item["progress"] == true) break;
             count++;
         }
@@ -65,13 +65,15 @@ public static class Reliability
                 var started = DateTimeOffset.TryParse((string?)ledger["attemptStartedAt"], out var at) ? at : now;
                 var lastProgress = DateTimeOffset.TryParse((string?)ledger["lastProgressAt"], out var progressAt) ? progressAt : DateTimeOffset.MinValue;
                 var progress = lastProgress > started;
+                var endReason = (string?)ledger["stallEndReason"] == "stalled" ? "stalled" : "lease_expired";
+                ledger.Remove("stallEndReason");
                 await AttemptLog.Record(conn, tx, task.Id, task.Attempt, started, now,
                     Math.Max(task.ToolCalls, task.Steps - ((int?)ledger["attemptStepsAtStart"] ?? 0)),
-                    "lease_expired", progress, task.Worker);
+                    endReason, progress, task.Worker);
                 var attempts = ledger["attempts"] as JsonArray ?? new JsonArray();
                 attempts.Add(new JsonObject {
                     ["n"] = task.Attempt, ["startedAt"] = started.ToString("O"), ["endedAt"] = now.ToString("O"),
-                    ["endReason"] = "lease_expired", ["stepsAtEnd"] = task.Steps, ["progress"] = progress
+                    ["endReason"] = endReason, ["stepsAtEnd"] = task.Steps, ["progress"] = progress
                 });
                 while (attempts.Count > 16) attempts.RemoveAt(0);
                 var withinHour = RecentAutoResumes(attempts, now);
@@ -95,7 +97,7 @@ public static class Reliability
                 {
                     var delay = BackoffSeconds(noProgress);
                     await conn.ExecuteAsync("UPDATE tasks SET status='queued',waiting_reason='lease_expired',checkpoint=@json::jsonb,lease_owner=NULL,lease_until=NULL,resume_after=now()+(@delay * interval '1 second'),updated_at=now() WHERE id=@id AND status='running'", new { task.Id, json, delay }, tx);
-                    pendingEvents.Add((task.Id, "resume_scheduled", new { attempt = task.Attempt, reason = "lease_expired", backoffSeconds = delay, stepsUsed = task.Steps }));
+                    pendingEvents.Add((task.Id, "resume_scheduled", new { attempt = task.Attempt, reason = endReason, backoffSeconds = delay, stepsUsed = task.Steps }));
                     requeued = true;
                 }
             }

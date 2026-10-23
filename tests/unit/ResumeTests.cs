@@ -21,6 +21,14 @@ public class ResumeTests
     }
 
     [Fact]
+    public void ResumeBriefIncludesSavedSnapshotWhenPresent()
+    {
+        var brief = ResumeBrief.Build(2, "stalled", 15, 200, "continue", [], null,
+            "refs/teammates/checkpoints/12345678", "2026-10-24T00:00:00Z");
+        Assert.Contains("Saved snapshot ref refs/teammates/checkpoints/12345678 at 2026-10-24T00:00:00Z", brief);
+    }
+
+    [Fact]
     public void ResumeNoticeCollapseIncrementsOnlyWithinFifteenMinutes()
     {
         var now = DateTimeOffset.UtcNow;

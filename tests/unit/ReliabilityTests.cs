@@ -118,6 +118,14 @@ public class ReliabilityTests
         Assert.Null(DurationEstimate.Range([60,120]));
         Assert.Equal("passing", CiSummary.From("""[{"name":"unit","state":"SUCCESS","link":"x"}]""").State);
     }
+
+    [Theory]
+    [InlineData(179, false, "None")]
+    [InlineData(180, false, "ForceCompact")]
+    [InlineData(300, true, "None")]
+    [InlineData(600, true, "Abandon")]
+    public void StallEscalationUsesSoftAndHardLimits(double seconds, bool forced, string expected) =>
+        Assert.Equal(expected, StallEscalation.Decide(seconds, 180, 600, forced).ToString());
     [Theory]
     [InlineData("waiting_resource", "connect_openrouter", true)]
     [InlineData("waiting_resource", "computer_recovering", false)]

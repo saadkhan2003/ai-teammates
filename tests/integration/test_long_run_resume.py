@@ -85,6 +85,32 @@ def _worker_tool(body):
         return exc.code, json.loads(exc.read())
 
 
+def _lease(worker_id):
+    request = urllib.request.Request(
+        API + "/internal/tasks/lease", data=json.dumps({"workerId": worker_id, "max": 10}).encode(),
+        method="POST", headers={"Authorization": "Bearer " + WORKER, "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.loads(response.read())
+
+
+def test_force_compact_stall_flag_is_returned_on_lease():
+    client, bot, _, task = _setup()
+    worker_id = "stall-check-" + uuid.uuid4().hex[:8]
+    try:
+        _psql(f"UPDATE tasks SET status='queued',checkpoint='{{\"lastProgressAt\":\"2000-01-01T00:00:00Z\"}}'::jsonb,force_compact=false WHERE id='{task}'")
+        leases = _lease(worker_id)
+        leased = next(item for item in leases if item["id"] == task)
+        assert leased.get("force_compact") is False
+        _wait_for(f"SELECT force_compact::text FROM tasks WHERE id='{task}'", "true", timeout=10)
+        _psql(f"UPDATE tasks SET status='queued',lease_owner=NULL,lease_until=NULL WHERE id='{task}'")
+        leases = _lease(worker_id)
+        leased = next(item for item in leases if item["id"] == task)
+        assert leased.get("force_compact") is True
+    finally:
+        _cleanup(client, bot, task)
+
+
 def _compact(task, body):
     request = urllib.request.Request(
         API + f"/internal/tasks/{task}/compact",

@@ -5,7 +5,8 @@ namespace Teammates.Api;
 public static class ResumeBrief
 {
     public static string Build(int attempt, string reason, int stepsUsed, int maxSteps, string instruction,
-        IReadOnlyList<(int Index, string Title, string Status)> plan, string? lastCommit)
+        IReadOnlyList<(int Index, string Title, string Status)> plan, string? lastCommit,
+        string? snapshotRef = null, string? snapshotAt = null)
     {
         static string Clean(string? value, int limit = int.MaxValue)
         {
@@ -24,6 +25,7 @@ public static class ResumeBrief
             Plan:
             {planText}
             Repo state: last commit {commit}.
+            {(string.IsNullOrWhiteSpace(snapshotRef) ? "" : $"Saved snapshot ref {Clean(snapshotRef, 100)} at {Clean(snapshotAt, 80)}.")}
             Calls with unknown outcome may have partly run. Check their result before repeating them. Do not repeat sends, payments, or deletes without verifying.
             Next: check the current plan item and continue. Do not restart finished items.
             """)));

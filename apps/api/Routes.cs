@@ -1171,8 +1171,8 @@ public static class Routes
             var wake = new HashSet<string>();
             foreach (var id in ids)
             {
-                var task = await conn.QuerySingleAsync<(Guid Id, Guid BotId, string Instruction, string Kind, int Attempt, int Epoch, string? Checkpoint, Guid? SkillId, Guid? ConversationId, Guid? SourceMessageId, string? PreviousReason)>(
-                "UPDATE tasks SET status='running', lease_owner=@worker, lease_until=now()+interval '20 seconds', lease_epoch=lease_epoch+1, attempt=attempt+1, started_at=coalesce(started_at, now()), last_progress_at=now(), resume_after=NULL, updated_at=now() WHERE id=@id RETURNING id, bot_id, instruction, kind, attempt, lease_epoch, checkpoint::text, skill_id, conversation_id, source_message_id, waiting_reason AS previous_reason",
+                var task = await conn.QuerySingleAsync<(Guid Id, Guid BotId, string Instruction, string Kind, int Attempt, int Epoch, string? Checkpoint, Guid? SkillId, Guid? ConversationId, Guid? SourceMessageId, string? PreviousReason, bool ForceCompact)>(
+                "UPDATE tasks SET status='running', lease_owner=@worker, lease_until=now()+interval '20 seconds', lease_epoch=lease_epoch+1, attempt=attempt+1, started_at=coalesce(started_at, now()), last_progress_at=now(), resume_after=NULL, updated_at=now() WHERE id=@id RETURNING id, bot_id, instruction, kind, attempt, lease_epoch, checkpoint::text, skill_id, conversation_id, source_message_id, waiting_reason AS previous_reason, force_compact",
                     new { id, worker }, tx);
                 var budget = await conn.QuerySingleAsync<(int? TaskSteps, int? TaskSeconds, int? BotSteps, int? BotSeconds, bool? TaskPause, bool? BotPause)>("SELECT t.budget_steps,t.budget_seconds,b.default_budget_steps,b.default_budget_seconds,t.pause_on_budget,b.pause_on_budget FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE t.id=@id", new { id }, tx);
                 var resolvedBudget = RunBudget.Resolve(budget.TaskSteps, budget.TaskSeconds, budget.BotSteps, budget.BotSeconds);
@@ -1189,7 +1189,7 @@ public static class Routes
                 ledger["attemptStartedAt"] = DateTimeOffset.UtcNow.ToString("O");
                 var checkpointJson = TaskCheckpoint.Bounded(ledger);
                 await conn.ExecuteAsync("UPDATE tasks SET checkpoint=@checkpoint::jsonb WHERE id=@id AND lease_epoch=@epoch", new { id, checkpoint = checkpointJson, epoch = task.Epoch }, tx);
-                if (previousReason is "lease_expired" or "computer_recovered" or "network_interrupted" or "attempt_limit") resumedEvents.Add((id, task.Attempt, previousReason, priorSteps));
+                if (previousReason is "lease_expired" or "computer_recovered" or "network_interrupted" or "attempt_limit" or "stalled") resumedEvents.Add((id, task.Attempt, previousReason, priorSteps));
                 var feedback = (await conn.QueryAsync<(Guid MessageId, string Emoji, string Action)>(
                     """
                     UPDATE bot_feedback SET consumed_at=now(), task_id=@task
@@ -1211,14 +1211,15 @@ public static class Routes
                 var dns = DockerComputeProvider.ContainerName(placement.Computer);
                 var maxRounds = task.Kind == "coding" ? platform.CodingRoundsCumulative : 12;
                 object? resume = null;
-                if (previousReason is "lease_expired" or "computer_recovered" or "network_interrupted" or "attempt_limit")
+                if (previousReason is "lease_expired" or "computer_recovered" or "network_interrupted" or "attempt_limit" or "stalled")
                 {
                     var planRows = (await conn.QueryAsync<(int Position, string Title, string Status)>("SELECT position,title,status FROM task_plan_items WHERE task_id=@id ORDER BY position", new { id }, tx)).Select(p => (p.Position, p.Title, p.Status)).ToArray();
                     var lastCommit = (string?)ledger["lastCommit"]?["sha"];
-                    var brief = ResumeBrief.Build(task.Attempt, previousReason, priorSteps, resolvedBudget.MaxSteps, task.Instruction, planRows, lastCommit);
-                    resume = new { brief, interrupted = previousReason is "lease_expired" or "computer_recovered" or "network_interrupted" };
+                    var brief = ResumeBrief.Build(task.Attempt, previousReason, priorSteps, resolvedBudget.MaxSteps, task.Instruction, planRows, lastCommit,
+                        (string?)ledger["snapshotRef"], (string?)ledger["snapshotAt"]);
+                    resume = new { brief, interrupted = previousReason is "lease_expired" or "computer_recovered" or "network_interrupted" or "stalled" };
                 }
-                rows.Add(new { id = task.Id, botId = task.BotId, computerId = placement.Computer.Value, cdpUrl = $"http://{dns}:9222", instruction = task.Instruction, kind = task.Kind, attempt = task.Attempt, epoch = task.Epoch, checkpoint = checkpointJson, conversationId = task.ConversationId, messageId = task.SourceMessageId, feedback, skill = skillJson, resume, budget = new { maxSteps = resolvedBudget.MaxSteps, maxSeconds = resolvedBudget.MaxSeconds, maxAttemptSteps = Math.Min(400, resolvedBudget.MaxSteps), maxAttemptSeconds = Math.Min(1800, resolvedBudget.MaxSeconds), maxRounds = task.Kind == "coding" ? platform.CodingRounds : 12, maxRoundsCumulative = maxRounds, pauseOnBudget, label = resolvedBudget.Label } });
+                rows.Add(new { id = task.Id, botId = task.BotId, computerId = placement.Computer.Value, cdpUrl = $"http://{dns}:9222", instruction = task.Instruction, kind = task.Kind, attempt = task.Attempt, epoch = task.Epoch, checkpoint = checkpointJson, force_compact = task.ForceCompact, conversationId = task.ConversationId, messageId = task.SourceMessageId, feedback, skill = skillJson, resume, budget = new { maxSteps = resolvedBudget.MaxSteps, maxSeconds = resolvedBudget.MaxSeconds, maxAttemptSteps = Math.Min(400, resolvedBudget.MaxSteps), maxAttemptSeconds = Math.Min(1800, resolvedBudget.MaxSeconds), maxRounds = task.Kind == "coding" ? platform.CodingRounds : 12, maxRoundsCumulative = maxRounds, pauseOnBudget, label = resolvedBudget.Label } });
                 wake.Add(placement.Computer.Value);
             }
             await tx.CommitAsync();
@@ -1250,10 +1251,10 @@ public static class Routes
             if (!Worker(ctx, platform)) return Results.Unauthorized();
             await using var conn = await platform.Data.OpenConnectionAsync();
             await using var tx = await conn.BeginTransactionAsync();
-            var row = await conn.QuerySingleOrDefaultAsync<(bool Nudge, string? Checkpoint, int Rounds, int Steps)>("""
+            var row = await conn.QuerySingleOrDefaultAsync<(bool Nudge, bool ForceCompact, string? Checkpoint, int Rounds, int Steps)>("""
                 UPDATE tasks SET lease_until=now()+interval '20 seconds', updated_at=now()
                 WHERE id=@id AND lease_owner=@worker AND lease_epoch=@epoch AND status='running'
-                RETURNING nudge_pending, checkpoint::text, model_calls,
+                RETURNING nudge_pending, force_compact, checkpoint::text, model_calls,
                     (SELECT count(*)::int FROM task_steps WHERE task_id=@id)
                 """, new { id, worker = body.GetProperty("workerId").GetString(), epoch = body.GetProperty("epoch").GetInt32() }, tx);
             if (row.Checkpoint == null) return Results.StatusCode(409);
@@ -1268,10 +1269,25 @@ public static class Routes
                 ledger["lastToolCallId"] = TaskCheckpoint.Id(callId.GetString());
             if (body.TryGetProperty("lastProgressAt", out var progress) && progress.ValueKind == JsonValueKind.String && DateTimeOffset.TryParse(progress.GetString(), out var progressAt))
                 ledger["lastProgressAt"] = progressAt.ToString("O");
+            if (body.TryGetProperty("snapshotRef", out var snapshotRef) && snapshotRef.ValueKind == JsonValueKind.String && snapshotRef.GetString() is { Length: <= 120 } snapshot)
+                ledger["snapshotRef"] = snapshot;
+            if (body.TryGetProperty("snapshotAt", out var snapshotAt) && snapshotAt.ValueKind == JsonValueKind.String && DateTimeOffset.TryParse(snapshotAt.GetString(), out var snapshotTime))
+                ledger["snapshotAt"] = snapshotTime.ToString("O");
+            if (body.TryGetProperty("inFlightToolStartedAt", out var inFlight) && inFlight.ValueKind == JsonValueKind.String && DateTimeOffset.TryParse(inFlight.GetString(), out var inFlightAt))
+            {
+                ledger["inFlightToolStartedAt"] = inFlightAt.ToString("O");
+                if (body.TryGetProperty("inFlightToolTimeoutSeconds", out var inFlightTimeout) && inFlightTimeout.TryGetInt32(out var seconds))
+                    ledger["inFlightToolTimeoutSeconds"] = Math.Clamp(seconds, 1, 600);
+            }
+            else if (body.TryGetProperty("inFlightToolStartedAt", out inFlight) && inFlight.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            {
+                ledger.Remove("inFlightToolStartedAt");
+                ledger.Remove("inFlightToolTimeoutSeconds");
+            }
             var bounded = TaskCheckpoint.Bounded(ledger);
             await conn.ExecuteAsync("UPDATE tasks SET checkpoint=@checkpoint::jsonb,nudge_pending=false WHERE id=@id AND lease_epoch=@epoch", new { id, checkpoint = bounded, epoch = body.GetProperty("epoch").GetInt32() }, tx);
             await tx.CommitAsync();
-            return Results.Json(new { ok = true, nudge = row.Nudge });
+            return Results.Json(new { ok = true, nudge = row.Nudge, force_compact = row.ForceCompact });
         });
 
         app.MapGet("/internal/tasks/{id:guid}/transcript", async (HttpContext ctx, Guid id) =>
@@ -1385,7 +1401,7 @@ public static class Routes
             ledger["lastCompactionAt"] = DateTimeOffset.UtcNow.ToString("O");
             if (stats.ValueKind == JsonValueKind.Object && stats.TryGetProperty("compactionsWithoutRelief", out var streak) && streak.TryGetInt32(out var streakCount))
                 ledger["compactionsWithoutRelief"] = Math.Clamp(streakCount, 0, 2);
-            await conn.ExecuteAsync("UPDATE tasks SET checkpoint=@checkpoint::jsonb,last_progress_at=now(),updated_at=now() WHERE id=@id AND status='running' AND lease_epoch=@epoch", new { id, epoch, checkpoint = TaskCheckpoint.Bounded(ledger) }, tx);
+            await conn.ExecuteAsync("UPDATE tasks SET checkpoint=@checkpoint::jsonb,last_progress_at=now(),force_compact=false,updated_at=now() WHERE id=@id AND status='running' AND lease_epoch=@epoch", new { id, epoch, checkpoint = TaskCheckpoint.Bounded(ledger) }, tx);
             if (task.ConversationId != null)
             {
                 var notice = ResumeNotices.BuildCompactedNotice(id, archived, Math.Min(20, incoming.Length));

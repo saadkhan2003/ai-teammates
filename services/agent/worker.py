@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import traceback
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -194,7 +195,10 @@ class Worker:
                      "stepsUsed": int(task.get("_stepsUsed", 0)),
                      "modelRounds": int(task.get("_modelRounds", 0)),
                      "lastToolCallId": str(task.get("_lastToolCallId", ""))[:100],
-                     "lastProgressAt": task.get("_lastProgressAt")},
+                     "lastProgressAt": task.get("_lastProgressAt"),
+                     "snapshotRef": task.get("_snapshotRef"), "snapshotAt": task.get("_snapshotAt"),
+                     "inFlightToolStartedAt": task.get("_toolInFlightSince"),
+                     "inFlightToolTimeoutSeconds": task.get("_toolTimeoutSeconds", 120)},
                 )
             except asyncio.CancelledError:
                 raise
@@ -207,6 +211,8 @@ class Worker:
                 try:
                     if response.json().get("nudge"):
                         await self._append_nudge(task)
+                    if response.json().get("force_compact"):
+                        task["_forceCompact"] = True
                 except (ValueError, AttributeError):
                     pass
             if stop.is_set():
@@ -267,6 +273,7 @@ class Worker:
         task["_lastPromptTokens"] = int(task.get("_lastPromptTokens", task.get("lastPromptTokens", 0)) or 0)
         task["_compactionsWithoutRelief"] = int(checkpoint.get("compactionsWithoutRelief", 0))
         task["_justCompacted"] = False
+        task["_forceCompact"] = bool(task.get("force_compact", False))
         guard = RunGuard(
             max_steps=int(budget.get("maxSteps", 200)), max_seconds=float(budget.get("maxSeconds", 3600)),
             steps_used=task["_stepsUsed"], seconds_used=float(checkpoint.get("secondsUsed", 0)),
@@ -286,6 +293,12 @@ class Worker:
                 return
             pending_calls = _unanswered_calls(messages)
             if not pending_calls:
+                if task.get("_forceCompact"):
+                    if await self._compact_if_needed(task, messages, forced=True):
+                        task["_forceCompact"] = False
+                        if task.get("_contextExhausted"):
+                            await self._status(task, "waiting_human", reason="context_exhausted")
+                            return
                 if rounds >= int(budget.get("maxRounds", MAX_MODEL_ROUNDS)):
                     await self._status(task, "queued", reason="attempt_limit")
                     return
@@ -348,7 +361,12 @@ class Worker:
                     return
                 task["_stepsUsed"] = guard.steps
                 task["_lastToolCallId"] = str(pending.get("id") or "")[:100]
-                result = await self._invoke(task, pending, authorize=True)
+                task["_toolInFlightSince"] = datetime.now(timezone.utc).isoformat()
+                task["_toolTimeoutSeconds"] = 120
+                try:
+                    result = await self._invoke(task, pending, authorize=True)
+                finally:
+                    task.pop("_toolInFlightSince", None)
                 if result is None:
                     return
                 invalid = invalid_reason(result)
@@ -494,12 +512,12 @@ class Worker:
         task["_justCompacted"] = False
         return message
 
-    async def _compact_if_needed(self, task: dict, messages: list) -> bool:
+    async def _compact_if_needed(self, task: dict, messages: list, forced: bool = False) -> bool:
         window = env_int("MODEL_CONTEXT_TOKENS", 32000)
         max_messages = env_int("COMPACT_MAX_MESSAGES", 120)
         last = messages[-1] if messages else {}
         at_boundary = isinstance(last, dict) and last.get("role") == "tool" and last.get("name") in {"plan_update", "git_commit"}
-        trigger = should_compact(messages, window, max_messages=max_messages, at_boundary=at_boundary, last_prompt_tokens=task.get("_lastPromptTokens"))
+        trigger = "hard" if forced else should_compact(messages, window, max_messages=max_messages, at_boundary=at_boundary, last_prompt_tokens=task.get("_lastPromptTokens"))
         if trigger is None:
             task["_justCompacted"] = False
             return False
@@ -507,7 +525,7 @@ class Worker:
         masked = mask_observations(messages, keep_last=10)
         stage = "mask"
         after_mask = estimate_tokens(masked, task.get("_lastPromptTokens"))
-        still_triggered = should_compact(masked, window, max_messages=max_messages, at_boundary=at_boundary, last_prompt_tokens=task.get("_lastPromptTokens"))
+        still_triggered = "hard" if forced else should_compact(masked, window, max_messages=max_messages, at_boundary=at_boundary, last_prompt_tokens=task.get("_lastPromptTokens"))
         compacted = masked
         archived_from, archived_to = 0, max(0, len(messages) - 1)
         if still_triggered is not None:
@@ -674,6 +692,10 @@ class Worker:
             return None
         if not isinstance(body, dict):
             return {"ok": False, "reason": "bad_response"}
+        snapshot = body.get("snapshot")
+        if isinstance(snapshot, dict):
+            task["_snapshotRef"] = snapshot.get("snapshotRef")
+            task["_snapshotAt"] = snapshot.get("snapshotAt")
         status = body.get("status")
         if should_halt(status):
             posted = "waiting_human" if status in {"needs_human", "waiting_human"} else status

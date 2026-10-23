@@ -30,6 +30,8 @@ public sealed class Platform
     public int MaxAutoResumesPerHour { get; }
     public int CodingRounds { get; }
     public int CodingRoundsCumulative { get; }
+    public int StallSoftSeconds { get; }
+    public int StallHardSeconds { get; }
     public bool PauseOnBudget { get; }
     public TimeSpan IdleSuspend { get; }
     public string BootId { get; } = Guid.NewGuid().ToString("n");
@@ -60,6 +62,8 @@ public sealed class Platform
         MaxAutoResumesPerHour = ConfigInt(config, "Resume:MaxAutoResumesPerHour", 5, 1, 20);
         CodingRounds = ConfigInt(config, "RunBudget:CodingRounds", 12, 1, 100);
         CodingRoundsCumulative = ConfigInt(config, "RunBudget:CodingRoundsCumulative", 60, CodingRounds, 500);
+        StallSoftSeconds = ConfigInt(config, "STALL_SOFT_SECONDS", 180, 30, 86400);
+        StallHardSeconds = Math.Max(StallSoftSeconds + 1, ConfigInt(config, "STALL_HARD_SECONDS", 600, 31, 172800));
         PauseOnBudget = !bool.TryParse(config["RunBudget:PauseOnBudget"], out var pause) || pause;
         IdleSuspend = int.TryParse(config["IDLE_SUSPEND_MINUTES"], out var idleMinutes) && idleMinutes >= 0
             ? TimeSpan.FromMinutes(idleMinutes)
@@ -140,7 +144,7 @@ public sealed class Platform
             await conn.ExecuteAsync(provider);
             await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('010') ON CONFLICT DO NOTHING");
         }
-        foreach (var (mid, file) in new[] { ("011", "011_devices.sql"), ("012", "012_reliability.sql"), ("013", "013_feedback.sql"), ("014", "014_avatar.sql"), ("015", "015_bot_messaging.sql"), ("016", "016_chat_actions.sql"), ("017", "017_primary.sql"), ("018", "018_bio.sql"), ("019", "019_coding_work.sql"), ("020", "020_coding_items.sql"), ("021", "021_routine_timezone.sql"), ("022", "022_routines_v2.sql"), ("023", "023_routine_test.sql"), ("024", "024_library.sql"), ("025", "025_library_actions.sql"), ("026", "026_library_shares.sql"), ("028", "028_long_run_resume.sql"), ("029", "029_resume_timing.sql"), ("030", "030_tool_dedupe.sql"), ("031", "031_pause_on_budget.sql"), ("032", "032_transcript_archive.sql") })
+        foreach (var (mid, file) in new[] { ("011", "011_devices.sql"), ("012", "012_reliability.sql"), ("013", "013_feedback.sql"), ("014", "014_avatar.sql"), ("015", "015_bot_messaging.sql"), ("016", "016_chat_actions.sql"), ("017", "017_primary.sql"), ("018", "018_bio.sql"), ("019", "019_coding_work.sql"), ("020", "020_coding_items.sql"), ("021", "021_routine_timezone.sql"), ("022", "022_routines_v2.sql"), ("023", "023_routine_test.sql"), ("024", "024_library.sql"), ("025", "025_library_actions.sql"), ("026", "026_library_shares.sql"), ("028", "028_long_run_resume.sql"), ("029", "029_resume_timing.sql"), ("030", "030_tool_dedupe.sql"), ("031", "031_pause_on_budget.sql"), ("032", "032_transcript_archive.sql"), ("033", "033_watchdog.sql") })
         {
             if (await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id=@mid", new { mid }) != 0) continue;
             await conn.ExecuteAsync(await File.ReadAllTextAsync("/migrations/" + file));

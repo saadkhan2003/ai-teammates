@@ -29,6 +29,15 @@ public static class StallPolicy
         nudges == 0 && sinceProgress >= window ? StallDecision.Nudge : StallDecision.None;
 }
 
+public enum StallEscalationDecision { None, ForceCompact, Abandon }
+public static class StallEscalation
+{
+    public static StallEscalationDecision Decide(double secondsSinceProgress, int softS, int hardS, bool forceCompactAlready) =>
+        secondsSinceProgress >= hardS ? StallEscalationDecision.Abandon :
+        secondsSinceProgress >= softS && !forceCompactAlready ? StallEscalationDecision.ForceCompact :
+        StallEscalationDecision.None;
+}
+
 public static class TestGate
 {
     public static bool Check(bool required, DateTimeOffset? passedAt, bool overridden) => !required || passedAt != null || overridden;
