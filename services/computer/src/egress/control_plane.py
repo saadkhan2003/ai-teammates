@@ -15,7 +15,8 @@ class EgressControlPlane:
         self.computer_id = computer_id or os.environ.get("COMPUTER_ID", "")
         self.token = token or os.environ.get("COMPUTER_TOKEN", "")
         self.policy_path = Path(policy_path or os.environ.get("EGRESS_POLICY_FILE", "/run/egress/policy.json"))
-        self.opener = opener or urllib.request.urlopen
+        # The container's HTTP(S)_PROXY points at this very proxy, so control calls must go direct.
+        self.opener = opener or urllib.request.build_opener(urllib.request.ProxyHandler({})).open
         self.version = -1
 
     def _request(self, path, body=None):

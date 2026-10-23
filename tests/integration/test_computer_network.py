@@ -66,7 +66,7 @@ report = {
     "seaweed": tcp(seaweed_ip, 8333),
     "api": tcp(api_ip, 8080),
     "agent": tcp(agent_ip, 7710),
-    "internal": http(f"http://{api_ip}:8080/internal/tasks/lease"),
+    "internal": http(f"http://{api_ip}:8080/internal/computers/00000000-0000-0000-0000-000000000000/egress-policy"),
     "health": http(f"http://{api_ip}:8080/health"),
     "local": http("http://127.0.0.1:7700/health"),
     "internet": http("https://example.com", timeout=12),
@@ -100,7 +100,10 @@ def test_bot_computer_cannot_reach_postgres_seaweed_or_internal_api():
         nets = _docker("inspect", "-f", "{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}", name).split()
         assert nets == [f"{STACK}-computers"], (name, nets)
         report = _probe(name, postgres_ip, seaweed_ip, api_ip, agent_ip)
-        for key in ("postgres", "seaweed", "api", "agent", "internal", "health", "private10", "private192"):
+        # The API's port 8080 is the one reachable service (egress policy pull); its /internal
+        # routes must still refuse an unauthenticated caller.
+        assert report["internal"] in ("open 401", "open 403"), (name, report)
+        for key in ("postgres", "seaweed", "agent", "private10", "private192"):
             assert report[key] != "open" and not str(report[key]).startswith("open "), (name, key, report)
         assert report["dns"] == "resolved", (name, report)
         assert report["local"].startswith("open "), (name, report)
@@ -267,7 +270,7 @@ def test_flushed_chain_refuses_start_until_rules_return():
                 break
             time.sleep(1)
         assert report["postgres"] != "open" and not str(report["postgres"]).startswith("open "), report
-        assert report["api"] != "open" and not str(report["api"]).startswith("open "), report
+        assert report["internal"] in ("open 401", "open 403"), report
         status, health, cookie = _api("GET", "/api/admin/health", cookie)
         assert status == 200 and health["ok"] is True and health["computerIsolation"] is True, health
     finally:

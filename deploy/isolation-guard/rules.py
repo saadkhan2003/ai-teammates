@@ -23,12 +23,16 @@ def rules(raw=None):
         ["-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "RETURN"],
         ["-s", SUBNET + ".10/32", "-j", "RETURN"],
         ["-s", SUBNET + ".11/32", "-j", "RETURN"],
+        ["-s", SUBNET + ".0/24", "-d", SUBNET + ".10/32", "-p", "tcp", "-m", "tcp", "--dport", "8080", "-j", "RETURN"],
     ]
     # Embedded DNS is container-local; this exception never routes loopback off-host.
     for address in dict.fromkeys([*resolvers(raw), "127.0.0.11"]):
         for protocol in ("udp", "tcp"):
             result.append(["-s", SUBNET + ".0/24", "-d", address + "/32", "-p", protocol,
                            "-m", protocol, "--dport", "53", "-j", "RETURN"])
+    # The computer's egress proxy and relay tunnel are root-owned and authenticate to the API's
+    # bearer-protected /internal routes on this one port. Bot uids stay blocked by the per-bot
+    # nftables policy inside the computer, which only allows loopback and the egress proxy.
     for dest in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"):
         result.append(["-s", SUBNET + ".0/24", "-d", dest, "-p", "tcp", "-j", "REJECT", "--reject-with", "tcp-reset"])
         result.append(["-s", SUBNET + ".0/24", "-d", dest, "-p", "udp", "-j", "DROP"])

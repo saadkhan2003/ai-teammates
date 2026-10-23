@@ -71,7 +71,8 @@ class RelayTunnelManager:
     async def run(self):
         if self.connector is None:
             from websockets.asyncio.client import connect
-            self.connector = connect
+            # Never route the tunnel through the container's own egress proxy (HTTP(S)_PROXY).
+            self.connector = lambda *args, **kwargs: connect(*args, proxy=None, **kwargs)
         while True:
             try:
                 async with self.connector(self.url, additional_headers={"Authorization": "Bearer " + self.token}, open_timeout=15, close_timeout=5) as ws:

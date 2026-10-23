@@ -4,6 +4,7 @@
 # teammates-computers so they can open a computer's desktop and CDP ports.
 # New connections from the computer subnet to private addresses are rejected.
 # 172.30.28.10 (API) and 172.30.28.11 (agent) may still dial a computer.
+# Computers may open new connections only to the API's port 8080 (egress policy pull, relay tunnel).
 # Replies to those dials are ESTABLISHED and are allowed.
 set -eu
 

@@ -108,3 +108,20 @@ def test_relay_tunnel_multiplexes_connect_and_tcp_bytes_in_memory():
         return iterator()
 
     asyncio.run(scenario())
+
+
+def test_control_calls_bypass_the_container_proxy_environment(monkeypatch):
+    # HTTP_PROXY points at the egress proxy itself, which would deadlock the policy pull.
+    import urllib.request
+    from egress.control_plane import EgressControlPlane
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:1")
+    control = EgressControlPlane(api_url="http://api", computer_id="fake-computer", token="FAKE_TOKEN_123456789")
+    assert getattr(control.opener, "__self__", None).__class__.__name__ == "OpenerDirector"
+    assert not any(isinstance(h, urllib.request.ProxyHandler) and h.proxies for h in control.opener.__self__.handlers)
+
+
+def test_relay_tunnel_default_connector_disables_websockets_proxy():
+    import inspect
+    from egress import relay_tunnel
+    assert "proxy=None" in inspect.getsource(relay_tunnel.RelayTunnelManager.run)
