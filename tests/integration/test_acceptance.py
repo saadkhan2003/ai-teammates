@@ -162,7 +162,7 @@ def assert_clean(text: str) -> None:
 
 def _psql(sql: str) -> str:
     return subprocess.check_output(
-        ["sudo", "docker", "exec", "teammates-postgres-1", "psql", "-U", "agent", "-d", "agent", "-tA", "-c", sql],
+        ["sudo", "docker", "exec", os.environ.get("PG_CONTAINER", "teammates-postgres-1"), "psql", "-U", "agent", "-d", "agent", "-tA", "-c", sql],
         text=True,
     ).strip()
 
