@@ -47,6 +47,7 @@ var compute = new DockerComputeProvider(new DockerComputeOptions
     ImageRef = config["COMPUTE_IMAGE"] ?? "teammates-computer:dev",
     NetworkName = string.IsNullOrWhiteSpace(config["COMPUTE_NETWORK"]) ? null : config["COMPUTE_NETWORK"],
     SeccompPath = config["SECCOMP_PROFILE"],
+    Stack = string.IsNullOrWhiteSpace(config["COMPUTE_STACK"]) ? null : config["COMPUTE_STACK"],
     MaxComputers = HostBudget.MaxComputers(HostBudget.ReadMemTotalBytes(), config["MAX_COMPUTERS"]),
     ComputerToken = config["COMPUTER_TOKEN"] ?? "",
     DisplayGeometry = config["DISPLAY_GEOMETRY"] ?? "1920x1200",

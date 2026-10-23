@@ -57,3 +57,11 @@ def test_computer_container_bypasses_egress_proxy_for_loopback():
     source = (Path(__file__).resolve().parents[2] / "src" / "Compute.Docker" / "DockerComputeProvider.cs").read_text()
     assert '"NO_PROXY=localhost,127.0.0.1,::1"' in source
     assert '"no_proxy=localhost,127.0.0.1,::1"' in source
+
+
+def test_compute_provider_is_scoped_to_its_compose_stack():
+    provider = (C.parents[1] / "src/Compute.Docker/DockerComputeProvider.cs").read_text()
+    assert 'StackLabel = "teammates.stack"' in provider
+    assert "if (!OwnedByThisStack(item.Labels)) continue;" in provider
+    assert "COMPUTE_STACK" in (C.parents[1] / "apps/api/Program.cs").read_text()
+    assert "COMPUTE_STACK" in (C.parents[1] / "scripts/gen-stack-compose.py").read_text()

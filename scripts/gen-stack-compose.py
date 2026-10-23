@@ -43,6 +43,7 @@ def main() -> None:
     doc = yaml.safe_load(text)
     doc["services"]["caddy"]["ports"] = [f"127.0.0.1:{a.http}:80"] + ([f"127.0.0.1:{a.https}:443"] if a.https else [])
     doc["services"]["api"]["ports"] = [f"127.0.0.1:{a.api}:8080"]
+    doc["services"]["api"]["environment"]["COMPUTE_STACK"] = name
     iso = doc["services"]["isolation"]["environment"]
     iso["ISOLATION_SUBNET"] = a.subnet
     iso["ISOLATION_CHAIN"] = chain

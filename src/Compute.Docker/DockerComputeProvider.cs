@@ -21,6 +21,7 @@ namespace Teammates.Compute;
 public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAuthority, IComputerDisplays, IComputerDesktopControl, IAsyncDisposable
 {
     private const string ManagedLabel = "teammates.managed";
+    private const string StackLabel = "teammates.stack";
     private readonly DockerComputeOptions _options;
     private readonly IExecSecretResolver _secrets;
     private readonly ISnapshotStore _snapshots;
@@ -1510,6 +1511,7 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
         {
             if (item.Labels == null || !item.Labels.TryGetValue("teammates.computer_id", out var id) || string.IsNullOrWhiteSpace(id))
                 continue;
+            if (!OwnedByThisStack(item.Labels)) continue;
             item.Labels.TryGetValue("teammates.owner_id", out var owner);
             var labels = new Dictionary<string, string>(item.Labels);
             // The quota image is not bind-mounted, so Docker's mount list only has the data volume.
@@ -1603,13 +1605,25 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
         throw ComputeException.Unavailable("computer has no reachable address");
     }
 
-    private static Dictionary<string, string> Labels(ComputerId id, string owner) => new()
+    private Dictionary<string, string> Labels(ComputerId id, string owner)
     {
-        [ManagedLabel] = "1",
-        ["teammates.computer_id"] = id.Value,
-        ["teammates.owner_id"] = owner,
-        ["teammates.role"] = "user-computer"
-    };
+        var labels = new Dictionary<string, string>
+        {
+            [ManagedLabel] = "1",
+            ["teammates.computer_id"] = id.Value,
+            ["teammates.owner_id"] = owner,
+            ["teammates.role"] = "user-computer"
+        };
+        if (!string.IsNullOrWhiteSpace(_options.Stack)) labels[StackLabel] = _options.Stack;
+        return labels;
+    }
+
+    /// <summary>Containers of another compose stack on the same Docker daemon are never adopted or counted.</summary>
+    private bool OwnedByThisStack(IDictionary<string, string> labels)
+    {
+        labels.TryGetValue(StackLabel, out var stack);
+        return string.Equals(stack ?? "", _options.Stack ?? "", StringComparison.Ordinal);
+    }
 
     public static string ContainerName(ComputerId id) => "tm" + Slug(id.Value);
 
