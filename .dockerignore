@@ -1,0 +1,15 @@
+.git
+**/.git
+**/node_modules
+**/.next
+**/bin
+**/obj
+**/__pycache__
+**/*.pyc
+backups
+test-results
+playwright-report
+evals/out
+docs/evidence
+secrets/secrets_master_key
+.env

@@ -1,0 +1,19 @@
+#!/bin/sh
+# Wallpaper once, then a top clock and a bottom dock. Both panels are tint2.
+set -eu
+display="${1:-:1}"
+export DISPLAY="$display"
+export HOME="${HOME:-/data/home/desk}"
+i=0
+while [ "$i" -lt 100 ]; do
+  xdpyinfo -display "$DISPLAY" >/dev/null 2>&1 && break
+  i=$((i + 1))
+  sleep 0.1
+done
+feh --no-fehbg --bg-fill /usr/share/backgrounds/teammates.png || true
+tint2 -c /opt/desk/tint2/top.tint2rc &
+top_pid=$!
+tint2 -c /opt/desk/tint2/dock.tint2rc &
+dock_pid=$!
+trap 'kill "$top_pid" "$dock_pid" 2>/dev/null || true' EXIT
+wait "$top_pid" "$dock_pid"

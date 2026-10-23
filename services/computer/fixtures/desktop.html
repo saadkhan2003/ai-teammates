@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Teammate desktop</title>
+  <style>
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: "Liberation Sans", sans-serif;
+      color: #1c1c1c;
+      background:
+        radial-gradient(520px 280px at 20% 20%, rgba(255,255,255,0.7), transparent 70%),
+        radial-gradient(640px 420px at 70% 60%, rgba(196,98,45,0.16), transparent 70%),
+        linear-gradient(#f7f1e6, #e4d3c0);
+    }
+    main {
+      min-height: 100%;
+      display: grid;
+      place-items: center;
+      padding: 32px;
+      box-sizing: border-box;
+    }
+    section {
+      width: min(440px, 100%);
+      background: rgba(255,255,255,0.88);
+      border: 1px solid #e6e0d8;
+      border-radius: 14px;
+      padding: 28px;
+    }
+    h1 { margin: 0; font-size: 28px; font-weight: 560; letter-spacing: -0.03em; }
+    p { margin: 12px 0 0; line-height: 1.5; color: #3f3a34; }
+    ul { margin: 18px 0 0; padding: 0; list-style: none; display: flex; gap: 8px; }
+    li {
+      border-radius: 999px;
+      background: #f6f4f1;
+      border: 1px solid #e6e0d8;
+      padding: 6px 10px;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section>
+      <h1 id="title">This computer stays on</h1>
+      <p id="blurb">Chromium, files, and the terminal live on the dock. Windows open filling the screen between the clock and the dock.</p>
+      <ul>
+        <li>Chromium</li>
+        <li>Files</li>
+        <li>Terminal</li>
+      </ul>
+    </section>
+  </main>
+  <script>
+    const name = new URLSearchParams(location.search).get("name");
+    if (name) document.getElementById("title").textContent = name + "'s computer";
+  </script>
+</body>
+</html>

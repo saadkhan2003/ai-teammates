@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Terminal
+Exec=/opt/desk/bin/launch-terminal
+Icon=/opt/desk/icons/terminal.png
+Terminal=false
+StartupNotify=false

@@ -1,0 +1,14 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Pets", "version": "1.0.0" },
+  "servers": [{ "url": "https://pets.example.com/v1" }],
+  "paths": {
+    "/pets": {
+      "get": { "operationId": "list_pets", "summary": "List pets" },
+      "post": { "operationId": "create_pet", "summary": "Create a pet" }
+    },
+    "/pets/{id}": {
+      "delete": { "operationId": "delete_pet", "summary": "Delete a pet" }
+    }
+  }
+}

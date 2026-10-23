@@ -1,0 +1,252 @@
+syntax = "proto3";
+
+package compute.v1;
+
+option csharp_namespace = "Platform.Contracts.Compute.V1";
+option go_package = "github.com/ORG/platform/gen/go/compute/v1;computev1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+// Future ASP.NET <-> Go compute-host contract.
+// MVP runs DockerComputeProvider in-process and does not open a gRPC port.
+service ComputeHost {
+  rpc Negotiate(NegotiateRequest) returns (NegotiateResponse);
+
+  rpc CreateComputer(CreateComputerRequest) returns (Computer);
+  rpc StartComputer(StartComputerRequest) returns (Computer);
+  rpc StopComputer(StopComputerRequest) returns (Computer);
+  rpc RestartComputer(RestartComputerRequest) returns (Computer);
+  rpc RecreateComputer(RecreateComputerRequest) returns (Computer);
+  rpc DeleteComputer(DeleteComputerRequest) returns (DeleteComputerResponse);
+  rpc GetComputer(GetComputerRequest) returns (Computer);
+  rpc GetStatus(GetStatusRequest) returns (ComputerStatus);
+  rpc WatchStatus(WatchStatusRequest) returns (stream ComputerStatusEvent);
+  rpc GetMetrics(GetMetricsRequest) returns (ComputerMetrics);
+  rpc WatchMetrics(WatchMetricsRequest) returns (stream ComputerMetrics);
+  rpc Exec(ExecRequest) returns (stream ExecEvent);
+  rpc GetDesktopSession(GetDesktopSessionRequest) returns (DesktopSession);
+  rpc Snapshot(SnapshotRequest) returns (SnapshotInfo);
+  rpc Restore(RestoreRequest) returns (Computer);
+  rpc GetCapacity(GetCapacityRequest) returns (Capacity);
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+message RequestMeta {
+  string idempotency_key = 1;
+  string tenant_id = 2;
+  string user_id = 3;
+  string task_id = 4;
+  string trace_id = 5;
+}
+
+message NegotiateRequest {
+  uint32 protocol_major = 1;
+  uint32 protocol_minor = 2;
+  repeated string features = 3;
+  string control_plane_version = 4;
+}
+message NegotiateResponse {
+  uint32 protocol_major = 1;
+  uint32 protocol_minor = 2;
+  repeated string features = 3;
+  string host_version = 4;
+  repeated IsolationClass isolation_classes = 5;
+}
+
+enum IsolationClass {
+  ISOLATION_CLASS_UNSPECIFIED = 0;
+  ISOLATION_CLASS_DOCKER = 1;
+  ISOLATION_CLASS_KATA = 2;
+  ISOLATION_CLASS_FIRECRACKER = 3;
+}
+
+enum ComputerState {
+  COMPUTER_STATE_UNSPECIFIED = 0;
+  COMPUTER_STATE_PROVISIONING = 1;
+  COMPUTER_STATE_RUNNING = 2;
+  COMPUTER_STATE_IDLE = 3;
+  COMPUTER_STATE_STOPPING = 4;
+  COMPUTER_STATE_STOPPED = 5;
+  COMPUTER_STATE_HIBERNATED = 6;
+  COMPUTER_STATE_RECREATING = 7;
+  COMPUTER_STATE_RESTORING = 8;
+  COMPUTER_STATE_FAILED = 9;
+  COMPUTER_STATE_DELETING = 10;
+  COMPUTER_STATE_DELETED = 11;
+}
+
+message Computer {
+  string computer_id = 1;
+  string tenant_id = 2;
+  string user_id = 3;
+  string image_ref = 4;
+  IsolationClass isolation_class = 5;
+  ComputerState state = 6;
+  string host_id = 7;
+  repeated string volume_ids = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+  map<string, string> labels = 11;
+}
+
+message ResourceLimits {
+  uint32 vcpu_millis = 1;
+  uint64 memory_bytes = 2;
+  uint64 disk_bytes = 3;
+  uint32 max_pids = 4;
+}
+
+message CreateComputerRequest {
+  RequestMeta meta = 1;
+  string computer_id = 2;
+  string image_ref = 3;
+  IsolationClass isolation_class = 4;
+  ResourceLimits limits = 5;
+  string network_policy_id = 6;
+  map<string, string> labels = 7;
+}
+message StartComputerRequest { RequestMeta meta = 1; string computer_id = 2; }
+message StopComputerRequest {
+  RequestMeta meta = 1;
+  string computer_id = 2;
+  bool force = 3;
+  google.protobuf.Duration grace = 4;
+}
+message RestartComputerRequest { RequestMeta meta = 1; string computer_id = 2; }
+message RecreateComputerRequest { RequestMeta meta = 1; string computer_id = 2; string image_ref = 3; }
+message DeleteComputerRequest { RequestMeta meta = 1; string computer_id = 2; bool retain_volumes = 3; }
+message DeleteComputerResponse { string computer_id = 1; ComputerState state = 2; }
+message GetComputerRequest { string computer_id = 1; }
+
+message ComponentHealth { string name = 1; bool healthy = 2; string detail = 3; }
+message ComputerStatus {
+  string computer_id = 1;
+  ComputerState state = 2;
+  repeated ComponentHealth components = 3;
+  google.protobuf.Timestamp observed_at = 4;
+}
+message GetStatusRequest { string computer_id = 1; }
+message WatchStatusRequest { string computer_id = 1; }
+message ComputerStatusEvent { ComputerStatus status = 1; uint64 sequence = 2; }
+
+message ComputerMetrics {
+  string computer_id = 1;
+  double cpu_ratio = 2;
+  uint64 memory_used_bytes = 3;
+  uint64 disk_used_bytes = 4;
+  uint32 pids = 5;
+  uint64 net_rx_bytes = 6;
+  uint64 net_tx_bytes = 7;
+  uint32 browser_tabs = 8;
+  google.protobuf.Timestamp observed_at = 9;
+}
+message GetMetricsRequest { string computer_id = 1; }
+message WatchMetricsRequest { string computer_id = 1; google.protobuf.Duration interval = 2; }
+
+message SecretEnvBinding {
+  string env_name = 1;
+  string secret_ref = 2;
+  string grant_id = 3;
+}
+
+message ExecRequest {
+  RequestMeta meta = 1;
+  string computer_id = 2;
+  repeated string argv = 3;
+  string cwd = 4;
+  map<string, string> env = 5;
+  repeated SecretEnvBinding secret_env = 6;
+  string run_as = 7;
+  google.protobuf.Duration timeout = 8;
+  uint64 max_output_bytes = 9;
+  bool stdin = 10;
+}
+message ExecEvent {
+  oneof event {
+    ExecStarted started = 1;
+    bytes stdout = 2;
+    bytes stderr = 3;
+    ExecExited exited = 4;
+    ComputeError error = 5;
+  }
+  uint64 sequence = 6;
+}
+message ExecStarted { uint32 pid = 1; }
+message ExecExited {
+  int32 exit_code = 1;
+  string signal = 2;
+  google.protobuf.Duration duration = 3;
+  bool output_truncated = 4;
+}
+
+enum DesktopAccess {
+  DESKTOP_ACCESS_UNSPECIFIED = 0;
+  DESKTOP_ACCESS_VIEW = 1;
+  DESKTOP_ACCESS_INTERACTIVE = 2;
+}
+message GetDesktopSessionRequest {
+  RequestMeta meta = 1;
+  string computer_id = 2;
+  DesktopAccess access = 3;
+  uint64 fencing_epoch = 4;
+  google.protobuf.Duration ttl = 5;
+}
+message DesktopSession {
+  string url = 1;
+  string token = 2;
+  DesktopAccess access = 3;
+  uint64 fencing_epoch = 4;
+  google.protobuf.Timestamp expires_at = 5;
+}
+
+message SnapshotRequest { RequestMeta meta = 1; string computer_id = 2; string label = 3; }
+message SnapshotInfo {
+  string snapshot_id = 1;
+  string computer_id = 2;
+  uint64 size_bytes = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+message RestoreRequest { RequestMeta meta = 1; string computer_id = 2; string snapshot_id = 3; }
+
+message GetCapacityRequest { IsolationClass isolation_class = 1; }
+message Capacity {
+  string host_id = 1;
+  uint32 vcpu_millis_total = 2;
+  uint32 vcpu_millis_allocatable = 3;
+  uint64 memory_bytes_total = 4;
+  uint64 memory_bytes_allocatable = 5;
+  uint64 disk_bytes_total = 6;
+  uint64 disk_bytes_allocatable = 7;
+  uint32 computers_running = 8;
+  uint32 computers_max = 9;
+  bool draining = 10;
+}
+
+message HealthCheckRequest {}
+message HealthCheckResponse {
+  bool healthy = 1;
+  string host_version = 2;
+  repeated ComponentHealth components = 3;
+}
+
+enum ComputeErrorCode {
+  COMPUTE_ERROR_CODE_UNSPECIFIED = 0;
+  COMPUTE_ERROR_CODE_NOT_FOUND = 1;
+  COMPUTE_ERROR_CODE_ALREADY_EXISTS = 2;
+  COMPUTE_ERROR_CODE_INVALID_ARGUMENT = 3;
+  COMPUTE_ERROR_CODE_FAILED_PRECONDITION = 4;
+  COMPUTE_ERROR_CODE_CONFLICT = 5;
+  COMPUTE_ERROR_CODE_IDEMPOTENCY_CONFLICT = 6;
+  COMPUTE_ERROR_CODE_RESOURCE_EXHAUSTED = 7;
+  COMPUTE_ERROR_CODE_PERMISSION_DENIED = 8;
+  COMPUTE_ERROR_CODE_UNAVAILABLE = 9;
+  COMPUTE_ERROR_CODE_DEADLINE_EXCEEDED = 10;
+  COMPUTE_ERROR_CODE_UNSUPPORTED = 11;
+  COMPUTE_ERROR_CODE_INTERNAL = 12;
+}
+message ComputeError {
+  ComputeErrorCode code = 1;
+  string message = 2;
+  bool retryable = 3;
+}

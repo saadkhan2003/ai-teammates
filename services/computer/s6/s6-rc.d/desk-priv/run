@@ -1,0 +1,30 @@
+#!/bin/sh
+set -e
+install -d -o root -g desk -m 0750 /run/desk/secrets
+install -d -o desk -g desk -m 0755 \
+    /run/desk /run/desk/screens /run/desk/keys \
+    /data /data/workspace /data/workspace/outputs /data/profiles \
+    /data/state /data/home /data/home/desk
+if [ ! -s /run/desk/secrets/plugin.token ]; then
+    umask 077
+    od -An -tx1 -N 24 /dev/urandom | tr -d ' \n' > /run/desk/secrets/plugin.token.tmp
+    mv /run/desk/secrets/plugin.token.tmp /run/desk/secrets/plugin.token
+fi
+chown desk:desk /run/desk/secrets/plugin.token
+chmod 0400 /run/desk/secrets/plugin.token
+touch /run/desk/vnc.tokens
+chown desk:desk /run/desk/vnc.tokens
+chmod 0640 /run/desk/vnc.tokens
+chown desk:desk /data /data/workspace /data/profiles /data/state /data/home /data/home/desk
+chmod 0750 /run/desk/secrets
+ln -sfn /data/workspace /workspace
+if [ ! -f /data/workspace/sample-repo/calc.py ]; then
+    cp -a /opt/fixtures/sample-repo /data/workspace/sample-repo
+    chown -R desk:desk /data/workspace/sample-repo
+fi
+if [ -n "${S6_NOTIFICATION_FD:-}" ]; then
+    printf '\n' >&"$S6_NOTIFICATION_FD"
+else
+    printf '\n' >&3
+fi
+exec /command/s6-pause

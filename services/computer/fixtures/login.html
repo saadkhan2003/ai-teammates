@@ -1,0 +1,15 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Portal sign-in</title></head>
+<body style="font-family: sans-serif; background:#f6f1e7">
+  <h1>University portal</h1>
+  <form onsubmit="return false">
+    <label>Password <input id="password" type="password" autocomplete="current-password" /></label>
+  </form>
+  <p id="status">waiting</p>
+  <script>
+    document.getElementById("password").addEventListener("input", () => {
+      document.getElementById("status").textContent = "filled";
+      document.body.dataset.filled = "yes";
+    });
+  </script>
+</body></html>

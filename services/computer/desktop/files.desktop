@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Files
+Exec=/opt/desk/bin/launch-files
+Icon=/opt/desk/icons/files.png
+Terminal=false
+StartupNotify=false

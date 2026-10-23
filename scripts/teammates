@@ -1,0 +1,5 @@
+#!/bin/bash
+# Catalog commands: plugins import | check | stats | add-openapi
+set -euo pipefail
+cd "$(dirname "$0")/.."
+exec dotnet run --project apps/api/Teammates.Api.csproj --no-launch-profile -- "$@"

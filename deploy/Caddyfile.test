@@ -1,0 +1,59 @@
+# Test-only proxy. Use it when ENABLE_TEST_HOOKS=true and you need the
+# worker routes on the public port:
+#   CADDYFILE=./deploy/Caddyfile.test docker compose up -d caddy
+# Production and the default Caddyfile do not publish these paths.
+# Integration tests call the API directly (deploy/compose.test.yml).
+{
+	admin off
+	auto_https off
+}
+
+(routes) {
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+		X-Frame-Options SAMEORIGIN
+	}
+	handle /api/events {
+		reverse_proxy api:8080 {
+			flush_interval -1
+			transport http {
+				read_timeout 0
+				write_timeout 0
+			}
+		}
+	}
+	handle /api/* {
+		reverse_proxy api:8080
+	}
+	handle /health {
+		reverse_proxy api:8080
+	}
+	handle /internal/* {
+		reverse_proxy api:8080
+	}
+	handle /metrics {
+		reverse_proxy api:8080
+	}
+	handle /vnc/* {
+		reverse_proxy api:8080 {
+			flush_interval -1
+			transport http {
+				read_timeout 0
+				write_timeout 0
+			}
+		}
+	}
+	handle {
+		reverse_proxy web:3000
+	}
+}
+
+:80 {
+	import routes
+}
+
+:443 {
+	tls internal
+	import routes
+}

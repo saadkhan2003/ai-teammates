@@ -1,0 +1,4 @@
+#!/bin/sh
+exec 2>&1
+export PYTHONUNBUFFERED=1
+exec /command/with-contenv python3 /opt/desk/src/cdp_proxy.py

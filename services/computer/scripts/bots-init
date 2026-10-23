@@ -1,0 +1,11 @@
+#!/bin/sh
+i=0
+while [ "$i" -lt 150 ]; do
+    if curl -fsS -o /dev/null http://127.0.0.1:7700/health; then
+        exit 0
+    fi
+    i=$((i + 1))
+    sleep 0.2
+done
+echo "computer-api did not become healthy" >&2
+exit 1

@@ -1,0 +1,13 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Human check</title></head>
+<body style="font-family: sans-serif; background:#f6f1e7; color:#1a1714">
+  <h1 id="challenge">Please complete the CAPTCHA</h1>
+  <p>The bot will wait. Only a person at the keyboard can clear this.</p>
+  <button id="human-check" style="font-size:22px;padding:14px 22px">I am human</button>
+  <script>
+    document.getElementById("human-check").onclick = () => {
+      document.getElementById("challenge").textContent = "Check cleared. You may continue.";
+      document.body.dataset.cleared = "yes";
+    };
+  </script>
+</body></html>

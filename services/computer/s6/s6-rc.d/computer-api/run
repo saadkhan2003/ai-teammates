@@ -1,0 +1,19 @@
+#!/bin/sh
+exec 2>&1
+if [ ! -f /run/desk/secrets/plugin.token ]; then
+    echo "plugin.token missing; refusing to start computer-api" >&2
+    exit 1
+fi
+mode=$(stat -c %a /run/desk/secrets/plugin.token)
+case "$mode" in
+    400|440) ;;
+    *)
+        echo "plugin.token mode $mode is not 0400/0440" >&2
+        exit 1
+        ;;
+esac
+export PYTHONUNBUFFERED=1
+export HOME=/data/home/desk
+cd /opt/desk
+# s6 longruns do not inherit the container environment unless asked.
+exec /command/with-contenv /opt/desk/venv/bin/python /opt/desk/src/server.py

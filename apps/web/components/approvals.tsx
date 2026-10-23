@@ -1,0 +1,110 @@
+"use client";
+
+import { useState } from "react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { api } from "@/lib/api";
+import type { Approval } from "@/lib/types";
+import { errorMessage } from "@/lib/utils";
+
+const decided = new Set(["approved", "denied", "allow_once", "allowed", "rejected"]);
+
+function domainOf(target?: string) {
+  if (!target || !target.includes("://")) return "";
+  try {
+    return new URL(target).hostname;
+  } catch {
+    return "";
+  }
+}
+
+function needsDecision(status?: string) {
+  if (!status) return true;
+  return !decided.has(status.toLowerCase());
+}
+
+export function Approvals({ approvals, onChanged }: { approvals: Approval[]; onChanged: () => void }) {
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function decide(id: string, decision: "allow_once" | "allow_domain" | "deny") {
+    setPendingId(id);
+    setError(null);
+    try {
+      await api(`/api/approvals/${id}/decide`, {
+        method: "POST",
+        body: JSON.stringify({ decision }),
+      });
+      toast.success(decision === "deny" ? "Denied." : decision === "allow_domain" ? "Allowed for this domain." : "Allowed once.");
+      onChanged();
+    } catch (caught) {
+      setError(errorMessage(caught, "Could not record that decision."));
+    } finally {
+      setPendingId(null);
+    }
+  }
+
+  if (approvals.length === 0) return null;
+
+  return (
+    <div className="flex flex-col gap-3">
+      {approvals.map((approval) => (
+        <Card key={approval.id} data-testid="approval-card" className="min-w-0 max-w-full">
+          <CardHeader className="p-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <CardTitle className="min-w-0 break-words text-sm">{approval.action || "Approval"}</CardTitle>
+              {approval.status ? <span className="text-xs text-muted-foreground">{approval.status}</span> : null}
+            </div>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-2 p-4 pt-0">
+            {approval.riskClass ? <p className="text-xs uppercase tracking-wide text-muted-foreground">{approval.riskClass}</p> : null}
+            {approval.summary ? <p data-testid="approval-summary" className="break-words text-sm">{approval.summary}</p> : null}
+            {approval.target ? <p className="break-words text-sm">{approval.target}</p> : null}
+            {approval.reason && approval.reason !== approval.summary ? <p className="break-words text-sm text-muted-foreground">{approval.reason}</p> : null}
+            {needsDecision(approval.status) ? (
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button
+                  data-testid="approve-once"
+                  size="sm"
+                  className="rounded-md"
+                  disabled={pendingId === approval.id}
+                  onClick={() => void decide(approval.id, "allow_once")}
+                >
+                  Allow once
+                </Button>
+                {approval.riskClass === "credential_use" && domainOf(approval.target) ? (
+                  <Button
+                    data-testid="approve-domain"
+                    size="sm"
+                    variant="outline"
+                    className="rounded-md"
+                    disabled={pendingId === approval.id}
+                    onClick={() => void decide(approval.id, "allow_domain")}
+                  >
+                    Always allow for this domain
+                  </Button>
+                ) : null}
+                <Button
+                  data-testid="deny"
+                  size="sm"
+                  variant="outline"
+                  className="rounded-md"
+                  disabled={pendingId === approval.id}
+                  onClick={() => void decide(approval.id, "deny")}
+                >
+                  Deny
+                </Button>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ))}
+      {error ? (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}

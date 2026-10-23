@@ -1,0 +1,29 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Portal sign-in</title></head>
+<body style="font-family: sans-serif; background:#f6f1e7">
+  <h1>University portal</h1>
+  <form id="login">
+    <label>Username <input id="username" name="username" autocomplete="username" /></label>
+    <label>Password <input id="password" type="password" autocomplete="current-password" /></label>
+    <button id="submit" type="submit">Sign in</button>
+  </form>
+  <p id="status">waiting</p>
+  <script>
+    document.getElementById("login").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const user = document.getElementById("username").value;
+      const pw = document.getElementById("password").value;
+      if (!user || pw.length < 8) {
+        document.getElementById("status").textContent = "invalid";
+        return;
+      }
+      let sum = 0;
+      for (const ch of pw) sum = (sum + ch.charCodeAt(0)) % 997;
+      document.getElementById("status").textContent = "logged in";
+      document.body.dataset.logged = "yes";
+      document.body.dataset.mark = String(sum);
+      document.getElementById("password").value = "";
+      document.getElementById("username").value = "";
+    });
+  </script>
+</body></html>

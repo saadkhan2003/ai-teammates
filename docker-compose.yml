@@ -1,0 +1,307 @@
+name: teammates
+
+services:
+  caddy:
+    image: caddy:2.10.0
+    ports:
+      - "18080:80"
+      - "18443:443"
+    volumes:
+      - ${CADDYFILE:-./Caddyfile}:/etc/caddy/Caddyfile:ro
+    networks:
+      - front
+    depends_on:
+      web:
+        condition: service_started
+      api:
+        condition: service_healthy
+    mem_limit: 48m
+    cpus: 0.05
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./apps/web
+    environment:
+      NODE_ENV: production
+    networks:
+      - front
+    depends_on:
+      api:
+        condition: service_healthy
+    mem_limit: 192m
+    cpus: 0.15
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      ASPNETCORE_URLS: http://0.0.0.0:8080
+      ASPNETCORE_ENVIRONMENT: Production
+      Logging__Console__FormatterName: json
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-agent}
+      POSTGRES_USER: ${POSTGRES_USER:-agent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-teammates-dev}
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://object-store:8333}
+      S3_BUCKET: ${S3_BUCKET:-artifacts}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-agent}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-teammates-dev-s3}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      OWNER_USERNAME: ${OWNER_USERNAME:-saad}
+      OWNER_PASSWORD: ${OWNER_PASSWORD:-teammates-dev}
+      WORKER_TOKEN: ${WORKER_TOKEN:-dev-worker-token-change-me}
+      COMPUTER_TOKEN: ${COMPUTER_TOKEN:-dev-computer-token-change-me}
+      METRICS_TOKEN: ${METRICS_TOKEN:-dev-metrics-token-change-me}
+      DOCKER_HOST: tcp://docker-proxy:2375
+      COMPUTE_NETWORK: teammates-computers
+      ISOLATION_SOCKET: /run/teammates/isolation.sock
+      ISOLATION_TOKEN: ${ISOLATION_TOKEN:-dev-isolation-token-change-me}
+      COMPUTE_IMAGE: teammates-computer:dev
+      COMPUTE_PROVIDER: docker
+      SECCOMP_PROFILE: /var/lib/teammates/seccomp-chrome.json
+      SNAPSHOT_DIR: /var/lib/teammates/snapshots
+      MAX_COMPUTERS: ${MAX_COMPUTERS:-}
+      CGROUP_PARENT: ${CGROUP_PARENT:-}
+      DISPLAY_GEOMETRY: ${DISPLAY_GEOMETRY:-1024x768}
+      DISPLAY_DEPTH: ${DISPLAY_DEPTH:-16}
+      IDLE_SUSPEND_MINUTES: ${IDLE_SUSPEND_MINUTES:-10}
+      IDLE_POWER: ${IDLE_POWER:-hibernate}
+      IDLE_HIBERNATE_MINUTES: ${IDLE_HIBERNATE_MINUTES:-30}
+      IDLE_RESUME_TARGET_SECONDS: ${IDLE_RESUME_TARGET_SECONDS:-15}
+      CGROUP_ROOT: /host-cgroup
+      DOTNET_gcServer: "0"
+      DOTNET_GCHeapHardLimit: "0x10000000"
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-http://mock-openrouter:8090/api/v1}
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      MODEL_FAST: ${MODEL_FAST:-mock/planner}
+      MODEL_PLANNER: ${MODEL_PLANNER:-mock/planner}
+      MODEL_EMBEDDING: local-hash-64
+      SECRETS_MASTER_KEY_FILE: /run/secrets/secrets_master_key
+      ENABLE_TEST_HOOKS: ${ENABLE_TEST_HOOKS:-true}
+      MAX_PARALLEL_TASKS_PER_USER: ${MAX_PARALLEL_TASKS_PER_USER:-6}
+    secrets:
+      - secrets_master_key
+    volumes:
+      - snapshots:/var/lib/teammates/snapshots
+      - ./deploy/seccomp-chrome.json:/var/lib/teammates/seccomp-chrome.json:ro
+      - /run/teammates:/run/teammates
+      - /sys/fs/cgroup:/host-cgroup:rw
+    networks:
+      front: {}
+      back: {}
+      dockerctl: {}
+      computers:
+        ipv4_address: 172.30.28.10
+    depends_on:
+      postgres:
+        condition: service_healthy
+      object-store:
+        condition: service_started
+      docker-proxy:
+        condition: service_started
+      isolation:
+        condition: service_started
+      computer-image:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    mem_limit: 384m
+    cpus: 0.25
+    restart: unless-stopped
+
+  agent:
+    build:
+      context: ./services/agent
+    environment:
+      API_URL: http://api:8080
+      WORKER_TOKEN: ${WORKER_TOKEN:-dev-worker-token-change-me}
+      WORKER_ID: ${WORKER_ID:-worker-1}
+      MAX_PARALLEL_TASKS: ${MAX_PARALLEL_TASKS_PER_USER:-6}
+      MALLOC_ARENA_MAX: "2"
+    networks:
+      back: {}
+      computers:
+        ipv4_address: 172.30.28.11
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7710/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: 160m
+    cpus: 0.15
+    restart: unless-stopped
+
+  # Marker for `docker compose --profile lowend`. scripts/low-end.sh creates
+  # the teammates-lowend cgroup (4 GiB, 2 CPUs) and starts the stack with
+  # deploy/compose.low-end.yml, which places every service in that cgroup.
+  lowend:
+    profiles: ["lowend"]
+    image: alpine:3.20
+    command: ["echo", "lowend budget: 4 GiB, 2 CPUs, MAX_COMPUTERS=2"]
+    network_mode: none
+    mem_limit: 8m
+    cpus: 0.01
+    restart: "no"
+
+  # Builds teammates-computer:dev onto the host Docker engine, then exits.
+  # User computers are created later by the API, not by this service.
+  computer-image:
+    image: teammates-computer:dev
+    build:
+      context: ./services/computer
+    entrypoint: ["true"]
+    restart: "no"
+    networks:
+      - back
+
+  # Only the API joins this network. User computers never see the socket.
+  # DELETE, INFO, PING, and VERSION are enabled because Docker.DotNet and
+  # capacity/health call those endpoints. The brief's CONTAINERS, IMAGES,
+  # VOLUMES, EXEC, NETWORKS, and POST set is not enough for that client.
+  # The entrypoint raises HAProxy's buffer so an inlined seccomp profile fits.
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:0.3
+    entrypoint: ["/bin/sh", "/opt/docker-proxy-entrypoint.sh"]
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      VOLUMES: 1
+      EXEC: 1
+      NETWORKS: 1
+      POST: 1
+      DELETE: 1
+      INFO: 1
+      PING: 1
+      VERSION: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./deploy/docker-proxy-entrypoint.sh:/opt/docker-proxy-entrypoint.sh:ro
+    networks:
+      - dockerctl
+    mem_limit: 48m
+    cpus: 0.05
+    restart: unless-stopped
+
+  # Host network namespace so iptables-legacy repairs DOCKER-USER after a
+  # daemon restart. The API reaches it through a unix socket, not a published port.
+  isolation:
+    build:
+      context: ./deploy
+      dockerfile: isolation-guard/Dockerfile
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    environment:
+      ISOLATION_TOKEN: ${ISOLATION_TOKEN:-dev-isolation-token-change-me}
+      ISOLATION_SOCKET: /run/teammates/isolation.sock
+    volumes:
+      - /run/teammates:/run/teammates
+    mem_limit: 48m
+    cpus: 0.02
+    restart: unless-stopped
+
+  mock-openrouter:
+    build:
+      context: ./services/mock-openrouter
+    environment:
+      PORT: "8090"
+    networks:
+      - back
+    mem_limit: 64m
+    cpus: 0.05
+    restart: unless-stopped
+
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-agent}
+      POSTGRES_USER: ${POSTGRES_USER:-agent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-teammates-dev}
+    command:
+      - postgres
+      - -c
+      - shared_buffers=32MB
+      - -c
+      - max_connections=40
+      - -c
+      - work_mem=2MB
+      - -c
+      - maintenance_work_mem=16MB
+      - -c
+      - effective_cache_size=64MB
+      - -c
+      - huge_pages=off
+      - -c
+      - wal_buffers=1MB
+      - -c
+      - jit=off
+      - -c
+      - checkpoint_timeout=15min
+      - -c
+      - max_wal_size=64MB
+      - -c
+      - min_wal_size=32MB
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - back
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agent} -d ${POSTGRES_DB:-agent}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    mem_limit: 192m
+    cpus: 0.20
+    restart: unless-stopped
+
+  object-store:
+    image: chrislusf/seaweedfs:3.80
+    command: ["server", "-dir=/data", "-s3", "-s3.port=8333", "-s3.config=/etc/seaweed/s3.json"]
+    environment:
+      GOMEMLIMIT: 140MiB
+      GOGC: "100"
+    volumes:
+      - objectstore-data:/data
+      - ./deploy/seaweed/s3.json:/etc/seaweed/s3.json:ro
+    networks:
+      - back
+    mem_limit: 160m
+    cpus: 0.10
+    restart: unless-stopped
+
+networks:
+  front:
+  back:
+    name: teammates-back
+    internal: true
+  # User computers join this network only. It is not internal, so the browser
+  # has a default route. Postgres, SeaweedFS, and the mock model stay on back.
+  # deploy/computer-isolation.sh stops computer addresses from opening the
+  # API, the worker, or any other private address. .10 and .11 are the exceptions.
+  computers:
+    name: teammates-computers
+    ipam:
+      config:
+        - subnet: 172.30.28.0/24
+  dockerctl:
+    name: teammates-dockerctl
+    internal: true
+
+volumes:
+  postgres-data:
+  objectstore-data:
+  snapshots:
+
+secrets:
+  secrets_master_key:
+    file: ./secrets/secrets_master_key

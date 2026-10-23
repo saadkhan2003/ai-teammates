@@ -1,0 +1,15 @@
+# Production overlay. Compose refuses to start until OWNER_PASSWORD is set.
+# The API also refuses the dev default when REQUIRE_OWNER_PASSWORD=true.
+#
+#   OWNER_PASSWORD="$(openssl rand -base64 24)" \
+#   CADDYFILE=./deploy/Caddyfile.production \
+#   docker compose -f docker-compose.yml -f deploy/compose.production.yml up -d
+#
+# Generate POSTGRES_PASSWORD, S3_SECRET_KEY, and the service tokens the same way
+# before this host is reachable by anyone else. Do not reuse the local dev owner password.
+services:
+  api:
+    environment:
+      OWNER_PASSWORD: ${OWNER_PASSWORD:?Generate OWNER_PASSWORD before starting production}
+      REQUIRE_OWNER_PASSWORD: "true"
+      ENABLE_TEST_HOOKS: "false"

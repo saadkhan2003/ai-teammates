@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: buf
+        run: |
+          curl -fsSL -o /tmp/buf https://github.com/bufbuild/buf/releases/download/v1.50.0/buf-Linux-x86_64
+          sudo install -m 0755 /tmp/buf /usr/local/bin/buf
+          (cd contracts && buf lint)
+          if git cat-file -e origin/main:contracts/proto/compute/v1/compute.proto 2>/dev/null; then
+            git fetch origin main
+            (cd contracts && buf breaking --against "../.git#branch=origin/main,subdir=contracts")
+          fi
+      - name: unit tests
+        run: |
+          dotnet test tests/unit/Teammates.UnitTests.csproj --nologo
+          python3 -m pip install pytest
+          python3 -m pytest -q tests/unit
+          dotnet test tests/compute-contract/Compute.ContractTests.csproj --nologo
+      # Full stack, Playwright, and eval-real are local: make test / make eval-real.

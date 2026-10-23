@@ -1,0 +1,53 @@
+{
+	admin off
+	auto_https off
+}
+
+(routes) {
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+		X-Frame-Options SAMEORIGIN
+	}
+	handle /api/events {
+		reverse_proxy api:8080 {
+			flush_interval -1
+			transport http {
+				read_timeout 0
+				write_timeout 0
+			}
+		}
+	}
+	handle /api/* {
+		reverse_proxy api:8080
+	}
+	handle /health {
+		reverse_proxy api:8080
+	}
+	# /internal/* and /metrics are not published on the public ports.
+	# The worker calls http://api:8080 on the internal Docker network.
+	# Prometheus scrapes that address with METRICS_TOKEN.
+	# Test-only paths: set CADDYFILE=./deploy/Caddyfile.test with
+	# ENABLE_TEST_HOOKS=true. Do not do that on a shared host.
+	handle /vnc/* {
+		reverse_proxy api:8080 {
+			flush_interval -1
+			transport http {
+				read_timeout 0
+				write_timeout 0
+			}
+		}
+	}
+	handle {
+		reverse_proxy web:3000
+	}
+}
+
+:80 {
+	import routes
+}
+
+:443 {
+	tls internal
+	import routes
+}

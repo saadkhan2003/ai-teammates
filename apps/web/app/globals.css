@@ -1,0 +1,140 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Light greys from the desktop reference. Dark is the same system, inverted. */
+:root {
+  --background: #141414;
+  --foreground: #f5f5f5;
+  --card: #181818;
+  --card-foreground: #f5f5f5;
+  --popover: #181818;
+  --popover-foreground: #f5f5f5;
+  --primary: #f5f5f5;
+  --primary-foreground: #111111;
+  --secondary: #222222;
+  --secondary-foreground: #f5f5f5;
+  --muted: #282828;
+  --muted-foreground: #9a9a9a;
+  --accent: #242424;
+  --accent-foreground: #f5f5f5;
+  --destructive: #e11d48;
+  --destructive-foreground: #ffffff;
+  --border: #2a2a2a;
+  --input: #282828;
+  --ring: #737373;
+  --chart-1: #f5f5f5;
+  --chart-2: #a1a1a1;
+  --chart-3: #737373;
+  --chart-4: #3a3a3a;
+  --chart-5: #2a2a2a;
+  --radius: 8px;
+  --radius-button: 8px;
+  --radius-input: 8px;
+  --radius-card: 14px;
+  --radius-bubble: 18px;
+  --sidebar: #141414;
+  --sidebar-foreground: #f5f5f5;
+  --sidebar-primary: #f5f5f5;
+  --sidebar-primary-foreground: #111111;
+  --sidebar-accent: #242424;
+  --sidebar-accent-foreground: #f5f5f5;
+  --sidebar-border: #2a2a2a;
+  --sidebar-ring: #737373;
+  --brand: #c4622d;
+  --sage: #8fd0a8;
+  --sage-soft: rgba(143, 208, 168, 0.14);
+  --user-bubble: #3a3a3a;
+  --user-bubble-foreground: #f5f5f5;
+  --assistant-bubble: #262626;
+  --assistant-bubble-foreground: #f5f5f5;
+  --app-height: 100dvh;
+  --app-top: 0px;
+  color-scheme: dark;
+}
+
+html.light {
+  --background: #fafafa;
+  --foreground: #111111;
+  --card: #ffffff;
+  --card-foreground: #111111;
+  --popover: #ffffff;
+  --popover-foreground: #111111;
+  --primary: #111111;
+  --primary-foreground: #ffffff;
+  --secondary: #ebebeb;
+  --secondary-foreground: #111111;
+  --muted: #f6f6f6;
+  --muted-foreground: #8a8a8a;
+  --accent: #e4e4e4;
+  --accent-foreground: #111111;
+  --destructive: #be123c;
+  --destructive-foreground: #ffffff;
+  --border: #e5e5e5;
+  --input: #e5e5e5;
+  --ring: #a3a3a3;
+  --chart-1: #111111;
+  --chart-2: #525252;
+  --chart-3: #737373;
+  --chart-4: #d4d4d4;
+  --chart-5: #f6f6f6;
+  --sidebar: #f6f6f6;
+  --sidebar-foreground: #111111;
+  --sidebar-primary: #111111;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e4e4e4;
+  --sidebar-accent-foreground: #111111;
+  --sidebar-border: #ececec;
+  --sidebar-ring: #a3a3a3;
+  --brand: #c4622d;
+  --sage: #1f7a45;
+  --sage-soft: #e7f6ec;
+  --user-bubble: #111111;
+  --user-bubble-foreground: #ffffff;
+  --assistant-bubble: #ebebeb;
+  --assistant-bubble-foreground: #111111;
+  color-scheme: light;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body {
+    height: 100%;
+    overflow-x: clip;
+  }
+  body {
+    @apply bg-background text-foreground;
+    min-height: 100dvh;
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    font-size: 14px;
+  }
+}
+
+::selection {
+  background: color-mix(in srgb, var(--brand) 28%, transparent);
+  color: var(--foreground);
+}
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+[data-testid="desktop-stage"]:fullscreen {
+  box-sizing: border-box;
+  display: flex;
+  height: 100%;
+  width: 100%;
+  flex-direction: column;
+  background: var(--background);
+  padding: 8px;
+}

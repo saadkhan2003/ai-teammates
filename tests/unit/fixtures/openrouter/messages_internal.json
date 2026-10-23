@@ -1,0 +1,38 @@
+[
+  {
+    "role": "system",
+    "content": "You are a teammate."
+  },
+  {
+    "role": "user",
+    "content": "Delete the old note and list the directory.",
+    "message_id": "msg_9f"
+  },
+  {
+    "role": "assistant",
+    "content": "",
+    "toolCalls": [
+      {
+        "id": "call_del_9f2",
+        "name": "delete_file",
+        "arguments": {"path": "/workspace/notes/ping.txt"}
+      },
+      {
+        "id": "call_ls_3ab",
+        "name": "shell",
+        "arguments": {"command": "ls /workspace/notes"}
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "toolCallId": "call_del_9f2",
+    "tool_call_id": "call_1",
+    "content": "{\"ok\":true,\"path\":\"/workspace/notes/ping.txt\"}"
+  },
+  {
+    "role": "tool",
+    "toolCallId": "call_ls_3ab",
+    "content": "{\"exitCode\":0,\"stdout\":\"ping.txt\"}"
+  }
+]

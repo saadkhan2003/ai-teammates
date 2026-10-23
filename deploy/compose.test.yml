@@ -1,0 +1,8 @@
+# Local test override. Publishes the API on localhost so worker-token
+# calls and /metrics do not need the public proxy.
+#   docker compose -f docker-compose.yml -f deploy/compose.test.yml up -d
+# The public Caddyfile still hides /internal/* and /metrics.
+services:
+  api:
+    ports:
+      - "127.0.0.1:18081:8080"

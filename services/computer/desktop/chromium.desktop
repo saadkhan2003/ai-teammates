@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Chromium
+Exec=/opt/desk/bin/launch-browser
+Icon=/opt/desk/icons/chromium.png
+Terminal=false
+StartupNotify=false
+StartupWMClass=Chromium

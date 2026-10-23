@@ -1,0 +1,14 @@
+{
+  "identities": [
+    {
+      "name": "teammates",
+      "credentials": [
+        {
+          "accessKey": "agent",
+          "secretKey": "teammates-dev-s3"
+        }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

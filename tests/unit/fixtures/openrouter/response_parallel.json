@@ -1,0 +1,35 @@
+{
+  "id": "gen-recorded",
+  "choices": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_del_9f2",
+            "type": "function",
+            "function": {
+              "name": "delete_file",
+              "arguments": "{\"path\":\"/workspace/notes/ping.txt\"}"
+            }
+          },
+          {
+            "id": "call_ls_3ab",
+            "type": "function",
+            "function": {
+              "name": "shell",
+              "arguments": "{\"command\":\"ls /workspace/notes\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 180,
+    "completion_tokens": 36,
+    "cost": 0.000128
+  }
+}

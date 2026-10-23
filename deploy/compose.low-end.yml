@@ -1,0 +1,48 @@
+# Simulates a 4 GB / 2 vCPU host. scripts/low-end.sh creates the
+# teammates-lowend cgroup (memory.max=4 GiB, cpu.max=2) and selects the
+# lowend profile. Per-service caps are the same numbers as docker-compose.yml;
+# the parent cgroup is what stops the group from exceeding the host.
+services:
+  caddy:
+    mem_limit: 48m
+    cpus: 0.05
+    cgroup_parent: /teammates-lowend
+  web:
+    mem_limit: 192m
+    cpus: 0.15
+    cgroup_parent: /teammates-lowend
+  api:
+    mem_limit: 384m
+    cpus: 0.25
+    cgroup_parent: /teammates-lowend
+    environment:
+      MAX_COMPUTERS: "2"
+      IDLE_SUSPEND_MINUTES: "10"
+      IDLE_POWER: hibernate
+      IDLE_HIBERNATE_MINUTES: "30"
+      IDLE_RESUME_TARGET_SECONDS: "15"
+      CGROUP_PARENT: /teammates-lowend
+  agent:
+    mem_limit: 160m
+    cpus: 0.15
+    cgroup_parent: /teammates-lowend
+  postgres:
+    mem_limit: 192m
+    cpus: 0.20
+    cgroup_parent: /teammates-lowend
+  object-store:
+    mem_limit: 160m
+    cpus: 0.10
+    cgroup_parent: /teammates-lowend
+  mock-openrouter:
+    mem_limit: 64m
+    cpus: 0.05
+    cgroup_parent: /teammates-lowend
+  docker-proxy:
+    mem_limit: 48m
+    cpus: 0.05
+    cgroup_parent: /teammates-lowend
+  lowend:
+    cgroup_parent: /teammates-lowend
+  computer-image:
+    cgroup_parent: /teammates-lowend

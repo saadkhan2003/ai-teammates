@@ -1,0 +1,35 @@
+{
+  "servers": [
+    {
+      "server": {
+        "name": "com.example/remote",
+        "title": "Example remote",
+        "description": "A remote MCP server",
+        "version": "2.0.0",
+        "repository": { "url": "https://github.com/example/remote", "source": "github" },
+        "remotes": [{ "type": "streamable-http", "url": "https://mcp.example.com/rpc" }]
+      },
+      "_meta": { "io.modelcontextprotocol.registry/official": { "status": "active", "isLatest": true, "updatedAt": "2026-04-01T00:00:00Z" } }
+    },
+    {
+      "server": {
+        "name": "com.example/pkg",
+        "title": "Packaged",
+        "description": "stdio package again",
+        "version": "0.1.0",
+        "packages": [{ "registryType": "npm", "identifier": "@example/tool", "version": "0.1.0" }]
+      },
+      "_meta": { "io.modelcontextprotocol.registry/official": { "status": "active", "isLatest": true, "updatedAt": "2026-02-01T00:00:00Z" } }
+    },
+    {
+      "server": {
+        "name": "com.example/file",
+        "title": "File remote",
+        "version": "1.0.0",
+        "remotes": [{ "type": "stdio", "url": "file:///etc/passwd" }]
+      },
+      "_meta": { "io.modelcontextprotocol.registry/official": { "status": "active", "isLatest": true, "updatedAt": "2026-02-01T00:00:00Z" } }
+    }
+  ],
+  "metadata": { "nextCursor": "", "count": 3 }
+}

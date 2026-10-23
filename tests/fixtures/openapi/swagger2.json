@@ -1,0 +1,16 @@
+{
+  "swagger": "2.0",
+  "info": { "title": "Notes", "version": "1" },
+  "host": "notes.example.com",
+  "basePath": "/api",
+  "schemes": ["https"],
+  "securityDefinitions": {
+    "key": { "type": "apiKey", "name": "X-Api-Key", "in": "header" }
+  },
+  "security": [{ "key": [] }],
+  "paths": {
+    "/notes": {
+      "get": { "operationId": "list_notes", "summary": "List notes" }
+    }
+  }
+}

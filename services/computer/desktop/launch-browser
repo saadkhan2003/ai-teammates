@@ -1,0 +1,23 @@
+#!/bin/sh
+# Raise the main Chromium window. Helper windows share the class and are tiny.
+export DISPLAY="${DISPLAY:-:1}"
+best=""
+bestarea=0
+ids=$(xdotool search --class chromium 2>/dev/null || true)
+ids="$ids $(xdotool search --class Chromium 2>/dev/null || true)"
+for id in $ids; do
+  geom=$(xdotool getwindowgeometry --shell "$id" 2>/dev/null || true)
+  width=$(printf '%s\n' "$geom" | awk -F= '/^WIDTH=/{print $2}')
+  height=$(printf '%s\n' "$geom" | awk -F= '/^HEIGHT=/{print $2}')
+  [ -n "$width" ] && [ -n "$height" ] || continue
+  area=$((width * height))
+  if [ "$area" -gt "$bestarea" ]; then
+    bestarea=$area
+    best=$id
+  fi
+done
+if [ -n "$best" ]; then
+  xdotool windowactivate "$best" >/dev/null 2>&1 || true
+  xdotool windowraise "$best" >/dev/null 2>&1 || true
+fi
+exit 0
