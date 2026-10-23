@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import traceback
 from typing import Any
 
 import httpx
@@ -165,7 +166,8 @@ class Worker:
                 log.warning("task http id=%s status=%s", task_id, exc.response.status_code)
                 await self._fail(task, "worker error")
         except Exception as exc:
-            log.warning("task error id=%s type=%s", task_id, type(exc).__name__)
+            frames = ",".join(f"{os.path.basename(f.filename)}:{f.lineno}" for f in traceback.extract_tb(exc.__traceback__)[-3:])
+            log.warning("task error id=%s type=%s at=%s", task_id, type(exc).__name__, frames)
             if not lost.is_set():
                 await self._fail(task, "worker error")
         finally:
