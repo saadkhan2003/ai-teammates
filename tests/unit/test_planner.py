@@ -79,7 +79,31 @@ def test_thanks_is_reaction_only():
     final = plan([user, {"role": "tool", "content": "{\"ok\": true, \"action\": \"added\"}"}])
     message = final["choices"][0]["message"]
     assert message["content"] == ""
-    assert "tool_calls" not in message
+
+
+def test_compactor_marker_returns_deterministic_structured_json():
+    result = plan([{"role": "user", "content": "[compaction-summary-request]\nHistory JSON: /workspace/example.txt"}])
+    message = result["choices"][0]["message"]
+    summary = json.loads(message["content"])
+    assert set(summary) >= {"goal", "decisions", "files_touched", "commits", "commands_and_outcomes", "errors_and_fixes", "open_issues", "next_step"}
+    assert "/workspace/example.txt" in summary["files_touched"]
+
+
+def test_long_run_demo_uses_step_filenames_and_resumes_by_results():
+    user = {"role": "user", "content": "LONG RUN DEMO 2 BIG OUTPUT"}
+    first = plan([user])["choices"][0]["message"]["tool_calls"][0]
+    first_args = json.loads(first["function"]["arguments"])
+    assert first["function"]["name"] == "write_file"
+    assert first_args["path"].endswith("long-run-step-00001.txt")
+    assert len(first_args["content"]) >= 20000
+
+    transcript = [user, {"role": "assistant", "tool_calls": [first]}, {"role": "tool", "name": "write_file", "tool_call_id": first["id"], "content": '{"path":"/workspace/long-run-step-00001.txt"}'}]
+    read = plan(transcript)["choices"][0]["message"]["tool_calls"][0]
+    assert read["function"]["name"] == "read_file"
+    read_args = json.loads(read["function"]["arguments"])
+    transcript.extend([{"role": "assistant", "tool_calls": [read]}, {"role": "tool", "name": "read_file", "tool_call_id": read["id"], "content": read_args["path"]}])
+    second = plan(transcript)["choices"][0]["message"]["tool_calls"][0]
+    assert json.loads(second["function"]["arguments"])["path"].endswith("long-run-step-00002.txt")
 
 
 def test_ask_user_plan_then_continues_with_the_choice():

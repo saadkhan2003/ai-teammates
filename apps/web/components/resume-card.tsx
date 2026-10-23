@@ -8,7 +8,11 @@ import { api } from "@/lib/api";
 import { cardCopy, resumeText, type ResumeBlock } from "@/lib/resume-blocks";
 import { errorMessage } from "@/lib/utils";
 
-export function ResumeNotice({ block }: { block: Extract<ResumeBlock, { kind: "resume" }> }) {
+export function ResumeNotice({ block }: { block: Extract<ResumeBlock, { kind: "resume" | "compacted" }> }) {
+  if (block.kind === "compacted") return <div data-testid="compacted-notice" role="status" className="inline-flex min-h-8 flex-wrap items-center gap-2 px-1 text-sm text-muted-foreground">
+    <RotateCw className="h-3.5 w-3.5" aria-hidden />Condensed earlier work to keep going (kept the plan and the last {block.keptSteps} steps).
+    <a className="underline underline-offset-4 hover:text-foreground" href={`/api/tasks/${block.taskId}/history`} target="_blank" rel="noreferrer">View full history</a>
+  </div>;
   return <div data-testid="resume-notice" data-count={block.count} role="status" className="inline-flex min-h-8 items-center gap-2 px-1 text-sm text-muted-foreground">
     <RotateCw className="h-3.5 w-3.5" aria-hidden />{resumeText(block)}
   </div>;
@@ -36,7 +40,7 @@ export function ResumeCard({ block, onChanged }: { block: Extract<ResumeBlock, {
     {state === "open" ? <div className="mt-3 flex flex-wrap gap-2">
       <Button type="button" className="min-h-11" data-testid="resume-continue" disabled={pending} onClick={() => void act("continue")}>Continue</Button>
       {block.reason === "budget_reached" ? <Button type="button" variant="outline" className="min-h-11" data-testid="resume-raise" disabled={pending} onClick={() => void act("raise-budget")}>Raise budget</Button> : null}
-      <Button type="button" variant="outline" className="min-h-11" data-testid="resume-stop" disabled={pending} onClick={() => void act("cancel")}>Stop</Button>
+      {block.reason !== "context_exhausted" ? <Button type="button" variant="outline" className="min-h-11" data-testid="resume-stop" disabled={pending} onClick={() => void act("cancel")}>Stop</Button> : null}
     </div> : <p className="mt-2 text-sm text-muted-foreground" role="status">{state === "continued" ? "Continued." : "Stopped."}</p>}
   </section>;
 }

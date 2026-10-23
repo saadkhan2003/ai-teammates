@@ -386,7 +386,7 @@ export function ChatPane({
                 </article>
               );
             }
-            if (only?.kind === "resume") {
+            if (only?.kind === "resume" || only?.kind === "compacted") {
               return <article key={message.id} data-testid="message-item" data-role={message.role} className="group mr-auto w-full max-w-md"><ResumeNotice block={only} /><time className="mt-1 block px-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{formatWhen(message.createdAt)}</time></article>;
             }
             if (only?.kind === "resume_card") {
@@ -691,7 +691,7 @@ function MemoryNotice({ action, text }: { action: "saved" | "forgot"; text: stri
 
 function MessageBlockView({ block }: { block: ReturnType<typeof messageBlocks>[number] }) {
   if (block.kind === "text") return <Markdown text={block.text} />;
-  if (block.kind === "question" || block.kind === "memory" || block.kind === "resume" || block.kind === "resume_card") return null;
+  if (block.kind === "question" || block.kind === "memory" || block.kind === "resume" || block.kind === "compacted" || block.kind === "resume_card") return null;
   if (block.kind === "form") return <SecureFormCard title={block.title} fields={block.fields} />;
   if (block.kind === "image") {
     return (

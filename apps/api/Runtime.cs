@@ -19,6 +19,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         var taskId = body.GetProperty("taskId").GetGuid();
         var botId = body.GetProperty("botId").GetGuid();
         var owner = await OwnerOf(botId);
+        var role = body.TryGetProperty("role", out var roleElement) && roleElement.GetString() == "compactor" ? "compactor" : "planner";
         var messages = body.GetProperty("messages");
         var secret = await platform.Resolve(owner, "secret://openrouter/default", "model_gateway", botId, null, taskId, "model_gateway");
         if (secret == null)
@@ -26,7 +27,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         var key = Encoding.UTF8.GetString(secret);
         CryptographicOperations.ZeroMemory(secret);
         var redacted = RedactMessages(messages, key);
-        var payload = ProviderWire.Completion(platform.ModelName, redacted, await ToolsFor(botId, ct));
+        var payload = ProviderWire.Completion(platform.ModelName, redacted, role == "compactor" ? Array.Empty<object>() : await ToolsFor(botId, ct));
         using var request = new HttpRequestMessage(HttpMethod.Post, platform.OpenRouterBase + "/chat/completions");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
         request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
@@ -36,17 +37,19 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         key = "";
         if (!response.IsSuccessStatusCode)
         {
-            await StoreModel(owner, botId, taskId, redacted, false, (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds, default);
-            return Results.Json(new { status = "error", error = "provider rejected the request" });
+            await StoreModel(owner, botId, taskId, redacted, false, (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds, default, role);
+            var contextError = raw.Contains("context_length", StringComparison.OrdinalIgnoreCase) || raw.Contains("maximum context", StringComparison.OrdinalIgnoreCase) || raw.Contains("too many tokens", StringComparison.OrdinalIgnoreCase);
+            return Results.Json(new { status = "error", error = "provider rejected the request", errorCode = contextError ? "context_length" : "provider_error" });
         }
         using var doc = JsonDocument.Parse(raw);
         var message = doc.RootElement.GetProperty("choices")[0].GetProperty("message");
         var normalized = ProviderWire.Normalize(message);
         var normalizedText = OutputRedactor.Redact(normalized.GetRawText(), []);
-        await StoreModel(owner, botId, taskId, redacted, true, (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds, ProviderWire.ReadUsage(doc.RootElement));
+        var usage = ProviderWire.ReadUsage(doc.RootElement);
+        await StoreModel(owner, botId, taskId, redacted, true, (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds, usage, role);
         await using var conn = await platform.Data.OpenConnectionAsync(ct);
         await conn.ExecuteAsync("UPDATE tasks SET model_calls = model_calls + 1, updated_at=now() WHERE id=@id", new { id = taskId });
-        return Results.Text("{\"status\":\"ok\",\"message\":" + normalizedText + "}", "application/json");
+        return Results.Text("{\"status\":\"ok\",\"message\":" + normalizedText + ",\"promptTokens\":" + usage.PromptTokens.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}", "application/json");
     }
 
     public async Task<IResult> Authorize(JsonElement body, CancellationToken ct)
@@ -1092,15 +1095,15 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         return new { replayed = true, output };
     }
 
-    private async Task StoreModel(Guid owner, Guid botId, Guid taskId, JsonElement prompt, bool ok, int latency, TokenUsage usage)
+    private async Task StoreModel(Guid owner, Guid botId, Guid taskId, JsonElement prompt, bool ok, int latency, TokenUsage usage, string role = "planner")
     {
         await using var conn = await platform.Data.OpenConnectionAsync();
         await conn.ExecuteAsync(
             "INSERT INTO model_requests (owner_id, bot_id, task_id, provider, model, prompt_json) VALUES (@owner, @bot, @task, @provider, @model, @prompt::jsonb)",
             new { owner, bot = botId, task = taskId, provider = platform.LlmProvider, model = platform.ModelName, prompt = prompt.GetRawText() });
         await conn.ExecuteAsync(
-            "INSERT INTO model_calls (bot_id, task_id, owner_id, role, provider, model, latency_ms, prompt_tokens, completion_tokens, ok, cost_usd) VALUES (@bot, @task, @owner, 'planner', @provider, @model, @latency, @promptTokens, @completionTokens, @ok, @cost)",
-            new { bot = botId, task = taskId, owner, provider = platform.LlmProvider, model = platform.ModelName, latency, promptTokens = usage.PromptTokens, completionTokens = usage.CompletionTokens, ok, cost = usage.CostUsd });
+            "INSERT INTO model_calls (bot_id, task_id, owner_id, role, provider, model, latency_ms, prompt_tokens, completion_tokens, ok, cost_usd) VALUES (@bot, @task, @owner, @role, @provider, @model, @latency, @promptTokens, @completionTokens, @ok, @cost)",
+            new { bot = botId, task = taskId, owner, role, provider = platform.LlmProvider, model = platform.ModelName, latency, promptTokens = usage.PromptTokens, completionTokens = usage.CompletionTokens, ok, cost = usage.CostUsd });
     }
 
     private async Task<Guid> OwnerOf(Guid botId)

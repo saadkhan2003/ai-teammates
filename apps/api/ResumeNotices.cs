@@ -11,6 +11,9 @@ public static class ResumeNotices
     public static string BuildNotice(int count, int attempt, string reason, int stepsUsed, string current, DateTimeOffset firstAt, DateTimeOffset lastAt) =>
         InjectionFilter.ScrubJson(JsonSerializer.Serialize(new { type = "resume", @event = "resumed", count, attempt, reason = Safe(reason), stepsUsed = Math.Max(0, stepsUsed), current = Safe(current), firstAt = firstAt.ToString("O"), lastAt = lastAt.ToString("O") }));
 
+    public static string BuildCompactedNotice(Guid taskId, int archived, int keptSteps) =>
+        InjectionFilter.ScrubJson(JsonSerializer.Serialize(new { type = "resume", @event = "compacted", taskId, archived = Math.Max(0, archived), keptSteps = Math.Max(0, keptSteps) }));
+
     public static string BuildCard(string reason, Guid taskId, int stepsUsed, int maxSteps, int secondsUsed, int maxSeconds, string current) =>
         InjectionFilter.ScrubJson(JsonSerializer.Serialize(new { type = "resume_card", reason = Safe(reason), state = "open", taskId, stepsUsed = Math.Max(0, stepsUsed), maxSteps = Math.Max(0, maxSteps), secondsUsed = Math.Max(0, secondsUsed), maxSeconds = Math.Max(0, maxSeconds), current = Safe(current) }));
 
@@ -31,7 +34,7 @@ public static class ResumeNotices
         catch (KeyNotFoundException) { return (false, null); }
     }
 
-    public static bool IsCardReason(string reason) => reason is "budget_reached" or "no_progress" or "resume_exhausted";
+    public static bool IsCardReason(string reason) => reason is "budget_reached" or "no_progress" or "resume_exhausted" or "context_exhausted";
     public static bool IsResumeReason(string reason) => Reliability.IsAutoResumeReason(reason);
     public static bool ShouldInsertCard(bool hasOpenCard) => !hasOpenCard;
 
@@ -106,6 +109,12 @@ public static class ResumeNotices
                 if (!ShouldInsertCard(open)) return;
                 var secondsUsed = (int?)checkpoint["secondsUsed"] ?? 0;
                 content = BuildCard(type, taskId, stepsUsed, task.MaxSteps ?? 200, secondsUsed, task.MaxSeconds ?? 3600, current ?? "");
+            }
+            else if (type == "compacted")
+            {
+                var archived = raw.TryGetProperty("archived", out var archivedValue) && archivedValue.TryGetInt32(out var count) ? count : 0;
+                var kept = raw.TryGetProperty("kept", out var keptValue) && keptValue.TryGetInt32(out var keptCount) ? keptCount : 20;
+                content = BuildCompactedNotice(taskId, archived, Math.Min(20, kept));
             }
             if (content == null) return;
             if (!updatedExisting)

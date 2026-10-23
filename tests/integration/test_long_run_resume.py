@@ -85,6 +85,20 @@ def _worker_tool(body):
         return exc.code, json.loads(exc.read())
 
 
+def _compact(task, body):
+    request = urllib.request.Request(
+        API + f"/internal/tasks/{task}/compact",
+        data=json.dumps(body).encode(),
+        method="POST",
+        headers={"Authorization": "Bearer " + WORKER, "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status, json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read())
+
+
 def test_shell_execute_deduped_by_idempotency_key():
     client, bot, _, task = _setup()
     try:
@@ -255,6 +269,52 @@ def test_transcript_put_is_append_only():
         assert _put_transcript(task, {"epoch": 7, "messages": rewritten}) == 200
         assert _psql(f"SELECT count(*) FROM task_transcript WHERE task_id='{task}'") == "5"
         assert _psql(f"SELECT content FROM task_transcript WHERE task_id='{task}' AND seq=0") == "rewritten prefix"
+    finally:
+        _cleanup(client, bot, task)
+
+
+def test_compaction_archives_replaced_rows_and_rewrites_transcript():
+    client, bot, _, task = _setup()
+    try:
+        _psql(f"UPDATE tasks SET status='running',lease_epoch=7,lease_owner='compact-test',lease_until=now()+interval '1 minute' WHERE id='{task}'")
+        old = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "original request"},
+            {"role": "assistant", "content": "finished a file write"},
+        ]
+        assert _put_transcript(task, {"epoch": 7, "messages": old}) == 200
+        compacted = [{"role": "system", "content": "system"}, {"role": "user", "content": "[compaction summary 1] {}"}]
+        status, result = _compact(task, {"epoch": 7, "compactionId": "integration-compact", "archivedFromSeq": 0, "archivedToSeq": 2, "messages": compacted, "stats": {"stage": "summary", "estimateBefore": 120, "estimateAfter": 50}})
+        assert status == 200, result
+        assert _psql(f"SELECT count(*) FROM task_transcript_archive WHERE task_id='{task}' AND compaction_id='integration-compact'") == "3"
+        assert _psql(f"SELECT count(*) FROM task_transcript WHERE task_id='{task}'") == "2"
+        assert _psql(f"SELECT type FROM task_run_events WHERE task_id='{task}' AND type='compacted'") == "compacted"
+        assert _psql(f"SELECT checkpoint->>'compactions' FROM tasks WHERE id='{task}'") == "1"
+        assert _psql(f"SELECT count(*) FROM messages WHERE task_id='{task}' AND content::jsonb->>'event'='compacted'") == "1"
+    finally:
+        _cleanup(client, bot, task)
+
+
+def test_compact_route_rejects_stale_epoch():
+    client, bot, _, task = _setup()
+    try:
+        _psql(f"UPDATE tasks SET status='running',lease_epoch=7,lease_owner='compact-test',lease_until=now()+interval '1 minute' WHERE id='{task}'")
+        status, _ = _compact(task, {"epoch": 6, "compactionId": "stale-compact", "archivedFromSeq": 0, "archivedToSeq": 0, "messages": [{"role": "user", "content": "no"}], "stats": {}})
+        assert status == 409
+        assert _psql(f"SELECT count(*) FROM task_transcript_archive WHERE task_id='{task}'") == "0"
+    finally:
+        _cleanup(client, bot, task)
+
+
+def test_history_endpoint_is_owner_checked():
+    client, bot, _, task = _setup()
+    try:
+        assert client.call("GET", f"/api/tasks/{task}/history")[0] == 200
+        worker_call("POST", "/internal/test/users", {"username": "compact-history-other", "password": "compact-history-password"})
+        from test_acceptance import Client
+        other = Client()
+        assert other.call("POST", "/api/auth/login", {"username": "compact-history-other", "password": "compact-history-password"}, auth=False)[0] == 200
+        assert other.call("GET", f"/api/tasks/{task}/history")[0] == 404
     finally:
         _cleanup(client, bot, task)
 

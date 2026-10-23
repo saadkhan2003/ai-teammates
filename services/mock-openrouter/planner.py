@@ -24,6 +24,11 @@ Step = tuple[str, str, dict] | tuple[str, str] | tuple[str, Callable[[list], str
 def plan(messages: list) -> dict:
     """Return one tool call, or a final assistant message, for this transcript."""
     transcript = [item for item in messages or [] if isinstance(item, dict)]
+    if any("[compaction-summary-request]" in _content_text(item.get("content")) for item in transcript):
+        return _final(json.dumps(_compaction_summary(transcript), ensure_ascii=False, sort_keys=True))
+    long_run = re.search(r"LONG RUN DEMO\s+(\d+)", _first_user(transcript), re.IGNORECASE)
+    if long_run:
+        return _long_run_plan(transcript, min(500, int(long_run.group(1))))
     done = sum(1 for item in transcript if item.get("role") == "tool")
     steps = _steps(_first_user(transcript), transcript)
     if done >= len(steps):
@@ -33,6 +38,74 @@ def plan(messages: list) -> dict:
         text = step[1](transcript) if callable(step[1]) else step[1]
         return _final(text)
     return _tool(step[1], step[2])
+
+
+def _compaction_summary(messages: list) -> dict:
+    text = "\n".join(_content_text(item.get("content")) for item in messages)
+    paths = sorted(set(re.findall(r"/workspace/[A-Za-z0-9_./-]+", text)))[:100]
+    return {
+        "goal": _first_user(messages)[:500], "decisions": [], "files_touched": paths,
+        "commits": [], "commands_and_outcomes": [], "errors_and_fixes": [],
+        "completed_long_run_steps": _long_run_progress(messages),
+        "open_issues": [], "next_step": "Continue with the next numbered long-run step.",
+    }
+
+
+def _long_run_plan(messages: list, count: int) -> dict:
+    text = _first_user(messages)
+    done = _long_run_progress(messages)
+    if done >= count:
+        return _final(f"Long run finished: completed {count} steps.")
+    index = done + 1
+    path = f"/workspace/long-run-step-{index:05d}.txt"
+    if not _has_result_for(messages, path, "write_file"):
+        content = f"step {index}\n" + ("x" * 20000 if "BIG OUTPUT" in text else "complete\n")
+        return _tool("write_file", {"path": path, "content": content})
+    if not _has_result_for(messages, path, "read_file"):
+        return _tool("read_file", {"path": path})
+    return _tool("read_file", {"path": path})
+
+
+def _long_run_progress(messages: list) -> int:
+    completed = set()
+    for item in messages:
+        if item.get("role") == "user" and "[compaction summary" in _content_text(item.get("content")):
+            try:
+                summary_text = _content_text(item.get("content")).split("\n", 1)[1]
+                if "[untrusted compaction summary content]\n" in summary_text:
+                    summary_text = summary_text.split("[untrusted compaction summary content]\n", 1)[1].split("\n[/untrusted]", 1)[0]
+                summary_text = summary_text.removeprefix("Quoted source data:\n")
+                summary = json.loads(summary_text)
+                completed.add(int(summary.get("completed_long_run_steps", 0)))
+            except (ValueError, TypeError, AttributeError):
+                pass
+        if item.get("role") != "tool":
+            continue
+        if "read_file" in str(item.get("name") or ""):
+            completed.update(int(value) for value in re.findall(r"long-run-step-(\d{5})", _result_path(item, messages)))
+    return max(completed, default=0)
+
+
+def _has_result_for(messages: list, path: str, tool_name: str) -> bool:
+    marker = path.rsplit("/", 1)[-1]
+    return any(item.get("role") == "tool" and tool_name in str(item.get("name") or "") and marker in _result_path(item, messages) for item in messages)
+
+
+def _result_path(result: dict, messages: list) -> str:
+    call_id = str(result.get("tool_call_id") or result.get("toolCallId") or "")
+    if not call_id:
+        return _content_text(result.get("content"))
+    for message in messages:
+        calls = message.get("tool_calls", message.get("toolCalls", []))
+        for call in calls if isinstance(calls, list) else []:
+            if str(call.get("id") or "") != call_id:
+                continue
+            function = call.get("function") if isinstance(call.get("function"), dict) else {}
+            try:
+                return str(json.loads(function.get("arguments") or "{}").get("path") or "") + " " + _content_text(result.get("content"))
+            except (ValueError, TypeError):
+                break
+    return _content_text(result.get("content"))
 
 
 def _steps(text: str, messages: list) -> list[Step]:

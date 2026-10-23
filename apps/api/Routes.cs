@@ -374,6 +374,16 @@ public static class Routes
             return Results.Json(rows.Select(Platform.ToDict));
         });
 
+        app.MapGet("/api/tasks/{id:guid}/history", async (HttpContext ctx, Guid id) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            if (!await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE t.id=@id AND b.owner_id=@owner)", new { id, owner = user })) return Results.NotFound();
+            var rows = await conn.QueryAsync("SELECT compaction_id,seq,role,content,tool_calls::text AS tool_calls,tool_call_id,name,archived_at FROM task_transcript_archive WHERE task_id=@id ORDER BY archived_at,compaction_id,seq", new { id });
+            return Results.Json(rows.Select(Platform.ToDict));
+        });
+
         app.MapGet("/api/bots/{id:guid}/work-settings", async (HttpContext ctx, Guid id) =>
         {
             var user = await RequireUser(ctx, platform);
@@ -425,17 +435,18 @@ public static class Routes
                 FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE t.id=@id AND b.owner_id=@owner
                 """, new { id, owner = user });
             if (row.BotId == Guid.Empty) return Results.NotFound();
-            if (row.Status != "waiting_human" || row.Reason is not ("budget_reached" or "no_progress" or "resume_exhausted"))
+            if (row.Status != "waiting_human" || row.Reason is not ("budget_reached" or "no_progress" or "resume_exhausted" or "context_exhausted"))
                 return Results.Conflict(new { error = "task_not_continuable" });
             var current = RunBudget.Resolve(row.Steps, row.Seconds, row.BotSteps, row.BotSeconds);
-            var extraSteps = body.ValueKind == JsonValueKind.Object && body.TryGetProperty("extraSteps", out var se) && se.TryGetInt32(out var s) ? Math.Clamp(s, 1, 1000) : 200;
-            var extraSeconds = body.ValueKind == JsonValueKind.Object && body.TryGetProperty("extraSeconds", out var te) && te.TryGetInt32(out var t) ? Math.Clamp(t, 1, 21600) : 3600;
+            var contextExhausted = row.Reason == "context_exhausted";
+            var extraSteps = contextExhausted ? 0 : body.ValueKind == JsonValueKind.Object && body.TryGetProperty("extraSteps", out var se) && se.TryGetInt32(out var s) ? Math.Clamp(s, 1, 1000) : 200;
+            var extraSeconds = contextExhausted ? 0 : body.ValueKind == JsonValueKind.Object && body.TryGetProperty("extraSeconds", out var te) && te.TryGetInt32(out var t) ? Math.Clamp(t, 1, 21600) : 3600;
             var nextSteps = Math.Clamp(current.MaxSteps + extraSteps, 4, 1000);
             var nextSeconds = Math.Clamp(current.MaxSeconds + extraSeconds, 30, 21600);
             var n = await conn.ExecuteAsync("""
                 UPDATE tasks SET status='queued',waiting_reason=NULL,budget_steps=@steps,budget_seconds=@seconds,
                     lease_owner=NULL,lease_until=NULL,resume_after=NULL,lease_epoch=lease_epoch+1,updated_at=now()
-                WHERE id=@id AND status='waiting_human' AND waiting_reason IN ('budget_reached','no_progress','resume_exhausted')
+                WHERE id=@id AND status='waiting_human' AND waiting_reason IN ('budget_reached','no_progress','resume_exhausted','context_exhausted')
                 """, new { id, steps = nextSteps, seconds = nextSeconds });
             if (n == 0) return Results.Conflict(new { error = "task_not_continuable" });
             await platform.Audit(user.Value.ToString(), "task.budget_continue", row.BotId, id, new { extraSteps, extraSeconds, maxSteps = nextSteps, maxSeconds = nextSeconds });
@@ -1268,6 +1279,7 @@ public static class Routes
             if (!Worker(ctx, platform)) return Results.Unauthorized();
             await using var conn = await platform.Data.OpenConnectionAsync();
             var rows = await conn.QueryAsync("SELECT role, content, tool_calls::text AS tool_calls, tool_call_id, name FROM task_transcript WHERE task_id=@id ORDER BY seq", new { id });
+            var lastPromptTokens = await conn.ExecuteScalarAsync<int>("SELECT coalesce((SELECT prompt_tokens FROM model_calls WHERE task_id=@id AND role='planner' ORDER BY created_at DESC LIMIT 1),0)", new { id });
             var messages = rows.Select(row =>
             {
                 var dict = (IDictionary<string, object>)row;
@@ -1275,7 +1287,7 @@ public static class Routes
                 if (dict["tool_calls"] is string json && json != "") tools = JsonDocument.Parse(json).RootElement;
                 return new { role = dict["role"], content = dict["content"], toolCalls = tools, toolCallId = dict["tool_call_id"], name = dict["name"] };
             });
-            return Results.Json(new { messages });
+            return Results.Json(new { messages, lastPromptTokens });
         });
 
         app.MapPut("/internal/tasks/{id:guid}/transcript", async (HttpContext ctx, Guid id, JsonElement body) =>
@@ -1329,6 +1341,61 @@ public static class Routes
                 await conn.ExecuteAsync("UPDATE tasks SET last_progress_at=now(),blocked_reason=NULL WHERE id=@id AND status='running' AND lease_epoch=@epoch", new { id, epoch });
             else await conn.ExecuteAsync("UPDATE tasks SET last_progress_at=now(),blocked_reason=NULL WHERE id=@id", new { id });
             return Results.Json(new { ok = true });
+        });
+
+        app.MapPost("/internal/tasks/{id:guid}/compact", async (HttpContext ctx, Guid id, JsonElement body) =>
+        {
+            if (!Worker(ctx, platform)) return Results.Unauthorized();
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            await using var tx = await conn.BeginTransactionAsync();
+            var epoch = body.TryGetProperty("epoch", out var ep) ? ep.GetInt32() : -1;
+            var task = await conn.QuerySingleOrDefaultAsync<(int Epoch, string Status, string? Checkpoint, Guid? ConversationId, Guid BotId, Guid OwnerId)>(
+                "SELECT t.lease_epoch,t.status,t.checkpoint::text,t.conversation_id,t.bot_id,b.owner_id FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE t.id=@id FOR UPDATE OF t", new { id }, tx);
+            if (task.Status == null || !EpochFence.Accepts(true, epoch, task.Epoch, task.Status)) return Results.StatusCode(409);
+            var compactionId = body.GetProperty("compactionId").GetString();
+            if (string.IsNullOrWhiteSpace(compactionId) || compactionId.Length > 80) return Results.BadRequest();
+            var from = Math.Max(0, body.GetProperty("archivedFromSeq").GetInt32());
+            var to = Math.Max(from, body.GetProperty("archivedToSeq").GetInt32());
+            var archived = await conn.ExecuteAsync("""
+                INSERT INTO task_transcript_archive(task_id,compaction_id,seq,role,content,tool_calls,tool_call_id,name)
+                SELECT task_id,@compactionId,seq,role,content,tool_calls,tool_call_id,name
+                FROM task_transcript WHERE task_id=@id AND seq BETWEEN @from AND @to
+                ON CONFLICT(task_id,compaction_id,seq) DO NOTHING
+                """, new { id, compactionId, from, to }, tx);
+            var incoming = body.GetProperty("messages").EnumerateArray().Select((message, seq) => new {
+                Seq = seq,
+                Role = message.GetProperty("role").GetString() ?? "user",
+                Content = message.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.String ? OutputRedactor.Redact(content.GetString()) : "",
+                Tools = message.TryGetProperty("toolCalls", out var calls) ? calls.GetRawText() : null,
+                ToolCallId = message.TryGetProperty("toolCallId", out var callId) ? callId.GetString() : null,
+                Name = message.TryGetProperty("name", out var name) ? name.GetString() : null
+            }).ToArray();
+            await conn.ExecuteAsync("DELETE FROM task_transcript WHERE task_id=@id", new { id }, tx);
+            foreach (var message in incoming)
+                await conn.ExecuteAsync("INSERT INTO task_transcript(task_id,seq,role,content,tool_calls,tool_call_id,name) VALUES(@id,@Seq,@Role,@Content,@Tools::jsonb,@ToolCallId,@Name)", new { id, message.Seq, message.Role, message.Content, message.Tools, message.ToolCallId, message.Name }, tx);
+
+            var stats = body.TryGetProperty("stats", out var statsEl) ? statsEl : default;
+            int Stat(string key) => stats.ValueKind == JsonValueKind.Object && stats.TryGetProperty(key, out var value) && value.TryGetInt32(out var number) ? Math.Clamp(number, 0, 10_000_000) : 0;
+            var stage = stats.ValueKind == JsonValueKind.Object && stats.TryGetProperty("stage", out var stageEl) && stageEl.GetString() == "summary" ? "summary" : "mask";
+            var detail = InjectionFilter.ScrubJson(JsonSerializer.Serialize(new { kept = incoming.Length, archived, stage, estimateBefore = Stat("estimateBefore"), estimateAfter = Stat("estimateAfter") }));
+            await conn.ExecuteAsync("INSERT INTO task_run_events(task_id,type,detail) VALUES(@id,'compacted',@detail::jsonb)", new { id, detail }, tx);
+            var ledger = TaskCheckpoint.Read(task.Checkpoint);
+            var count = (int?)ledger["compactions"] ?? 0;
+            ledger["compactions"] = Math.Min(10000, count + 1);
+            ledger["lastCompactionAt"] = DateTimeOffset.UtcNow.ToString("O");
+            if (stats.ValueKind == JsonValueKind.Object && stats.TryGetProperty("compactionsWithoutRelief", out var streak) && streak.TryGetInt32(out var streakCount))
+                ledger["compactionsWithoutRelief"] = Math.Clamp(streakCount, 0, 2);
+            await conn.ExecuteAsync("UPDATE tasks SET checkpoint=@checkpoint::jsonb,last_progress_at=now(),updated_at=now() WHERE id=@id AND status='running' AND lease_epoch=@epoch", new { id, epoch, checkpoint = TaskCheckpoint.Bounded(ledger) }, tx);
+            if (task.ConversationId != null)
+            {
+                var notice = ResumeNotices.BuildCompactedNotice(id, archived, Math.Min(20, incoming.Length));
+                await conn.ExecuteAsync("INSERT INTO messages(conversation_id,role,kind,content,task_id) VALUES(@conversation,'assistant','text',@notice,@id)", new { conversation = task.ConversationId, notice, id }, tx);
+            }
+            await tx.CommitAsync();
+            await platform.Publish(new { type = "compacted", taskId = id, detail = JsonSerializer.Deserialize<object>(detail) });
+            if (task.ConversationId != null) await platform.Publish(new { type = "message", conversationId = task.ConversationId });
+            await platform.Audit(task.OwnerId.ToString(), "task.compacted", task.BotId, id, JsonSerializer.Deserialize<object>(detail)!);
+            return Results.Json(new { ok = true, kept = incoming.Length, archived, compactionId });
         });
 
         app.MapPost("/internal/tasks/{id:guid}/grounding", async (HttpContext ctx, Guid id, JsonElement body) =>
@@ -1529,6 +1596,11 @@ public static class Routes
             {
                 var usage = await conn.QuerySingleAsync<(int Steps, int Rounds)>("SELECT (SELECT count(*)::int FROM task_steps WHERE task_id=@id),model_calls FROM tasks WHERE id=@id", new { id });
                 await Reliability.Event(platform, id, "budget_reached", new { stepsUsed = usage.Steps, modelRounds = usage.Rounds });
+            }
+            if (n > 0 && status == "waiting_human" && reason == "context_exhausted")
+            {
+                var usage = await conn.QuerySingleAsync<(int Steps, int Rounds)>("SELECT (SELECT count(*)::int FROM task_steps WHERE task_id=@id),model_calls FROM tasks WHERE id=@id", new { id });
+                await Reliability.Event(platform, id, "context_exhausted", new { stepsUsed = usage.Steps, modelRounds = usage.Rounds });
             }
             if (n > 0 && Reliability.WaitsForKey(status, reason))
             {
