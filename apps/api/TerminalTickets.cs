@@ -40,6 +40,9 @@ public static class TerminalTickets
     }
 
     public static TerminalTicketClaims Verify(string token, byte[] secret, DateTimeOffset? now = null)
+        => VerifyCore(token, secret, now, checkExpiry: true);
+
+    private static TerminalTicketClaims VerifyCore(string token, byte[] secret, DateTimeOffset? now, bool checkExpiry)
     {
         try
         {
@@ -63,7 +66,7 @@ public static class TerminalTickets
             RequireScope(claims.Computer, nameof(claims.Computer));
             RequireScope(claims.User, nameof(claims.User));
             RequireScope(claims.Bot, nameof(claims.Bot));
-            if (FromBase64Url(claims.Nonce).Length < 16 || claims.Expires <= (now ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds()) throw new InvalidOperationException();
+            if (FromBase64Url(claims.Nonce).Length < 16 || (checkExpiry && claims.Expires <= (now ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds())) throw new InvalidOperationException();
             return claims;
         }
         catch (Exception ex) when (ex is FormatException or JsonException or KeyNotFoundException or InvalidOperationException or ArgumentException or OverflowException)
@@ -116,6 +119,8 @@ public static class TerminalTickets
             if (owned == 0 || mapped == 0) return Results.NotFound();
             await platform.Compute.EnsureAwakeAsync(new Teammates.Compute.ComputerId(id.ToString()), ctx.RequestAborted);
             var token = Create(SecretFor(platform.ComputerToken, id.ToString()), id.ToString(), user.Value.ToString(), bot.ToString(), window, role);
+            await platform.Tickets.IssueAsync(new OneTimeTicket(Guid.NewGuid(), "terminal", token, user.Value, bot, id,
+                role, "", 0, JsonSerializer.Serialize(new { window }), null, DateTime.UtcNow.AddSeconds(60)), ctx.RequestAborted);
             return Results.Json(new { ticket = token, websocketPath = $"/api/computers/{id}/terminal", expiresInSeconds = 60 });
             }
         });
@@ -134,10 +139,12 @@ public static class TerminalTickets
             var user = await Routes.RequireUser(ctx, platform);
             if (user == null) { ctx.Response.StatusCode = 401; return; }
             TerminalTicketClaims claims;
-            try { claims = Verify(token, SecretFor(platform.ComputerToken, id.ToString())); }
+            try { claims = VerifyCore(token, SecretFor(platform.ComputerToken, id.ToString()), null, checkExpiry: false); }
             catch (InvalidOperationException) { ctx.Response.StatusCode = 401; return; }
             if (claims.Computer != id.ToString() || claims.User != user.Value.ToString()) { ctx.Response.StatusCode = 403; return; }
             if (!await Routes.Owns(platform, user.Value, Guid.Parse(claims.Bot))) { ctx.Response.StatusCode = 403; return; }
+            var consumed = await platform.Tickets.ConsumeAsync(token, "terminal", user.Value, Guid.Parse(claims.Bot), null, ctx.RequestAborted);
+            if (consumed is null || consumed.ComputerId != id || consumed.Role != claims.Role) { ctx.Response.StatusCode = 401; return; }
             await using (var conn = await platform.Data.OpenConnectionAsync(ctx.RequestAborted))
             {
                 if (await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM user_computers WHERE user_id=@user AND computer_id=@id", new { user, id }) == 0)

@@ -218,8 +218,11 @@ def test_shell_and_cdp_http_actions_require_epoch_and_use_fence():
 def test_websocket_close_grace_force_release_and_tab_transfer_are_wired():
     routes = (ROOT / "apps/api/Routes.cs").read_text()
     tickets = (ROOT / "apps/api/VncTickets.cs").read_text()
+    connections = (ROOT / "apps/api/DesktopRwConnections.cs").read_text()
     ui = (ROOT / "apps/web/components/computer-pane.tsx").read_text()
-    assert "WebSocketCloseGrace" in routes and "TimeSpan.FromSeconds(12)" in tickets
+    assert "DesktopRwConnections.RegisterAsync" in routes and "DesktopRwConnections.DisconnectedAsync" in routes
+    assert "release_after=clock_timestamp()+interval '12 seconds'" in connections
+    assert "FOR UPDATE SKIP LOCKED" in connections
     assert "leaseMonitor" in routes and "socket.Abort()" in routes
     force = tickets.split('MapPost("/api/computers/{id:guid}/lease/force-release"', 1)[1].split('MapPost("/api/computers/{id:guid}/lease"', 1)[0]
     assert "force_release_reason_required" in force and "desktop.lease.force_release" in force

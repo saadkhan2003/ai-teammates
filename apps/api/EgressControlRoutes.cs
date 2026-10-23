@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -11,8 +10,6 @@ namespace Teammates.Api;
 public static class EgressControlRoutes
 {
     public sealed record Decision(string? Host, int Port, bool Allowed, string? Reason);
-    private sealed class Window { public long Started; public int Count; }
-    private static readonly ConcurrentDictionary<Guid, Window> Windows = new();
 
     public static void MapEgressControlRoutes(this WebApplication app, Platform platform)
     {
@@ -36,7 +33,7 @@ public static class EgressControlRoutes
             await using var conn = await platform.Data.OpenConnectionAsync();
             var exists = await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM user_computers WHERE computer_id=@computerId)", new { computerId });
             if (!exists) return Results.NotFound();
-            if (!TakeRate(computerId)) return Results.StatusCode(429);
+            if (!await TakeRateAsync(conn, computerId)) return Results.StatusCode(429);
             await platform.Audit("computer:" + computerId.ToString("N"), decision.Allowed ? "egress.allowed" : "egress.blocked", null, null,
                 new { host, decision.Port, decision.Allowed, reason });
             return Results.Ok(new { ok = true });
@@ -52,15 +49,19 @@ public static class EgressControlRoutes
         return CryptographicOperations.FixedTimeEquals(a, b);
     }
 
-    private static bool TakeRate(Guid id)
+    private static async Task<bool> TakeRateAsync(System.Data.IDbConnection conn, Guid id)
     {
-        var now = Environment.TickCount64;
-        var window = Windows.GetOrAdd(id, _ => new Window { Started = now });
-        lock (window)
-        {
-            if (now - window.Started >= 60_000) { window.Started = now; window.Count = 0; }
-            return ++window.Count <= 120;
-        }
+        var count = await conn.ExecuteScalarAsync<int?>("""
+            INSERT INTO egress_rate_windows (computer_id,window_started,decision_count)
+            VALUES (@id,clock_timestamp(),1)
+            ON CONFLICT (computer_id) DO UPDATE SET
+              window_started=CASE WHEN egress_rate_windows.window_started <= clock_timestamp()-interval '1 minute' THEN clock_timestamp() ELSE egress_rate_windows.window_started END,
+              decision_count=CASE WHEN egress_rate_windows.window_started <= clock_timestamp()-interval '1 minute' THEN 1 ELSE egress_rate_windows.decision_count+1 END
+            WHERE egress_rate_windows.window_started <= clock_timestamp()-interval '1 minute' OR egress_rate_windows.decision_count < 120
+            RETURNING decision_count
+            """, new { id });
+        await conn.ExecuteAsync("DELETE FROM egress_rate_windows WHERE window_started<clock_timestamp()-interval '1 day'");
+        return count is not null;
     }
 
     private static bool SafeHost(string host) => !host.Any(char.IsControl) && !host.Any(c => c is '/' or '?' or '#' or '@' or '\\')

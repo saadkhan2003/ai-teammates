@@ -72,7 +72,7 @@ var platform = new Platform(data, master, compute, s3, config);
 compute.MissingComputer = platform.BeginComputerRecovery;
 compute.OnComputerRestored = platform.ResumeRecoveringTasks;
 secrets.Platform = platform;
-var loginBroker = new LoginBroker();
+var loginBroker = new LoginBroker(data, master);
 var loginFlow = new LoginFlow(platform, loginBroker);
 var runtime = new Runtime(platform, loginFlow);
 builder.Services.AddSingleton(platform);
@@ -82,6 +82,8 @@ builder.Services.AddSingleton(loginFlow);
 builder.Services.AddSingleton(runtime);
 builder.Services.AddHostedService<Maintenance>();
 builder.Services.AddHostedService<PluginCatalogJob>();
+builder.Services.AddHostedService<TicketCleanupService>();
+builder.Services.AddHostedService<DesktopLeaseSweepService>();
 
 var app = builder.Build();
 app.UseExceptionHandler(handler => handler.Run(async ctx =>

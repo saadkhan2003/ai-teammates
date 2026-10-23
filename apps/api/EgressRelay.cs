@@ -58,11 +58,21 @@ public static class EgressRelay
             }
             using var socket = await ctx.WebSockets.AcceptWebSocketAsync();
             var pair = Pairs.GetOrAdd(relayComputerId, _ => new Pair());
+            var occupied = false;
             lock (pair)
             {
-                if (role == "computer") pair.Computer = socket;
-                else pair.Companion = socket;
-                if (pair.Computer is not null && pair.Companion is not null) pair.Ready.TrySetResult();
+                occupied = role == "computer" ? pair.Computer is not null : pair.Companion is not null;
+                if (!occupied)
+                {
+                    if (role == "computer") pair.Computer = socket;
+                    else pair.Companion = socket;
+                    if (pair.Computer is not null && pair.Companion is not null) pair.Ready.TrySetResult();
+                }
+            }
+            if (occupied)
+            {
+                await socket.CloseAsync(WebSocketCloseStatus.PolicyViolation, "relay_pair_mismatch", CancellationToken.None);
+                return;
             }
             try
             {
@@ -76,6 +86,11 @@ public static class EgressRelay
             }
             catch (OperationCanceledException) { }
             catch (WebSocketException) { }
+            catch (TimeoutException)
+            {
+                try { if (socket.State == WebSocketState.Open) await socket.CloseAsync(WebSocketCloseStatus.PolicyViolation, "relay_pair_mismatch", CancellationToken.None); }
+                catch (WebSocketException) { }
+            }
             finally
             {
                 lock (pair) { if (role == "computer") pair.Computer = null; else pair.Companion = null; }

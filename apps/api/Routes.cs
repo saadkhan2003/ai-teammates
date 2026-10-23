@@ -64,15 +64,15 @@ public static class Routes
         app.MapPost("/api/auth/login", async (HttpContext ctx, JsonElement body) =>
         {
             var ip = ClientAddress.From(ctx);
-            if (platform.LoginBlocked(ip)) return Results.StatusCode(429);
-            platform.NoteLoginAttempt(ip);
+            if (await platform.LoginBlocked(ip)) return Results.StatusCode(429);
+            var loginAttemptId = await platform.NoteLoginAttempt(ip);
             var username = body.GetProperty("username").GetString() ?? "";
             var password = body.GetProperty("password").GetString() ?? "";
             await using var conn = await platform.Data.OpenConnectionAsync();
             var row = await conn.QuerySingleOrDefaultAsync<(Guid Id, string Hash, string Status)>("SELECT id, password_hash, coalesce(status, 'active') FROM users WHERE username=@username", new { username });
             if (row.Id == Guid.Empty || !Passwords.Verify(password, row.Hash ?? ""))
             {
-                platform.NoteLoginFailure(ip);
+                await platform.NoteLoginFailure(ip, loginAttemptId);
                 return Results.Json(new { error = "invalid credentials" }, statusCode: 401);
             }
             if (row.Status == "disabled") return Results.Json(new { error = "disabled" }, statusCode: 403);
@@ -425,7 +425,7 @@ public static class Routes
             var row = await DesktopLeaseRepository.ReleaseAsync(conn, computerId, 1, user.Value, tabId, expectedEpoch, ct);
             if (row == null) return Results.Conflict(new { error = "lease changed" });
             var epoch = row.Epoch;
-            VncTicketStore.InvalidateLease(id, epoch);
+            await VncTicketStore.InvalidateLeaseAsync(platform, id, epoch, ct);
             await conn.ExecuteAsync("UPDATE control_locks SET holder='agent', epoch=@epoch, updated_at=now() WHERE bot_id=@id", new { id, epoch });
             await platform.Compute.SetHolderAsync(placement.Computer, "fenced", (ulong)epoch, ct);
             await conn.ExecuteAsync("UPDATE tasks SET waiting_reason='await_continue', lease_owner=NULL, lease_until=NULL, updated_at=now() WHERE bot_id IN (SELECT id FROM bots WHERE owner_id=@owner) AND status='waiting_human' AND waiting_reason IN ('takeover', 'captcha_or_mfa', 'You''re in control — tell me when to continue')", new { owner = user.Value });
@@ -692,9 +692,10 @@ public static class Routes
             var token = ctx.Request.Query["token"].ToString();
             if (!Guid.TryParse(ctx.Request.Query["window"], out var windowId)) { ctx.Response.StatusCode = 401; return; }
             var user = await RequireUser(ctx, platform);
-            var ipHash = VncTicketStore.ClientIpHash(ctx.Connection.RemoteIpAddress);
-            var ticket = VncTicketStore.Consume(token, windowId, user ?? Guid.Empty, ipHash, out var failureStatus);
-            if (ticket == null) { ctx.Response.StatusCode = failureStatus; return; }
+            var ipHash = VncTicketStore.ClientIpHash(platform.MasterKey, ctx.Connection.RemoteIpAddress);
+            var consumed = await VncTicketStore.ConsumeAsync(platform, token, windowId, user ?? Guid.Empty, ipHash, ctx.RequestAborted);
+            var ticket = consumed.Ticket;
+            if (ticket == null) { ctx.Response.StatusCode = consumed.FailureStatus; return; }
             var endpoint = ticket.Endpoint;
             if (ticket.Role == "control")
             {
@@ -707,12 +708,12 @@ public static class Routes
             await platform.Compute.EnsureAwakeAsync(endpoint.ComputerId, ctx.RequestAborted);
             platform.Compute.NoteViewer(endpoint.ComputerId);
             var isControl = ticket.Role == "control";
-            var leaseConnectionKey = $"{ticket.LeaseId:N}:{ticket.UserId:N}:{ticket.TabId}:{ticket.Epoch}";
             var leaseLogger = ctx.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("DesktopLease");
             using var socket = await ctx.WebSockets.AcceptWebSocketAsync();
             using var tcp = new System.Net.Sockets.TcpClient();
             await tcp.ConnectAsync(endpoint.Host, endpoint.Port);
-            if (isControl) WebSocketCloseGrace.Connected(leaseConnectionKey);
+            var rwConnectionId = Guid.NewGuid();
+            if (isControl) await DesktopRwConnections.RegisterAsync(platform.Data, ticket.LeaseId, ticket.Epoch, rwConnectionId, ctx.RequestAborted);
             await using var stream = tcp.GetStream();
             var toTcp = Task.Run(async () =>
             {
@@ -748,6 +749,7 @@ public static class Routes
                 while (socket.State == WebSocketState.Open && !ctx.RequestAborted.IsCancellationRequested)
                 {
                     await Task.Delay(TimeSpan.FromSeconds(1), ctx.RequestAborted);
+                    await DesktopRwConnections.HeartbeatAsync(platform.Data, ticket.LeaseId, ticket.Epoch, rwConnectionId, ctx.RequestAborted);
                     await using var leaseConn = await platform.Data.OpenConnectionAsync(ctx.RequestAborted);
                     var lease = await DesktopLeaseRepository.StateAsync(leaseConn, ticket.LeaseId, 1, ctx.RequestAborted);
                     var dbNow = await leaseConn.ExecuteScalarAsync<DateTimeOffset>(new CommandDefinition("SELECT clock_timestamp()", cancellationToken: ctx.RequestAborted));
@@ -769,22 +771,8 @@ public static class Routes
             try { await Task.WhenAll(toTcp, toWs).WaitAsync(TimeSpan.FromSeconds(2)); } catch { /* copy loops end once the sockets close */ }
             if (isControl)
             {
-                WebSocketCloseGrace.Disconnected(leaseConnectionKey, async () =>
-                {
-                    try
-                    {
-                        await using var conn = await platform.Data.OpenConnectionAsync(CancellationToken.None);
-                        var released = await DesktopLeaseRepository.ReleaseAsync(conn, ticket.LeaseId, 1, ticket.UserId, ticket.TabId, ticket.Epoch, CancellationToken.None);
-                        if (released == null) return;
-                        VncTicketStore.InvalidateLease(ticket.BotId, released.Epoch);
-                        await conn.ExecuteAsync("UPDATE control_locks SET holder='agent', epoch=@epoch, updated_at=now() WHERE bot_id=@id", new { id = ticket.BotId, epoch = released.Epoch });
-                        await platform.Compute.SetHolderAsync(endpoint.ComputerId, "fenced", (ulong)released.Epoch, CancellationToken.None);
-                        await platform.Compute.ReleaseViewerAsync(ticket.SessionToken, CancellationToken.None);
-                        await platform.Audit(ticket.UserId.ToString(), "desktop.lease.release", ticket.BotId, null, new { reason = "rw_websocket_grace_expired", epoch = released.Epoch });
-                        await platform.Publish(new { type = "computer.mode", botId = ticket.BotId, mode = "watching", epoch = released.Epoch });
-                    }
-                    catch (Exception ex) { leaseLogger.LogDebug("desktop websocket lease release deferred {Message}", OutputRedactor.Redact(ex.Message)); }
-                });
+                try { await DesktopRwConnections.DisconnectedAsync(platform.Data, ticket.LeaseId, ticket.Epoch, rwConnectionId); }
+                catch (Exception ex) { leaseLogger.LogDebug("desktop websocket close registration failed {Type}", ex.GetType().Name); }
             }
             else try { await platform.Compute.ReleaseViewerAsync(ticket.SessionToken, CancellationToken.None); } catch { /* viewer session closes with its websocket */ }
             try { await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None); } catch { /* already closed */ }

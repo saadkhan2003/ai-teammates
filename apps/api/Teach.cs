@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -13,7 +12,6 @@ public static class TeachRoutes
 {
     public const string Prompt = "The recording is finished. Learn the task from it.";
     private const int MaxRecordingBytes = 45 * 1024 * 1024;
-    private static readonly ConcurrentDictionary<Guid, string> Active = new();
 
     public static void Map(WebApplication app, Platform platform)
     {
@@ -32,7 +30,17 @@ public static class TeachRoutes
                 if (owns == 0) return Results.NotFound();
             }
             var session = Guid.NewGuid().ToString("N");
-            if (!Active.TryAdd(botId, session)) return Results.Json(new { error = "teach_already_active" }, statusCode: 409);
+            await using (var conn = await platform.Data.OpenConnectionAsync(ct))
+            {
+                var acquired = await conn.QuerySingleOrDefaultAsync<int?>(new CommandDefinition("""
+                    INSERT INTO active_teach (bot_id,user_id,session_id,expires_at) VALUES (@botId,@user,@session,clock_timestamp()+interval '10 minutes')
+                    ON CONFLICT (bot_id) DO UPDATE SET user_id=EXCLUDED.user_id, session_id=EXCLUDED.session_id,
+                      expires_at=EXCLUDED.expires_at, created_at=clock_timestamp()
+                    WHERE active_teach.expires_at <= clock_timestamp()
+                    RETURNING 1
+                    """, new { botId, user, session }, cancellationToken: ct));
+                if (acquired is null) return Results.Json(new { error = "teach_already_active" }, statusCode: 409);
+            }
             try
             {
                 var placement = await platform.PlacementForBot(botId, ct);
@@ -41,17 +49,20 @@ public static class TeachRoutes
                 using var bodyDoc = JsonDocument.Parse(json);
                 var serviceSession = bodyDoc.RootElement.GetProperty("id").GetString();
                 if (string.IsNullOrWhiteSpace(serviceSession) || serviceSession.Length > 96) throw new InvalidOperationException("invalid recorder session");
-                Active[botId] = serviceSession;
+                await using (var conn = await platform.Data.OpenConnectionAsync(ct))
+                    await conn.ExecuteAsync(new CommandDefinition("UPDATE active_teach SET session_id=@serviceSession, expires_at=clock_timestamp()+interval '10 minutes' WHERE bot_id=@botId AND session_id=@session", new { serviceSession, botId, session }, cancellationToken: ct));
                 return Results.Json(new { status = "recording", sessionId = serviceSession });
             }
             catch (ComputeException ex) when (ex.Code == ComputeErrorCode.Conflict)
             {
-                Active.TryRemove(botId, out _);
+                await using var conn = await platform.Data.OpenConnectionAsync(ct);
+                await conn.ExecuteAsync(new CommandDefinition("DELETE FROM active_teach WHERE bot_id=@botId AND session_id=@session", new { botId, session }, cancellationToken: ct));
                 return Results.Json(new { error = "teach_already_active" }, statusCode: 409);
             }
             catch
             {
-                Active.TryRemove(botId, out _);
+                await using var conn = await platform.Data.OpenConnectionAsync(ct);
+                await conn.ExecuteAsync(new CommandDefinition("DELETE FROM active_teach WHERE bot_id=@botId AND session_id=@session", new { botId, session }, cancellationToken: ct));
                 throw;
             }
         });
@@ -63,14 +74,15 @@ public static class TeachRoutes
             if (!body.TryGetProperty("botId", out var botNode) || !botNode.TryGetGuid(out var botId)
                 || !body.TryGetProperty("conversationId", out var conversationNode) || !conversationNode.TryGetGuid(out var conversationId))
                 return Results.BadRequest(new { error = "bot_and_conversation_required" });
-            var sessionId = Active.TryGetValue(botId, out var active) ? active : null;
-            if (sessionId == null) return Results.Json(new { error = "teach_not_active" }, statusCode: 409);
+            string? sessionId;
             await using (var conn = await platform.Data.OpenConnectionAsync(ct))
             {
                 var owns = await conn.ExecuteScalarAsync<int>(
                     "SELECT count(*) FROM bots b JOIN conversations c ON c.bot_id=b.id WHERE b.id=@bot AND b.owner_id=@user AND c.id=@conversation",
                     new { bot = botId, user, conversation = conversationId });
                 if (owns == 0) return Results.NotFound();
+                sessionId = await conn.ExecuteScalarAsync<string?>("UPDATE active_teach SET stopping=true WHERE bot_id=@botId AND user_id=@user AND expires_at > clock_timestamp() AND NOT stopping RETURNING session_id", new { botId, user });
+                if (sessionId is null) return Results.Json(new { error = "teach_not_active" }, statusCode: 409);
             }
 
             try
@@ -128,7 +140,8 @@ public static class TeachRoutes
             }
             finally
             {
-                if (Active.TryGetValue(botId, out var current) && current == sessionId) Active.TryRemove(botId, out _);
+                await using var conn = await platform.Data.OpenConnectionAsync(CancellationToken.None);
+                await conn.ExecuteAsync("DELETE FROM active_teach WHERE bot_id=@botId AND session_id=@sessionId", new { botId, sessionId });
             }
         });
     }

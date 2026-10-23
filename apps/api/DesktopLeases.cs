@@ -4,7 +4,7 @@ using Npgsql;
 namespace Teammates.Api;
 
 public sealed record DesktopLeaseRow(Guid ComputerId, int Display, string HolderKind, Guid? HolderUserId,
-    string? TabId, long Epoch, DateTimeOffset ExpiresAt, DateTimeOffset UpdatedAt);
+    string? TabId, long Epoch, DateTime ExpiresAt, DateTime UpdatedAt);
 
 /// <summary>Postgres is the lease authority; mutations use DB time and epoch CAS.</summary>
 public static class DesktopLeaseRepository
@@ -23,7 +23,7 @@ public static class DesktopLeaseRepository
                 WHEN desktop_lease.holder_kind='none' OR desktop_lease.expires_at <= clock_timestamp()
                   OR desktop_lease.holder_user_id IS DISTINCT FROM EXCLUDED.holder_user_id
                   OR desktop_lease.tab_id IS DISTINCT FROM EXCLUDED.tab_id THEN 1 ELSE 0 END,
-              expires_at=clock_timestamp() + interval '35 seconds', updated_at=clock_timestamp()
+              expires_at=clock_timestamp() + interval '35 seconds', updated_at=clock_timestamp(), release_after=NULL
             WHERE desktop_lease.epoch=@expectedEpoch
               AND (desktop_lease.holder_kind IN ('none','agent') OR desktop_lease.expires_at <= clock_timestamp()
                    OR (desktop_lease.holder_user_id=@userId AND
@@ -42,7 +42,7 @@ public static class DesktopLeaseRepository
         Validate(display, tabId);
         const string sql = """
             UPDATE desktop_lease SET holder_kind='none', holder_user_id=NULL, tab_id=NULL,
-              epoch=epoch+1, expires_at=clock_timestamp(), updated_at=clock_timestamp()
+              epoch=epoch+1, expires_at=clock_timestamp(), updated_at=clock_timestamp(), release_after=NULL
             WHERE computer_id=@computerId AND display=@display AND epoch=@expectedEpoch
               AND holder_kind='human' AND holder_user_id=@userId AND tab_id=@tabId
               AND expires_at > clock_timestamp()
@@ -76,7 +76,7 @@ public static class DesktopLeaseRepository
         Validate(display, "force-release");
         return await conn.QuerySingleOrDefaultAsync<DesktopLeaseRow>(new CommandDefinition("""
             UPDATE desktop_lease SET holder_kind='none', holder_user_id=NULL, tab_id=NULL,
-              epoch=epoch+1, expires_at=clock_timestamp(), updated_at=clock_timestamp()
+              epoch=epoch+1, expires_at=clock_timestamp(), updated_at=clock_timestamp(), release_after=NULL
             WHERE computer_id=@computerId AND display=@display AND epoch=@expectedEpoch AND holder_kind <> 'none'
             RETURNING computer_id AS "ComputerId", display AS "Display", holder_kind AS "HolderKind",
               holder_user_id AS "HolderUserId", tab_id AS "TabId", epoch AS "Epoch",
@@ -93,7 +93,7 @@ public static class DesktopLeaseRepository
             """, new { computerId, display }, cancellationToken: ct));
 
     public static bool IsActiveFor(DesktopLeaseRow? row, Guid user, string tabId, long epoch, DateTimeOffset dbNow) =>
-        row is { HolderKind: "human" } && row.HolderUserId == user && row.TabId == tabId && row.Epoch == epoch && row.ExpiresAt > dbNow;
+        row is { HolderKind: "human" } && row.HolderUserId == user && row.TabId == tabId && row.Epoch == epoch && row.ExpiresAt > dbNow.UtcDateTime;
 
     private static void Validate(int display, string tabId)
     {

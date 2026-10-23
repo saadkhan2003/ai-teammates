@@ -24,7 +24,10 @@
 		}
 	}
 	handle /api/* {
-		reverse_proxy api:8080
+		reverse_proxy api:8080 {
+			# Relay clients should send the same X-Relay-Affinity value for both WS ends.
+			lb_policy header X-Relay-Affinity
+		}
 	}
 	handle /health {
 		reverse_proxy api:8080

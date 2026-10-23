@@ -30,6 +30,7 @@ public sealed class TerminalTicketsTests
         Assert.Throws<InvalidOperationException>(() => TerminalTickets.Verify(token + "x", Secret, now));
         Assert.Throws<InvalidOperationException>(() => TerminalTickets.Verify(token, Secret, now.AddSeconds(61)));
         Assert.Throws<ArgumentOutOfRangeException>(() => TerminalTickets.Create(Secret, "computer-1", "user-1", "bot-1", 9, "user", now));
+        Assert.Throws<ArgumentException>(() => TerminalTickets.Create(Secret, "computer-1", "user-1", "bot-1", 1, "admin", now));
     }
 
     private static byte[] DecodeBase64Url(string value)

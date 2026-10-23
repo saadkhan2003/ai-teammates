@@ -1,7 +1,7 @@
-using System.Collections.Concurrent;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Dapper;
 using Teammates.Compute;
 
@@ -10,106 +10,46 @@ namespace Teammates.Api;
 public sealed record VncTicket(string Token, Guid UserId, Guid BotId, string Role, DateTimeOffset ExpiresAt);
 public sealed record VncTicketEndpoint(DesktopEndpoint Endpoint, string SessionToken, Guid UserId, Guid BotId, Guid LeaseId, string Role, string TabId, long Epoch);
 
-/// <summary>Delays human lease release after the final RW websocket closes, allowing brief reconnects.</summary>
-public static class WebSocketCloseGrace
-{
-    private static readonly object Gate = new();
-    private static readonly Dictionary<string, int> Connections = new(StringComparer.Ordinal);
-    private static readonly Dictionary<string, CancellationTokenSource> Pending = new(StringComparer.Ordinal);
-    public static Func<TimeSpan, CancellationToken, Task> Delay { get; set; } = Task.Delay;
-
-    public static void Connected(string key)
-    {
-        lock (Gate)
-        {
-            if (Pending.Remove(key, out var pending)) { pending.Cancel(); pending.Dispose(); }
-            Connections[key] = Connections.GetValueOrDefault(key) + 1;
-        }
-    }
-
-    public static void Disconnected(string key, Func<Task> onGraceExpired)
-    {
-        CancellationTokenSource token;
-        lock (Gate)
-        {
-            var left = Math.Max(0, Connections.GetValueOrDefault(key) - 1);
-            if (left > 0) { Connections[key] = left; return; }
-            Connections.Remove(key);
-            token = new CancellationTokenSource();
-            Pending[key] = token;
-        }
-        _ = ExpireAsync(key, token, onGraceExpired);
-    }
-
-    private static async Task ExpireAsync(string key, CancellationTokenSource token, Func<Task> callback)
-    {
-        try
-        {
-            await Delay(TimeSpan.FromSeconds(12), token.Token);
-            lock (Gate)
-            {
-                if (!Pending.TryGetValue(key, out var current) || !ReferenceEquals(current, token) || Connections.GetValueOrDefault(key) != 0) return;
-                Pending.Remove(key);
-            }
-            await callback();
-        }
-        catch (OperationCanceledException) { }
-        finally { token.Dispose(); }
-    }
-}
-
 /// <summary>Short lived, one-use VNC tickets. Raw values exist only in the response and memory transiently.</summary>
 public static class VncTicketStore
 {
-    private sealed record Entry(byte[] TokenHash, byte[] IpHash, Guid User, Guid Bot, Guid LeaseId, string Role,
-        string TabId, long Epoch, DesktopEndpoint Endpoint, string SessionToken, DateTimeOffset ExpiresAt);
-    private static readonly ConcurrentDictionary<string, Entry> Entries = new(StringComparer.Ordinal);
-    private static readonly object TicketGate = new();
-    private static readonly byte[] IpKey = RandomNumberGenerator.GetBytes(32);
+    private sealed record Scope(string Host, int Port, string Mode, string ComputerId, string EncryptedSessionToken);
 
-    public static string ClientIpHash(IPAddress? address)
+    public static string ClientIpHash(byte[] key, IPAddress? address)
     {
         var canonical = address?.MapToIPv6().ToString() ?? "unknown";
-        return Convert.ToHexString(HMACSHA256.HashData(IpKey, Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+        return Convert.ToHexString(HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
     }
 
-    public static VncTicket Issue(Guid user, Guid bot, Guid leaseId, string role, string tabId, long epoch, DesktopEndpoint endpoint, string sessionToken, string ipHash, DateTimeOffset? issuedAt = null)
+    public static async Task<VncTicket> IssueAsync(Platform platform, Guid user, Guid bot, Guid leaseId, string role,
+        string tabId, long epoch, DesktopEndpoint endpoint, string sessionToken, string ipHash, CancellationToken ct)
     {
         if (role is not ("watch" or "control")) throw new ArgumentException("invalid VNC role");
         var raw = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
-        var tokenHash = SHA256.HashData(Encoding.UTF8.GetBytes(raw));
-        var expires = (issuedAt ?? DateTimeOffset.UtcNow).AddSeconds(60);
-        lock (TicketGate)
-        {
-            var now = DateTimeOffset.UtcNow;
-            foreach (var (key, entry) in Entries)
-                if (entry.ExpiresAt <= now) Entries.TryRemove(new KeyValuePair<string, Entry>(key, entry));
-            if (Entries.Count >= 10_000) throw new InvalidOperationException("VNC ticket capacity reached");
-            if (!Entries.TryAdd(Convert.ToHexString(tokenHash), new Entry(tokenHash, Convert.FromHexString(ipHash), user, bot, leaseId, role, tabId, epoch, endpoint, sessionToken, expires)))
-                throw new CryptographicException("VNC ticket collision");
-        }
+        var expires = DateTimeOffset.UtcNow.AddSeconds(60);
+        var scope = JsonSerializer.Serialize(new Scope(endpoint.Host, endpoint.Port, endpoint.Mode.ToString(), endpoint.ComputerId.Value,
+            TicketScopeCrypto.Encrypt(platform.MasterKey, sessionToken)));
+        await platform.Tickets.IssueAsync(new OneTimeTicket(Guid.NewGuid(), "vnc", raw, user, bot, leaseId, role,
+            tabId, epoch, scope, Convert.FromHexString(ipHash), expires.UtcDateTime), ct);
         return new VncTicket(raw, user, bot, role, expires);
     }
 
-    public static VncTicketEndpoint? Consume(string raw, Guid requestedBot, Guid user, string ipHash, out int failureStatus)
+    public static async Task<(VncTicketEndpoint? Ticket, int FailureStatus)> ConsumeAsync(Platform platform, string raw, Guid requestedBot, Guid user,
+        string ipHash, CancellationToken ct)
     {
-        failureStatus = 401;
-        if (string.IsNullOrEmpty(raw) || raw.Length > 128) return null;
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(raw));
-        var key = Convert.ToHexString(hash);
-        if (!Entries.TryGetValue(key, out var entry) || !CryptographicOperations.FixedTimeEquals(hash, entry.TokenHash)) return null;
-        if (entry.Bot != requestedBot) { failureStatus = 403; return null; }
-        if (entry.User != user || !CryptographicOperations.FixedTimeEquals(Convert.FromHexString(ipHash), entry.IpHash)) return null;
-        if (entry.ExpiresAt <= DateTimeOffset.UtcNow) { Entries.TryRemove(key, out _); return null; }
-        if (!Entries.TryRemove(key, out var consumed) || !ReferenceEquals(entry, consumed)) return null;
-        return new VncTicketEndpoint(entry.Endpoint, entry.SessionToken, entry.User, entry.Bot, entry.LeaseId, entry.Role, entry.TabId, entry.Epoch);
+        if (string.IsNullOrEmpty(raw) || raw.Length > 128) return (null, 401);
+        var ticket = await platform.Tickets.ConsumeAsync(raw, "vnc", user, requestedBot, Convert.FromHexString(ipHash), ct);
+        if (ticket is null) return (null, 401);
+        var scope = JsonSerializer.Deserialize<Scope>(ticket.Scope);
+        if (scope is null || ticket.Role is not ("watch" or "control") || ticket.TabId.Length > 128) return (null, 401);
+        var endpoint = new DesktopEndpoint(new Teammates.Compute.ComputerId(scope.ComputerId), scope.Host, scope.Port,
+            Enum.Parse<DesktopMode>(scope.Mode), (ulong)Math.Max(ticket.Epoch, 0), new DateTimeOffset(DateTime.SpecifyKind(ticket.ExpiresAt, DateTimeKind.Utc)));
+        return (new VncTicketEndpoint(endpoint, TicketScopeCrypto.Decrypt(platform.MasterKey, scope.EncryptedSessionToken),
+            ticket.UserId, ticket.BotId, ticket.ComputerId ?? Guid.Empty, ticket.Role, ticket.TabId, ticket.Epoch), 401);
     }
 
-    public static void InvalidateLease(Guid bot, long epoch)
-    {
-        foreach (var (key, entry) in Entries)
-            if (entry.Bot == bot && entry.Epoch != epoch) Entries.TryRemove(new KeyValuePair<string, Entry>(key, entry));
-    }
+    public static Task InvalidateLeaseAsync(Platform platform, Guid bot, long epoch, CancellationToken ct = default) =>
+        platform.Tickets.InvalidateLeaseAsync(bot, epoch, ct);
 }
 
 public static class VncTicketRoutes
@@ -129,7 +69,7 @@ public static class VncTicketRoutes
             if (!Guid.TryParse(placement.Computer.Value, out var computerId)) return Results.Conflict(new { error = "computer_unavailable" });
             var released = await DesktopLeaseRepository.ForceReleaseAsync(conn, computerId, 1, expectedEpoch, ct);
             if (released == null) return Results.Conflict(new { error = "lease_changed" });
-            VncTicketStore.InvalidateLease(id, released.Epoch);
+            await VncTicketStore.InvalidateLeaseAsync(platform, id, released.Epoch, ct);
             await conn.ExecuteAsync("UPDATE control_locks SET holder='agent', epoch=@epoch, updated_at=now() WHERE bot_id=@id", new { id, epoch = released.Epoch });
             await platform.Compute.SetHolderAsync(placement.Computer, "fenced", (ulong)released.Epoch, ct);
             await platform.Audit(user.Value.ToString(), "desktop.lease.force_release", id, null, new { reason = OutputRedactor.Redact(reason), epoch = released.Epoch });
@@ -171,7 +111,7 @@ public static class VncTicketRoutes
                 await platform.Audit(user.Value.ToString(), "desktop.lease.reject", id, null, new { reason = "busy", holder = current.HolderUserId, tabId = current.TabId, epoch = current.Epoch });
                 return Results.Conflict(new { error = "desktop_busy", holder = current.HolderUserId, tabId = current.TabId, epoch = current.Epoch });
             }
-            VncTicketStore.InvalidateLease(id, changed.Epoch);
+            await VncTicketStore.InvalidateLeaseAsync(platform, id, changed.Epoch, ct);
             await conn.ExecuteAsync("UPDATE control_locks SET holder=@holder, epoch=@epoch, updated_at=now() WHERE bot_id=@id", new { holder = changed.HolderKind == "human" ? "human" : "agent", epoch = changed.Epoch, id });
             await platform.Compute.SetHolderAsync(placement.Computer, changed.HolderKind == "human" ? "human" : "fenced", (ulong)changed.Epoch, ct);
             var eventName = action == "release" ? "desktop.lease.release" : action == "transfer" ? "desktop.lease.acquire" : "desktop.lease.renew";
@@ -207,7 +147,7 @@ public static class VncTicketRoutes
                 }
                 lease = held;
                 epoch = held.Epoch;
-                VncTicketStore.InvalidateLease(id, epoch);
+                await VncTicketStore.InvalidateLeaseAsync(platform, id, epoch, ct);
                 await conn.ExecuteAsync("UPDATE control_locks SET holder='human', epoch=@epoch, updated_at=now() WHERE bot_id=@id", new { id, epoch });
                 if (changedOwner)
                     await conn.ExecuteAsync("UPDATE tasks SET status='waiting_human', waiting_reason='takeover', lease_owner=NULL, lease_until=NULL, lease_epoch=lease_epoch+1, updated_at=now() WHERE bot_id IN (SELECT id FROM bots WHERE owner_id=@owner) AND status='running' AND instruction NOT LIKE 'Terminal:%'", new { owner = user.Value });
@@ -216,7 +156,7 @@ public static class VncTicketRoutes
                 await platform.Publish(new { type = "computer.mode", botId = id, mode = "control", epoch });
                 await platform.Compute.SetHolderAsync(placement.Computer, "human", (ulong)epoch, ct);
             }
-            else if (lease.HolderKind == "human" && lease.ExpiresAt > DateTimeOffset.UtcNow)
+            else if (lease.HolderKind == "human" && lease.ExpiresAt > DateTime.UtcNow)
             {
                 // A second tab remains view-only unless it explicitly transfers control.
                 if (lease.HolderUserId != user.Value || lease.TabId != tabId) epoch = lease.Epoch;
@@ -235,7 +175,7 @@ public static class VncTicketRoutes
                 return Results.Conflict(new { error = "desktop_epoch_conflict" });
             }
             var endpoint = platform.Compute.RequireSession(session.Token, DateTimeOffset.UtcNow);
-            var ticket = VncTicketStore.Issue(user.Value, id, computerId, role, tabId, epoch, endpoint, session.Token, VncTicketStore.ClientIpHash(ctx.Connection.RemoteIpAddress));
+            var ticket = await VncTicketStore.IssueAsync(platform, user.Value, id, computerId, role, tabId, epoch, endpoint, session.Token, VncTicketStore.ClientIpHash(platform.MasterKey, ctx.Connection.RemoteIpAddress), ct);
             return Results.Json(new { token = ticket.Token, role, windowId = id, epoch, expiresAt = ticket.ExpiresAt });
         });
     }

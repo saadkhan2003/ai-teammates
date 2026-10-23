@@ -23,7 +23,7 @@ public sealed class LoginFlow(Platform platform, LoginBroker broker)
         var rows = (await conn.QueryAsync<(Guid Id, Guid? TaskId)>("SELECT id, task_id FROM login_prompts WHERE status='pending' AND expires_at < now()")).ToArray();
         foreach (var row in rows)
         {
-            broker.Drop(row.Id);
+            await broker.DropAsync(row.Id);
             await conn.ExecuteAsync("UPDATE login_prompts SET status='expired' WHERE id=@id AND status='pending'", new { id = row.Id });
             if (row.TaskId != null)
             {
@@ -57,7 +57,7 @@ public sealed class LoginFlow(Platform platform, LoginBroker broker)
         {
             if (row.ExpiresAt <= DateTimeOffset.UtcNow)
             {
-                broker.Drop(row.Id);
+                await broker.DropAsync(row.Id);
                 await SetStatus(row.Id, "expired");
                 return new { status = "expired" };
             }
@@ -66,7 +66,9 @@ public sealed class LoginFlow(Platform platform, LoginBroker broker)
         }
         if (row.Status == "submitted")
         {
-            if (!broker.TryTake(row.Id, out var fields, out _) || fields == null)
+            var submitted = await broker.TryTakeAsync(row.Id);
+            var fields = submitted.Fields;
+            if (fields == null)
             {
                 await SetStatus(row.Id, "expired");
                 return new { status = "expired" };
@@ -134,11 +136,11 @@ public sealed class LoginFlow(Platform platform, LoginBroker broker)
         if (row.Status != "pending") return Results.Json(new { status = row.Status });
         if (row.ExpiresAt <= DateTimeOffset.UtcNow)
         {
-            broker.Drop(id);
+            await broker.DropAsync(id);
             await SetStatus(id, "expired");
             return Results.Json(new { error = "expired" }, statusCode: 410);
         }
-        broker.Hold(id, fields, save);
+        await broker.HoldAsync(id, fields, save);
         try
         {
             var refs = save ? await SaveVault(user, row, fields) : new Dictionary<string, string>();
@@ -152,7 +154,7 @@ public sealed class LoginFlow(Platform platform, LoginBroker broker)
         }
         catch (ToolHalt halt)
         {
-            broker.Drop(id);
+            await broker.DropAsync(id);
             return Results.Json(new { error = halt.Reason ?? "denied" }, statusCode: 422);
         }
     }
@@ -163,7 +165,7 @@ public sealed class LoginFlow(Platform platform, LoginBroker broker)
         var row = await conn.QuerySingleOrDefaultAsync<(Guid Id, Guid OwnerId, Guid BotId, Guid? TaskId, string Status)>(
             "SELECT id, owner_id, bot_id, task_id, status FROM login_prompts WHERE id=@id", new { id });
         if (row.Id == Guid.Empty || row.OwnerId != user) return Results.NotFound();
-        broker.Drop(id);
+        await broker.DropAsync(id);
         await SetStatus(id, "cancelled");
         if (row.TaskId != null)
         {

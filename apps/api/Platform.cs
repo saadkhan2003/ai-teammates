@@ -12,8 +12,8 @@ namespace Teammates.Api;
 
 public sealed class Platform
 {
-    private readonly LoginRateLimiter _loginLimits = new();
     public NpgsqlDataSource Data { get; }
+    public IOneTimeTicketStore Tickets { get; }
     public byte[] MasterKey { get; }
     public DockerComputeProvider Compute { get; }
     public IAmazonS3 S3 { get; }
@@ -41,6 +41,7 @@ public sealed class Platform
     public Platform(NpgsqlDataSource data, byte[] masterKey, DockerComputeProvider compute, IAmazonS3 s3, IConfiguration config)
     {
         Data = data;
+        Tickets = new PostgresOneTimeTicketStore(data);
         Config = config;
         MasterKey = masterKey;
         Compute = compute;
@@ -130,7 +131,7 @@ public sealed class Platform
             await conn.ExecuteAsync(provider);
             await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('010') ON CONFLICT DO NOTHING");
         }
-        foreach (var (mid, file) in new[] { ("011", "011_devices.sql"), ("012", "012_reliability.sql"), ("013", "013_feedback.sql"), ("014", "014_avatar.sql"), ("015", "015_bot_messaging.sql"), ("016", "016_chat_actions.sql"), ("017", "017_primary.sql"), ("018", "018_bio.sql"), ("019", "019_computer_windows.sql"), ("020", "020_approval_rules.sql"), ("021", "021_desktop_lease.sql") })
+        foreach (var (mid, file) in new[] { ("011", "011_devices.sql"), ("012", "012_reliability.sql"), ("013", "013_feedback.sql"), ("014", "014_avatar.sql"), ("015", "015_bot_messaging.sql"), ("016", "016_chat_actions.sql"), ("017", "017_primary.sql"), ("018", "018_bio.sql"), ("019", "019_computer_windows.sql"), ("020", "020_approval_rules.sql"), ("021", "021_desktop_lease.sql"), ("022", "022_tickets_state.sql") })
         {
             if (await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id=@mid", new { mid }) != 0) continue;
             await conn.ExecuteAsync(await File.ReadAllTextAsync("/migrations/" + file));
@@ -175,11 +176,28 @@ public sealed class Platform
         return await conn.ExecuteScalarAsync<Guid?>("SELECT user_id FROM sessions WHERE token_hash=@h AND expires_at > now()", new { h = hash });
     }
 
-    public bool LoginBlocked(string ip) => _loginLimits.IsBlocked(ip, DateTimeOffset.UtcNow);
+    public async Task<bool> LoginBlocked(string ip)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(ip.Length <= 128 ? ip : ip[..128]));
+        await using var conn = await Data.OpenConnectionAsync();
+        return await conn.ExecuteScalarAsync<bool>("SELECT count(*) FILTER (WHERE failed) >= @failures OR count(*) >= @attempts FROM login_rate_events WHERE ip_hash=@hash AND created_at > clock_timestamp() - interval '10 minutes'", new { hash, failures = LoginRateLimiter.MaxFailures, attempts = LoginRateLimiter.MaxAttempts });
+    }
 
-    public void NoteLoginAttempt(string ip) => _loginLimits.NoteAttempt(ip, DateTimeOffset.UtcNow);
+    public async Task<long> NoteLoginAttempt(string ip)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(ip.Length <= 128 ? ip : ip[..128]));
+        await using var conn = await Data.OpenConnectionAsync();
+        var id = await conn.ExecuteScalarAsync<long>("INSERT INTO login_rate_events (ip_hash, failed) VALUES (@hash,false) RETURNING id", new { hash });
+        await conn.ExecuteAsync("DELETE FROM login_rate_events WHERE created_at < clock_timestamp() - interval '1 day'");
+        return id;
+    }
 
-    public void NoteLoginFailure(string ip) => _loginLimits.NoteFailure(ip, DateTimeOffset.UtcNow);
+    public async Task NoteLoginFailure(string ip, long attemptId)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(ip.Length <= 128 ? ip : ip[..128]));
+        await using var conn = await Data.OpenConnectionAsync();
+        await conn.ExecuteAsync("UPDATE login_rate_events SET failed=true WHERE id=@attemptId AND ip_hash=@hash", new { hash, attemptId });
+    }
 
     public async Task<string> CreateSession(Guid userId)
     {
