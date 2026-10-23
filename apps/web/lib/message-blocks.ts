@@ -3,7 +3,7 @@ export type QuestionOption = { label: string; style: "primary" | "danger" };
 export type MessageBlock =
   | { kind: "text"; text: string }
   | { kind: "question"; prompt: string; options: QuestionOption[]; multiple: boolean; allowCustom: boolean; answer: string[] | null }
-  | { kind: "memory"; action: "saved" | "forgot"; text: string }
+  | { kind: "memory"; action: "saved" | "updated" | "forgot" | "suggested" | "blocked"; memoryId?: string; memoryKind?: string; text: string; previous?: string; reason?: string }
   | { kind: "form"; title: string; fields: FormField[] }
   | { kind: "file"; name: string; url?: string; mime?: string }
   | { kind: "image"; name: string; url: string };
@@ -43,8 +43,9 @@ function asBlock(value: unknown): MessageBlock | null {
     };
   }
   if (type === "memory" || type === "note") {
-    const action = String(record.action ?? "saved") === "forgot" ? "forgot" : "saved";
-    return { kind: "memory", action, text: String(record.content ?? record.text ?? record.fact ?? "") };
+    const action = String(record.action ?? "saved");
+    if (!["saved", "updated", "forgot", "suggested", "blocked"].includes(action)) return null;
+    return { kind: "memory", action: action as "saved" | "updated" | "forgot" | "suggested" | "blocked", memoryId: String(record.memoryId ?? record.memory_id ?? "") || undefined, memoryKind: String(record.kindName ?? record.memoryKind ?? record.noteKind ?? (record.type === "memory" ? record.kind : "") ?? "") || undefined, text: String(record.content ?? record.text ?? record.fact ?? ""), previous: typeof record.previous === "string" ? record.previous : undefined, reason: typeof record.reason === "string" ? record.reason : undefined };
   }
   if (type === "form" || type === "secure-form") {
     const fields: FormField[] = [];

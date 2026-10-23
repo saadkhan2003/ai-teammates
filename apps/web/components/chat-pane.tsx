@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api, apiFetch } from "@/lib/api";
 import { messageBlocks, type FormField, type QuestionOption } from "@/lib/message-blocks";
+import { memoryReason, undoableMemoryAction } from "@/lib/memory-notes";
 import type { ChatMessage } from "@/lib/types";
 import { errorMessage, formatWhen } from "@/lib/utils";
 
@@ -44,7 +45,11 @@ export function ChatPane({
   hasOlder = false,
   onLoadOlder,
   editRequest,
+  onEditMemory,
+  onMemoryChanged,
 }: {
+  onEditMemory?: (id: string) => void;
+  onMemoryChanged?: () => void;
   editRequest?: { key: number; text: string };
   botId?: string;
   avatar?: { shape?: string; color?: string; primary?: boolean };
@@ -380,7 +385,7 @@ export function ChatPane({
             if (only?.kind === "memory") {
               return (
                 <article key={message.id} data-testid="message-item" data-role={message.role} className="group mr-auto w-full max-w-md">
-                  <MemoryNotice action={only.action} text={only.text} />
+                  <MemoryNotice botId={botId} action={only.action} text={only.text} memoryId={only.memoryId} memoryKind={only.memoryKind} previous={only.previous} reason={only.reason} onEdit={onEditMemory} onChanged={onMemoryChanged} />
                   <time className="mt-1 block px-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{formatWhen(message.createdAt)}</time>
                 </article>
               );
@@ -663,8 +668,23 @@ function QuestionCard({
   );
 }
 
-function MemoryNotice({ action, text }: { action: "saved" | "forgot"; text: string }) {
-  const label = action === "forgot" ? "Forgot a note" : "Saved to notes";
+function MemoryNotice({ botId, action, text, memoryId, memoryKind, previous, reason, onEdit, onChanged }: { botId?: string; action: "saved" | "updated" | "forgot" | "suggested" | "blocked"; text: string; memoryId?: string; memoryKind?: string; previous?: string; reason?: string; onEdit?: (id: string) => void; onChanged?: () => void }) {
+  const [undoOpen, setUndoOpen] = useState(true);
+  const [focused, setFocused] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (!undoableMemoryAction(action) || focused) return; const timer = window.setTimeout(() => setUndoOpen(false), 10_000); return () => window.clearTimeout(timer); }, [action, focused]);
+  const label = action === "forgot" ? "Forgot a note" : action === "updated" ? "Updated a note" : action === "suggested" ? "Suggested a note" : action === "blocked" ? memoryReason(reason) : "Saved to notes";
+  async function undo() {
+    if (!botId || !memoryId) return; setBusy(true);
+    try {
+      if (action === "forgot") await api(`/api/bots/${botId}/memories/${memoryId}/restore`, { method: "POST" });
+      else if (action === "saved") await api(`/api/bots/${botId}/memories/${memoryId}`, { method: "DELETE" });
+      else if (action === "updated" && previous) await api(`/api/bots/${botId}/memories/${memoryId}`, { method: "PATCH", body: JSON.stringify({ content: previous }) });
+      setUndoOpen(false);
+      onChanged?.();
+    } catch { toast.error("Could not undo that memory change."); }
+    finally { setBusy(false); }
+  }
   return (
     <Collapsible>
       <CollapsibleTrigger
@@ -675,8 +695,9 @@ function MemoryNotice({ action, text }: { action: "saved" | "forgot"; text: stri
         <Notebook className="h-3.5 w-3.5" aria-hidden />
         {label}
       </CollapsibleTrigger>
-      <CollapsibleContent data-testid="memory-fact" className="px-6 pb-1 text-sm text-muted-foreground">
-        {text}
+      <CollapsibleContent data-testid="memory-fact" onFocusCapture={() => setFocused(true)} onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false); }} className="px-6 pb-1 text-sm text-muted-foreground">
+        {memoryKind === "rule" ? <span className="mr-2 rounded-sm border border-line px-1.5 py-0.5 text-xs">Rule</span> : null}{text}
+        {action === "blocked" ? null : <div className="mt-2 flex flex-wrap gap-2">{undoOpen && undoableMemoryAction(action) && memoryId ? <Button data-testid="memory-undo" className="min-h-11" size="sm" variant="outline" disabled={busy} onClick={() => void undo()}>Undo</Button> : null}{memoryId && onEdit ? <Button className="min-h-11" size="sm" variant="ghost" onClick={() => onEdit(memoryId)}>Edit</Button> : null}{action === "suggested" && memoryId && botId ? <><Button className="min-h-11" size="sm" onClick={() => void api(`/api/bots/${botId}/memories/${memoryId}/accept`, { method: "POST" }).then(onChanged).catch(() => toast.error("Could not save this suggestion."))}>Save</Button><Button className="min-h-11" size="sm" variant="outline" onClick={() => void api(`/api/bots/${botId}/memories/${memoryId}/dismiss`, { method: "POST" }).then(onChanged).catch(() => toast.error("Could not dismiss this suggestion."))}>Skip</Button></> : null}</div>}
       </CollapsibleContent>
     </Collapsible>
   );
@@ -767,7 +788,7 @@ function EventCard({ event }: { event: AgentEvent }) {
     if (!Number.isFinite(verified) || !Number.isFinite(removed)) return null;
     return <p data-testid="grounding-notice" role="status" className="text-xs text-muted-foreground">Verified {verified} links, removed {removed}</p>;
   }
-  if (event.type === "memory") return <MemoryNotice action={event.action === "forgot" ? "forgot" : "saved"} text={String(event.content ?? "")} />;
+  if (event.type === "memory") return <MemoryNotice action={(["saved", "updated", "forgot", "suggested", "blocked"].includes(String(event.action)) ? String(event.action) : "saved") as "saved" | "updated" | "forgot" | "suggested" | "blocked"} text={String(event.content ?? "")} memoryId={String(event.memoryId ?? event.memory_id ?? "") || undefined} memoryKind={String(event.kind ?? "") || undefined} reason={String(event.reason ?? "") || undefined} />;
   const tool = String(event.tool ?? event.name ?? "Tool");
   const args = typeof event.args === "object" && event.args ? JSON.stringify(event.args) : String(event.args ?? "");
   return <Collapsible data-testid="tool-call-card" className="rounded-md border border-border text-xs"><CollapsibleTrigger className="flex min-h-10 w-full items-center gap-2 px-3 text-left"><span aria-hidden>⌘</span><span className="font-medium">{tool}</span><span className="min-w-0 flex-1 truncate text-muted-foreground">{args.slice(0, 90)}</span><span>{String(event.status ?? (event.type === "tool_result" ? "Done" : "Running"))}</span></CollapsibleTrigger><CollapsibleContent><pre className="max-h-64 overflow-auto whitespace-pre-wrap border-t border-border p-3">{JSON.stringify({ args: event.args, result: event.result }, null, 2)}</pre></CollapsibleContent></Collapsible>;
