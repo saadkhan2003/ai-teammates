@@ -2,6 +2,7 @@ namespace Teammates.Compute;
 
 public sealed record DockerComputeOptions
 {
+    public int EgressProxyPort { get; init; }
     public string DockerHost { get; init; } = "unix:///var/run/docker.sock";
     public string ImageRef { get; init; } = "teammates-computer:dev";
     public string? NetworkName { get; init; }

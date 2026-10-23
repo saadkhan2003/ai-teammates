@@ -1,0 +1,10 @@
+# Optional resource limits for a computer service in a disposable deployment.
+# Merge this service fragment into the deployment that creates computer containers.
+services:
+  computer-template:
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+          pids: 256

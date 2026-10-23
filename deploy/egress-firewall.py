@@ -15,11 +15,12 @@ PROXY_ADDRESS = "127.0.0.1"
 
 def render() -> str:
     return f"""table inet bot_egress {{
+  set bot_uids {{ type uid; }}
   chain output {{
     type filter hook output priority 0; policy drop;
     ct state established,related accept
     ip daddr {PROXY_ADDRESS} tcp dport {PROXY_PORT} accept
-    oifname \"lo\" accept
+    meta skuid @bot_uids oifname "lo" drop
     counter drop
   }}
 }}

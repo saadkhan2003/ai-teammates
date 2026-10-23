@@ -112,6 +112,24 @@ def unpair(_: argparse.Namespace) -> int:
     return 0
 
 
+def egress_client(args: argparse.Namespace) -> int:
+    from egress_client import EgressClient
+    config = load_config()
+    fail_closed = args.fail_closed or bool(config.get("failClosed", False))
+    client = EgressClient(config["server"], config["deviceId"], config["token"], fail_closed=fail_closed)
+    try:
+        asyncio_run(client.run())
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"egress-client: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def asyncio_run(coro):
+    import asyncio
+    return asyncio.run(coro)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="teammates-companion")
     commands = parser.add_subparsers(dest="action", required=True)
@@ -119,6 +137,7 @@ def main(argv=None) -> int:
     p = commands.add_parser("status"); p.set_defaults(func=status)
     p = commands.add_parser("run"); p.add_argument("--command"); p.add_argument("--once", action="store_true"); p.set_defaults(func=run)
     p = commands.add_parser("unpair"); p.set_defaults(func=unpair)
+    p = commands.add_parser("egress-client"); p.add_argument("--fail-closed", action="store_true"); p.set_defaults(func=egress_client)
     try:
         args = parser.parse_args(argv)
         return args.func(args)
