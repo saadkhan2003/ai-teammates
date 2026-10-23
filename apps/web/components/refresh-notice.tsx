@@ -1,12 +1,56 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { RotateCw, TriangleAlert } from "lucide-react";
 import { retryNow, useConnection } from "@/lib/connection";
 import { cn } from "@/lib/utils";
 
 // Sidebar variant: grey text and a small round refresh button above the bot card.
 // Chat variant: a warning row with a "Try again" pill under the working indicator.
-export function RefreshNotice({ variant }: { variant: "sidebar" | "chat" }) {
+// Panel variant: a bar at the top of the right-hand panel, "Couldn't refresh" left and a
+// rounded "Try again" button right. It fades in, and fades out once a refresh succeeds.
+function PanelNotice() {
+  const { failed, retrying } = useConnection();
+  const [mounted, setMounted] = useState(failed);
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if (failed) {
+      setMounted(true);
+      const frame = requestAnimationFrame(() => setShown(true));
+      return () => cancelAnimationFrame(frame);
+    }
+    setShown(false);
+    const timer = setTimeout(() => setMounted(false), 220);
+    return () => clearTimeout(timer);
+  }, [failed]);
+  if (!mounted) return null;
+  return (
+    <div
+      data-testid="refresh-notice-panel"
+      data-state={shown && failed ? "visible" : "hidden"}
+      role="status"
+      className={cn("flex shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-2 text-sm transition-opacity duration-200 motion-reduce:transition-none", shown && failed ? "opacity-100" : "opacity-0")}
+    >
+      <span>Couldn&apos;t refresh</span>
+      <button
+        type="button"
+        data-testid="refresh-retry-panel"
+        disabled={retrying}
+        onClick={retryNow}
+        className="rounded-full bg-muted px-4 py-1.5 text-sm text-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+      >
+        {retrying ? "Trying…" : "Try again"}
+      </button>
+    </div>
+  );
+}
+
+export function RefreshNotice({ variant }: { variant: "sidebar" | "chat" | "panel" }) {
+  if (variant === "panel") return <PanelNotice />;
+  return <Notice variant={variant} />;
+}
+
+function Notice({ variant }: { variant: "sidebar" | "chat" }) {
   const { failed, retrying } = useConnection();
   if (!failed) return null;
   if (variant === "sidebar") {

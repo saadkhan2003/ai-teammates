@@ -57,3 +57,31 @@ test("going offline shows the notice and coming back online auto-recovers", asyn
     await page.request.delete(`/api/bots/${botId}`);
   }
 });
+
+test("right panel shows its own couldn't refresh bar when offline, retries on click and fades out", async ({ page, context }) => {
+  const botId = await openBot(page);
+  try {
+    const pane = page.getByTestId("info-pane");
+    await expect(pane).toBeVisible();
+    await expect(pane.getByTestId("refresh-notice-panel")).toHaveCount(0);
+    await context.setOffline(true);
+    const bar = pane.getByTestId("refresh-notice-panel");
+    await expect(bar).toHaveCount(1);
+    await expect(bar).toHaveAttribute("data-state", "visible");
+    await expect(bar).toContainText("Couldn't refresh");
+    // The bar is the first thing in the panel, above avatar, name and tabs.
+    const barBox = await bar.boundingBox();
+    const identityBox = await pane.getByTestId("panel-identity").boundingBox();
+    expect(barBox && identityBox && barBox.y < identityBox.y).toBeTruthy();
+    await page.screenshot({ path: "/workspace/ai-teammates-live/shots/9-panel-couldnt-refresh.png" });
+    // Still offline: clicking Try again keeps the bar.
+    await pane.getByTestId("refresh-retry-panel").click();
+    await expect(bar).toHaveCount(1);
+    await context.setOffline(false);
+    await pane.getByTestId("refresh-retry-panel").click();
+    await expect(bar).toHaveCount(0, { timeout: 15_000 });
+  } finally {
+    await context.setOffline(false);
+    await page.request.delete(`/api/bots/${botId}`);
+  }
+});

@@ -40,6 +40,7 @@ import { BotAvatarPicker } from "@/components/bot-avatar-picker";
 import { defaultBotAvatar } from "@/lib/avatars";
 import { HISTORY_PAGE, mergeHistory } from "@/lib/history";
 import type { ChatMessage } from "@/lib/types";
+import { RefreshNotice } from "@/components/refresh-notice";
 import { LibraryPane } from "@/components/library-pane";
 import { ShareMenu } from "@/components/share-menu";
 import { RecordingBanner, useTeachTask } from "@/components/teach-task";
@@ -436,6 +437,7 @@ export function Workspace({ botId }: { botId: string }) {
           aria-hidden={pane ? undefined : true}
           className={cn("fixed inset-0 z-30 flex w-full min-w-0 flex-col border-border bg-background pt-[env(safe-area-inset-top)] transition-opacity duration-200 motion-reduce:transition-none md:static md:z-0 md:w-[min(380px,42vw)] md:border-l md:pt-0", !pane && "pointer-events-none opacity-0 max-md:hidden")}
         >
+          <RefreshNotice variant="panel" />
           <div className="flex h-11 items-center gap-1 border-b border-border px-2">
             <p className="min-w-0 flex-1 truncate px-1 text-sm font-medium">{bot?.name}</p>
             <ShareMenu botId={botId} onCreated={() => window.dispatchEvent(new Event("teammates-bots-changed"))} />
