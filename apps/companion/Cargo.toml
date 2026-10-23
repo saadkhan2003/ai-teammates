@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = ["core", "src-tauri"]
+default-members = ["core"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+

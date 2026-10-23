@@ -1,0 +1,6 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Approve command</title>
+<style>body{font:15px system-ui,sans-serif;background:#111827;color:#f9fafb;margin:0;padding:24px}h1{font-size:20px;margin:0 0 16px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#1f2937;padding:14px;border-radius:4px;max-height:190px;overflow:auto}.buttons{display:flex;gap:8px;margin-top:20px}button{padding:9px 15px;border:1px solid #4b5563;border-radius:4px;background:#1f2937;color:white;cursor:pointer}button.allow{background:#166534}</style></head>
+<body><h1>Allow this command?</h1><p id="cwd"></p><pre id="command">Waiting for command details…</pre><div class="buttons"><button class="allow" id="allow">Allow</button><button id="deny">Deny</button></div>
+<script>let id;window.__TAURI__.event.listen('approval',({payload})=>{id=payload.requestId;document.querySelector('#command').textContent=payload.command;document.querySelector('#cwd').textContent=payload.cwd||''});async function answer(allow){if(id)await window.__TAURI__.core.invoke('respond',{requestId:id,allow});window.close()}document.querySelector('#allow').onclick=()=>answer(true);document.querySelector('#deny').onclick=()=>answer(false);</script></body></html>
