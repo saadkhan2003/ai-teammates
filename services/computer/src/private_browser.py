@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Callable
 
@@ -43,6 +44,17 @@ def private_host_matches(host: str, suffixes) -> bool:
     return False
 
 
+def private_browser_url_allowed(url: str, suffixes) -> bool:
+    from urllib.parse import urlsplit
+    if not isinstance(url, str) or len(url) > 4096:
+        return False
+    try:
+        parsed = urlsplit(url)
+        return parsed.scheme in {"http", "https"} and bool(parsed.hostname) and parsed.username is None and parsed.password is None and private_host_matches(parsed.hostname, suffixes)
+    except ValueError:
+        return False
+
+
 class PrivateBrowserUnavailable(PermissionError):
     """Private browser is unavailable for a cloned/untrusted session (launcher exit 75)."""
     exit_code = 75
@@ -60,15 +72,50 @@ def load_host_suffixes(path: str | Path) -> tuple[str, ...]:
         value = line.strip().lower().lstrip("*.").rstrip(".")
         if not value or value.startswith("#"):
             continue
-        if len(value) > 253 or "/" in value or ":" in value or " " in value or ".." in value:
+        if len(value) > 253 or "/" in value or ":" in value or " " in value or ".." in value or not all(label and len(label) <= 63 and label[0] != "-" and label[-1] != "-" and all(c.isascii() and (c.isalnum() or c == "-") for c in label) for label in value.split(".")):
             raise ValueError("invalid private host suffix")
         suffixes.append(value)
     return tuple(suffixes)
 
 
-async def block_normal_browser_private_hosts(page, path: str | Path = "/var/lib/teammates/private/host-suffixes") -> None:
+def replace_host_suffixes(hosts, path: str | Path = "/tmp/private-host-suffixes") -> None:
+    values = list(hosts)
+    if len(values) > 500:
+        raise ValueError("private host list exceeds its size limit")
+    normalized = []
+    for entry in values:
+        if not isinstance(entry, str) or len(entry) > 255:
+            raise ValueError("invalid private host suffix")
+        suffix = entry.strip().lower()
+        if suffix.startswith("*."):
+            suffix = suffix[2:]
+        if suffix.endswith("."):
+            suffix = suffix[:-1]
+        if not suffix:
+            raise ValueError("invalid private host suffix")
+        # Reuse the strict file parser's validation before replacing the live file.
+        labels = suffix.split(".")
+        if len(suffix) > 253 or ".." in suffix or not all(label and len(label) <= 63 and label[0] != "-" and label[-1] != "-" and all(c.isascii() and (c.isalnum() or c == "-") for c in label) for label in labels):
+            raise ValueError("invalid private host suffix")
+        normalized.append(suffix)
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".private-hosts-", dir=target.parent, text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write("".join(host + "\n" for host in sorted(set(normalized))))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, target)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+async def block_normal_browser_private_hosts(page, path: str | Path | None = None) -> None:
     """Attach request interception to normal browser pages; the private profile opts out."""
-    suffixes = load_host_suffixes(path)
+    suffixes = load_host_suffixes(path or os.environ.get("PRIVATE_HOST_SUFFIXES_FILE", "/tmp/private-host-suffixes"))
 
     async def route_request(route):
         from urllib.parse import urlsplit
@@ -88,6 +135,7 @@ class PrivateBrowser:
         self.trusted_session = trusted_session if trusted_session is not None else os.environ.get("BOX_UNTRUSTED_TURN_CLONE") != "1"
         self.mountinfo = mountinfo
         self.launcher = launcher or subprocess.Popen
+        self.custom_launcher = launcher is not None
         self.process = None
 
     def _require_private_mount(self) -> None:
@@ -105,15 +153,28 @@ class PrivateBrowser:
         self.profile.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(self.profile, 0o700)
         args = [executable, f"--user-data-dir={self.profile}", f"--remote-debugging-port={TAILNET_CHROME_CDP}", "--remote-debugging-address=127.0.0.1", "--no-first-run"]
+        if not self.custom_launcher and os.geteuid() == 0:
+            import pwd
+            account = pwd.getpwnam("desk")
+            os.chown(self.profile, account.pw_uid, account.pw_gid)
+            args = ["runuser", "-u", "desk", "--", *args]
         self.process = self.launcher(args, close_fds=True)
         return self.process
 
+    def stop(self) -> None:
+        if self.process is not None:
+            if self.process.poll() is None:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait(timeout=5)
+            self.process = None
+
     def wipe(self) -> None:
         self._require_private_mount()
-        if self.process is not None and self.process.poll() is None:
-            self.process.terminate()
-            self.process.wait(timeout=5)
-        self.process = None
+        self.stop()
         if self.profile.exists():
             for child in self.profile.iterdir():
                 if child.is_dir() and not child.is_symlink():

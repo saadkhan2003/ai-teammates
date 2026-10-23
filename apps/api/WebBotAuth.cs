@@ -32,6 +32,7 @@ public sealed class WebBotAuthKey : IDisposable
 }
 
 public sealed record WebBotAuthHeaders(string SignatureAgent, string SignatureInput, string Signature);
+public sealed record WebBotAuthDirectorySignature(string SignatureAgent, string SignatureInput, string Signature, string ContentDigest);
 
 /// <summary>RFC 9421 profile used by Web Bot Auth. Header lifetime is capped at 120 seconds.</summary>
 public static class WebBotAuth
@@ -105,7 +106,7 @@ public static class WebBotAuth
     public static WebBotAuthHeaders SignRequest(string authority, string signatureAgent, WebBotAuthKey key, DateTimeOffset? timestamp = null)
     {
         if (!ValidAuthority(authority)) throw new ArgumentException("invalid authority", nameof(authority));
-        if (!Uri.TryCreate(signatureAgent, UriKind.Absolute, out var agentUri) || agentUri.Scheme != Uri.UriSchemeHttps || agentUri.UserInfo.Length != 0 || agentUri.Fragment.Length != 0 || signatureAgent.Length > 512)
+        if (!Uri.TryCreate(signatureAgent, UriKind.Absolute, out var agentUri) || agentUri.Scheme != Uri.UriSchemeHttps || agentUri.UserInfo.Length != 0 || agentUri.Fragment.Length != 0 || signatureAgent.Length > 512 || signatureAgent.Any(c => char.IsControl(c) || c is '"' or '\\'))
             throw new ArgumentException("Signature-Agent must be an HTTPS URI", nameof(signatureAgent));
         ArgumentNullException.ThrowIfNull(key);
         var created = (timestamp ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds();
@@ -153,6 +154,22 @@ public static class WebBotAuth
             alg = "EdDSA"
         });
         return "{\"keys\":[" + jwk + "]}";
+    }
+
+    public static WebBotAuthDirectorySignature SignDirectoryResponse(string authority, string contentType, byte[] body, string signatureAgent, WebBotAuthKey key, DateTimeOffset? timestamp = null)
+    {
+        if (!ValidAuthority(authority) || string.IsNullOrWhiteSpace(contentType) || contentType.Length > 128 || body.Length > 65_536 || !Uri.TryCreate(signatureAgent, UriKind.Absolute, out var agentUri) || agentUri.Scheme != Uri.UriSchemeHttps || agentUri.UserInfo.Length > 0 || agentUri.Fragment.Length > 0 || signatureAgent.Length > 512 || signatureAgent.Any(c => char.IsControl(c) || c is '"' or '\\'))
+            throw new ArgumentException("invalid directory response");
+        var created = (timestamp ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds();
+        var expires = checked(created + MaxLifetimeSeconds);
+        var digest = "sha-256=:" + Convert.ToBase64String(SHA256.HashData(body)) + ":";
+        var keyId = key.KeyId;
+        const int status = 200;
+        var agent = "\"" + signatureAgent + "\"";
+        var parameters = $"(\"@status\" \"content-type\" \"content-digest\" \"signature-agent\");created={created};expires={expires};keyid=\"{keyId}\";tag=\"web-bot-auth\"";
+        var signatureInput = "sig1=" + parameters;
+        var signatureBase = Encoding.UTF8.GetBytes($"\"@status\": {status}\n\"content-type\": {contentType}\n\"content-digest\": {digest}\n\"signature-agent\": {agent}\n\"@signature-params\": {parameters}");
+        return new WebBotAuthDirectorySignature(agent, signatureInput, $"sig1=:{Convert.ToBase64String(key.Sign(signatureBase))}:", digest);
     }
 
     public static string Thumbprint(byte[] publicKey)

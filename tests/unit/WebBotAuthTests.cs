@@ -28,4 +28,30 @@ public class WebBotAuthTests
         Assert.Contains("\"crv\":\"Ed25519\"", jwks, StringComparison.Ordinal);
         Assert.DoesNotContain("\"d\"", jwks, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void SignsDirectoryBodyAndBindsDigestAndSignatureAgent()
+    {
+        using var key = WebBotAuthKey.Generate();
+        var body = "{\"keys\":[]}"u8.ToArray();
+        const string agent = "https://bot.example/.well-known/http-message-signatures-directory";
+        var signed = WebBotAuth.SignDirectoryResponse("bot.example", "application/json", body, agent, key, DateTimeOffset.FromUnixTimeSeconds(1_800_000_000));
+        Assert.Contains("@status", signed.SignatureInput, StringComparison.Ordinal);
+        Assert.Contains("expires=1800000120", signed.SignatureInput, StringComparison.Ordinal);
+        Assert.Equal("\"" + agent + "\"", signed.SignatureAgent);
+        Assert.Equal("sha-256=:" + Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(body)) + ":", signed.ContentDigest);
+        var signature = Convert.FromBase64String(signed.Signature[6..^1]);
+        var parameters = signed.SignatureInput[5..];
+        var signatureBase = System.Text.Encoding.UTF8.GetBytes($"\"@status\": 200\n\"content-type\": application/json\n\"content-digest\": {signed.ContentDigest}\n\"signature-agent\": {signed.SignatureAgent}\n\"@signature-params\": {parameters}");
+        var publicKey = NSec.Cryptography.PublicKey.Import(NSec.Cryptography.SignatureAlgorithm.Ed25519, key.PublicKey, NSec.Cryptography.KeyBlobFormat.RawPublicKey);
+        Assert.True(NSec.Cryptography.SignatureAlgorithm.Ed25519.Verify(publicKey, signatureBase, signature));
+        Assert.False(NSec.Cryptography.SignatureAlgorithm.Ed25519.Verify(publicKey, signatureBase.Concat(new byte[] { 1 }).ToArray(), signature));
+    }
+
+    [Fact]
+    public void RejectsSignatureAgentStructuredFieldInjection()
+    {
+        using var key = WebBotAuthKey.Generate();
+        Assert.Throws<ArgumentException>(() => WebBotAuth.SignRequest("example.test", "https://bot.example/\"\r\nX-Evil: yes", key));
+    }
 }

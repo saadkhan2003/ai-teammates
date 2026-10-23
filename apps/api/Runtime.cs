@@ -70,6 +70,14 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         }
         if (tool == "browser_open" && Uri.TryCreate(Arg(args, "url"), UriKind.Absolute, out var uri))
         {
+            try
+            {
+                await PrivateHosts.PropagateBotAsync(platform, botId, ct);
+            }
+            catch
+            {
+                return Results.Json(new { error = "private host policy could not be applied" }, statusCode: 503);
+            }
             await using var conn = await platform.Data.OpenConnectionAsync(ct);
             await conn.ExecuteAsync("INSERT INTO task_browser_origins (task_id, origin) VALUES (@task, @origin) ON CONFLICT DO NOTHING", new { task = taskId, origin = uri.GetLeftPart(UriPartial.Authority) });
         }

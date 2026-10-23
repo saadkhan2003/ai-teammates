@@ -25,6 +25,7 @@ public sealed class Platform
     public string OpenRouterBase { get; }
     public string LlmProvider { get; }
     public string ModelName { get; }
+    public IConfiguration Config { get; }
     public int MaxParallel { get; }
     public TimeSpan IdleSuspend { get; }
     public string BootId { get; } = Guid.NewGuid().ToString("n");
@@ -40,6 +41,7 @@ public sealed class Platform
     public Platform(NpgsqlDataSource data, byte[] masterKey, DockerComputeProvider compute, IAmazonS3 s3, IConfiguration config)
     {
         Data = data;
+        Config = config;
         MasterKey = masterKey;
         Compute = compute;
         S3 = s3;

@@ -6,12 +6,14 @@ and the resulting short lived headers.
 from __future__ import annotations
 
 import base64
+import contextvars
 import ipaddress
 import re
 from typing import Awaitable, Callable, Mapping
 from urllib.parse import urlsplit
 
 Signer = Callable[[str, str], Awaitable[Mapping[str, str]]]
+CURRENT_AUTH_CONFIG: contextvars.ContextVar[Mapping | None] = contextvars.ContextVar("current_web_bot_auth", default=None)
 
 
 def geo_browser_settings(ip_address: str, geo_lookup: Callable[[str], Mapping[str, str]]) -> dict[str, str]:
@@ -23,6 +25,19 @@ def geo_browser_settings(ip_address: str, geo_lookup: Callable[[str], Mapping[st
     if len(country) != 2 or not country.isalpha() or not locale or len(locale) > 35 or not timezone or len(timezone) > 64:
         raise ValueError("exit IP geo data is incomplete")
     return {"country": country, "locale": locale, "timezone": timezone}
+
+
+def fingerprint_browser_settings(country: str, locale: str, user_agent: str | None = None) -> dict[str, str]:
+    """Return locale headers alongside native Chromium UA and software WebGL profile hints."""
+    if len(country) != 2 or not country.isalpha() or not locale or len(locale) > 35:
+        raise ValueError("invalid browser fingerprint locale")
+    language = locale.replace("_", "-")
+    return {
+        "locale": language,
+        "acceptLanguage": f"{language},{language.split('-')[0]};q=0.9,en;q=0.7",
+        "userAgent": user_agent or "native",
+        "webgl": "swiftshader",
+    }
 
 
 async def apply_geo_settings(cdp, settings: Mapping[str, str]) -> None:
@@ -54,16 +69,35 @@ def _normalize_host(value: str) -> str | None:
 
 
 class WebBotAuthHook:
-    def __init__(self, cdp, allowed_hosts, signature_agent: str, signer: Signer):
+    def __init__(self, cdp, allowed_hosts=(), signature_agent: str = "", signer: Signer | None = None, *, blocked_hosts=()):
         self.cdp = cdp
         raw_hosts = list(allowed_hosts)
-        if len(raw_hosts) > 500:
+        raw_blocked = list(blocked_hosts)
+        if len(raw_hosts) > 500 or len(raw_blocked) > 500:
             raise ValueError("Web Bot Auth allowlist exceeds its size limit")
         self.allowed_hosts = tuple(host for value in raw_hosts if (host := _normalize_host(str(value))) is not None)
-        agent = urlsplit(signature_agent)
-        if agent.scheme != "https" or not agent.hostname or agent.username or agent.password or agent.fragment or len(signature_agent) > 512:
-            raise ValueError("Signature-Agent must be an HTTPS URI")
+        self.blocked_hosts = tuple(host for value in raw_blocked if (host := _normalize_host(str(value))) is not None)
+        if signer is not None:
+            agent = urlsplit(signature_agent)
+            if agent.scheme != "https" or not agent.hostname or agent.username or agent.password or agent.fragment or len(signature_agent) > 512 or any(ord(ch) < 32 or ch in '"\\' for ch in signature_agent):
+                raise ValueError("Signature-Agent must be an HTTPS URI")
         self.signature_agent = signature_agent
+        self.signer = signer
+
+    def update_config(self, config: Mapping) -> None:
+        hosts = list(config.get("allowed_hosts", ()))
+        blocked = list(config.get("blocked_hosts", ()))
+        if len(hosts) > 500 or len(blocked) > 500:
+            raise ValueError("Web Bot Auth allowlist exceeds its size limit")
+        agent_value = str(config.get("signature_agent", ""))
+        signer = config.get("signer")
+        if signer is not None:
+            agent = urlsplit(agent_value)
+            if agent.scheme != "https" or not agent.hostname or agent.username or agent.password or agent.fragment or len(agent_value) > 512 or any(ord(ch) < 32 or ch in '"\\' for ch in agent_value):
+                raise ValueError("Signature-Agent must be an HTTPS URI")
+        self.allowed_hosts = tuple(host for value in hosts if (host := _normalize_host(str(value))) is not None)
+        self.blocked_hosts = tuple(host for value in blocked if (host := _normalize_host(str(value))) is not None)
+        self.signature_agent = agent_value
         self.signer = signer
 
     async def enable(self) -> None:
@@ -74,10 +108,16 @@ class WebBotAuthHook:
         request_id = event.get("requestId")
         request = event.get("request") or {}
         url = str(request.get("url") or "")
+        blocked = False
         try:
             parsed = urlsplit(url)
+            host = parsed.hostname or ""
+            if any(_host_allowed(host, (suffix,)) for suffix in self.blocked_hosts):
+                blocked = True
+                await self.cdp.send("Fetch.failRequest", {"requestId": request_id, "errorReason": "BlockedByClient"})
+                return
             headers = list((request.get("headers") or {}).items())
-            if parsed.scheme == "https" and parsed.hostname and _host_allowed(parsed.hostname, self.allowed_hosts):
+            if self.signer is not None and parsed.scheme == "https" and parsed.hostname and _host_allowed(parsed.hostname, self.allowed_hosts):
                 additions = await self.signer(url, self.signature_agent)
                 headers = [(name, value) for name, value in headers if name.lower() not in {key.lower() for key in additions}]
                 headers.extend((str(name), str(value)) for name, value in additions.items())
@@ -85,6 +125,8 @@ class WebBotAuthHook:
                 return
             await self.cdp.send("Fetch.continueRequest", {"requestId": request_id})
         except Exception:
+            if blocked:
+                return
             # Signing failures fail open to the site's ordinary request; no exception
             # details (which can contain request data) cross the browser boundary.
             await self.cdp.send("Fetch.continueRequest", {"requestId": request_id})

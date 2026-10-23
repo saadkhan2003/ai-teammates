@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 
 from browser import BrowserHub
+from web_bot_auth import CURRENT_AUTH_CONFIG, fingerprint_browser_settings, geo_browser_settings
 from guard import invalid_reason, login_result, present_tool, scrub, should_halt, strip_text
 from plugins import call_allowed, enabled_names
 from run_guard import RunGuard
@@ -76,12 +77,14 @@ class ComputerRecovering(Exception):
 
 
 class Worker:
-    def __init__(self) -> None:
+    def __init__(self, *, exit_ip: str | None = None, geo_lookup=None) -> None:
         self.api_url = os.environ.get("API_URL", "http://api:8080").rstrip("/")
         self.token = os.environ.get("WORKER_TOKEN", "")
         self.worker_id = os.environ.get("WORKER_ID", "worker-1")
         self.max_parallel = parallel_limit(os.environ)
         self.browser = BrowserHub()
+        self.browser_exit_ip = exit_ip
+        self.geo_lookup = geo_lookup
         self.client: httpx.AsyncClient | None = None
         self.inflight: set[asyncio.Task] = set()
         self.inflight_ids: set[str] = set()
@@ -450,7 +453,32 @@ class Worker:
         if method is None:
             return {"ok": False, "reason": "unknown_browser_tool"}
         try:
-            output = await method(cdp_url, args)
+            private_policy = await self.request_json("GET", f"/internal/tasks/{_task_id(task)}/private-hosts")
+            blocked_hosts = private_policy.get("hosts", []) if isinstance(private_policy, dict) else []
+            if not isinstance(blocked_hosts, list) or len(blocked_hosts) > 500:
+                return {"ok": False, "reason": "private_host_policy_unavailable"}
+            hosts = [host.strip() for host in os.environ.get("WEB_BOT_AUTH_ALLOWED_HOSTS", "").split(",") if host.strip()]
+            agent = os.environ.get("WEB_BOT_AUTH_SIGNATURE_AGENT", "")
+            config = None
+            if hosts and agent:
+                async def signer(url: str, signature_agent: str):
+                    return await self.request_json("POST", "/internal/web-bot-auth/sign", {
+                        "taskId": str(task.get("id") or task.get("taskId") or task.get("task_id") or ""),
+                        "url": url,
+                        "signatureAgent": signature_agent,
+                    })
+                config = {"allowed_hosts": hosts, "signature_agent": agent, "signer": signer, "blocked_hosts": blocked_hosts}
+            elif blocked_hosts:
+                config = {"blocked_hosts": blocked_hosts}
+            if self.browser_exit_ip and self.geo_lookup:
+                geo = geo_browser_settings(self.browser_exit_ip, self.geo_lookup)
+                fingerprint = fingerprint_browser_settings(geo["country"], geo["locale"])
+                config = dict(config or {}, geo_settings=geo, accept_language=fingerprint["acceptLanguage"], user_agent=fingerprint["userAgent"])
+            auth_token = CURRENT_AUTH_CONFIG.set(config)
+            try:
+                output = await method(cdp_url, args)
+            finally:
+                CURRENT_AUTH_CONFIG.reset(auth_token)
         except Exception as exc:
             log.warning("browser tool=%s type=%s", tool, type(exc).__name__)
             return {"ok": False, "reason": "browser_failed"}

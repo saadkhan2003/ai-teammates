@@ -31,6 +31,14 @@ public static partial class SecurityRoutes
                     if (!ActionClasses.All.Contains(prop.Name)) return Results.BadRequest(new { error = "unknown class" });
                 }
             }
+            try
+            {
+                await PrivateHosts.PropagateAsync(platform, user.Value, policy.PrivateHosts, ctx.RequestAborted);
+            }
+            catch
+            {
+                return Results.Json(new { error = "private host policy could not be applied" }, statusCode: 503);
+            }
             await using var conn = await platform.Data.OpenConnectionAsync();
             var json = JsonSerializer.Serialize(new { classes = policy.Classes, modelAssist = policy.ModelAssist, privateHosts = policy.PrivateHosts });
             await conn.ExecuteAsync(
@@ -40,7 +48,7 @@ public static partial class SecurityRoutes
                 """,
                 new { id = user, settings = json });
             await platform.Audit(user.Value.ToString(), "policy.updated", null, null, new { classes = policy.Classes, modelAssist = policy.ModelAssist, privateHosts = policy.PrivateHosts });
-            return Results.Json(new { ok = true, classes = policy.Classes, modelAssist = policy.ModelAssist });
+            return Results.Json(new { ok = true, classes = policy.Classes, modelAssist = policy.ModelAssist, privateHosts = policy.PrivateHosts });
         });
 
         app.MapGet("/api/admin/policy/deny-list", async (HttpContext ctx) =>

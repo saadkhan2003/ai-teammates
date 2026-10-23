@@ -15,9 +15,14 @@ from browser import BrowserHub, run_command
 from desktops import DesktopManager, cdp_port, rw_port, view_port
 from fixtureserver import start as start_fixtures
 from pure import redact, scrub_tree
+from private_browser import PrivateBrowser, load_host_suffixes, private_browser_url_allowed, replace_host_suffixes
+from box_contract import TAILNET_CHROME_CDP
+from urllib.parse import quote
+import httpx
 
 manager = DesktopManager()
 hub: BrowserHub | None = None
+private_browser: PrivateBrowser | None = None
 
 
 def require_token(authorization: str = Header(default="")) -> None:
@@ -42,9 +47,14 @@ def agent_allowed(bot_id: str) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global hub
+    global hub, private_browser
     start_fixtures()
     hub = BrowserHub(manager)
+    private_browser = PrivateBrowser(
+        profile=os.environ.get("PRIVATE_BROWSER_PROFILE", "/home/box/private"),
+        mountinfo=None,
+        trusted_session=os.environ.get("BOX_UNTRUSTED_TURN_CLONE") != "1",
+    )
     try:
         await manager.restore_all()
         computer_id = os.environ.get("COMPUTER_ID", "").strip()
@@ -55,10 +65,84 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         print(json.dumps({"level": "error", "msg": "restore failed", "error": str(exc)}), flush=True)
     yield
+    if private_browser is not None:
+        private_browser.stop()
     await hub.close()
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.post("/private-browser/start")
+async def private_browser_start(_: None = Depends(require_token)):
+    if private_browser is None:
+        raise HTTPException(status_code=503, detail="private browser unavailable")
+    try:
+        process = private_browser.start()
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="private browser unavailable for untrusted session") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="private browser requires a tmpfs profile") from exc
+    return {"ok": True, "port": TAILNET_CHROME_CDP, "running": process.poll() is None}
+
+
+@app.post("/private-browser/open")
+async def private_browser_open(body: dict, _: None = Depends(require_token)):
+    if private_browser is None:
+        raise HTTPException(status_code=503, detail="private browser unavailable")
+    url = body.get("url")
+    hosts = load_host_suffixes(os.environ.get("PRIVATE_HOST_SUFFIXES_FILE", "/tmp/private-host-suffixes"))
+    if not private_browser_url_allowed(url, hosts):
+        raise HTTPException(status_code=403, detail="private host is not allowed")
+    try:
+        private_browser.start()
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.put(f"http://127.0.0.1:{TAILNET_CHROME_CDP}/json/new?{quote(url, safe='')}")
+            response.raise_for_status()
+            target = response.json()
+        return {"ok": True, "targetId": str(target.get("id", "")), "url": url}
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="private browser unavailable for untrusted session") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="private browser requires a tmpfs profile") from exc
+    except (httpx.HTTPError, ValueError, KeyError) as exc:
+        raise HTTPException(status_code=503, detail="private browser is not ready") from exc
+
+
+@app.post("/private-browser/stop")
+async def private_browser_stop(_: None = Depends(require_token)):
+    if private_browser is None:
+        raise HTTPException(status_code=503, detail="private browser unavailable")
+    try:
+        private_browser.stop()
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="private browser unavailable for untrusted session") from exc
+    return {"ok": True}
+
+
+@app.post("/private-browser/wipe")
+async def private_browser_wipe(_: None = Depends(require_token)):
+    if private_browser is None:
+        raise HTTPException(status_code=503, detail="private browser unavailable")
+    try:
+        private_browser.wipe()
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="private browser unavailable for untrusted session") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="private browser requires a tmpfs profile") from exc
+    return {"ok": True}
+
+
+@app.post("/internal/private-hosts")
+async def update_private_hosts(body: dict, _: None = Depends(require_token)):
+    hosts = body.get("hosts")
+    if not isinstance(hosts, list):
+        raise HTTPException(status_code=400, detail="invalid host list")
+    try:
+        replace_host_suffixes(hosts, os.environ.get("PRIVATE_HOST_SUFFIXES_FILE", "/tmp/private-host-suffixes"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid host list") from exc
+    return {"ok": True, "count": len(hosts)}
 
 
 def _hub() -> BrowserHub:

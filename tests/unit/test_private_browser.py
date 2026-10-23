@@ -6,7 +6,7 @@ import pytest
 from services.computer.src.box_contract import TAILNET_CHROME_CDP
 from services.computer.src.private_browser import (
     PrivateBrowser, PrivateBrowserUnavailable, block_normal_browser_private_hosts,
-    is_tmpfs_mount, private_host_matches,
+    is_tmpfs_mount, private_host_matches, private_browser_url_allowed,
 )
 
 
@@ -15,6 +15,13 @@ def test_private_host_suffix_blocks_parent_and_subdomains_only():
     assert private_host_matches("internal.example", ["internal.example"])
     assert not private_host_matches("evilinternal.example", ["internal.example"])
     assert not private_host_matches("internal.example.evil.test", ["internal.example"])
+
+
+def test_private_browser_accepts_only_explicit_private_host_suffixes():
+    assert private_browser_url_allowed("https://git.internal.example/repo", ["internal.example"])
+    assert not private_browser_url_allowed("https://public.example/", ["internal.example"])
+    assert not private_browser_url_allowed("file:///etc/passwd", ["internal.example"])
+    assert not private_browser_url_allowed("https://internal.example@evil.test/", ["internal.example"])
 
 
 def test_mountinfo_check_requires_exact_tmpfs_mountpoint():
@@ -107,3 +114,42 @@ def test_wipe_removes_profile_contents(tmp_path):
     private.wipe()
     assert profile.is_dir()
     assert list(profile.iterdir()) == []
+
+
+def test_lifecycle_stop_terminates_process_without_wiping(tmp_path):
+    profile = tmp_path / "private"
+    profile.mkdir()
+    mountinfo = f"22 1 0:19 / {profile} rw,nosuid - tmpfs tmpfs rw,size=1m"
+    class Process:
+        terminated = False
+        def poll(self): return None
+        def terminate(self): self.terminated = True
+        def wait(self, timeout): return 0
+    process = Process()
+    private = PrivateBrowser(profile=profile, trusted_session=True, mountinfo=mountinfo,
+                             launcher=lambda *args, **kwargs: process)
+    private.start()
+    (profile / "Cookies").write_text("cookie")
+    private.stop()
+    assert process.terminated
+    assert (profile / "Cookies").exists()
+    assert private.process is None
+
+
+def test_host_suffix_update_is_validated_and_atomic(tmp_path):
+    from services.computer.src.private_browser import replace_host_suffixes
+    target = tmp_path / "host-suffixes"
+    replace_host_suffixes(["Corp.Example", "*.internal.test"], target)
+    assert target.read_text().splitlines() == ["corp.example", "internal.test"]
+    with pytest.raises(ValueError):
+        replace_host_suffixes(["invalid/path"], target)
+    assert target.read_text().splitlines() == ["corp.example", "internal.test"]
+
+
+def test_private_browser_refuses_untrusted_wipe(tmp_path):
+    profile = tmp_path / "private"
+    profile.mkdir()
+    mountinfo = f"22 1 0:19 / {profile} rw,nosuid - tmpfs tmpfs rw,size=1m"
+    private = PrivateBrowser(profile=profile, trusted_session=False, mountinfo=mountinfo)
+    with pytest.raises(PermissionError):
+        private.wipe()
