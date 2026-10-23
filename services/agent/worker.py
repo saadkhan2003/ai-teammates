@@ -16,6 +16,7 @@ from plugins import call_allowed, enabled_names
 from run_guard import RunGuard
 from grounding import check_answer, observed_urls
 from retry import send_with_retry
+from resume import apply_resume
 
 log = logging.getLogger("worker")
 
@@ -241,6 +242,10 @@ class Worker:
                 {"role": "system", "content": system},
                 user,
             ]
+        previous_message_count = len(messages)
+        messages, _ = apply_resume(messages, task.get("resume"), task.get("attempt"))
+        if len(messages) != previous_message_count:
+            await self._put_transcript(task, messages)
         _note_target(task, messages)
         checkpoint = task.get("checkpoint")
         if isinstance(checkpoint, str):
@@ -749,6 +754,8 @@ def _unanswered_calls(messages: list) -> list[dict]:
         if not isinstance(item, dict):
             continue
         role = item.get("role")
+        if role == "user" and item.get("resume_brief"):
+            continue
         if role == "tool":
             cid = _result_id(item)
             if cid:
@@ -805,6 +812,8 @@ def _bind_target(task: dict, args: dict) -> dict:
 
 def _note_target(task: dict, messages: list) -> None:
     for item in reversed(messages):
+        if isinstance(item, dict) and item.get("resume_brief"):
+            continue
         target = _target_in(item)
         if target:
             task["_targetId"] = target
