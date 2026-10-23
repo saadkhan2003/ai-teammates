@@ -1054,6 +1054,16 @@ async def _health(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) ->
             pass
 
 
+def _call_slot(messages: list, pending: dict) -> str:
+    """The model's tool-call id: stable when a call is retried after a crash, new for a new call."""
+    return str(pending.get("id") or "")
+
+
+def _idempotency_key(task: dict, tool: str, args: dict) -> str:
+    digest = hashlib.sha256((str(task.get("_callSlot") or "") + "|" + tool + json.dumps(args, sort_keys=True)).encode()).hexdigest()
+    return _task_id(task) + ":" + digest
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     server = await asyncio.start_server(_health, "0.0.0.0", 7710)
@@ -1065,12 +1075,3 @@ async def main() -> None:
 if __name__ == "__main__":
     asyncio.run(main())
 
-
-def _call_slot(messages: list, pending: dict) -> str:
-    """The model's tool-call id: stable when a call is retried after a crash, new for a new call."""
-    return str(pending.get("id") or "")
-
-
-def _idempotency_key(task: dict, tool: str, args: dict) -> str:
-    digest = hashlib.sha256((str(task.get("_callSlot") or "") + "|" + tool + json.dumps(args, sort_keys=True)).encode()).hexdigest()
-    return _task_id(task) + ":" + digest
