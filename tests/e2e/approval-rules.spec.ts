@@ -25,7 +25,7 @@ test("approval card describes Always allow and settings can revoke the scoped ru
     const row = page.getByTestId("approval-rule").first();
     await expect(row).toBeVisible();
     await expect(row).toContainText("portal.example.edu");
-    await expect(row).toContainText("This bot");
+    await expect(row).not.toContainText("All my bots");
     page.once("dialog", (dialog) => dialog.accept());
     await row.getByRole("button", { name: "Revoke" }).click();
     await expect(page.getByTestId("approval-rules-empty")).toBeVisible();

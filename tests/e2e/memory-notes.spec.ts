@@ -71,7 +71,7 @@ test("Memory tab supports inline rules, pinning, forgetting, suggestions, search
   const deleted = new Map<string, typeof rows[number]>();
   let failList = false;
   await page.route(`**/api/bots/${bot}/memory-settings`, async route => route.fulfill({ json: { mode: "auto", shareOwner: true } }));
-  await page.route(`**/api/bots/${bot}/memories**`, async route => {
+  await page.route(new RegExp(`/api/bots/${bot}/memories(?:[/?]|$)`), async route => {
     const req = route.request(); const url = new URL(req.url()); const path = url.pathname;
     if (req.method() === "GET" && path.endsWith("/memories")) {
       if (failList) return route.fulfill({ status: 500, json: { error: "offline" } });
@@ -96,7 +96,7 @@ test("Memory tab supports inline rules, pinning, forgetting, suggestions, search
   await rule.getByRole("button", { name: "Edit" }).click();
   await page.getByLabel("Edit note").fill("Unsafe rule");
   await rule.getByRole("button", { name: "Save" }).click();
-  await expect(rule.getByRole("alert")).toContainText("approval and security requirements");
+  await expect(rule.getByRole("alert")).toContainText(/approval and security requirements/i);
   await page.getByLabel("Edit note").fill("Use descriptive headings");
   await rule.getByRole("button", { name: "Save" }).click();
   await rule.getByRole("button", { name: "Pin" }).click();
@@ -125,7 +125,7 @@ test("Memory tab supports inline rules, pinning, forgetting, suggestions, search
   failList = true;
   await page.getByRole("tab", { name: "Overview" }).click();
   await page.getByRole("tab", { name: "Memory" }).click();
-  await expect(page.getByRole("alert")).toContainText("Could not load notes");
+  await expect(page.getByRole("alert").filter({ hasText: "Could not load notes" })).toContainText("Could not load notes");
   await page.getByRole("button", { name: "Retry" }).click();
-  await expect(page.getByRole("alert")).toContainText("Could not load notes");
+  await expect(page.getByRole("alert").filter({ hasText: "Could not load notes" })).toContainText("Could not load notes");
 });
