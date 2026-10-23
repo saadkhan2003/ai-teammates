@@ -1,3 +1,6 @@
+import { parseResumeBlock } from "@/lib/resume-blocks";
+import type { ResumeBlock } from "@/lib/resume-blocks";
+
 export type QuestionOption = { label: string; style: "primary" | "danger" };
 
 export type MessageBlock =
@@ -6,7 +9,8 @@ export type MessageBlock =
   | { kind: "memory"; action: "saved" | "forgot"; text: string }
   | { kind: "form"; title: string; fields: FormField[] }
   | { kind: "file"; name: string; url?: string; mime?: string }
-  | { kind: "image"; name: string; url: string };
+  | { kind: "image"; name: string; url: string }
+  | ResumeBlock;
 
 export type FormField = { name: string; label: string; secret?: boolean };
 
@@ -14,6 +18,8 @@ function asBlock(value: unknown): MessageBlock | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
   const type = String(record.type ?? record.kind ?? "");
+  const resume = parseResumeBlock(record);
+  if (resume) return resume;
   if (type === "question") {
     const styles = Array.isArray(record.styles) ? record.styles.map((item) => String(item)) : [];
     const options: QuestionOption[] = [];
@@ -80,7 +86,7 @@ export function messageBlocks(content: string): MessageBlock[] {
     }
   }
   const blocks: MessageBlock[] = [];
-  const pattern = /```(question|form|file|image|memory)\n([\s\S]*?)```/g;
+  const pattern = /```(question|form|file|image|memory|resume|resume_card)\n([\s\S]*?)```/g;
   let last = 0;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(content))) {
