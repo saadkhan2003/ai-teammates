@@ -9,6 +9,15 @@ public static class CodingTools
     public static async Task<object> Run(Platform platform, Guid botId, Guid taskId, string tool, JsonElement args,
         Func<IReadOnlyList<string>, Task<(int Code, string Stdout, string Stderr)>> run, CancellationToken ct)
     {
+        var result = await RunCore(platform, botId, taskId, tool, args, run, ct);
+        var repoArg = Repo(Arg(args, "repo")) ?? ".";
+        await CodingItems.Record(platform, botId, taskId, tool, result, repoArg == "." ? "/workspace" : "/workspace/" + repoArg, run, ct);
+        return result;
+    }
+
+    private static async Task<object> RunCore(Platform platform, Guid botId, Guid taskId, string tool, JsonElement args,
+        Func<IReadOnlyList<string>, Task<(int Code, string Stdout, string Stderr)>> run, CancellationToken ct)
+    {
         var repo = Repo(Arg(args, "repo"));
         if (repo == null) throw new ToolHalt("invalid", "repo must be a relative workspace path without '..'");
         var root = repo == "." ? "/workspace" : "/workspace/" + repo;
@@ -55,7 +64,8 @@ public static class CodingTools
                 var pr = Arg(args, "pr");
                 var result = string.IsNullOrEmpty(pr) ? await run(["gh", "run", "list", "--limit", "5", "--json", "name,status,conclusion,url"]) : await run(["gh", "pr", "checks", pr, "--json", "name,state,link"]);
                 if (result.Code != 0) return new { ok = false, error = "gh_not_available", message = "GitHub CLI is unavailable or unauthenticated." };
-                return new { ok = true, summary = CiSummary.From(result.Stdout) };
+                var ci = CiSummary.From(result.Stdout);
+                return new { ok = true, summary = new { state = ci.State, checks = ci.Checks } };
             }
             case "create_pr":
             {

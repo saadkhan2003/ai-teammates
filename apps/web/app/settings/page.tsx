@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
+import { EDITORS, type EditorId, readEnabledEditors, writeEnabledEditors } from "@/lib/editors";
 import { applyTheme, readTheme, type ThemeMode } from "@/lib/theme";
 
 const ACCENTS = [
@@ -43,6 +44,7 @@ export default function GeneralSettingsPage() {
   const [zone, setZone] = useState("UTC");
   const [alerts, setAlerts] = useState(false);
   const [accent, setAccent] = useState("blue");
+  const [editors, setEditors] = useState<EditorId[]>([]);
 
   useEffect(() => {
     setMode(readTheme());
@@ -50,6 +52,7 @@ export default function GeneralSettingsPage() {
     setZone(window.localStorage.getItem("teammates-timezone") || "UTC");
     setAlerts(window.localStorage.getItem("teammates-desktop-notifications") === "on");
     setAccent(window.localStorage.getItem("teammates-accent-id") || "blue");
+    setEditors(readEnabledEditors());
     void api<{ username?: string; role?: string }>("/api/auth/me")
       .then((me) => {
         setUsername(me.username ?? "");
@@ -83,6 +86,12 @@ export default function GeneralSettingsPage() {
   function chooseZone(value: string) {
     setZone(value);
     window.localStorage.setItem("teammates-timezone", value);
+  }
+
+  function chooseEditor(id: EditorId, on: boolean) {
+    const next = EDITORS.filter((e) => (e.id === id ? on : editors.includes(e.id))).map((e) => e.id);
+    setEditors(next);
+    writeEnabledEditors(next);
   }
 
   async function chooseAlerts(next: boolean) {
@@ -196,6 +205,20 @@ export default function GeneralSettingsPage() {
         </div>
         <Switch checked={alerts} onCheckedChange={(checked) => void chooseAlerts(checked)} aria-label="Notifications" />
       </div>
+      <Card data-testid="editors-card">
+        <CardHeader className="p-4">
+          <CardTitle className="text-sm">Code editors</CardTitle>
+          <p className="text-xs text-muted-foreground">Editors offered in the Open menu of a coding task.</p>
+        </CardHeader>
+        <CardContent className="grid gap-2 p-4 pt-0">
+          {EDITORS.map((editor) => (
+            <div key={editor.id} className="flex items-center justify-between">
+              <Label htmlFor={`editor-${editor.id}`} className="text-sm">{editor.label}</Label>
+              <Switch id={`editor-${editor.id}`} data-testid={`editor-${editor.id}`} checked={editors.includes(editor.id)} onCheckedChange={(on) => chooseEditor(editor.id, on)} />
+            </div>
+          ))}
+        </CardContent>
+      </Card>
       <Card>
         <CardHeader className="p-4">
           <CardTitle className="text-sm">Approval rules</CardTitle>
