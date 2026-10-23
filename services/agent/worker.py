@@ -57,6 +57,20 @@ def env_int(name: str, default: int) -> int:
         return default
 
 
+DEFAULT_PARALLEL = 4
+MAX_PARALLEL_CAP = 8
+
+
+def parallel_limit(environ) -> int:
+    """Worker concurrency: default 4, raisable to 8 with WORKER_PARALLEL_TASKS (legacy MAX_PARALLEL_TASKS also read)."""
+    raw = environ.get("WORKER_PARALLEL_TASKS") or environ.get("MAX_PARALLEL_TASKS") or ""
+    try:
+        value = int(str(raw).strip()) if str(raw).strip() else DEFAULT_PARALLEL
+    except ValueError:
+        value = DEFAULT_PARALLEL
+    return max(1, min(MAX_PARALLEL_CAP, value))
+
+
 class ComputerRecovering(Exception):
     """The computer is being rebuilt. The task should wait instead of retrying."""
 
@@ -66,7 +80,7 @@ class Worker:
         self.api_url = os.environ.get("API_URL", "http://api:8080").rstrip("/")
         self.token = os.environ.get("WORKER_TOKEN", "")
         self.worker_id = os.environ.get("WORKER_ID", "worker-1")
-        self.max_parallel = max(1, env_int("MAX_PARALLEL_TASKS", 2))
+        self.max_parallel = parallel_limit(os.environ)
         self.browser = BrowserHub()
         self.client: httpx.AsyncClient | None = None
         self.inflight: set[asyncio.Task] = set()

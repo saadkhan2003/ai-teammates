@@ -125,7 +125,7 @@ services:
       API_URL: http://api:8080
       WORKER_TOKEN: ${WORKER_TOKEN:-dev-worker-token-change-me}
       WORKER_ID: ${WORKER_ID:-worker-1}
-      MAX_PARALLEL_TASKS: ${MAX_PARALLEL_TASKS_PER_USER:-6}
+      WORKER_PARALLEL_TASKS: ${WORKER_PARALLEL_TASKS:-4}
       MALLOC_ARENA_MAX: "2"
     networks:
       back: {}
