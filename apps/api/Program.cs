@@ -75,6 +75,8 @@ var loginBroker = new LoginBroker();
 var loginFlow = new LoginFlow(platform, loginBroker);
 var runtime = new Runtime(platform, loginFlow);
 builder.Services.AddSingleton(platform);
+builder.Services.AddSingleton(new DeviceHub(data, platform));
+builder.Services.AddHostedService(sp => sp.GetRequiredService<DeviceHub>());
 builder.Services.AddSingleton(new DeviceGate(data));
 builder.Services.AddSingleton(loginBroker);
 builder.Services.AddSingleton(loginFlow);
@@ -141,6 +143,7 @@ Routes.Map(app, platform, runtime);
 SecurityRoutes.Map(app, platform, loginFlow);
 BotMessaging.Map(app, platform);
 Devices.Map(app, platform);
+DeviceCommandRoutes.Map(app, platform, app.Services.GetRequiredService<DeviceHub>());
 Feedback.Map(app, platform);
 app.Run();
 

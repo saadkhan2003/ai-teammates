@@ -23,3 +23,11 @@ Management returns 403 without an owner session. Pairing, permission updates and
 ## Execution contract
 
 `DeviceGate` is registered in API dependency injection. `await gate.CanExecute(deviceId)` returns false for missing/revoked devices, unknown modes, or execution `off`. `ask` means the caller must still obtain an approval; `always` does not bypass PolicyGate, DLP, account/workspace authorization or network isolation. Check ownership before the gate and recheck immediately before dispatch. Route traffic, file access, and browser access require their separate flags. This helper is intentionally not wired to agent dispatch in v0.4.
+
+## v0.5 execution transport
+
+The companion keeps one outbound WebSocket at `GET /api/devices/{id}/connect`, authenticated with its paired device bearer token. The server validates each v1 JSON frame (maximum 256 KiB), sends the current permission set and version compatibility, and accepts command decisions and bounded results only for commands belonging to that connected device. The owner session can request, list, inspect, or cancel commands at `/api/devices/{id}/commands`. Requests expire after 120 seconds when they have not been acted on. Output is stored with the command result and omitted from audit entries; audit records contain request identifiers and execution metadata only.
+
+Command execution is available only when the device permission is `ask` or `always` and the device is connected. A device in `off` mode or an offline device returns 409. Command text is limited to 4,000 characters, working directories must be absolute paths or null, and timeout values are clamped to 1–600 seconds (default 60). A disconnect fails in-flight work after the 90-second reconnect grace. Revocation closes a connection when the next frame is handled; the v0.4 device deletion handler has not yet been wired to close the socket immediately.
+
+The migration is `db/032_device_commands.sql`. The API migration runner in `Platform.MigrateAndSeed` must include migration 032 when integrating this chunk; that file is outside the server-side edit allowlist for this worktree task.
