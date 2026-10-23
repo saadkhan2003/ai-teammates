@@ -123,7 +123,7 @@ app.Use(async (ctx, next) =>
     Interlocked.Add(ref platform.HttpMicros, (long)(DateTimeOffset.UtcNow - started).TotalMicroseconds);
     Interlocked.Increment(ref platform.HttpCount);
 });
-app.UseWebSockets();
+app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(25), KeepAliveTimeout = TimeSpan.FromSeconds(15) });
 var ownerPassword = config["OWNER_PASSWORD"];
 OwnerPasswordGuard.Ensure(string.Equals(config["REQUIRE_OWNER_PASSWORD"], "true", StringComparison.OrdinalIgnoreCase), ownerPassword);
 await platform.MigrateAndSeed(config["OWNER_USERNAME"] ?? "saad", string.IsNullOrWhiteSpace(ownerPassword) ? OwnerPasswordGuard.DevDefault : ownerPassword);
@@ -137,6 +137,7 @@ catch (Exception ex)
     app.Logger.LogError("computer isolation alert: computers will not start ({Message})", ex.Message);
 }
 Routes.Map(app, platform, runtime);
+VncTicketRoutes.Map(app, platform);
 SecurityRoutes.Map(app, platform, loginFlow);
 BotMessaging.Map(app, platform);
 Devices.Map(app, platform);
@@ -212,6 +213,25 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
             {
                 await runtime.RecoverOutbound(stoppingToken);
                 await using var conn = await platform.Data.OpenConnectionAsync(stoppingToken);
+                var expiredLeaseUsers = VncTicketStore.ExpireHumanLeases(DateTimeOffset.UtcNow).ToHashSet();
+                var databaseExpired = await conn.QueryAsync<Guid>("SELECT DISTINCT b.owner_id FROM bots b JOIN control_locks l ON l.bot_id=b.id WHERE l.holder='human' AND l.updated_at < now() - interval '120 seconds'");
+                expiredLeaseUsers.UnionWith(databaseExpired);
+                foreach (var userId in expiredLeaseUsers)
+                {
+                    VncTicketStore.ReleaseHuman(userId, userId);
+                    await conn.ExecuteAsync("UPDATE control_locks SET holder='agent', updated_at=now() WHERE bot_id IN (SELECT id FROM bots WHERE owner_id=@user)", new { user = userId });
+                    var resumed = await conn.ExecuteAsync("UPDATE tasks SET status='queued', waiting_reason=NULL, lease_owner=NULL, lease_until=NULL, lease_epoch=lease_epoch+1, updated_at=now() WHERE bot_id IN (SELECT id FROM bots WHERE owner_id=@user) AND status='waiting_human' AND waiting_reason IN ('takeover','captcha_or_mfa')", new { user = userId });
+                    var computer = await conn.ExecuteScalarAsync<Guid?>("SELECT computer_id FROM user_computers WHERE user_id=@user", new { user = userId });
+                    if (computer != null)
+                    {
+                        var epoch = await conn.ExecuteScalarAsync<long?>("SELECT epoch FROM control_locks WHERE bot_id IN (SELECT desktop_bot_id FROM user_computers WHERE user_id=@user)", new { user = userId }) ?? 1;
+                        try { await platform.Compute.SetHolderAsync(new ComputerId(computer.Value.ToString()), "agent", (ulong)epoch, stoppingToken); }
+                        catch (Exception ex) { logger.LogDebug("expired desktop lease release deferred {Message}", OutputRedactor.Redact(ex.Message)); }
+                    }
+                    await platform.Audit(userId.ToString(), "desktop.lease.release", null, null, new { expired = true });
+                    await platform.Publish(new { type = "computer.mode", mode = "watching" });
+                    if (resumed > 0) platform.Tasks.Pulse();
+                }
                 var expired = await conn.ExecuteAsync("UPDATE tasks SET status='queued', lease_owner=NULL, lease_until=NULL, waiting_reason='lease_expired', updated_at=now() WHERE status='running' AND lease_until < now()");
                 if (expired > 0) platform.Tasks.Pulse();
                 await ResumeRecoveredComputers(stoppingToken);

@@ -13,3 +13,11 @@ services:
       OWNER_PASSWORD: ${OWNER_PASSWORD:?Generate OWNER_PASSWORD before starting production}
       REQUIRE_OWNER_PASSWORD: "true"
       ENABLE_TEST_HOOKS: "false"
+
+  # Optional outbound-only named Cloudflare Tunnel. Configure an Access application
+  # in Cloudflare for the public hostname and require authentication on /admin*.
+  cloudflared:
+    image: cloudflare/cloudflared:2025.11.1
+    profiles: ["tunnel"]
+    command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARED_TUNNEL_TOKEN:?Set a named tunnel token}"]
+    restart: unless-stopped

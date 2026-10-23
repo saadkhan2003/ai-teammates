@@ -27,9 +27,9 @@ function keysymFor(char: string) {
   return code < 0x100 ? code : 0x01000000 + code;
 }
 
-function socketUrl(token: string) {
+function socketUrl(token: string, windowId: string) {
   const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${scheme}://${window.location.host}/vnc/websockify?token=${encodeURIComponent(token)}`;
+  return `${scheme}://${window.location.host}/vnc/websockify?token=${encodeURIComponent(token)}&window=${encodeURIComponent(windowId)}`;
 }
 
 function statusLabel(state: VncState) {
@@ -216,7 +216,7 @@ export function ComputerPane({
     screen.replaceChildren();
     const session = ++sessionRef.current;
     const RFB = imported.default;
-    const rfb = new RFB(screen, socketUrl(token)) as unknown as RfbClient;
+    const rfb = new RFB(screen, socketUrl(token, botIdRef.current)) as unknown as RfbClient;
     const resolved: DesktopMode = mobileRef.current && nextMode === "control" && !armedControl.current ? "view" : nextMode;
     rfb.scaleViewport = true;
     rfb.showDotCursor = true;
@@ -289,7 +289,7 @@ export function ComputerPane({
     const gen = ++connectGen.current;
     setError(null);
     try {
-      await openView("view", `/api/bots/${botIdRef.current}/computer/view-token`, gen);
+      await openView("view", `/api/computers/${botIdRef.current}/vnc-ticket?role=watch`, gen);
     } catch (caught) {
       if (gen !== connectGen.current || !wantViewRef.current) return;
       liveRef.current = false;
@@ -396,7 +396,7 @@ export function ComputerPane({
     pendingRef.current = true;
     const gen = ++connectGen.current;
     try {
-      await openView("control", `/api/bots/${botId}/computer/take-control`, gen);
+      await openView("control", `/api/computers/${botId}/vnc-ticket?role=control`, gen);
       if (gen === connectGen.current) onChanged();
     } catch (caught) {
       if (gen === connectGen.current) setError(errorMessage(caught, "Could not take control."));
@@ -405,6 +405,16 @@ export function ComputerPane({
       setBusy(null);
     }
   }
+
+  useEffect(() => {
+    if (mode !== "control") return;
+    const timer = window.setInterval(() => {
+      void api(`/api/computers/${botId}/lease`, { method: "POST" }).catch(() => {
+        setError("The control lease expired. Take control again to continue.");
+      });
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [botId, mode]);
 
   const autoKey = useRef(autoControlKey);
   useEffect(() => {

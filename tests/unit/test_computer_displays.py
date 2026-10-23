@@ -81,9 +81,13 @@ def test_native_routes_require_auth_and_respect_human_control(runtime, monkeypat
     assert client.post("/desktops/bot-a/screenshot?display=3", headers=auth).status_code == 422
     assert client.post("/desktops/other/screenshot", headers=auth).status_code == 404
     runtime.manager.desktops["bot-a"].holder = "human"
+    import asyncio
+    asyncio.run(runtime._lease("bot-a").acquire("api-human", "human"))
     before = command.await_count
     for endpoint in ("screenshot", "click", "type"):
-        assert client.post(f"/desktops/bot-a/{endpoint}?display=2", headers=auth, json={}).status_code == 423
+        response = client.post(f"/desktops/bot-a/{endpoint}?display=2", headers=auth, json={})
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "DESKTOP_BUSY"
     assert command.await_count == before
 
 

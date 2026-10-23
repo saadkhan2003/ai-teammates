@@ -11,7 +11,7 @@ from typing import Any
 import httpx
 
 from browser import BrowserHub
-from guard import invalid_reason, login_result, present_tool, scrub, should_halt, strip_text
+from guard import invalid_reason, login_result, present_tool, scrub, should_halt, stamp_actor, strip_text
 from plugins import call_allowed, enabled_names
 from run_guard import RunGuard
 from grounding import check_answer, observed_urls
@@ -147,12 +147,19 @@ class Worker:
         task_id = _task_id(task)
         stop = asyncio.Event()
         lost = asyncio.Event()
-        heartbeat = asyncio.create_task(self._heartbeat(task, stop, lost))
+        execution = asyncio.create_task(self.execute(task, lost))
+        heartbeat = asyncio.create_task(self._heartbeat(task, stop, lost, execution))
         try:
-            await self.execute(task, lost)
+            await execution
+        except asyncio.CancelledError:
+            if not lost.is_set():
+                raise
         except ComputerRecovering:
             await self._status(task, "waiting_resource", reason=RECOVERING)
         except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 409 and _desktop_busy(exc.response):
+                await self._status(task, "waiting_human", reason="You're in control — tell me when to continue")
+                return
             if exc.response.status_code in LEASE_GONE or lost.is_set():
                 log.info("lease gone id=%s status=%s", task_id, exc.response.status_code)
             else:
@@ -174,7 +181,7 @@ class Worker:
             if nxt is not None:
                 self._start(nxt)
 
-    async def _heartbeat(self, task: dict, stop: asyncio.Event, lost: asyncio.Event) -> None:
+    async def _heartbeat(self, task: dict, stop: asyncio.Event, lost: asyncio.Event, execution: asyncio.Task | None = None) -> None:
         task_id = _task_id(task)
         while not stop.is_set():
             try:
@@ -188,12 +195,14 @@ class Worker:
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code in LEASE_GONE:
                     lost.set()
+                    if execution is not None and not execution.done():
+                        execution.cancel()
                     return
                 log.warning("heartbeat status=%s id=%s", exc.response.status_code, task_id)
             if stop.is_set():
                 return
             try:
-                await asyncio.wait_for(stop.wait(), timeout=5)
+                await asyncio.wait_for(stop.wait(), timeout=0.5)
                 return
             except asyncio.TimeoutError:
                 continue
@@ -399,14 +408,14 @@ class Worker:
         body = await self.request_json(
             "POST",
             "/internal/tools/authorize",
-            {
+            stamp_actor({
                 "workerId": self.worker_id,
                 "taskId": _task_id(task),
                 "botId": _bot_id(task),
                 "epoch": _epoch(task),
                 "tool": tool,
                 "args": args,
-            },
+            }, self.worker_id),
         )
         if not isinstance(body, dict):
             return {"ok": False, "reason": "denied"}
@@ -479,7 +488,7 @@ class Worker:
             body = await self.request_json(
                 "POST",
                 "/internal/tools/execute",
-                {
+                stamp_actor({
                     "workerId": self.worker_id,
                     "taskId": _task_id(task),
                     "botId": _bot_id(task),
@@ -487,7 +496,7 @@ class Worker:
                     "tool": tool,
                     "idempotencyKey": _task_id(task) + ":" + hashlib.sha256((tool + json.dumps(args, sort_keys=True)).encode()).hexdigest(),
                     "args": args,
-                },
+                }, self.worker_id),
             )
         except ComputerRecovering:
             log.info("computer recovering task=%s", _task_id(task))
@@ -569,6 +578,18 @@ class Worker:
             return response.json()
         except json.JSONDecodeError:
             return {}
+
+
+def _desktop_busy(response: httpx.Response) -> bool:
+    try:
+        payload = response.json()
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    detail = payload.get("detail")
+    return (payload.get("code") == "DESKTOP_BUSY" or
+            isinstance(detail, dict) and detail.get("code") == "DESKTOP_BUSY")
 
 
 def _computer_recovering(response: httpx.Response) -> bool:

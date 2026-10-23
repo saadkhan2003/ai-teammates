@@ -404,9 +404,13 @@ public static class Routes
             if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
             await using var conn = await platform.Data.OpenConnectionAsync(ct);
             var epoch = await conn.ExecuteScalarAsync<long>("UPDATE control_locks SET holder='agent', epoch=epoch+1, updated_at=now() WHERE bot_id=@id RETURNING epoch", new { id });
+            VncTicketStore.ReleaseHuman(user.Value, user.Value);
             var placement = await platform.PlacementForBot(id, ct);
             await platform.Compute.SetHolderAsync(placement.Computer, "agent", (ulong)epoch, ct);
-            await conn.ExecuteAsync("UPDATE tasks SET status='queued', waiting_reason=NULL, lease_owner=NULL, lease_until=NULL, lease_epoch=lease_epoch+1, updated_at=now() WHERE bot_id=@id AND status='waiting_human' AND waiting_reason IN ('takeover', 'captcha_or_mfa')", new { id });
+            await conn.ExecuteAsync("UPDATE control_locks SET holder='agent', updated_at=now() WHERE bot_id IN (SELECT id FROM bots WHERE owner_id=@owner)", new { owner = user.Value });
+            await conn.ExecuteAsync("UPDATE tasks SET status='queued', waiting_reason=NULL, lease_owner=NULL, lease_until=NULL, lease_epoch=lease_epoch+1, updated_at=now() WHERE bot_id IN (SELECT id FROM bots WHERE owner_id=@owner) AND status='waiting_human' AND waiting_reason IN ('takeover', 'captcha_or_mfa')", new { owner = user.Value });
+            await platform.Audit(user.Value.ToString(), "desktop.lease.release", id, null, new { });
+            await platform.Publish(new { type = "computer.mode", botId = id, mode = "watching" });
             platform.Tasks.Pulse();
             return Results.Json(new { ok = true, epoch });
         });
@@ -631,9 +635,12 @@ public static class Routes
         {
             if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = 400; return; }
             var token = ctx.Request.Query["token"].ToString();
-            DesktopEndpoint endpoint;
-            try { endpoint = platform.Compute.RequireSession(token, DateTimeOffset.UtcNow); }
-            catch (ComputeException) { ctx.Response.StatusCode = 401; return; }
+            if (!Guid.TryParse(ctx.Request.Query["window"], out var windowId)) { ctx.Response.StatusCode = 401; return; }
+            var user = await RequireUser(ctx, platform);
+            var ipHash = VncTicketStore.ClientIpHash(ctx.Connection.RemoteIpAddress);
+            var ticket = VncTicketStore.Consume(token, windowId, user ?? Guid.Empty, ipHash, out var failureStatus);
+            if (ticket == null) { ctx.Response.StatusCode = failureStatus; return; }
+            var endpoint = ticket.Endpoint;
             await platform.Compute.EnsureAwakeAsync(endpoint.ComputerId, ctx.RequestAborted);
             platform.Compute.NoteViewer(endpoint.ComputerId);
             using var socket = await ctx.WebSockets.AcceptWebSocketAsync();
@@ -643,11 +650,14 @@ public static class Routes
             var toTcp = Task.Run(async () =>
             {
                 var buffer = new byte[8192];
+                var filter = endpoint.Mode == DesktopMode.View ? new RfbClientStreamFilter("watch") : null;
                 while (socket.State == WebSocketState.Open)
                 {
                     var result = await socket.ReceiveAsync(buffer, ctx.RequestAborted);
                     if (result.MessageType == WebSocketMessageType.Close) break;
-                    await stream.WriteAsync(buffer.AsMemory(0, result.Count), ctx.RequestAborted);
+                    if (endpoint.Mode == DesktopMode.Interactive && !VncTicketStore.HumanLeaseActive(ticket.LeaseId, ticket.UserId)) break;
+                    var forwarded = filter?.Feed(buffer.AsSpan(0, result.Count)) ?? buffer.AsSpan(0, result.Count).ToArray();
+                    if (forwarded.Length > 0) await stream.WriteAsync(forwarded, ctx.RequestAborted);
                 }
             });
             var toWs = Task.Run(async () =>
@@ -667,7 +677,7 @@ public static class Routes
             // leave a CLOSE_WAIT backlog behind a process that ignores SIGTERM.
             try { tcp.Close(); } catch { /* already closed */ }
             try { await Task.WhenAll(toTcp, toWs).WaitAsync(TimeSpan.FromSeconds(2)); } catch { /* copy loops end once the sockets close */ }
-            try { await platform.Compute.ReleaseViewerAsync(token, CancellationToken.None); } catch { /* the view server stops on its own */ }
+            try { await platform.Compute.ReleaseViewerAsync(ticket.SessionToken, CancellationToken.None); } catch { /* the view server stops on its own */ }
             try { await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None); } catch { /* already closed */ }
         });
 

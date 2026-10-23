@@ -23,12 +23,21 @@
 	request_body {
 		max_size 32MB
 	}
+	handle /internal/* {
+		respond 404
+	}
+	handle /metrics {
+		respond 404
+	}
 	handle /api/events {
 		reverse_proxy api:8080 {
 			flush_interval -1
+			stream_timeout 24h
+			stream_close_delay 5m
 			transport http {
 				read_timeout 0
 				write_timeout 0
+				keepalive 30s
 			}
 		}
 	}
@@ -41,9 +50,12 @@
 	handle /vnc/* {
 		reverse_proxy api:8080 {
 			flush_interval -1
+			stream_timeout 24h
+			stream_close_delay 5m
 			transport http {
 				read_timeout 0
 				write_timeout 0
+				keepalive 30s
 			}
 		}
 	}
