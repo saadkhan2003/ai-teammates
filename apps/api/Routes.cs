@@ -694,7 +694,7 @@ public static class Routes
             if (user == null) return Results.Unauthorized();
             await using var conn = await platform.Data.OpenConnectionAsync();
             if (body.TryGetProperty("nextRunAt", out var next))
-                await conn.ExecuteAsync("UPDATE routines SET next_run_at=@next, nominal_next_at=@next FROM bots b WHERE routines.id=@id AND routines.bot_id=b.id AND b.owner_id=@owner", new { id, owner = user, next = next.GetDateTimeOffset() });
+                await conn.ExecuteAsync("UPDATE routines SET next_run_at=@next, nominal_next_at=GREATEST(@next, now() - interval '1 minute') FROM bots b WHERE routines.id=@id AND routines.bot_id=b.id AND b.owner_id=@owner", new { id, owner = user, next = next.GetDateTimeOffset() });
             if (body.TryGetProperty("enabled", out var enabledEl) && enabledEl.ValueKind is JsonValueKind.True or JsonValueKind.False)
             {
                 var enabled = enabledEl.GetBoolean();

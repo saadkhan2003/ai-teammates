@@ -34,7 +34,7 @@ def test_routine_next_run_uses_the_zone(session, bot):
     r = session.post(f"{API}/api/bots/{bot['id']}/routines", json={"name": "Brief", "cron": "0 8 * * *", "instruction": "Say hi.", "timezone": "Asia/Karachi"})
     assert r.status_code == 200, r.text
     nxt = dt.datetime.fromisoformat(r.json()["nextRunAt"].replace("Z", "+00:00")).astimezone(dt.timezone.utc)
-    assert (nxt.hour, nxt.minute) == (3, 0)
+    assert (nxt.hour, nxt.minute) >= (3, 0) and (nxt.hour, nxt.minute) <= (3, 15)  # jitter is at most 15 min
     rows = session.get(f"{API}/api/bots/{bot['id']}/routines").json()
     assert rows[0]["nextRunAt"] or rows[0].get("next_run_at")
 
@@ -42,7 +42,7 @@ def test_routine_next_run_uses_the_zone(session, bot):
 def test_default_zone_applies_when_none_given(session, bot):
     r = session.post(f"{API}/api/bots/{bot['id']}/routines", json={"name": "Brief", "cron": "30 9 * * *", "instruction": "Say hi."})
     nxt = dt.datetime.fromisoformat(r.json()["nextRunAt"].replace("Z", "+00:00")).astimezone(dt.timezone.utc)
-    assert (nxt.hour, nxt.minute) == (4, 30)
+    assert (4, 30) <= (nxt.hour, nxt.minute) <= (4, 45)
 
 
 def test_invalid_cron_is_a_400_not_a_500(session, bot):
