@@ -669,7 +669,7 @@ public static class Routes
             using var obj = await platform.S3.GetObjectAsync(platform.Bucket, row.Key, ct);
             using var memory = new MemoryStream();
             await obj.ResponseStream.CopyToAsync(memory, ct);
-            return Results.File(memory.ToArray(), string.IsNullOrWhiteSpace(row.Mime) ? "application/octet-stream" : row.Mime, enableRangeProcessing: row.Mime?.StartsWith("video/", StringComparison.OrdinalIgnoreCase) == true);
+            return Results.File(memory.ToArray(), string.IsNullOrWhiteSpace(row.Mime) ? "application/octet-stream" : row.Mime, row.Name, enableRangeProcessing: row.Mime?.StartsWith("video/", StringComparison.OrdinalIgnoreCase) == true);
         });
 
         app.MapGet("/api/usage", async (HttpContext ctx) =>

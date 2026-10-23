@@ -61,6 +61,11 @@ test("phone layout, events, and live desktop", async ({ page }, testInfo) => {
   await page.getByTestId("login-password").fill(password);
   await page.getByTestId("login-submit").click();
   await expect(page.getByTestId("app-shell")).toBeVisible();
+  // The phone run must not depend on bots left behind by other specs.
+  const made = await page.request.post("/api/bots", { data: { name: `Clerk ${Date.now().toString().slice(-4)}` } });
+  expect(made.ok()).toBeTruthy();
+  await page.reload();
+  await expect(page.getByTestId("app-shell")).toBeVisible();
   await noHorizontalScroll(page);
   await shot("home");
 

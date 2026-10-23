@@ -395,9 +395,8 @@ class BrowserHub:
         await self.connect(bot_id)
         if target_id:
             return self._page(bot_id, target_id)
-        pages = self.pages.get(bot_id) or {}
-        if pages:
-            return next(reversed(pages.values()))
+        # Newest tab by browser order (dict insertion order can drift once
+        # tabs are re-tracked or closed).
         listed = await self.list_pages(bot_id)
         if not listed:
             raise KeyError("no pages")
