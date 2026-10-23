@@ -100,6 +100,12 @@ def test_bot_computer_cannot_reach_postgres_seaweed_or_internal_api():
         nets = _docker("inspect", "-f", "{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}", name).split()
         assert nets == [f"{STACK}-computers"], (name, nets)
         report = _probe(name, postgres_ip, seaweed_ip, api_ip, agent_ip)
+        # A freshly started computer's proxy fails closed with 503 until its first policy pull lands.
+        for _ in range(20):
+            if report["internal"] != "open 503":
+                break
+            time.sleep(1.5)
+            report = _probe(name, postgres_ip, seaweed_ip, api_ip, agent_ip)
         # The API's port 8080 is the one reachable service (egress policy pull); its /internal
         # routes must still refuse an unauthenticated caller.
         assert report["internal"] in ("open 401", "open 403"), (name, report)

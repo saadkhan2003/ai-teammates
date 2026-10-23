@@ -109,7 +109,7 @@ def test_bots_have_separate_workspaces_and_delete_wipes():
         text=True,
     )
     assert wm_uid == desktop_owner.stdout.strip() and wm_uid != "0", (openbox, desktop_owner.stdout)
-    assert owner.stdout.strip() == uid_line, (owner.stdout, shell)
+    assert desktop_owner.stdout.strip() == uid_line, (desktop_owner.stdout, shell)
     status, _ = client.call("DELETE", f"/api/bots/{right}")
     assert status == 204, status
     after = subprocess.run(["sudo", "docker", "exec", name, "cat", host_path], capture_output=True, text=True)
