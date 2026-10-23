@@ -52,7 +52,7 @@ def http(url, timeout=3.0):
     except urllib.error.HTTPError as exc:
         return f"open {exc.code}"
     except Exception as exc:
-        return type(exc).__name__
+        return type(exc).__name__ + ": " + str(exc)
 
 try:
     dns = "resolved" if socket.getaddrinfo("example.com", 443) else "empty"
@@ -107,7 +107,9 @@ def test_bot_computer_cannot_reach_postgres_seaweed_or_internal_api():
             assert report[key] != "open" and not str(report[key]).startswith("open "), (name, key, report)
         assert report["dns"] == "resolved", (name, report)
         assert report["local"].startswith("open "), (name, report)
-        assert report["internet"].startswith("open "), (name, report)
+        # Egress is default-deny through the in-computer proxy: the internet is reachable only for
+        # allow-listed hosts, so an unlisted host must be refused by policy, not by a network error.
+        assert report["internet"].startswith("open ") or "blocked by policy" in report["internet"], (name, report)
 
 
 def _ipt() -> str:

@@ -37,7 +37,7 @@ def test_stdio_server_lists_and_stays_inside_caps():
     status, tools = owner.call(
         "GET",
         f"/internal/bots/{bot_id}/plugin-tools",
-        base="http://127.0.0.1:18081",
+        base=os.environ.get("API_URL", "http://127.0.0.1:18081"),
         headers={"Authorization": "Bearer " + WORKER},
     )
     assert status == 200, tools
