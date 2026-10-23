@@ -85,7 +85,7 @@ class WindowRouter:
             valid = True
         try:
             if self.token_dir.is_symlink():
-                return
+                return 403, None
             root = self.token_dir.resolve(strict=True)
             target = root / display
             if target.is_symlink() or target.resolve(strict=True).parent != root:
