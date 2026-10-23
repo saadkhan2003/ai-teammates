@@ -4,6 +4,11 @@ export type Bot = {
   role: string;
   instructions: string;
   status?: string;
+  avatarShape?: string;
+  avatarColor?: string;
+  avatar?: string;
+  model?: string;
+  notificationsEnabled?: boolean;
 };
 
 export type Task = {

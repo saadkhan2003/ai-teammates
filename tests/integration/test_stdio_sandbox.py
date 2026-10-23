@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import json
+import os
 
 from test_plugin_catalog import login
 
-WORKER = "dev-worker-token-change-me"
+WORKER = os.environ.get("WORKER_TOKEN", "dev-worker-token-change-me")
 
 
 def test_stdio_server_lists_and_stays_inside_caps():

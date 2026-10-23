@@ -34,6 +34,9 @@ import { mergeAgentEvent, parseAgentEvent, subscribeEvents, type AgentEvent } fr
 import { StatusBadge } from "@/lib/status";
 import type { Artifact, FileEntry, LoginRequest, MemoryItem, Routine, SecretRequest, Skill, Workspace as WorkspaceData } from "@/lib/types";
 import { cn, errorMessage } from "@/lib/utils";
+import { BotAvatar } from "@/components/bot-avatar";
+import { BotAvatarPicker } from "@/components/bot-avatar-picker";
+import { defaultBotAvatar } from "@/lib/avatars";
 
 const ComputerPane = dynamic(() => import("@/components/computer-pane").then((mod) => mod.ComputerPane), {
   ssr: false,
@@ -263,7 +266,7 @@ export function Workspace({ botId }: { botId: string }) {
             className="inline-flex max-w-[70%] items-center gap-2 rounded-md border border-border bg-card px-3 py-1 text-sm font-medium shadow-sm"
             onClick={() => setPane((value) => !value)}
           >
-            <img src="/favicon.svg" alt="" className="h-4 w-4 rounded-sm" />
+            <BotAvatar botId={bot?.id} shape={bot?.avatarShape} color={bot?.avatarColor} size={20} />
             <span className="truncate">{bot?.name || "Teammate"}</span>
           </button>
           {bot?.status ? (
@@ -392,6 +395,8 @@ export function Workspace({ botId }: { botId: string }) {
               instructions={bot?.instructions || ""}
               model={(bot as { model?: string } | undefined)?.model || ""}
               avatar={(bot as { avatar?: string } | undefined)?.avatar || ""}
+              avatarShape={bot?.avatarShape || defaultBotAvatar(bot?.id || botId).shape}
+              avatarColor={bot?.avatarColor || defaultBotAvatar(bot?.id || botId).color}
               notifications={(bot as { notificationsEnabled?: boolean } | undefined)?.notificationsEnabled !== false}
               onClose={() => setSettingsOpen(false)}
               onSaved={() => void loadWorkspace()}
@@ -500,6 +505,8 @@ function BotSettings({
   instructions,
   model,
   avatar,
+  avatarShape,
+  avatarColor,
   notifications,
   onClose,
   onSaved,
@@ -510,11 +517,13 @@ function BotSettings({
   instructions: string;
   model: string;
   avatar: string;
+  avatarShape: string;
+  avatarColor: string;
   notifications: boolean;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [draft, setDraft] = useState({ name, role, instructions, model, avatar, notifications });
+  const [draft, setDraft] = useState({ name, role, instructions, model, avatar, avatarShape, avatarColor, notifications });
   const [error, setError] = useState<string | null>(null);
 
   async function save(event: FormEvent) {
@@ -537,8 +546,8 @@ function BotSettings({
           Back
         </Button>
       </div>
-      <Label htmlFor="settings-avatar">Avatar</Label>
-      <Input id="settings-avatar" value={draft.avatar} onChange={(event) => setDraft({ ...draft, avatar: event.target.value })} placeholder="Initials or an emoji" />
+      <p className="text-sm font-medium">Avatar</p>
+      <BotAvatarPicker botId={botId} shape={draft.avatarShape} color={draft.avatarColor} onChange={(shape, color) => setDraft({ ...draft, avatarShape: shape, avatarColor: color })} />
       <Label htmlFor="settings-name">Name</Label>
       <Input id="settings-name" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} required />
       <Label htmlFor="settings-title">Title</Label>

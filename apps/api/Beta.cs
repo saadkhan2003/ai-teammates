@@ -279,6 +279,10 @@ public static class Beta
             await using var conn = await platform.Data.OpenConnectionAsync();
             var owns = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM bots WHERE id=@id AND owner_id=@owner", new { id, owner = user });
             if (owns == 0) return Results.NotFound();
+            var avatarShape = body.TryGetProperty("avatarShape", out var shapeEl) ? shapeEl.GetString() : null;
+            var avatarColor = body.TryGetProperty("avatarColor", out var colorEl) ? colorEl.GetString() : null;
+            if (avatarShape is not null && !System.Text.RegularExpressions.Regex.IsMatch(avatarShape, @"^blob(1[0-5]|[1-9])$")) return Results.BadRequest(new { error = "invalid avatar shape" });
+            if (avatarColor is not null && avatarColor.Length != 0 && !System.Text.RegularExpressions.Regex.IsMatch(avatarColor, @"^#[0-9a-fA-F]{6}$")) return Results.BadRequest(new { error = "invalid avatar color" });
             if (body.TryGetProperty("name", out var name))
                 await conn.ExecuteAsync("UPDATE bots SET name=@name, updated_at=now() WHERE id=@id", new { id, name = name.GetString() ?? "Teammate" });
             if (body.TryGetProperty("role", out var roleEl))
@@ -291,9 +295,11 @@ public static class Beta
                 await conn.ExecuteAsync("UPDATE bots SET section=@section, updated_at=now() WHERE id=@id", new { id, section = string.IsNullOrWhiteSpace(section.GetString()) ? "Teammates" : section.GetString() });
             if (body.TryGetProperty("avatar", out var avatar))
                 await conn.ExecuteAsync("UPDATE bots SET avatar=@avatar, updated_at=now() WHERE id=@id", new { id, avatar = avatar.GetString() ?? "" });
+            if (avatarShape is not null) await conn.ExecuteAsync("UPDATE bots SET avatar_shape=@value, updated_at=now() WHERE id=@id", new { id, value = avatarShape });
+            if (avatarColor is not null) await conn.ExecuteAsync("UPDATE bots SET avatar_color=@value, updated_at=now() WHERE id=@id", new { id, value = avatarColor });
             if (body.TryGetProperty("notifications", out var notes))
                 await conn.ExecuteAsync("UPDATE bots SET notifications_enabled=@on, updated_at=now() WHERE id=@id", new { id, on = notes.ValueKind != JsonValueKind.False });
-            var row = await conn.QuerySingleAsync("SELECT id, name, role, instructions, status, model, avatar, section, notifications_enabled FROM bots WHERE id=@id", new { id });
+            var row = await conn.QuerySingleAsync("SELECT id, name, role, instructions, status, model, avatar, avatar_shape, avatar_color, section, notifications_enabled FROM bots WHERE id=@id", new { id });
             return Results.Json(Platform.ToDict(row));
         });
 

@@ -12,6 +12,10 @@ namespace Teammates.Api;
 
 public static class Routes
 {
+    private static bool ValidAvatar(string shape, string color) =>
+        (shape.Length == 0 || System.Text.RegularExpressions.Regex.IsMatch(shape, @"^blob(1[0-5]|[1-9])$")) &&
+        (color.Length == 0 || System.Text.RegularExpressions.Regex.IsMatch(color, @"^#[0-9a-fA-F]{6}$"));
+
     public static void Map(WebApplication app, Platform platform, Runtime runtime)
     {
         app.MapGet("/health", async () =>
@@ -99,7 +103,7 @@ public static class Routes
             await using var conn = await platform.Data.OpenConnectionAsync();
             var rows = await conn.QueryAsync(
                 """
-                SELECT b.id, b.name, b.role, b.instructions, b.status, b.created_at, b.section, b.avatar, b.model, b.notifications_enabled,
+                SELECT b.id, b.name, b.role, b.instructions, b.status, b.created_at, b.section, b.avatar, b.avatar_shape, b.avatar_color, b.model, b.notifications_enabled,
                        (EXISTS (SELECT 1 FROM approvals a WHERE a.bot_id=b.id AND a.status='pending')
                         OR EXISTS (SELECT 1 FROM tasks t WHERE t.bot_id=b.id AND t.status IN ('waiting_human','waiting_approval'))) AS attention
                 FROM bots b WHERE b.owner_id=@id ORDER BY b.created_at
@@ -114,7 +118,11 @@ public static class Routes
             if (user == null) return Results.Unauthorized();
             var name = body.GetProperty("name").GetString() ?? "Teammate";
             var role = body.TryGetProperty("role", out var roleEl) ? roleEl.GetString() ?? "" : "";
+            if (string.IsNullOrWhiteSpace(role)) role = "Teammate";
             var instructions = body.TryGetProperty("instructions", out var ins) ? ins.GetString() ?? "" : "";
+            var avatarShape = body.TryGetProperty("avatarShape", out var shapeEl) ? shapeEl.GetString() ?? "" : "";
+            var avatarColor = body.TryGetProperty("avatarColor", out var colorEl) ? colorEl.GetString() ?? "" : "";
+            if (!ValidAvatar(shape: avatarShape, color: avatarColor)) return Results.BadRequest(new { error = "invalid avatar" });
             var id = Guid.NewGuid();
             var botToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(24)).ToLowerInvariant();
             var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(botToken))).ToLowerInvariant();
@@ -124,7 +132,7 @@ public static class Routes
             var existingBots = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM bots WHERE owner_id=@id", new { id = user });
             if (existingBots >= maxBots) return Results.Json(new { error = "quota", reason = "max_bots" }, statusCode: 403);
             var shared = await conn.QuerySingleOrDefaultAsync<Guid?>("SELECT computer_id FROM user_computers WHERE user_id=@id", new { id = user });
-            await conn.ExecuteAsync("INSERT INTO bots (id, owner_id, name, role, instructions, token_hash) VALUES (@id, @owner, @name, @role, @instructions, @hash)", new { id, owner = user, name, role, instructions, hash });
+            await conn.ExecuteAsync("INSERT INTO bots (id, owner_id, name, role, instructions, token_hash, avatar_shape, avatar_color) VALUES (@id, @owner, @name, @role, @instructions, @hash, @avatarShape, @avatarColor)", new { id, owner = user, name, role, instructions, hash, avatarShape, avatarColor });
             var conversation = await conn.ExecuteScalarAsync<Guid>("INSERT INTO conversations (bot_id, title) VALUES (@id, 'Desk') RETURNING id", new { id });
             await conn.ExecuteAsync("INSERT INTO control_locks (bot_id, holder, epoch) VALUES (@id, 'agent', 1)", new { id });
             try
@@ -162,7 +170,7 @@ public static class Routes
                 ctx.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Compute").LogWarning("computer create failed {Code}: {Message}", ex.Code, ex.Message);
                 return Results.Json(new { error = ex.Code.ToString(), id, conversationId = conversation }, statusCode: 503);
             }
-            return Results.Json(new { id, name, role, instructions, conversationId = conversation, botToken });
+            return Results.Json(new { id, name, role, instructions, conversationId = conversation, avatarShape, avatarColor, botToken });
         });
 
         app.MapGet("/api/bots/{id:guid}/workspace", async (HttpContext ctx, Guid id) =>
@@ -171,7 +179,7 @@ public static class Routes
             if (user == null) return Results.Unauthorized();
             if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             await using var conn = await platform.Data.OpenConnectionAsync();
-            var bot = Platform.ToDict(await conn.QuerySingleAsync("SELECT id, name, role, instructions, status, model, avatar, section, notifications_enabled FROM bots WHERE id=@id", new { id }));
+            var bot = Platform.ToDict(await conn.QuerySingleAsync("SELECT id, name, role, instructions, status, model, avatar, avatar_shape, avatar_color, section, notifications_enabled FROM bots WHERE id=@id", new { id }));
             var conversationId = await conn.ExecuteScalarAsync<Guid>("SELECT id FROM conversations WHERE bot_id=@id ORDER BY created_at LIMIT 1", new { id });
             var tasks = (await conn.QueryAsync("SELECT id, title, instruction, status, kind, model_calls, waiting_reason, error, error_code, result::text AS result FROM tasks WHERE bot_id=@id ORDER BY created_at DESC LIMIT 50", new { id })).Select(Platform.ToDict);
             var messages = (await conn.QueryAsync("SELECT id, role, content, created_at FROM messages WHERE conversation_id=@conversation ORDER BY created_at LIMIT 200", new { conversation = conversationId })).Select(Platform.ToDict).ToList();

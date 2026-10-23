@@ -25,6 +25,7 @@ COPY db/010_provider.sql /migrations/010_provider.sql
 COPY db/011_devices.sql /migrations/011_devices.sql
 COPY db/012_reliability.sql /migrations/012_reliability.sql
 COPY db/013_feedback.sql /migrations/013_feedback.sql
+COPY db/014_avatar.sql /migrations/014_avatar.sql
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
     DOTNET_gcServer=0 \
     DOTNET_GCHeapHardLimit=0x10000000

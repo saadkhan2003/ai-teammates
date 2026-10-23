@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 
 from test_acceptance import login
@@ -49,7 +50,7 @@ def test_bots_have_separate_workspaces_and_delete_wipes():
     before = subprocess.run(["sudo", "docker", "exec", name, "cat", host_path], capture_output=True, text=True)
     assert before.returncode == 0 and "bot-b" in before.stdout, before.stderr
 
-    token = "dev-computer-token-change-me"
+    token = os.environ.get("COMPUTER_TOKEN", "dev-computer-token-change-me")
     other_file = f"/desktops/{left}/files/raw?path=/workspace/notes/own.txt"
     status_line, body = computer_api(name, "GET", other_file, token)
     assert status_line != "200" or "bot-b" not in body, body

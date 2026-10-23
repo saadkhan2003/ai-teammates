@@ -5,6 +5,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { BotAvatar } from "@/components/bot-avatar";
+import { BotAvatarPicker } from "@/components/bot-avatar-picker";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -51,6 +53,7 @@ import { subscribeEvents } from "@/lib/events";
 import { applyTheme, type ThemeMode } from "@/lib/theme";
 import { cn, errorMessage } from "@/lib/utils";
 import { matchShortcut } from "@/lib/shortcuts";
+import { defaultBotAvatar } from "@/lib/avatars";
 
 type RosterBot = {
   id: string;
@@ -58,6 +61,8 @@ type RosterBot = {
   role: string;
   section: string;
   avatar: string;
+  avatarShape: string;
+  avatarColor: string;
   attention: boolean;
 };
 
@@ -73,6 +78,8 @@ function readBots(data: unknown): RosterBot[] {
         role: String(record.role ?? ""),
         section: String(record.section ?? "Teammates"),
         avatar: String(record.avatar ?? ""),
+        avatarShape: String(record.avatarShape ?? ""),
+        avatarColor: String(record.avatarColor ?? ""),
         attention: record.attention === true,
       };
     })
@@ -333,7 +340,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       {compact || !activeBot ? null : (
         <div className="flex flex-col items-center px-3 pb-3">
           <div className="grid h-16 w-16 place-items-center rounded-md border border-sidebar-border bg-background text-base font-medium">
-            {activeBot.avatar || initials(activeBot.name)}
+            <BotAvatar botId={activeBot.id} shape={activeBot.avatarShape} color={activeBot.avatarColor} size={48} />
           </div>
           <p className="mt-2 max-w-full truncate text-sm font-medium">{activeBot.name}</p>
         </div>
@@ -367,9 +374,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                               compact && "justify-center px-1",
                             )}
                           >
-                            <Avatar className="h-8 w-8">
-                              <AvatarFallback className="text-[11px]">{bot.avatar || initials(bot.name)}</AvatarFallback>
-                            </Avatar>
+                            <BotAvatar botId={bot.id} shape={bot.avatarShape} color={bot.avatarColor} size={32} />
                             <span className={cn("min-w-0 flex-1", compact && "sr-only")}>
                               <span className="block truncate font-medium">{bot.name}</span>
                               {bot.role ? <span className="block truncate text-xs text-muted-foreground">{bot.role}</span> : null}
@@ -552,7 +557,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <CommandGroup heading="Teammates">
                   {bots.map((bot) => (
                     <CommandItem key={bot.id} value={`${bot.name} ${bot.role}`} onSelect={() => go(`/bots/${bot.id}`)}>
-                      {bot.name}
+                      <BotAvatar botId={bot.id} shape={bot.avatarShape} color={bot.avatarColor} size={24} />{bot.name}
                       <span className="ml-2 truncate text-xs text-muted-foreground">{bot.role}</span>
                     </CommandItem>
                   ))}
@@ -615,7 +620,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </Dialog>
         <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
         <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
-        <Dialog open={quickSwitch} onOpenChange={setQuickSwitch}><DialogContent data-testid="quick-switcher"><DialogHeader><DialogTitle>Switch teammate</DialogTitle></DialogHeader><div className="grid gap-1">{bots.map(bot => <Button key={bot.id} variant="ghost" className="justify-start" onClick={() => { router.push(`/bots/${bot.id}`); setQuickSwitch(false); }}>{bot.name}</Button>)}</div></DialogContent></Dialog>
+        <Dialog open={quickSwitch} onOpenChange={setQuickSwitch}><DialogContent data-testid="quick-switcher"><DialogHeader><DialogTitle>Switch teammate</DialogTitle></DialogHeader><div className="grid gap-1">{bots.map(bot => <Button key={bot.id} variant="ghost" className="justify-start" onClick={() => { router.push(`/bots/${bot.id}`); setQuickSwitch(false); }}><BotAvatar botId={bot.id} shape={bot.avatarShape} color={bot.avatarColor} size={26} />{bot.name}</Button>)}</div></DialogContent></Dialog>
       </div>
     </TooltipProvider>
   );
@@ -633,6 +638,8 @@ function CreateTeammateDialog({
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
   const [instructions, setInstructions] = useState("");
+  const [avatarShape, setAvatarShape] = useState("blob3");
+  const [avatarColor, setAvatarColor] = useState("#ff3045");
   const [creating, setCreating] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -648,11 +655,13 @@ function CreateTeammateDialog({
     try {
       await api("/api/bots", {
         method: "POST",
-        body: JSON.stringify({ name: name.trim(), role: role.trim() || "Teammate", instructions: instructions.trim() }),
+        body: JSON.stringify({ name: name.trim(), role: role.trim(), instructions: instructions.trim(), avatarShape, avatarColor }),
       });
       setName("");
       setRole("");
       setInstructions("");
+      setAvatarShape("blob3");
+      setAvatarColor("#ff3045");
       onOpenChange(false);
       toast.success(`Created ${name}.`);
       window.dispatchEvent(new Event("teammates-bots-changed"));
@@ -668,18 +677,19 @@ function CreateTeammateDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>New teammate</DialogTitle>
-          <DialogDescription>A name is enough to start. Add a title and instructions whenever you like.</DialogDescription>
+          <DialogTitle data-testid="create-bot-title">Create New Bot</DialogTitle>
+          <DialogDescription className="sr-only">Choose an avatar and name your bot. Role and instructions are optional.</DialogDescription>
         </DialogHeader>
-        <form className="flex flex-col gap-3" onSubmit={createBot} noValidate>
+        <form data-testid="create-bot-form" className="flex max-h-[80vh] flex-col gap-3 overflow-y-auto" onSubmit={createBot} noValidate>
+          <BotAvatarPicker shape={avatarShape} color={avatarColor} onChange={(shape, color) => { setAvatarShape(shape); setAvatarColor(color); }} />
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="bot-name" className="flex items-center gap-2">
-              <span className="grid h-6 w-6 place-items-center rounded-md bg-primary text-[11px] text-primary-foreground">A</span>
-              Name
-            </Label>
-            <Input id="bot-name" data-testid="bot-name" value={name} onChange={(event) => { setName(event.target.value); setFormError(null); }} aria-invalid={!!formError && !name.trim()} aria-describedby="bot-name-help bot-form-error" />
+            <Label htmlFor="bot-name">Name your Bot</Label>
+            <Input id="bot-name" data-testid="bot-name" placeholder="Name your Bot" value={name} onChange={(event) => { setName(event.target.value); setFormError(null); }} aria-invalid={!!formError && !name.trim()} aria-describedby="bot-name-help bot-form-error" />
             <p id="bot-name-help" className="text-xs text-muted-foreground">Required. What should we call your teammate?</p>
           </div>
+          <Collapsible>
+          <CollapsibleTrigger type="button" data-testid="bot-advanced-toggle" className="text-sm text-muted-foreground underline">Advanced (optional)</CollapsibleTrigger>
+          <CollapsibleContent className="mt-3 grid gap-3">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="bot-role" className="flex items-center gap-2">
               <span className="grid h-6 w-6 place-items-center rounded-md bg-primary text-[11px] text-primary-foreground">B</span>
@@ -702,14 +712,16 @@ function CreateTeammateDialog({
             />
           </div>
           <p id="bot-instructions-help" className="text-xs text-muted-foreground">Optional. Describe their work, preferences, or goals.</p>
+          </CollapsibleContent>
+          </Collapsible>
           {formError ? (
             <p id="bot-form-error" role="alert" className="text-sm text-destructive">
               {formError}
             </p>
           ) : null}
-          <Button data-testid="bot-create" type="submit" disabled={creating}>
+          <DialogFooter><Button type="button" variant="outline" data-testid="bot-cancel" onClick={() => onOpenChange(false)}>Cancel</Button><Button data-testid="bot-create" type="submit" disabled={creating || !name.trim()}>
             {creating ? "Creating…" : "Create"}
-          </Button>
+          </Button></DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
