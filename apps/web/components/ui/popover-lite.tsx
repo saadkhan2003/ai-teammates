@@ -20,5 +20,5 @@ export function PopoverLite({ open, onClose, children, label, className = "", an
     return () => { document.removeEventListener("keydown", onKey, true); document.removeEventListener("pointerdown", onDown, true); };
   }, [open, onClose, anchorRef]);
   if (!open) return null;
-  return <div ref={ref} role="dialog" aria-label={label} className={`absolute z-40 rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-md ${className}`}>{children}</div>;
+  return <div ref={ref} role="dialog" aria-label={label} className={`motion-pop absolute z-40 rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-md ${className}`}>{children}</div>;
 }

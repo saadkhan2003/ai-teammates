@@ -5,6 +5,8 @@ const config: Config = {
   content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}"],
   theme: {
     extend: {
+      transitionDuration: { fast: "var(--motion-fast)", base: "var(--motion-base)", slow: "var(--motion-slow)" },
+      transitionTimingFunction: { out: "var(--ease-out)", spring: "var(--ease-spring)" },
       colors: {
         bg: "var(--background)",
         ink: "var(--foreground)",

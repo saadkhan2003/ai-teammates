@@ -633,7 +633,7 @@ export function ComputerPane({
       data-testid="computer-tab"
       data-vnc-state={vncState}
       data-desktop-mode={mode}
-      className={cn("flex min-h-0 min-w-0 flex-col gap-3", !compact && "md:flex-1", fullscreen && "dark fixed inset-0 z-[80] gap-3 overflow-hidden bg-neutral-950 p-3 text-neutral-100 sm:p-5")}
+      className={cn("flex min-h-0 min-w-0 flex-col gap-3", !compact && "md:flex-1", fullscreen && "motion-pop dark fixed inset-0 z-[80] gap-3 overflow-hidden bg-neutral-950 p-3 text-neutral-100 sm:p-5")}
     >
       <div ref={stageRef} data-testid="desktop-stage" className={cn("relative flex min-h-0 min-w-0 flex-col gap-2 bg-background", !compact && "md:min-h-[14rem] md:flex-1", fullscreen && "flex-1 bg-neutral-950")}>
         {fullscreen ? (

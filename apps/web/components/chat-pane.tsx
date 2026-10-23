@@ -101,6 +101,11 @@ export function ChatPane({
   }
   const initial = userName.trim().charAt(0).toUpperCase() || "Y";
   const byId = new Map(messages.map(m => [m.id, m]));
+  // Messages that arrive after the first paint of this conversation slide in; the history does not.
+  const seen = useRef<{ key?: string; ids: Set<string> } | null>(null);
+  if (!seen.current || seen.current.key !== botId) seen.current = { key: botId, ids: new Set(messages.map(m => m.id)) };
+  const freshIds = new Set(messages.filter(m => !seen.current!.ids.has(m.id)).map(m => m.id));
+  useEffect(() => { for (const m of messages) seen.current?.ids.add(m.id); });
 
   function announce(text: string) { setLive(""); window.setTimeout(() => setLive(text), 30); }
   function focusComposer() { window.setTimeout(() => { const node = lastTextId ? partRefs.current.get(lastTextId) : null; (node ?? Array.from(partRefs.current.values()).pop())?.focus(); }, 0); }
@@ -311,6 +316,7 @@ export function ChatPane({
               <MessageItem
                 key={message.id}
                 message={message}
+                fresh={freshIds.has(message.id)}
                 mine={mine}
                 botName={botName}
                 botId={botId}

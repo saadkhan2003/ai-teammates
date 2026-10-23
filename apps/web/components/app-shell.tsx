@@ -1,5 +1,6 @@
 "use client";
 
+import { ListSkeleton } from "@/components/ui/skeleton";
 import { Bell, ChevronRight, CircleHelp, Info, Menu, PanelLeft, PanelLeftClose, Plug, Plus, Search, Settings, Upload, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -103,6 +104,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [bots, setBots] = useState<RosterBot[]>([]);
+  const [botsLoaded, setBotsLoaded] = useState(false);
   const [username, setUsername] = useState("Account");
   const [open, setOpen] = useState(false);
   const [mobile, setMobile] = useState(false);
@@ -129,6 +131,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         api<unknown>("/api/notifications").catch(() => []),
       ]);
       setBots(readBots(botData));
+      setBotsLoaded(true);
       setUsername(me.username || "Account");
       setNotes(
         asList(noteData, ["items", "notifications"]).map((entry) => {
@@ -143,6 +146,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       );
     } catch {
       // Keep the last good roster; the "Couldn't refresh" notice offers a retry.
+      setBotsLoaded(true);
     }
   }, []);
 
@@ -367,12 +371,13 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       )}
       <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-1.5 pb-3">
-        {groups.length === 0 ? <p className={cn("px-2 py-3 text-xs text-muted-foreground", compact && "sr-only")}>No teammates yet</p> : null}
+        {!botsLoaded && groups.length === 0 ? <div className={cn(compact && "sr-only")}><ListSkeleton label="Loading teammates" rows={3} testId="sidebar-skeleton" /></div> : null}
+        {botsLoaded && groups.length === 0 ? <p className={cn("px-2 py-3 text-xs text-muted-foreground", compact && "sr-only")}>No teammates yet</p> : null}
         {groups.map(([section, items]) => (
-          <Collapsible key={section} defaultOpen>
+          <Collapsible key={section} defaultOpen className="motion-fade">
             {compact ? null : (
               <CollapsibleTrigger className="flex w-full items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground hover:bg-sidebar-accent [&[data-state=open]>svg]:rotate-90">
-                <ChevronRight className="h-3 w-3 transition-transform" />
+                <ChevronRight className="h-3 w-3 transition-transform duration-fast ease-out" />
                 {section}
               </CollapsibleTrigger>
             )}
@@ -390,7 +395,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                             aria-current={active ? "page" : undefined}
                             title={bot.name}
                             className={cn(
-                              "flex items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-sidebar-accent",
+                              "flex items-center gap-2 rounded-lg px-2 py-2 text-sm transition-[background-color,transform,box-shadow] duration-fast ease-out hover:bg-sidebar-accent active:scale-[0.98] motion-reduce:active:scale-100",
                               active && "bg-sidebar-accent",
                               compact && "justify-center px-1",
                             )}

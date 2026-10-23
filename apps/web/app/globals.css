@@ -158,3 +158,46 @@ html.light {
 /* Bot-accent scrollbar and selection */
 * { scrollbar-color: var(--bot-accent-soft, rgba(255, 48, 69, 0.18)) transparent; }
 ::selection { background: var(--bot-accent-soft, rgba(255, 48, 69, 0.3)); }
+
+
+/* Motion tokens: one set of durations and easings for the whole app (150-250 ms). */
+:root {
+  --motion-fast: 150ms;
+  --motion-base: 200ms;
+  --motion-slow: 250ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+@keyframes motion-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes motion-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes motion-pop { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: none; } }
+/* Message arrival and approval cards: fade and slide up. */
+.motion-rise { animation: motion-rise var(--motion-base) var(--ease-out) both; }
+/* Skeleton to content cross-fade. */
+.motion-fade { animation: motion-fade var(--motion-slow) var(--ease-out) both; }
+/* Full computer view opening. */
+.motion-pop { animation: motion-pop var(--motion-base) var(--ease-out) both; }
+/* Cards and rows: quiet hover and press. */
+.motion-card { transition: background-color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), box-shadow var(--motion-base) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+.motion-card:hover { transform: translateY(-1px); }
+.motion-card:active { transform: scale(0.99); }
+/* Expand and collapse of clamped text. */
+.motion-clamp { transition: max-height var(--motion-slow) var(--ease-in-out); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .motion-card:hover, .motion-card:active { transform: none; }
+}
+
+/* Collapsible sections open and close by height. */
+@keyframes collapsible-down { from { height: 0; opacity: 0; } to { height: var(--radix-collapsible-content-height); opacity: 1; } }
+@keyframes collapsible-up { from { height: var(--radix-collapsible-content-height); opacity: 1; } to { height: 0; opacity: 0; } }
+[data-radix-collapsible-content] { overflow: hidden; }
+[data-radix-collapsible-content][data-state="open"] { animation: collapsible-down var(--motion-base) var(--ease-out); }
+[data-radix-collapsible-content][data-state="closed"] { animation: collapsible-up var(--motion-base) var(--ease-out); }

@@ -57,12 +57,12 @@ export function Approvals({ approvals, onChanged }: { approvals: Approval[]; onC
   return (
     <div className="flex flex-col gap-3">
       {settledOnly.map(([id, item]) => (
-        <div key={id} data-testid="approval-card" data-decided="true" className="rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">{item.denied ? "Denied" : "Allowed"} {item.action} {domainOf(item.target) || item.target}</div>
+        <div key={id} data-testid="approval-card" data-decided="true" className="motion-fade rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">{item.denied ? "Denied" : "Allowed"} {item.action} {domainOf(item.target) || item.target}</div>
       ))}
       {approvals.map((approval) => !needsDecision(approval.status) ? (
-        <div key={approval.id} data-testid="approval-card" data-decided="true" className="rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">{["denied", "deny", "rejected"].includes(approval.status ?? "") ? "Denied" : "Allowed"} {approval.action} {domainOf(approval.target) || approval.target}</div>
+        <div key={approval.id} data-testid="approval-card" data-decided="true" className="motion-fade rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">{["denied", "deny", "rejected"].includes(approval.status ?? "") ? "Denied" : "Allowed"} {approval.action} {domainOf(approval.target) || approval.target}</div>
       ) : (
-        <Card key={approval.id} data-testid="approval-card" className="min-w-0 max-w-full">
+        <Card key={approval.id} data-testid="approval-card" className="motion-rise min-w-0 max-w-full">
           <CardHeader className="p-4">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <CardTitle className="min-w-0 break-words text-sm">{approval.action || "Approval"}</CardTitle>

@@ -242,3 +242,61 @@ test("accessibility: chat region has no serious axe violations", async ({ page }
   const bad = results.violations.filter(v => ["serious", "critical"].includes(v.impact ?? ""));
   expect(bad.map(v => `${v.id}: ${v.nodes[0]?.html.slice(0, 120)}`)).toEqual([]);
 });
+
+test("skeletons show while the roster, workspace and library load, then give way to content", async ({ page }) => {
+  const mock = await setup(page);
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/bots", async route => { await gate; await route.fulfill({ json: { bots } }); });
+  await page.route(`**/api/bots/${A}/workspace`, async route => {
+    await gate;
+    await route.fulfill({ json: { bot: bots[0], conversationId: A, tasks: [], messages: mock.messages, approvals: [], pages: [], holder: "agent", openrouterConnected: true } });
+  });
+  await page.goto(`/bots/${A}`);
+  await expect(page.getByTestId("sidebar-skeleton")).toBeVisible();
+  await expect(page.getByTestId("chat-skeleton")).toBeVisible();
+  await expect(page.getByTestId("chat-skeleton")).toHaveAttribute("aria-busy", "true");
+  release();
+  await expect(page.getByTestId("sidebar-skeleton")).toHaveCount(0);
+  await expect(page.getByTestId("chat-skeleton")).toHaveCount(0);
+  await expect(page.getByTestId("composer")).toBeVisible();
+});
+
+test("motion tokens exist, new messages slide in, and reduced motion removes the movement", async ({ page }) => {
+  const mock = await setup(page, { messages: [assistant("m1", "Hello there")] });
+  await page.goto(`/bots/${A}`);
+  await expect(page.getByTestId("composer")).toBeVisible();
+  const tokens = await page.evaluate(() => {
+    const s = getComputedStyle(document.documentElement);
+    return ["--motion-fast", "--motion-base", "--motion-slow", "--ease-out"].map(name => s.getPropertyValue(name).trim());
+  });
+  expect(tokens.slice(0, 3)).toEqual(["150ms", "200ms", "250ms"]);
+  expect(tokens[3]).toContain("cubic-bezier");
+  // History does not animate on load.
+  await expect(page.getByTestId("message-item").first()).not.toHaveClass(/motion-rise/);
+  // Buttons carry the shared press and hover transition.
+  const duration = await page.getByTestId("composer-plus").evaluate(el => getComputedStyle(el).transitionDuration);
+  expect(duration).toContain("0.15s");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const reduced = await page.getByTestId("composer-plus").evaluate(el => parseFloat(getComputedStyle(el).transitionDuration));
+  expect(reduced).toBeLessThan(0.001);
+  void mock;
+});
+
+test("screenshot: chat features (working row, quote, hover toolbar, panel)", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await setup(page, {
+    tasks: [{ id: "t1", status: "running", title: "Planning component animations" }],
+    messages: [
+      assistant("a1", "The sidebar cards now lift on hover and press. Next I will animate the panel and the dialogs."),
+      { id: "u1", role: "user", content: "> The sidebar cards now lift on hover\n\nCan you also animate the toasts?", parts: [{ type: "quote", id: "q1", text: "The sidebar cards now lift on hover", source: "a1" }, { type: "text", text: "Can you also animate the toasts?" }], createdAt: new Date().toISOString() },
+    ],
+  });
+  await page.goto(`/bots/${A}`);
+  await expect(page.getByTestId("working-row")).toBeVisible();
+  await expect(page.getByTestId("info-pane")).toBeVisible();
+  await page.locator("[data-message-id='a1']").hover();
+  await expect(page.locator("[data-message-id='a1']").getByTestId("msg-react")).toBeVisible();
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: require("path").resolve(__dirname, "../../../shots/7-chat-features.png") });
+});

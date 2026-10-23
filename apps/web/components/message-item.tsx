@@ -18,6 +18,7 @@ import { cn, errorMessage, formatWhen } from "@/lib/utils";
 
 export type MessageItemProps = {
   message: ChatMessage;
+  fresh?: boolean;
   mine: boolean;
   botName: string;
   botId?: string;
@@ -44,7 +45,7 @@ const selectionIn = (el: HTMLElement | null) => {
 };
 
 export function MessageItem(props: MessageItemProps) {
-  const { message, mine, botName, botId, bot, byId, children, onReact, onReply, onQuote, onChanged, announce, focusSibling } = props;
+  const { message, fresh, mine, botName, botId, bot, byId, children, onReact, onReply, onQuote, onChanged, announce, focusSibling } = props;
   const ref = useRef<HTMLElement>(null);
   const reactRef = useRef<HTMLButtonElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
@@ -153,7 +154,7 @@ export function MessageItem(props: MessageItemProps) {
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
-      className={cn("group relative min-w-0 max-w-[85%] rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring sm:max-w-[75%]", mine ? "ml-auto" : "mr-auto")}
+      className={cn(fresh && "motion-rise", "group relative min-w-0 max-w-[85%] rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring sm:max-w-[75%]", mine ? "ml-auto" : "mr-auto")}
     >
       <div
         role="toolbar"
@@ -286,15 +287,26 @@ export function MessageBody({ message, mine, byId, onJump, fallback }: { message
     window.addEventListener("resize", measure);
     return () => { ro.disconnect(); window.removeEventListener("resize", measure); };
   }, [clampable, message.content, expanded]);
-  const toggle = () => { const next = !expanded; EXPANDED.set(message.id, next); setExpanded(next); };
+  const [settled, setSettled] = useState(true);
+  const toggle = () => {
+    const next = !expanded;
+    EXPANDED.set(message.id, next);
+    setSettled(false);
+    setExpanded(next);
+    // Expanding animates max-height up to the content, then releases it so the bubble can grow freely.
+    window.setTimeout(() => setSettled(true), 320);
+  };
+  const clampStyle = clampable && clamped
+    ? (expanded ? (settled ? undefined : { maxHeight: (box.current?.scrollHeight ?? CLAMP_MAX_PX) + 1, overflow: "hidden" as const }) : { maxHeight: CLAMP_MAX_PX, overflow: "hidden" as const })
+    : undefined;
   const bubble = mine ? "bg-user-bubble text-user-bubble-foreground border border-bot-border/40" : "bg-assistant-bubble text-assistant-bubble-foreground";
   const inner = parts && parts.length
     ? <div className="space-y-2">{parts.map((part, i) => <PartView key={i} part={part} byId={byId} expanded={expanded} onJump={onJump} />)}</div>
     : null;
   return <div className={cn("relative rounded-bubble px-3.5 py-2 text-sm", bubble)} data-testid={mine ? "user-bubble" : "assistant-bubble"}>
     {message.skill ? <span data-testid="skill-chip" className="mb-1.5 inline-flex items-center gap-1 rounded-full border border-current/25 bg-black/10 px-2 py-0.5 text-xs font-medium"><Sparkles className="h-3 w-3" aria-hidden />{message.skill.label}</span> : null}
-    <div ref={box} id={`body-${message.id}`} style={clampable && clamped && !expanded ? { maxHeight: CLAMP_MAX_PX, overflow: "hidden" } : undefined}
-      className={cn(clampable && clamped && !expanded && "[mask-image:linear-gradient(to_bottom,black_85%,transparent)]")}>
+    <div ref={box} id={`body-${message.id}`} style={clampStyle}
+      className={cn("motion-clamp", clampable && clamped && !expanded && "[mask-image:linear-gradient(to_bottom,black_85%,transparent)]")}>
       {inner ?? <div data-testid="message-text" className="space-y-2">{fallback}</div>}
       {message.attachments?.length ? <div className="mt-2 space-y-1">{message.attachments.map(item => <div key={item.path} data-testid="recording-attachment" className="flex min-h-9 items-center gap-2 rounded-lg border border-current/20 bg-black/10 px-2.5 py-1.5 text-xs"><Video className="h-4 w-4 shrink-0" aria-hidden /><span className="truncate" title={item.path}>{item.name}</span></div>)}</div> : null}
     </div>

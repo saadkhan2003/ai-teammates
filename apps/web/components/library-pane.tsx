@@ -1,5 +1,6 @@
 "use client";
 
+import { ListSkeleton } from "@/components/ui/skeleton";
 import { useMemo, useState } from "react";
 import { Copy, Download, File, MoreHorizontal } from "lucide-react";
 import { toast } from "sonner";
@@ -19,15 +20,15 @@ export function LibraryPane({ botId, botName, botShape, botColor, files, artifac
   const groups = groupByDay<LibraryEntry>(entries);
   const shown = groups.flatMap(group => group.entries).slice(0, limit);
   const visibleGroups = groups.map(group => ({ ...group, entries: group.entries.filter(entry => shown.includes(entry)) })).filter(group => group.entries.length);
-  if (!loaded) return <p className="py-5 text-sm text-muted-foreground">Loading library…</p>;
+  if (!loaded) return <ListSkeleton label="Loading library" testId="library-loading" />;
   if (!entries.length) return <p className="py-5 text-sm text-muted-foreground">Nothing here yet. Files and finished artifacts will collect here.</p>;
   return <div className="relative" onKeyDown={event => { if (event.key === "Escape") setPreview(null); }}>
-    {visibleGroups.map(group => <section key={group.day} className="mb-4">
+    {visibleGroups.map(group => <section key={group.day} className="motion-fade mb-4">
       <h3 className="mb-2 text-xs font-medium text-muted-foreground">{group.day}</h3>
       <ul className="space-y-1">{group.entries.map(entry => {
         const url = entry.kind === "artifact" ? `/api/artifacts/${entry.id}/download` : `/api/bots/${botId}/files/raw?path=${encodeURIComponent(entry.path || "")}`;
         const image = entry.mime?.startsWith("image/") || /\.(png|jpe?g|gif|webp|svg)$/i.test(entry.name);
-        return <li key={`${entry.kind}:${entry.id}`} className="group relative flex items-center gap-2 rounded-md px-2 py-2 hover:bg-accent focus-within:bg-accent" onMouseEnter={() => setPreview(entry)} onMouseLeave={() => setPreview(null)} onFocus={() => setPreview(entry)}>
+        return <li key={`${entry.kind}:${entry.id}`} className="group relative flex items-center gap-2 rounded-md px-2 py-2 transition-colors duration-fast ease-out hover:bg-accent focus-within:bg-accent" onMouseEnter={() => setPreview(entry)} onMouseLeave={() => setPreview(null)} onFocus={() => setPreview(entry)}>
           <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-md border border-border bg-card">{image ? <img className="h-full w-full object-cover" src={url} alt="" /> : <File className="h-4 w-4 text-muted-foreground" />}</span>
           <a href={url} className="min-w-0 flex-1 truncate text-sm" title={entry.name}>{entry.name}</a>
           <span className="text-xs text-muted-foreground">{formatAge(entry.createdAt)}</span>

@@ -147,15 +147,8 @@ async function expectDone(page: Page, botId: string, taskId: string, timeout = 1
 async function openPane(page: Page, tab: "Overview" | "Computer" | "Routines" | "Files/Media" | "Skills" | "Memory" | "Tasks") {
   const pane = page.getByTestId("info-pane");
   const toggle = page.getByTestId("bot-name-button");
-  if (!(await pane.isVisible().catch(() => false))) {
-    await toggle.click();
-    const opened = await pane
-      .waitFor({ state: "visible", timeout: 2_000 })
-      .then(() => true)
-      .catch(() => false);
-    // Desktop opens the pane on navigation. A click in that window toggles it shut.
-    if (!opened) await toggle.click();
-  }
+  await expect(toggle).toBeVisible();
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
   await expect(pane).toBeVisible();
   const trigger = pane.getByRole("tab", { name: tab, exact: true });
   await trigger.scrollIntoViewIfNeeded();

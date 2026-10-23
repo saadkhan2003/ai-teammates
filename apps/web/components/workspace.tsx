@@ -18,7 +18,7 @@ import { TasksPane } from "@/components/tasks-pane";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ChatSkeleton, ListSkeleton, Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -45,8 +45,9 @@ import { RecordingBanner, useTeachTask } from "@/components/teach-task";
 const ComputerPane = dynamic(() => import("@/components/computer-pane").then((mod) => mod.ComputerPane), {
   ssr: false,
   loading: () => (
-    <div data-testid="computer-tab" data-vnc-state="disconnected" className="rounded-lg border border-border bg-card p-3 text-sm">
-      Loading the desktop…
+    <div data-testid="computer-tab" data-vnc-state="disconnected" role="status" aria-busy="true" className="p-3">
+      <span className="sr-only">Loading the desktop</span>
+      <Skeleton className="aspect-[4/3] w-full rounded-xl" />
     </div>
   ),
 });
@@ -276,10 +277,7 @@ export function Workspace({ botId }: { botId: string }) {
 
   if (!ready) {
     return (
-      <div className="space-y-3 p-4">
-        <Skeleton className="h-8 w-40" />
-        <Skeleton className="h-24 w-full" />
-      </div>
+      <ChatSkeleton />
     );
   }
 
@@ -306,7 +304,7 @@ export function Workspace({ botId }: { botId: string }) {
   return (
     <div className="flex h-full min-h-0">
       {teach.startedAt ? <RecordingBanner botName={bot?.name || "Teammate"} shape={bot?.avatarShape} color={bot?.avatarColor} startedAt={teach.startedAt} onCancel={() => void teach.cancel()} /> : null}
-      <section className="flex min-w-0 flex-1 flex-col">
+      <section className="motion-fade flex min-w-0 flex-1 flex-col">
         <header className="relative flex h-12 items-center justify-center border-b border-border px-3">
           <button
             type="button"
@@ -485,7 +483,7 @@ export function Workspace({ botId }: { botId: string }) {
               </div>
               <section className="border-b border-border px-3 py-3">
                 <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Routines</h2>
-                {!routines.loaded ? <p className="mt-2 text-sm text-muted-foreground">Loading routines…</p> : null}
+                {!routines.loaded ? <ListSkeleton label="Loading routines" rows={2} /> : null}
                 {routines.error ? <p className="mt-2 text-sm text-destructive">{routines.error}</p> : null}
                 {routines.loaded && !routines.error && routines.items.length === 0 ? (
                   <p className="mt-2 text-sm text-muted-foreground">
@@ -511,7 +509,6 @@ export function Workspace({ botId }: { botId: string }) {
               </section>
               <Tabs value={detailTab} onValueChange={setDetailTab} className="flex flex-col">
                 <TabsList aria-label="Bot details" className="mx-1 h-auto w-auto justify-start gap-0 overflow-x-auto rounded-none bg-transparent p-0">
-                  <TabsTrigger value="library" className="min-h-11 shrink-0 rounded-md px-2.5">Library</TabsTrigger>
                   {INFO_TABS.map(([value, label]) => (
                     <TabsTrigger
                       key={value}
