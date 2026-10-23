@@ -364,6 +364,16 @@ public static class Routes
             return Results.Json((await conn.QueryAsync("SELECT id,type,detail,created_at FROM task_run_events WHERE task_id=@id ORDER BY id", new { id })).Select(Platform.ToDict));
         });
 
+        app.MapGet("/api/tasks/{id:guid}/attempts", async (HttpContext ctx, Guid id) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            if (!await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE t.id=@id AND b.owner_id=@owner)", new { id, owner = user })) return Results.NotFound();
+            var rows = await conn.QueryAsync("SELECT id,task_id,attempt,started_at,ended_at,wall_seconds,tool_calls,end_reason,progress,worker,api_uptime_seconds FROM task_attempt_log WHERE task_id=@id ORDER BY id", new { id });
+            return Results.Json(rows.Select(Platform.ToDict));
+        });
+
         app.MapPatch("/api/bots/{id:guid}/work-settings", async (HttpContext ctx, Guid id, JsonElement body) =>
         {
             var user = await RequireUser(ctx, platform);
@@ -507,8 +517,20 @@ public static class Routes
             var user = await RequireUser(ctx, platform);
             if (user == null) return Results.Unauthorized();
             await using var conn = await platform.Data.OpenConnectionAsync();
+            var attempt = await conn.QuerySingleOrDefaultAsync<(string? Checkpoint, int Number, int Steps, string? Worker)>("SELECT checkpoint::text,attempt,(SELECT count(*)::int FROM task_steps WHERE task_id=@id),lease_owner FROM tasks WHERE id=@id AND status='running'", new { id });
             var n = await conn.ExecuteAsync("UPDATE tasks SET status='cancelled', updated_at=now(), finished_at=now(), lease_owner=NULL,lease_until=NULL,lease_epoch=lease_epoch+1 FROM bots b WHERE tasks.id=@id AND tasks.bot_id=b.id AND b.owner_id=@owner", new { id, owner = user });
-            if (n > 0) await platform.Audit(user.Value.ToString(), "task.cancelled", null, id, new { taskId = id });
+            if (n > 0)
+            {
+                if (attempt.Checkpoint != null)
+                {
+                    var ledger = TaskCheckpoint.Read(attempt.Checkpoint);
+                    var start = DateTimeOffset.TryParse((string?)ledger["attemptStartedAt"], out var started) ? started : DateTimeOffset.UtcNow;
+                    var progress = DateTimeOffset.TryParse((string?)ledger["lastProgressAt"], out var at) && at > start;
+                    await AttemptLog.Record(conn, null, id, attempt.Number, start, DateTimeOffset.UtcNow, Math.Max(0, attempt.Steps - ((int?)ledger["attemptStepsAtStart"] ?? 0)), "cancelled", progress, attempt.Worker);
+                }
+                await platform.Audit(user.Value.ToString(), "task.cancelled", null, id, new { taskId = id });
+                await Reliability.Event(platform, id, "task_stopped", new { reason = "cancelled" });
+            }
             return n == 0 ? Results.NotFound() : Results.Json(new { ok = true });
         });
 
@@ -1145,7 +1167,7 @@ public static class Routes
                 ledger["attemptStartedAt"] = DateTimeOffset.UtcNow.ToString("O");
                 var checkpointJson = TaskCheckpoint.Bounded(ledger);
                 await conn.ExecuteAsync("UPDATE tasks SET checkpoint=@checkpoint::jsonb WHERE id=@id AND lease_epoch=@epoch", new { id, checkpoint = checkpointJson, epoch = task.Epoch }, tx);
-                if (previousReason is "lease_expired" or "attempt_limit") resumedEvents.Add((id, task.Attempt, previousReason, priorSteps));
+                if (previousReason is "lease_expired" or "computer_recovered" or "network_interrupted" or "attempt_limit") resumedEvents.Add((id, task.Attempt, previousReason, priorSteps));
                 var feedback = (await conn.QueryAsync<(Guid MessageId, string Emoji, string Action)>(
                     """
                     UPDATE bot_feedback SET consumed_at=now(), task_id=@task
@@ -1166,7 +1188,15 @@ public static class Routes
                 var placement = await platform.PlacementForBot(task.BotId);
                 var dns = DockerComputeProvider.ContainerName(placement.Computer);
                 var maxRounds = task.Kind == "coding" ? platform.CodingRoundsCumulative : 12;
-                rows.Add(new { id = task.Id, botId = task.BotId, computerId = placement.Computer.Value, cdpUrl = $"http://{dns}:9222", instruction = task.Instruction, kind = task.Kind, attempt = task.Attempt, epoch = task.Epoch, checkpoint = checkpointJson, conversationId = task.ConversationId, messageId = task.SourceMessageId, feedback, skill = skillJson, budget = new { maxSteps = resolvedBudget.MaxSteps, maxSeconds = resolvedBudget.MaxSeconds, maxAttemptSteps = Math.Min(400, resolvedBudget.MaxSteps), maxAttemptSeconds = Math.Min(1800, resolvedBudget.MaxSeconds), maxRounds = task.Kind == "coding" ? platform.CodingRounds : 12, maxRoundsCumulative = maxRounds, pauseOnBudget = platform.PauseOnBudget, label = resolvedBudget.Label } });
+                object? resume = null;
+                if (previousReason is "lease_expired" or "computer_recovered" or "network_interrupted" or "attempt_limit")
+                {
+                    var planRows = (await conn.QueryAsync<(int Position, string Title, string Status)>("SELECT position,title,status FROM task_plan_items WHERE task_id=@id ORDER BY position", new { id }, tx)).Select(p => (p.Position, p.Title, p.Status)).ToArray();
+                    var lastCommit = (string?)ledger["lastCommit"]?["sha"];
+                    var brief = ResumeBrief.Build(task.Attempt, previousReason, priorSteps, resolvedBudget.MaxSteps, task.Instruction, planRows, lastCommit);
+                    resume = new { brief, interrupted = previousReason is "lease_expired" or "computer_recovered" or "network_interrupted" };
+                }
+                rows.Add(new { id = task.Id, botId = task.BotId, computerId = placement.Computer.Value, cdpUrl = $"http://{dns}:9222", instruction = task.Instruction, kind = task.Kind, attempt = task.Attempt, epoch = task.Epoch, checkpoint = checkpointJson, conversationId = task.ConversationId, messageId = task.SourceMessageId, feedback, skill = skillJson, resume, budget = new { maxSteps = resolvedBudget.MaxSteps, maxSeconds = resolvedBudget.MaxSeconds, maxAttemptSteps = Math.Min(400, resolvedBudget.MaxSteps), maxAttemptSeconds = Math.Min(1800, resolvedBudget.MaxSeconds), maxRounds = task.Kind == "coding" ? platform.CodingRounds : 12, maxRoundsCumulative = maxRounds, pauseOnBudget = platform.PauseOnBudget, label = resolvedBudget.Label } });
                 wake.Add(placement.Computer.Value);
             }
             await tx.CommitAsync();
@@ -1242,6 +1272,13 @@ public static class Routes
             if (!Worker(ctx, platform)) return Results.Unauthorized();
             await using var conn = await platform.Data.OpenConnectionAsync();
             await using var tx = await conn.BeginTransactionAsync();
+            var hasEpoch = body.TryGetProperty("epoch", out var epochElement);
+            var epoch = hasEpoch && epochElement.TryGetInt32(out var parsedEpoch) ? parsedEpoch : -1;
+            if (hasEpoch)
+            {
+                var fence = await conn.QuerySingleOrDefaultAsync<(int Epoch, string Status)>("SELECT lease_epoch,status FROM tasks WHERE id=@id FOR UPDATE", new { id }, tx);
+                if (fence.Status == null || !EpochFence.Accepts(true, epoch, fence.Epoch, fence.Status)) return Results.StatusCode(409);
+            }
             await conn.ExecuteAsync("DELETE FROM task_transcript WHERE task_id=@id", new { id }, tx);
             var seq = 0;
             foreach (var message in body.GetProperty("messages").EnumerateArray())
@@ -1263,7 +1300,9 @@ public static class Routes
                 seq++;
             }
             await tx.CommitAsync();
-            await conn.ExecuteAsync("UPDATE tasks SET last_progress_at=now(),blocked_reason=NULL WHERE id=@id", new { id });
+            if (hasEpoch)
+                await conn.ExecuteAsync("UPDATE tasks SET last_progress_at=now(),blocked_reason=NULL WHERE id=@id AND status='running' AND lease_epoch=@epoch", new { id, epoch });
+            else await conn.ExecuteAsync("UPDATE tasks SET last_progress_at=now(),blocked_reason=NULL WHERE id=@id", new { id });
             return Results.Json(new { ok = true });
         });
 
@@ -1284,8 +1323,17 @@ public static class Routes
             var epoch = body.TryGetProperty("epoch", out var epochEl) ? epochEl.GetInt32() : -1;
             var gate = await conn.QuerySingleOrDefaultAsync<(bool Required, DateTimeOffset? Passed, bool Override)>("SELECT coalesce(t.require_tests,b.require_tests,false),t.tests_passed_at,t.tests_override FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE t.id=@id", new { id });
             if (!TestGate.Check(gate.Required, gate.Passed, gate.Override)) return Results.Json(new { error = "tests_required" }, statusCode: 422);
+            var attempt = await conn.QuerySingleOrDefaultAsync<(string? Checkpoint, int Number, int Steps, string? Worker)>("SELECT checkpoint::text,attempt,(SELECT count(*)::int FROM task_steps WHERE task_id=@id),lease_owner FROM tasks WHERE id=@id AND status='running' AND lease_epoch=@epoch", new { id, epoch });
             var completed = await conn.QuerySingleOrDefaultAsync<(Guid? ConversationId, int Applied)>("UPDATE tasks SET status='completed', result=@result::jsonb, finished_at=now(), lease_owner=NULL, lease_until=NULL, updated_at=now() WHERE id=@id AND status='running' AND lease_epoch=@epoch RETURNING conversation_id, 1 AS applied", new { id, result = JsonSerializer.Serialize(new { text }), epoch });
             if (completed.Applied == 0) return Results.StatusCode(409);
+            if (attempt.Checkpoint != null)
+            {
+                var ledger = TaskCheckpoint.Read(attempt.Checkpoint);
+                var ended = DateTimeOffset.UtcNow;
+                var started = DateTimeOffset.TryParse((string?)ledger["attemptStartedAt"], out var at) ? at : ended;
+                var progress = DateTimeOffset.TryParse((string?)ledger["lastProgressAt"], out var progressAt) && progressAt > started;
+                await AttemptLog.Record(conn, null, id, attempt.Number, started, ended, Math.Max(0, attempt.Steps - ((int?)ledger["attemptStepsAtStart"] ?? 0)), "completed", progress, attempt.Worker);
+            }
             var conversation = completed.ConversationId;
             var taskKind = await conn.ExecuteScalarAsync<string>("SELECT kind FROM tasks WHERE id=@id", new { id });
             // A peer task's answer is the reply on the thread, not a chat message in the receiver's own chat.
@@ -1313,7 +1361,16 @@ public static class Routes
             var errorCode = failure.Code;
             await using var conn = await platform.Data.OpenConnectionAsync();
             var epoch = body.TryGetProperty("epoch", out var epochEl) ? epochEl.GetInt32() : -1;
+            var attempt = await conn.QuerySingleOrDefaultAsync<(string? Checkpoint, int Number, int Steps, string? Worker)>("SELECT checkpoint::text,attempt,(SELECT count(*)::int FROM task_steps WHERE task_id=@id),lease_owner FROM tasks WHERE id=@id AND status='running' AND lease_epoch=@epoch", new { id, epoch });
             var n = await conn.ExecuteAsync("UPDATE tasks SET status='failed', error=@error, error_code=@errorCode, finished_at=now(), lease_owner=NULL, updated_at=now() WHERE id=@id AND status='running' AND lease_epoch=@epoch", new { id, error, errorCode, epoch });
+            if (n > 0 && attempt.Checkpoint != null)
+            {
+                var ledger = TaskCheckpoint.Read(attempt.Checkpoint);
+                var ended = DateTimeOffset.UtcNow;
+                var started = DateTimeOffset.TryParse((string?)ledger["attemptStartedAt"], out var at) ? at : ended;
+                var progress = DateTimeOffset.TryParse((string?)ledger["lastProgressAt"], out var progressAt) && progressAt > started;
+                await AttemptLog.Record(conn, null, id, attempt.Number, started, ended, Math.Max(0, attempt.Steps - ((int?)ledger["attemptStepsAtStart"] ?? 0)), "failed", progress, attempt.Worker);
+            }
             if (n > 0) await Reliability.Event(platform, id, "error", new { error_code = errorCode, error });
             if (n > 0)
             {
@@ -1357,8 +1414,8 @@ public static class Routes
             }
             if (status == "queued" && reason == "attempt_limit")
             {
-                var state = await conn.QuerySingleOrDefaultAsync<(string? Checkpoint, int Attempt, int Steps)>("""
-                    SELECT checkpoint::text,attempt,(SELECT count(*)::int FROM task_steps WHERE task_id=@id)
+                var state = await conn.QuerySingleOrDefaultAsync<(string? Checkpoint, int Attempt, int Steps, string? Worker)>("""
+                    SELECT checkpoint::text,attempt,(SELECT count(*)::int FROM task_steps WHERE task_id=@id),lease_owner
                     FROM tasks WHERE id=@id AND status='running' AND lease_epoch=@epoch
                     """, new { id, epoch });
                 if (state.Checkpoint == null) return Results.StatusCode(409);
@@ -1366,8 +1423,9 @@ public static class Routes
                 var now = DateTimeOffset.UtcNow;
                 var startedAt = DateTimeOffset.TryParse((string?)ledger["attemptStartedAt"], out var started) ? started : now;
                 var progressAt = DateTimeOffset.TryParse((string?)ledger["lastProgressAt"], out var progress) ? progress : DateTimeOffset.MinValue;
+                var progressMade = progressAt > startedAt;
                 var attempts = ledger["attempts"] as JsonArray ?? new JsonArray();
-                attempts.Add(new JsonObject { ["n"] = state.Attempt, ["startedAt"] = startedAt.ToString("O"), ["endedAt"] = now.ToString("O"), ["endReason"] = "attempt_limit", ["stepsAtEnd"] = state.Steps, ["progress"] = progressAt > startedAt });
+                attempts.Add(new JsonObject { ["n"] = state.Attempt, ["startedAt"] = startedAt.ToString("O"), ["endedAt"] = now.ToString("O"), ["endReason"] = "attempt_limit", ["stepsAtEnd"] = state.Steps, ["progress"] = progressMade });
                 while (attempts.Count > 16) attempts.RemoveAt(0);
                 ledger["attempts"] = attempts;
                 ledger["stepsUsed"] = state.Steps;
@@ -1379,6 +1437,7 @@ public static class Routes
                     WHERE id=@id AND status='running' AND lease_epoch=@epoch
                     """, new { id, epoch, checkpoint = bounded });
                 if (queued == 0) return Results.StatusCode(409);
+                await AttemptLog.Record(conn, null, id, state.Attempt, startedAt, now, Math.Max(0, state.Steps - ((int?)ledger["attemptStepsAtStart"] ?? 0)), "attempt_limit", progressMade, state.Worker);
                 await Reliability.Event(platform, id, "resume_scheduled", new { attempt = state.Attempt, reason = "attempt_limit", backoffSeconds = 2, stepsUsed = state.Steps });
                 platform.Tasks.Pulse();
                 return Results.Json(new { ok = true, requeued = true });
@@ -1405,6 +1464,19 @@ public static class Routes
                     return Results.Json(new { ok = true, resumed = true });
                 }
             }
+            var endState = status is "waiting_resource" or "waiting_approval" or "waiting_human" or "completed" or "failed" or "cancelled";
+            var endInfo = endState ? await conn.QuerySingleOrDefaultAsync<(string? Checkpoint, int Attempt, int Steps, string? Worker)>("""
+                SELECT checkpoint::text,attempt,(SELECT count(*)::int FROM task_steps WHERE task_id=@id),lease_owner
+                FROM tasks WHERE id=@id AND status='running' AND lease_epoch=@epoch
+                """, new { id, epoch }) : default;
+            var endStartedAt = DateTimeOffset.UtcNow;
+            var endProgress = false;
+            if (endState && endInfo.Checkpoint != null)
+            {
+                var endLedger = TaskCheckpoint.Read(endInfo.Checkpoint);
+                if (DateTimeOffset.TryParse((string?)endLedger["attemptStartedAt"], out var parsedStart)) endStartedAt = parsedStart;
+                endProgress = DateTimeOffset.TryParse((string?)endLedger["lastProgressAt"], out var parsedProgress) && parsedProgress > endStartedAt;
+            }
             var n = await conn.ExecuteAsync(
                 """
                 UPDATE tasks
@@ -1426,6 +1498,8 @@ public static class Routes
                   )
                 """,
                 new { id, status, reason, checkpoint, epoch });
+            if (n > 0 && endState && endInfo.Checkpoint != null)
+                await AttemptLog.Record(conn, null, id, endInfo.Attempt, endStartedAt, DateTimeOffset.UtcNow, Math.Max(0, endInfo.Steps - ((int?)TaskCheckpoint.Read(endInfo.Checkpoint)["attemptStepsAtStart"] ?? 0)), reason ?? status ?? "status_change", endProgress, endInfo.Worker);
             if (n > 0 && status == "waiting_human" && reason == "budget_reached")
             {
                 var usage = await conn.QuerySingleAsync<(int Steps, int Rounds)>("SELECT (SELECT count(*)::int FROM task_steps WHERE task_id=@id),model_calls FROM tasks WHERE id=@id", new { id });

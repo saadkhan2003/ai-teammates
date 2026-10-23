@@ -770,11 +770,24 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
     private async Task<bool> SetTask(Guid taskId, string status, string? reason, bool clearLease, int epoch, CancellationToken ct)
     {
         await using var conn = await platform.Data.OpenConnectionAsync(ct);
+        var ending = clearLease ? await conn.QuerySingleOrDefaultAsync<(string? Checkpoint, int Attempt, int Steps, string? Worker)>("""
+            SELECT checkpoint::text,attempt,(SELECT count(*)::int FROM task_steps WHERE task_id=@id),lease_owner
+            FROM tasks WHERE id=@id AND status='running' AND lease_epoch=@epoch
+            """, new { id = taskId, epoch }) : default;
         var n = await conn.ExecuteAsync(
             clearLease
                 ? "UPDATE tasks SET status=@status, waiting_reason=@reason, lease_owner=NULL, lease_until=NULL, updated_at=now() WHERE id=@id AND status='running' AND lease_epoch=@epoch"
                 : "UPDATE tasks SET status=@status, waiting_reason=@reason, updated_at=now() WHERE id=@id AND status='running' AND lease_epoch=@epoch",
             new { id = taskId, status, reason, epoch });
+        if (n > 0 && clearLease && ending.Checkpoint != null)
+        {
+            var ledger = TaskCheckpoint.Read(ending.Checkpoint);
+            var now = DateTimeOffset.UtcNow;
+            var started = DateTimeOffset.TryParse((string?)ledger["attemptStartedAt"], out var at) ? at : now;
+            var progress = DateTimeOffset.TryParse((string?)ledger["lastProgressAt"], out var progressAt) && progressAt > started;
+            await AttemptLog.Record(conn, null, taskId, ending.Attempt, started, now,
+                Math.Max(0, ending.Steps - ((int?)ledger["attemptStepsAtStart"] ?? 0)), reason ?? status, progress, ending.Worker);
+        }
         return n > 0;
     }
 

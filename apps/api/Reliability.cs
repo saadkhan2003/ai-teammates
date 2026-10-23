@@ -1,4 +1,5 @@
 using Dapper;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace Teammates.Api;
@@ -46,10 +47,11 @@ public static class Reliability
         await using (var conn = await platform.Data.OpenConnectionAsync())
         await using (var tx = await conn.BeginTransactionAsync())
         {
-            var rows = await conn.QueryAsync<(Guid Id, int Attempt, string? Checkpoint, int Steps, int ModelRounds, string Status)>("""
+            var rows = await conn.QueryAsync<(Guid Id, int Attempt, string? Checkpoint, int Steps, int ModelRounds, string Status, string? Worker, int ToolCalls)>("""
                 SELECT t.id,t.attempt,t.checkpoint::text AS checkpoint,
                        (SELECT count(*)::int FROM task_steps s WHERE s.task_id=t.id) AS steps,
-                       t.model_calls AS model_rounds,t.status
+                       t.model_calls AS model_rounds,t.status,t.lease_owner AS worker,
+                       (SELECT count(*)::int FROM task_steps s WHERE s.task_id=t.id AND s.started_at >= coalesce((t.checkpoint->>'attemptStartedAt')::timestamptz,t.started_at,now())) AS tool_calls
                 FROM tasks t WHERE t.status='running' AND t.lease_until<now()
                   AND t.status NOT IN ('waiting_approval','waiting_human','cancelled')
                   AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.task_id=t.id AND a.status='pending')
@@ -63,6 +65,9 @@ public static class Reliability
                 var started = DateTimeOffset.TryParse((string?)ledger["attemptStartedAt"], out var at) ? at : now;
                 var lastProgress = DateTimeOffset.TryParse((string?)ledger["lastProgressAt"], out var progressAt) ? progressAt : DateTimeOffset.MinValue;
                 var progress = lastProgress > started;
+                await AttemptLog.Record(conn, tx, task.Id, task.Attempt, started, now,
+                    Math.Max(task.ToolCalls, task.Steps - ((int?)ledger["attemptStepsAtStart"] ?? 0)),
+                    "lease_expired", progress, task.Worker);
                 var attempts = ledger["attempts"] as JsonArray ?? new JsonArray();
                 attempts.Add(new JsonObject {
                     ["n"] = task.Attempt, ["startedAt"] = started.ToString("O"), ["endedAt"] = now.ToString("O"),
@@ -125,5 +130,7 @@ public static class Reliability
         await using var conn = await platform.Data.OpenConnectionAsync();
         await conn.ExecuteAsync("INSERT INTO task_run_events (task_id,type,detail) VALUES (@taskId,@type,CAST(@json AS jsonb))", new { taskId, type, json });
         await platform.Publish(new { type, taskId, detail = System.Text.Json.JsonSerializer.Deserialize<object>(json) });
+        try { await ResumeNotices.Persist(platform, taskId, type, System.Text.Json.JsonSerializer.Deserialize<JsonElement>(json)); }
+        catch { /* Resume notices are best-effort and cannot break the event. */ }
     }
 }
