@@ -11,7 +11,6 @@ import { ChatPane } from "@/components/chat-pane";
 import { LoginCard } from "@/components/login-card";
 import { FilesPane } from "@/components/files-pane";
 import { MemoryPane } from "@/components/memory-pane";
-import { RoutinesPane } from "@/components/routines-pane";
 import { CodingSection } from "@/components/coding-section";
 import { RoutinesSection } from "@/components/routines-section";
 import { SkillsPane } from "@/components/skills-pane";
@@ -89,7 +88,6 @@ const INFO_TABS = [
   ["overview", "Overview"],
   ["computer", "Computer"],
   ["library", "Library"],
-  ["routines", "Routines"],
   ["files", "Files/Media"],
   ["skills", "Skills"],
   ["memory", "Memory"],
@@ -141,6 +139,7 @@ export function Workspace({ botId }: { botId: string }) {
   const [memories, setMemories] = useState<ListState<MemoryItem>>(emptyList);
   const [skills, setSkills] = useState<ListState<Skill>>(emptyList);
   const [routines, setRoutines] = useState<ListState<Routine>>(emptyList);
+  const [routineEditRequest, setRoutineEditRequest] = useState<{ key: number; text: string } | undefined>();
   const [artifacts, setArtifacts] = useState<ListState<Artifact>>(emptyList);
   const [detailTab, setDetailTab] = useState("overview");
   const [finishedLogins, setFinishedLogins] = useState<LoginRequest[]>([]);
@@ -285,7 +284,6 @@ export function Workspace({ botId }: { botId: string }) {
     if (detailTab === "files") void loadAux(["files", "artifacts"]);
     if (detailTab === "memory") void loadAux(["memories"]);
     if (detailTab === "skills") void loadAux(["skills"]);
-    if (detailTab === "routines") void loadAux(["routines"]);
   }, [pane, detailTab, loadAux]);
 
   const teach = useTeachTask({
@@ -351,6 +349,7 @@ export function Workspace({ botId }: { botId: string }) {
           </p>
         ) : null}
         <ChatPane
+          editRequest={routineEditRequest}
           conversationId={workspace.conversationId}
           messages={mergeHistory(older.botId === botId ? older.items : [], workspace.messages ?? [])}
           hasOlder={older.botId === botId && older.hasMore !== null ? older.hasMore : !!workspace.messagesHasMore}
@@ -516,6 +515,7 @@ export function Workspace({ botId }: { botId: string }) {
                 error={routines.error}
                 onRetry={() => void loadAux(["routines"])}
                 onChanged={() => void loadAux(["routines"])}
+                onEdit={(text) => setRoutineEditRequest((current) => ({ key: (current?.key ?? 0) + 1, text }))}
               />
               <CodingSection botId={botId} />
               <section data-testid="channels" className="border-b border-border px-3 py-3">
@@ -562,9 +562,6 @@ export function Workspace({ botId }: { botId: string }) {
                       <FilesPane botId={botId} files={files.items} error={files.error} loaded={files.loaded} onChanged={() => void loadAux(["files"])} />
                       <ArtifactsPane artifacts={artifacts.items} error={artifacts.error} loaded={artifacts.loaded} onRetry={() => void loadAux(["artifacts"])} />
                     </div>
-                  </TabsContent>
-                  <TabsContent value="routines">
-                    <RoutinesPane botId={botId} routines={routines.items} error={routines.error} loaded={routines.loaded} onChanged={() => void loadAux(["routines"])} />
                   </TabsContent>
                   <TabsContent value="files">
                     <div className="flex flex-col gap-6">

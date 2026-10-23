@@ -140,6 +140,25 @@ export function normalizeRoutines(data: unknown) {
       enabled: record.enabled !== false,
       watchKind: text(record.watchKind ?? record.watch_kind) || undefined,
       watchRef: text(record.watchRef ?? record.watch_ref) || undefined,
+      kind: text(record.kind) || "recurring",
+      runAt: text(record.runAt ?? record.run_at) || undefined,
+      timezone: text(record.timezone) || "UTC",
+      pausedReason: text(record.pausedReason ?? record.paused_reason) || null,
+      failureStreak: Number(record.failureStreak ?? record.failure_streak) || 0,
+      quietRule: text(record.quietRule ?? record.quiet_rule) || null,
+      expiresAt: text(record.expiresAt ?? record.expires_at) || null,
+      jitterSeconds: Number(record.jitterSeconds ?? record.jitter_seconds) || 0,
+      runs: Array.isArray(record.runs) ? record.runs.map((run) => {
+        const item = (run ?? {}) as Record<string, unknown>;
+        return {
+          id: text(item.id), taskId: text(item.taskId ?? item.task_id) || null, status: text(item.status),
+          triggeredAt: text(item.triggeredAt ?? item.triggered_at) || undefined,
+          finishedAt: text(item.finishedAt ?? item.finished_at) || null,
+          scheduledFor: text(item.scheduledFor ?? item.scheduled_for) || null,
+          error: text(item.error) || null, skipReason: text(item.skipReason ?? item.skip_reason) || null,
+          summary: text(item.summary) || null, notified: item.notified !== false,
+        };
+      }) : [],
     };
   });
 }

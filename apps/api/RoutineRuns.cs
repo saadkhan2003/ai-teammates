@@ -8,7 +8,7 @@ public static class RoutineRuns
 {
     public delegate Task<string?> Watcher(string kind, string reference, Guid botId, CancellationToken ct);
 
-    private sealed record Claimed(Guid Id, Guid BotId, string Instruction, string Name, string Kind, string Cron, string Timezone, string? QuietRule,
+    private sealed record Claimed(Guid Id, Guid BotId, string Instruction, string Name, string Kind, string Cron, string Timezone, string? QuietRule, bool ForceOnce, bool Enabled,
         DateTime? Nominal, DateTime? RunAt, int Jitter, DateTime? ExpiresAt, string WatchKind, string WatchRef, string WatchFingerprint);
 
     /// <summary>Start every routine that is due. Rows are claimed with FOR UPDATE SKIP LOCKED, so two API instances never start the same run.</summary>
@@ -16,16 +16,19 @@ public static class RoutineRuns
     {
         await conn.ExecuteAsync("UPDATE routine_runs rr SET status='running' FROM tasks t WHERE rr.task_id=t.id AND rr.status='queued' AND t.status IN ('running','planning')");
         var unscheduled = await conn.QueryAsync<(Guid Id, string Cron, string Timezone)>(
-            "SELECT id, cron, timezone FROM routines WHERE enabled AND next_run_at IS NULL AND kind='recurring' AND (last_run_at IS NULL OR last_run_at < now() - interval '2 minutes')");
+            "SELECT id, cron, timezone FROM routines WHERE enabled AND NOT force_once AND next_run_at IS NULL AND kind='recurring' AND (last_run_at IS NULL OR last_run_at < now() - interval '2 minutes')");
         foreach (var item in unscheduled)
         {
             var fresh = RoutineTime.NextOrNull(item.Cron, now, item.Timezone);
             if (fresh != null) await conn.ExecuteAsync("UPDATE routines SET next_run_at=@fresh, nominal_next_at=@fresh WHERE id=@id AND next_run_at IS NULL", new { id = item.Id, fresh });
         }
         var claimed = (await conn.QueryAsync<Claimed>(
-            @"UPDATE routines r SET last_run_at=now(), next_run_at=NULL
-              WHERE r.id IN (SELECT id FROM routines WHERE enabled AND next_run_at IS NOT NULL AND next_run_at <= now() ORDER BY next_run_at LIMIT 50 FOR UPDATE SKIP LOCKED)
+            @"WITH due AS (SELECT id, force_once, enabled FROM routines WHERE (enabled OR force_once) AND next_run_at IS NOT NULL AND next_run_at <= now() ORDER BY next_run_at LIMIT 50 FOR UPDATE SKIP LOCKED)
+              UPDATE routines r SET last_run_at=now(), next_run_at=NULL, force_once=false
+              WHERE r.id IN (SELECT id FROM due)
               RETURNING r.id AS Id, r.bot_id AS BotId, r.instruction AS Instruction, r.name AS Name, r.kind AS Kind, r.cron AS Cron, r.timezone AS Timezone, r.quiet_rule AS QuietRule,
+                        (SELECT force_once FROM due WHERE due.id=r.id) AS ForceOnce,
+                        (SELECT enabled FROM due WHERE due.id=r.id) AS Enabled,
                         r.nominal_next_at AS Nominal, r.run_at AS RunAt, r.jitter_seconds AS Jitter, r.expires_at AS ExpiresAt,
                         coalesce(r.watch_kind,'') AS WatchKind, coalesce(r.watch_ref,'') AS WatchRef, coalesce(r.watch_fingerprint,'') AS WatchFingerprint")).ToList();
         foreach (var routine in claimed)
@@ -77,6 +80,8 @@ public static class RoutineRuns
             platform.Tasks.Pulse();
         }
         await Prune(conn, r.Id);
+        // An explicit test on a paused routine executes once, preserving its pause and normal schedule.
+        if (r.ForceOnce && !r.Enabled) return;
         if (r.Kind == "once")
         {
             await conn.ExecuteAsync("UPDATE routines SET enabled=false, next_run_at=NULL, paused_reason=@reason WHERE id=@id", new { id = r.Id, reason = run ? "ran" : "missed" });

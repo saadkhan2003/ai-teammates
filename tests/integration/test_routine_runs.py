@@ -170,3 +170,23 @@ def test_one_off_reminder_runs_once_then_finishes():
         assert client.call("PATCH", f"/api/routines/{rid}", {"enabled": True})[0] == 400
     finally:
         _cleanup(client, bot)
+
+
+def test_test_endpoint_runs_paused_routine_once_without_resuming_it():
+    client, bot = _setup()
+    try:
+        rid = _routine(client, bot)
+        _psql(f"UPDATE routines SET enabled=false, paused_reason='failed_repeatedly', next_run_at=NULL, nominal_next_at=NULL WHERE id='{rid}'")
+        task, _ = _manual_task(bot, rid)
+        assert client.call("POST", f"/api/routines/{rid}/test")[0] == 409
+        _finish(task, True)
+        status, body = client.call("POST", f"/api/routines/{rid}/test")
+        assert status == 200, body
+        run = _until(lambda: next((r for r in _get(client, rid)["runs"] if r["taskId"]), None), timeout=30, what="test run")
+        time.sleep(2)
+        routine = _get(client, rid)
+        assert run["status"] in ("queued", "running", "completed")
+        assert routine["enabled"] is False and routine["pausedReason"] == "failed_repeatedly"
+        assert routine["nextRunAt"] is None
+    finally:
+        _cleanup(client, bot)
