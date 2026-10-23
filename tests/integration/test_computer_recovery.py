@@ -5,6 +5,13 @@ import subprocess
 import time
 
 from test_acceptance import BASE, login, result_text, submit, wait_task
+import os
+
+# One compose project per live stack: STACK/STACK_SUBNET/ISOLATION_CHAIN default to the main `teammates` stack.
+STACK = os.environ.get("STACK", "teammates")
+SUBNET = os.environ.get("STACK_SUBNET", "172.30.28")
+CHAIN = os.environ.get("ISOLATION_CHAIN", "TEAMS-ISO")
+
 
 MARKER = "/workspace/notes/restore-marker.txt"
 MARKER_BODY = b"kept-across-restore\n"
@@ -140,7 +147,7 @@ def _run(client, bot_id: str, computer_id: str, name: str) -> None:
     assert name in running.split()
 
     _docker("rm", "-f", name)
-    _docker("restart", "teammates-api-1")
+    _docker("restart", f"{STACK}-api-1")
     _wait_health()
     status, recreated = client.call("POST", "/api/computer/recreate")
     assert status == 200, recreated

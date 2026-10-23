@@ -9,6 +9,13 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+# One compose project per live stack: STACK/STACK_SUBNET/ISOLATION_CHAIN default to the main `teammates` stack.
+STACK = os.environ.get("STACK", "teammates")
+SUBNET = os.environ.get("STACK_SUBNET", "172.30.28")
+CHAIN = os.environ.get("ISOLATION_CHAIN", "TEAMS-ISO")
+BASE_URL = os.environ.get("BASE_URL", "http://127.0.0.1:18080")
+
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -17,13 +24,14 @@ def _docker(*args: str) -> str:
 
 
 def _computers() -> list[str]:
-    raw = _docker("ps", "--filter", "label=teammates.role=user-computer", "--format", "{{.Names}}")
+    raw = _docker("ps", "--filter", "label=teammates.role=user-computer", "--filter", f"network={STACK}-computers", "--format", "{{.Names}}")
     return [line.strip() for line in raw.splitlines() if line.strip()]
 
 
 def _probe(container: str, postgres_ip: str, seaweed_ip: str, api_ip: str, agent_ip: str) -> dict[str, str]:
     script = r"""
 import json, socket, urllib.error, urllib.request
+
 postgres_ip, seaweed_ip, api_ip, agent_ip = json.loads(input())
 
 def tcp(host, port, timeout=2.0):
@@ -79,18 +87,18 @@ print(json.dumps(report))
 
 
 def test_bot_computer_cannot_reach_postgres_seaweed_or_internal_api():
-    subprocess.check_call(["sudo", "bash", str(ROOT / "deploy/computer-isolation.sh")])
+    subprocess.check_call(["sudo", "env", f"ISOLATION_CHAIN={CHAIN}", f"ISOLATION_SUBNET={SUBNET}", "bash", str(ROOT / "deploy/computer-isolation.sh")])
     names = _computers()
     assert names, "no user computer is running"
-    postgres_ip = _docker("inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", "teammates-postgres-1")
-    seaweed_ip = _docker("inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", "teammates-object-store-1")
-    api_ip = "172.30.28.10"
-    agent_ip = "172.30.28.11"
+    postgres_ip = _docker("inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", f"{STACK}-postgres-1")
+    seaweed_ip = _docker("inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", f"{STACK}-object-store-1")
+    api_ip = f"{SUBNET}.10"
+    agent_ip = f"{SUBNET}.11"
     assert postgres_ip and seaweed_ip
 
     for name in names:
         nets = _docker("inspect", "-f", "{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}", name).split()
-        assert nets == ["teammates-computers"], (name, nets)
+        assert nets == [f"{STACK}-computers"], (name, nets)
         report = _probe(name, postgres_ip, seaweed_ip, api_ip, agent_ip)
         for key in ("postgres", "seaweed", "api", "agent", "internal", "health", "private10", "private192"):
             assert report[key] != "open" and not str(report[key]).startswith("open "), (name, key, report)
@@ -108,20 +116,20 @@ def _ipt() -> str:
 def _rules_present() -> bool:
     ipt = _ipt()
     user = subprocess.check_output(["sudo", ipt, "-S", "DOCKER-USER"], text=True)
-    if "-j TEAMS-ISO" not in user:
+    if f"-j {CHAIN}" not in user:
         return False
-    chain = subprocess.check_output(["sudo", ipt, "-S", "TEAMS-ISO"], text=True)
-    return "REJECT --reject-with tcp-reset" in chain and "-s 172.30.28.0/24" in chain
+    chain = subprocess.check_output(["sudo", ipt, "-S", CHAIN], text=True)
+    return "REJECT --reject-with tcp-reset" in chain and f"-s {SUBNET}.0/24" in chain
 
 
 def _flush_rules() -> None:
     ipt = _ipt()
     while True:
         listing = subprocess.check_output(["sudo", ipt, "-S", "DOCKER-USER"], text=True)
-        if "-j TEAMS-ISO" not in listing:
+        if f"-j {CHAIN}" not in listing:
             break
-        subprocess.check_call(["sudo", ipt, "-D", "DOCKER-USER", "-j", "TEAMS-ISO"])
-    subprocess.call(["sudo", ipt, "-F", "TEAMS-ISO"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.check_call(["sudo", ipt, "-D", "DOCKER-USER", "-j", CHAIN])
+    subprocess.call(["sudo", ipt, "-F", CHAIN], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def _running(name: str) -> bool:
@@ -144,7 +152,7 @@ def _isolation_name() -> str:
 
 def _api(method: str, path: str, cookie: str, body: dict | None = None, timeout: float = 60):
     data = None if body is None else json.dumps(body).encode()
-    request = urllib.request.Request("http://127.0.0.1:18080" + path, data=data, method=method)
+    request = urllib.request.Request(BASE_URL + path, data=data, method=method)
     if body is not None:
         request.add_header("Content-Type", "application/json")
     if cookie:
@@ -188,7 +196,7 @@ def _bring_owned_up(cookie: str, owned: str, timeout: float = 120) -> str:
 
 def test_flushed_chain_refuses_start_until_rules_return():
     """Flush TEAMS-ISO with the guard stopped. Start must fail closed, and Postgres stays closed after the rules return."""
-    subprocess.check_call(["sudo", "bash", str(ROOT / "deploy/computer-isolation.sh")])
+    subprocess.check_call(["sudo", "env", f"ISOLATION_CHAIN={CHAIN}", f"ISOLATION_SUBNET={SUBNET}", "bash", str(ROOT / "deploy/computer-isolation.sh")])
     assert _rules_present()
     guard = _isolation_name()
     status, login, cookie = _api("POST", "/api/auth/login", "", {"username": "saad", "password": os.environ.get("OWNER_PASSWORD", "teammates-dev")})
@@ -199,9 +207,9 @@ def test_flushed_chain_refuses_start_until_rules_return():
     assert owned, computer
     cookie = _bring_owned_up(cookie, owned)
     names = _alive(_computers())
-    assert owned in names or owned in _docker("ps", "-a", "--filter", "label=teammates.role=user-computer", "--format", "{{.Names}}")
-    postgres_ip = _docker("inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", "teammates-postgres-1")
-    seaweed_ip = _docker("inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", "teammates-object-store-1")
+    assert owned in names or owned in _docker("ps", "-a", "--filter", "label=teammates.role=user-computer", "--filter", f"network={STACK}-computers", "--format", "{{.Names}}")
+    postgres_ip = _docker("inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", f"{STACK}-postgres-1")
+    seaweed_ip = _docker("inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", f"{STACK}-object-store-1")
     assert postgres_ip and seaweed_ip
     stopped: list[str] = []
     try:
@@ -210,7 +218,7 @@ def test_flushed_chain_refuses_start_until_rules_return():
         assert not _rules_present()
         for name in names:
             assert _running(name), name
-            report = _probe(name, postgres_ip, seaweed_ip, "172.30.28.10", "172.30.28.11")
+            report = _probe(name, postgres_ip, seaweed_ip, f"{SUBNET}.10", f"{SUBNET}.11")
             assert report["postgres"] != "open" and not str(report["postgres"]).startswith("open "), (name, report)
             assert report["api"] == "open", (name, report)
         for name in names:
@@ -251,7 +259,7 @@ def test_flushed_chain_refuses_start_until_rules_return():
         report = {}
         while time.time() < deadline:
             try:
-                report = _probe(owned, postgres_ip, seaweed_ip, "172.30.28.10", "172.30.28.11")
+                report = _probe(owned, postgres_ip, seaweed_ip, f"{SUBNET}.10", f"{SUBNET}.11")
             except AssertionError:
                 time.sleep(1)
                 continue

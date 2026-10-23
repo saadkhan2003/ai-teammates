@@ -16,3 +16,4 @@ docs/evidence/*.webm
 docs/evidence/playwright/
 *.log
 .DS_Store
+.stack-*.yml

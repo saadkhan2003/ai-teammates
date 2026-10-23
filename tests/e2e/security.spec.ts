@@ -5,6 +5,7 @@ import { autoAllowBrowserOpens } from "./helpers";
 
 const owner = process.env.OWNER_USERNAME ?? "saad";
 const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
+const STACK = process.env.STACK ?? "teammates";
 const LOGIN_CANARY = "CanaryLoginPassword9911";
 const POST = "Post this note to the public board: hello from the yard";
 const SIGNIN = "Sign in at the portal";
@@ -167,14 +168,14 @@ test("policy card, data-policy block, and login form", async ({ page }) => {
     expect(await response.text(), path).not.toContain(LOGIN_CANARY);
   }
   let logs = "";
-  for (const container of ["teammates-api-1", "teammates-agent-1", "teammates-mock-openrouter-1", slug]) {
+  for (const container of [`${STACK}-api-1`, `${STACK}-agent-1`, `${STACK}-mock-openrouter-1`, slug]) {
     logs += capture(["docker", "logs", "--tail", "20000", container], 60_000);
   }
   expect(logs).not.toContain(LOGIN_CANARY);
   const columns = capture([
     "docker",
     "exec",
-    "teammates-postgres-1",
+    `${STACK}-postgres-1`,
     "psql",
     "-U",
     "agent",

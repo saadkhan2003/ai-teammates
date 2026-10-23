@@ -4,11 +4,12 @@ import { expect, test, type Page } from "@playwright/test";
 
 const owner = process.env.OWNER_USERNAME ?? "saad";
 const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
+const STACK = process.env.STACK ?? "teammates";
 const tabs = ["Overview", "Computer", "Routines", "Files/Media", "Skills", "Memory", "Tasks", "Plugins"] as const;
 const pages = ["/", "/settings", "/settings/secrets", "/settings/computer", "/settings/usage", "/system", "/invite"] as const;
 
 function psql(sql: string) {
-  const args = ["exec", "-i", "teammates-postgres-1", "psql", "-U", "agent", "-d", "agent", "-v", "ON_ERROR_STOP=1", "-c", sql];
+  const args = ["exec", "-i", `${STACK}-postgres-1`, "psql", "-U", "agent", "-d", "agent", "-v", "ON_ERROR_STOP=1", "-c", sql];
   let result = spawnSync("docker", args, { encoding: "utf8" });
   if (result.error || result.status !== 0) result = spawnSync("sudo", ["docker", ...args], { encoding: "utf8" });
   if (result.status !== 0) throw new Error(result.stderr || result.stdout || "psql failed");

@@ -6,6 +6,7 @@ import { autoAllowBrowserOpens } from "./helpers";
 
 const owner = process.env.OWNER_USERNAME ?? "saad";
 const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
+const STACK = process.env.STACK ?? "teammates";
 const OPENROUTER = "sk-or-v1-CANARYOPENROUTERKEY8Kx2";
 const GITHUB = "ghp_CANARYGITHUBTOKENVALUE99";
 const PORTAL_PASSWORD = "CanaryPasswordValueXYZ99";
@@ -80,7 +81,7 @@ function shot(page: Page, name: string) {
 function waitHealth() {
   const start = Date.now();
   while (Date.now() - start < 90_000) {
-    const result = spawnSync("curl", ["-fsS", "http://127.0.0.1:18080/health"], { encoding: "utf8" });
+    const result = spawnSync("curl", ["-fsS", `${process.env.BASE_URL ?? "http://127.0.0.1:18080"}/health`], { encoding: "utf8" });
     if (result.status === 0 && (result.stdout || "").includes('"ok":true')) return;
     spawnSync("sleep", ["2"]);
   }
@@ -214,7 +215,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
     await login(page);
     // Integration grants portal.example.edu for the owner. That grant skips the saved-credential approval this test waits for.
     capture([
-      "docker", "exec", "teammates-postgres-1",
+      "docker", "exec", `${STACK}-postgres-1`,
       "psql", "-U", "agent", "-d", "agent", "-c",
       "DELETE FROM credential_domain_grants",
     ]);
@@ -560,13 +561,13 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
       await page.waitForTimeout(300);
     }
     expect(running).toBeTruthy();
-    capture(["docker", "restart", "teammates-agent-1"], 180_000);
+    capture(["docker", "restart", `${STACK}-agent-1`], 180_000);
     const done = await expectDone(page, botId, id, 120_000);
     expect(resultText(done)).toContain("Recovered");
     const attempt = capture([
       "docker",
       "exec",
-      "teammates-postgres-1",
+      `${STACK}-postgres-1`,
       "psql",
       "-U",
       "agent",
@@ -621,7 +622,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
 
   await test.step("13 API restart keeps completed tasks", async () => {
     const hello = await expectDone(page, botId, await assignTracked(page, botId, HELLO, false));
-    capture(["docker", "restart", "teammates-api-1"], 180_000);
+    capture(["docker", "restart", `${STACK}-api-1`], 180_000);
     waitHealth();
     await page.goto(botUrl);
     if (await page.getByTestId("login-username").isVisible().catch(() => false)) await login(page);
@@ -691,14 +692,14 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
     }
     const slug = await computerSlug(page, botId);
     let logs = "";
-    for (const name of ["teammates-api-1", "teammates-agent-1", "teammates-mock-openrouter-1", slug]) {
+    for (const name of [`${STACK}-api-1`, `${STACK}-agent-1`, `${STACK}-mock-openrouter-1`, slug]) {
       logs += capture(["docker", "logs", "--tail", "20000", name], 60_000);
     }
     assertClean("docker logs", logs);
     const columns = capture([
       "docker",
       "exec",
-      "teammates-postgres-1",
+      `${STACK}-postgres-1`,
       "psql",
       "-U",
       "agent",
