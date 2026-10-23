@@ -16,6 +16,17 @@ export function ShimmerText({ text, className = "" }: { text: string; className?
 
 export type StatusEvent = { type: string; tool?: unknown; name?: unknown; text?: unknown; title?: unknown; status?: unknown; label?: unknown };
 
+const TOOL_STATUS: Record<string, string> = {
+  list_bots: "Looking up teammates",
+  message_bot: "Messaging a teammate",
+  reply_to_bot: "Replying to a teammate",
+  thread_status: "Checking a conversation",
+  create_bot: "Creating a teammate",
+  update_bot: "Updating a teammate",
+  list_routines: "Checking routines",
+  create_routine: "Scheduling a routine",
+};
+
 /** What the working row says: "Typing…" while a reply streams, else the live step, else the task title. */
 export function workingStatus(events: StatusEvent[], typing: boolean, taskTitle?: string): string {
   if (typing) return "Typing…";
@@ -26,7 +37,9 @@ export function workingStatus(events: StatusEvent[], typing: boolean, taskTitle?
       if (text) return text.slice(0, 80);
     }
     if (e.type === "tool" || e.type === "tool_call") {
-      const tool = String(e.tool ?? e.name ?? "").replace(/[_.-]+/g, " ").trim();
+      const raw = String(e.tool ?? e.name ?? "");
+      if (TOOL_STATUS[raw]) return TOOL_STATUS[raw];
+      const tool = raw.replace(/[_.-]+/g, " ").trim();
       if (tool) return `Using ${tool}`;
     }
   }

@@ -1,3 +1,4 @@
+import type { BotThreadView } from "@/lib/bot-thread";
 export type Bot = {
   id: string;
   name: string;
@@ -11,6 +12,7 @@ export type Bot = {
   avatar?: string;
   model?: string;
   notificationsEnabled?: boolean;
+  peerMessaging?: boolean;
 };
 
 export type Task = {
@@ -63,6 +65,12 @@ export type Approval = {
   status?: string;
   riskClass?: string;
   summary?: string;
+  /** Pending on another teammate's task that this teammate started. Deciding it here decides it everywhere. */
+  relayed?: boolean;
+  threadId?: string | null;
+  threadTitle?: string | null;
+  requestedBy?: string | null;
+  botName?: string | null;
 };
 
 export type LoginField = {
@@ -100,6 +108,7 @@ export type Workspace = {
   tasks: Task[];
   messages: ChatMessage[];
   approvals: Approval[];
+  botThreads?: BotThreadView[];
   secretRequests?: SecretRequest[];
   loginRequests?: LoginRequest[];
   pages: BrowserPage[];

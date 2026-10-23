@@ -340,6 +340,7 @@ export function Workspace({ botId }: { botId: string }) {
           botName={bot?.name || "Teammate"}
           botId={botId}
           avatar={{ shape: bot?.avatarShape || defaultBotAvatar(bot?.id || botId).shape, color: bot?.avatarColor || defaultBotAvatar(bot?.id || botId).color, primary: bot?.isPrimary }}
+          botThreads={workspace.botThreads ?? []}
           taskTitle={(workspace.tasks ?? []).find(task => ["running", "planning"].includes((task.status ?? "").toLowerCase()))?.title}
           onSent={() => void loadWorkspace()}
           working={(workspace.tasks ?? []).some((task) => ["running", "planning", "queued"].includes((task.status ?? "").toLowerCase()))}
@@ -455,6 +456,7 @@ export function Workspace({ botId }: { botId: string }) {
               avatarShape={bot?.avatarShape || defaultBotAvatar(bot?.id || botId).shape}
               avatarColor={bot?.avatarColor || defaultBotAvatar(bot?.id || botId).color}
               notifications={(bot as { notificationsEnabled?: boolean } | undefined)?.notificationsEnabled !== false}
+              peerMessaging={bot?.peerMessaging !== false}
               onClose={() => setSettingsOpen(false)}
               onSaved={() => void loadWorkspace()}
             />
@@ -586,6 +588,7 @@ function BotSettings({
   avatarShape,
   avatarColor,
   notifications,
+  peerMessaging,
   onClose,
   onSaved,
 }: {
@@ -598,10 +601,11 @@ function BotSettings({
   avatarShape: string;
   avatarColor: string;
   notifications: boolean;
+  peerMessaging: boolean;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [draft, setDraft] = useState({ name, role, instructions, model, avatar, avatarShape, avatarColor, notifications });
+  const [draft, setDraft] = useState({ name, role, instructions, model, avatar, avatarShape, avatarColor, notifications, peerMessaging });
   const [error, setError] = useState<string | null>(null);
 
   async function save(event: FormEvent) {
@@ -640,6 +644,15 @@ function BotSettings({
           id="settings-notifications"
           checked={draft.notifications}
           onCheckedChange={(checked) => setDraft({ ...draft, notifications: checked })}
+        />
+      </div>
+      <div className="flex items-center justify-between gap-3 text-sm">
+        <Label htmlFor="settings-peer-messaging" className="min-w-0">Message other teammates<span className="block text-xs font-normal text-muted-foreground">You still approve each new conversation.</span></Label>
+        <Switch
+          id="settings-peer-messaging"
+          data-testid="settings-peer-messaging"
+          checked={draft.peerMessaging}
+          onCheckedChange={(checked) => setDraft({ ...draft, peerMessaging: checked })}
         />
       </div>
       {error ? <p className="text-sm text-destructive">{error}</p> : null}

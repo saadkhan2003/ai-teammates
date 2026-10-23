@@ -11,7 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/utils";
 
-const CLASSES = ["read", "write", "send_message", "payment", "sign", "delete", "credential_use", "external_post"];
+const CLASSES = ["read", "write", "send_message", "payment", "sign", "delete", "credential_use", "external_post", "bot_message", "bot_manage"];
 const MODES = ["ALLOW", "ASK", "DENY"];
 
 type PolicyResponse = {
