@@ -10,9 +10,10 @@ using Teammates.Compute;
 
 namespace Teammates.Api;
 
-public sealed class Runtime(Platform platform, LoginFlow logins)
+public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer? reviewer = null)
 {
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(90) };
+    private readonly IActionReviewer _reviewer = reviewer ?? new RuleBasedActionReviewer();
 
     public async Task<IResult> Model(JsonElement body, CancellationToken ct)
     {
@@ -72,6 +73,31 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         {
             await using var conn = await platform.Data.OpenConnectionAsync(ct);
             await conn.ExecuteAsync("INSERT INTO task_browser_origins (task_id, origin) VALUES (@task, @origin) ON CONFLICT DO NOTHING", new { task = taskId, origin = uri.GetLeftPart(UriPartial.Authority) });
+        }
+        return Results.Json(new { decision = "allow" });
+    }
+
+    public async Task<IResult> PreExec(JsonElement body, CancellationToken ct)
+    {
+        if (body.GetRawText().Length > 48_000 || !body.TryGetProperty("taskId", out var taskNode) || !taskNode.TryGetGuid(out var taskId)
+            || !body.TryGetProperty("botId", out var botNode) || !botNode.TryGetGuid(out var botId)
+            || !body.TryGetProperty("tool", out var toolNode) || toolNode.ValueKind != JsonValueKind.String
+            || !body.TryGetProperty("args", out var args))
+            return Results.BadRequest(new { decision = "deny", reason = "invalid_preexec_request" });
+        if (!await HoldsLease(taskId, EpochOf(body), ct)) return Results.StatusCode(409);
+        var tool = toolNode.GetString()!;
+        var gated = await Gate(botId, taskId, tool, args, false, ct);
+        if (gated.Decision == PolicyEngine.Deny)
+        {
+            await platform.Audit("policy", "tool.denied", botId, taskId, new { tool, reason = gated.Reason, riskClass = gated.RiskClass });
+            return Results.Json(new { decision = "deny", reason = gated.Reason, riskClass = gated.RiskClass });
+        }
+        if (gated.Decision == PolicyEngine.Ask && !await HasApprovedUnconsumed(taskId, tool))
+        {
+            if (!await HasPendingApproval(taskId, tool)
+                && !await CreateApproval(botId, taskId, tool, TargetOf(args), args, gated.Summary, gated.RiskClass, gated.Summary, EpochOf(body), ct))
+                return Results.StatusCode(409);
+            return Results.Json(new { decision = "ask", status = "waiting_approval", riskClass = gated.RiskClass, summary = gated.Summary });
         }
         return Results.Json(new { decision = "allow" });
     }
@@ -619,6 +645,16 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         if (PluginIds.IsPluginTool(tool)) hint = await PluginCatalog.Hint(platform, botId, tool, ct);
         var peerOrigin = await conn.ExecuteScalarAsync<bool>("SELECT (t.origin_thread_id IS NOT NULL OR t.origin_depth > 0 OR t.kind IN ('peer','peer_reply','peer_notice')) FROM tasks t WHERE t.id=@id", new { id = taskId });
         var decision = PolicyGate.Evaluate(tool, args, seen, policy, rules, instruction, approved, grants, hint, peerOrigin);
+        if (decision.Decision != PolicyEngine.Deny && !decision.HardDeny && await _reviewer.ReviewAsync(tool, args, ct) == "ask")
+            decision = decision with { Decision = PolicyEngine.Ask, Reason = "review_required" };
+        if (decision.Decision == PolicyEngine.Ask && !decision.HardDeny && policy.Mode(decision.RiskClass) != PolicyEngine.Ask
+            && ApprovalRules.CommandShapeHash(tool, args) is { } shape)
+        {
+            var remembered = await conn.ExecuteScalarAsync<int>(
+                "SELECT count(*) FROM approval_rules WHERE owner_id=@owner AND action=@tool AND shape_hash=@shape",
+                new { owner, tool, shape });
+            if (remembered > 0) decision = decision with { Decision = PolicyEngine.Allow, Reason = "remembered_command_shape" };
+        }
         if (decision.Decision != PolicyEngine.Deny && await TypeSecretOffDomain(conn, owner, tool, args))
             decision = decision with { Decision = PolicyEngine.Deny, Reason = "domain_not_allowed" };
         if (!policy.ModelAssist || ActionClassifier.IsBuiltIn(tool) || decision.HardDeny || decision.Decision == PolicyEngine.Deny)
@@ -701,6 +737,18 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         if (id == null) return false;
         await conn.ExecuteAsync("UPDATE approvals SET consumed_at=now() WHERE id=@id", new { id });
         return true;
+    }
+
+    private async Task<bool> HasApprovedUnconsumed(Guid taskId, string tool)
+    {
+        await using var conn = await platform.Data.OpenConnectionAsync();
+        return await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM approvals WHERE task_id=@task AND action=@tool AND status='approved' AND consumed_at IS NULL", new { task = taskId, tool }) > 0;
+    }
+
+    private async Task<bool> HasPendingApproval(Guid taskId, string tool)
+    {
+        await using var conn = await platform.Data.OpenConnectionAsync();
+        return await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM approvals WHERE task_id=@task AND action=@tool AND status='pending'", new { task = taskId, tool }) > 0;
     }
 
     private async Task<bool> CreateApproval(Guid botId, Guid taskId, string tool, string target, JsonElement args, string reason, string riskClass, string summary, int epoch, CancellationToken ct)

@@ -393,6 +393,22 @@ class Worker:
                 if observed == "stop":
                     return None
             return output
+        if authorize:
+            async def gate_request(name, payload):
+                return await self.request_json("POST", "/internal/tools/preexec", {
+                    "workerId": self.worker_id,
+                    "taskId": _task_id(task),
+                    "botId": _bot_id(task),
+                    "epoch": _epoch(task),
+                    "tool": name,
+                    "args": payload,
+                })
+            gate = await RunGuard().preexec(gate_request, name, args)
+            if gate.get("decision") == "ask" or gate.get("status") == "waiting_approval":
+                await self._status(task, "waiting_approval", reason=gate.get("reason"))
+                return None
+            if gate.get("decision") != "allow":
+                return {"ok": False, "status": "denied", "reason": gate.get("reason") or "gate_unavailable"}
         return await self._execute_api(task, name, args)
 
     async def _authorize(self, task: dict, tool: str, args: dict):

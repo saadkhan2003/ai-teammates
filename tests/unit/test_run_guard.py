@@ -37,3 +37,17 @@ def test_invalid_tool_stops_on_the_second_call():
     other = RunGuard()
     assert other.note_invalid("ask_user") is None
     assert other.note_invalid("shell") is None
+
+
+def test_preexec_gate_denies_errors_and_requires_explicit_allow():
+    import asyncio
+    guard = RunGuard()
+    async def allow(tool, args):
+        return {"decision": "allow"}
+    async def malformed(tool, args):
+        return {"status": "ok"}
+    async def unavailable(tool, args):
+        raise OSError("offline")
+    assert asyncio.run(guard.preexec(allow, "shell", {"command": "true"})) == {"decision": "allow"}
+    assert asyncio.run(guard.preexec(malformed, "shell", {}))["decision"] == "deny"
+    assert asyncio.run(guard.preexec(unavailable, "shell", {}))["decision"] == "deny"

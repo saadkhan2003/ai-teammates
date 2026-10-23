@@ -364,8 +364,19 @@ public static class Routes
             await using var conn = await platform.Data.OpenConnectionAsync();
             var taskId = await conn.ExecuteScalarAsync<Guid?>("SELECT a.task_id FROM approvals a JOIN bots b ON b.id=a.bot_id WHERE a.id=@id AND b.owner_id=@owner AND a.status='pending'", new { id, owner = user });
             if (taskId == null) return Results.NotFound();
-            if (decision is "allow_once" or "allow_domain")
+            if (decision is "allow_once" or "allow_domain" or "allow_always")
             {
+                if (decision == "allow_always")
+                {
+                    var proposed = await conn.QuerySingleOrDefaultAsync<(string Action, string Proposed)>("SELECT action, proposed::text FROM approvals WHERE id=@id", new { id });
+                    if (proposed.Action != "shell" || proposed.Proposed.Length > 32768)
+                        return Results.Json(new { error = "narrow_rule_unavailable" }, statusCode: 400);
+                    using var argsDoc = JsonDocument.Parse(proposed.Proposed);
+                    var shape = ApprovalRules.CommandShapeHash(proposed.Action, argsDoc.RootElement);
+                    if (shape == null) return Results.Json(new { error = "narrow_rule_unavailable" }, statusCode: 400);
+                    await conn.ExecuteAsync("INSERT INTO approval_rules (owner_id, action, shape_hash) VALUES (@owner, 'shell', @shape) ON CONFLICT DO NOTHING", new { owner = user, shape });
+                    await platform.Audit(user.Value.ToString(), "approval.rule_created", null, taskId, new { action = "shell" });
+                }
                 if (decision == "allow_domain")
                 {
                     var row = await conn.QuerySingleOrDefaultAsync<(string Target, string RiskClass)>("SELECT target, risk_class FROM approvals WHERE id=@id", new { id });
@@ -379,12 +390,14 @@ public static class Routes
                 }
                 await conn.ExecuteAsync("UPDATE approvals SET status='approved', decided_at=now() WHERE id=@id", new { id });
                 await conn.ExecuteAsync("UPDATE tasks SET status='queued', waiting_reason=NULL, lease_owner=NULL, lease_until=NULL, lease_epoch=lease_epoch+1, updated_at=now() WHERE id=@id AND status='waiting_approval'", new { id = taskId });
+                await platform.Audit(user.Value.ToString(), "approval.allowed", null, taskId, new { decision = decision == "allow_always" ? "always_narrow" : decision });
                 platform.Tasks.Pulse();
             }
             else if (decision == "deny")
             {
                 await conn.ExecuteAsync("UPDATE approvals SET status='denied', decided_at=now() WHERE id=@id", new { id });
                 await conn.ExecuteAsync("UPDATE tasks SET status='failed', error_code='denied', error='The requested action was denied.', finished_at=now(), updated_at=now() WHERE id=@id", new { id = taskId });
+                await platform.Audit(user.Value.ToString(), "approval.denied", null, taskId, new { decision = "deny" });
                 await Reliability.Event(platform, taskId.Value, "error", new { error_code = "denied", error = "The requested action was denied." });
             }
             else
@@ -1122,6 +1135,7 @@ public static class Routes
 
         app.MapPost("/internal/model/complete", (HttpContext ctx, JsonElement body, CancellationToken ct) => Worker(ctx, platform) ? runtime.Model(body, ct) : Task.FromResult<IResult>(Results.Unauthorized()));
         app.MapPost("/internal/tools/authorize", (HttpContext ctx, JsonElement body, CancellationToken ct) => Worker(ctx, platform) ? runtime.Authorize(body, ct) : Task.FromResult<IResult>(Results.Unauthorized()));
+        app.MapPost("/internal/tools/preexec", (HttpContext ctx, JsonElement body, CancellationToken ct) => Worker(ctx, platform) ? runtime.PreExec(body, ct) : Task.FromResult<IResult>(Results.Unauthorized()));
         app.MapPost("/internal/tools/execute", (HttpContext ctx, JsonElement body, CancellationToken ct) => Worker(ctx, platform) ? runtime.Execute(body, ct) : Task.FromResult<IResult>(Results.Unauthorized()));
         app.MapPost("/internal/tools/observe", (HttpContext ctx, JsonElement body, CancellationToken ct) => Worker(ctx, platform) ? runtime.Observe(body, ct) : Task.FromResult<IResult>(Results.Unauthorized()));
 

@@ -8,7 +8,7 @@ import { api } from "@/lib/api";
 import type { Approval } from "@/lib/types";
 import { errorMessage } from "@/lib/utils";
 
-const decided = new Set(["approved", "denied", "allow_once", "allowed", "rejected", "deny", "allow_domain"]);
+const decided = new Set(["approved", "denied", "allow_once", "allowed", "rejected", "deny", "allow_domain", "allow_always"]);
 
 function domainOf(target?: string) {
   if (!target || !target.includes("://")) return "";
@@ -30,7 +30,7 @@ export function Approvals({ approvals, onChanged }: { approvals: Approval[]; onC
   // The workspace only lists pending approvals, so keep what was just decided on screen.
   const [settled, setSettled] = useState<Record<string, { action: string; target: string; denied: boolean }>>({});
 
-  async function decide(id: string, decision: "allow_once" | "allow_domain" | "deny") {
+  async function decide(id: string, decision: "allow_once" | "allow_domain" | "allow_always" | "deny") {
     setPendingId(id);
     setError(null);
     try {
@@ -42,7 +42,7 @@ export function Approvals({ approvals, onChanged }: { approvals: Approval[]; onC
       if (decidedItem) {
         setSettled((prev) => ({ ...prev, [id]: { action: decidedItem.action ?? "", target: decidedItem.target ?? "", denied: decision === "deny" } }));
       }
-      toast.success(decision === "deny" ? "Denied." : decision === "allow_domain" ? "Allowed for this domain." : "Allowed once.");
+      toast.success(decision === "deny" ? "Denied." : decision === "allow_domain" ? "Allowed for this domain." : decision === "allow_always" ? "Saved a rule for this command shape." : "Allowed once.");
       onChanged();
     } catch (caught) {
       setError(errorMessage(caught, "Could not record that decision."));
@@ -96,6 +96,18 @@ export function Approvals({ approvals, onChanged }: { approvals: Approval[]; onC
                     onClick={() => void decide(approval.id, "allow_domain")}
                   >
                     Always allow site
+                  </Button>
+                ) : null}
+                {approval.action === "shell" ? (
+                  <Button
+                    data-testid="approve-command-shape"
+                    size="sm"
+                    variant="outline"
+                    className="rounded-md"
+                    disabled={pendingId === approval.id}
+                    onClick={() => void decide(approval.id, "allow_always")}
+                  >
+                    Always allow this command
                   </Button>
                 ) : null}
                 <Button
