@@ -5,7 +5,7 @@ import urllib.error
 import urllib.request
 import uuid
 
-from test_acceptance import API, OPENROUTER, WORKER, _psql, login
+from test_acceptance import API, OPENROUTER, WORKER, _psql, login, worker_call
 from test_bot_messaging import _bot, _workspace
 
 _CREATED_BOTS = set()
@@ -82,7 +82,8 @@ def _worker_tool(body):
         with urllib.request.urlopen(request, timeout=30) as response:
             return response.status, json.loads(response.read())
     except urllib.error.HTTPError as exc:
-        return exc.code, json.loads(exc.read())
+        raw = exc.read()
+        return exc.code, (json.loads(raw) if raw.strip() else {})
 
 
 def _lease(worker_id):
@@ -98,7 +99,7 @@ def test_force_compact_stall_flag_is_returned_on_lease():
     client, bot, _, task = _setup()
     worker_id = "stall-check-" + uuid.uuid4().hex[:8]
     try:
-        _psql(f"UPDATE tasks SET status='queued',checkpoint='{{\"lastProgressAt\":\"2000-01-01T00:00:00Z\"}}'::jsonb,force_compact=false WHERE id='{task}'")
+        _psql(f"UPDATE tasks SET status='queued',checkpoint=jsonb_build_object('lastProgressAt',(now()-interval '200 seconds')::text),force_compact=false WHERE id='{task}'")
         leases = _lease(worker_id)
         leased = next(item for item in leases if item["id"] == task)
         assert leased.get("force_compact") is False
@@ -122,7 +123,8 @@ def _compact(task, body):
         with urllib.request.urlopen(request, timeout=30) as response:
             return response.status, json.loads(response.read())
     except urllib.error.HTTPError as exc:
-        return exc.code, json.loads(exc.read())
+        raw = exc.read()
+        return exc.code, (json.loads(raw) if raw.strip() else {})
 
 
 def test_shell_execute_deduped_by_idempotency_key():
@@ -149,7 +151,7 @@ def test_shell_execute_deduped_by_idempotency_key():
         read_status, read_result = _worker_tool({
             "taskId": task, "botId": bot, "epoch": 1, "tool": "read_file", "args": {"path": path}
         })
-        assert read_status == 200 and read_result["output"]["content"] == "first execution", read_result
+        assert read_status == 200 and read_result["output"]["content"].strip() == "first execution", read_result
     finally:
         _cleanup(client, bot, task)
 
