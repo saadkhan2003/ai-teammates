@@ -103,6 +103,11 @@ def submit(client: Client, conversation: str, text: str, as_task=True) -> str:
     return body["taskId"]
 
 
+# The arch policy engine asks before write-class actions as well as new browser origins.
+# Anything the test decides itself (delete_file, type_secret, setup_env) stays out of this set.
+AUTO_ALLOW_ACTIONS = {"browser_open", "write_file"}
+
+
 def auto_allow_browser_opens(bot: str, stop: threading.Event) -> threading.Thread:
     """v0.4 asks for Allow once on every run that opens a new browser origin."""
     def loop() -> None:
@@ -112,7 +117,7 @@ def auto_allow_browser_opens(bot: str, stop: threading.Event) -> threading.Threa
                 status, workspace = helper_client.call("GET", f"/api/bots/{bot}/workspace")
                 if status == 200:
                     for item in workspace.get("approvals") or []:
-                        if item.get("action") == "browser_open":
+                        if item.get("action") in AUTO_ALLOW_ACTIONS:
                             helper_client.call("POST", f"/api/approvals/{item['id']}/decide", {"decision": "allow_once"})
             except Exception:
                 pass
