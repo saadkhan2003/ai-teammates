@@ -96,12 +96,17 @@ def _restore_if_missing(client, name: str) -> None:
 
 def _run(client, bot_id: str, computer_id: str, name: str) -> None:
     _ensure_running(name)
-    status, uploaded = client.call(
-        "PUT",
-        f"/api/bots/{bot_id}/files",
-        raw=MARKER_BODY,
-        headers={"x-path": MARKER, "Content-Type": "application/octet-stream"},
-    )
+    status, uploaded = 0, None
+    for _ in range(60):
+        status, uploaded = client.call(
+            "PUT",
+            f"/api/bots/{bot_id}/files",
+            raw=MARKER_BODY,
+            headers={"x-path": MARKER, "Content-Type": "application/octet-stream"},
+        )
+        if status != 503:
+            break
+        time.sleep(1)  # the computer is still settling after an earlier suite
     assert status == 200, uploaded
     status, before = client.call("GET", f"/api/bots/{bot_id}/files/raw?path={MARKER}")
     assert status == 200 and MARKER_BODY.decode() in str(before), before

@@ -103,6 +103,14 @@ app.UseExceptionHandler(handler => handler.Run(async ctx =>
         });
         return;
     }
+    if (feature?.Error is ComputeException busy && busy.Code == ComputeErrorCode.Conflict && busy.Message.StartsWith("another lifecycle operation"))
+    {
+        // A start, stop or restore is already running for this computer. The caller should retry shortly.
+        ctx.Response.StatusCode = 503;
+        ctx.Response.Headers["Retry-After"] = "2";
+        await ctx.Response.WriteAsJsonAsync(new { error = "computer_busy" });
+        return;
+    }
     var message = OutputRedactor.Redact(feature?.Error.Message);
     app.Logger.LogError("request failed {Path} {Message}", ctx.Request.Path, message);
     ctx.Response.StatusCode = 500;

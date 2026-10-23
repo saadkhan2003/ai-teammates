@@ -240,7 +240,7 @@ def test_flushed_chain_refuses_start_until_rules_return():
             if status == 200 or time.time() > retry_until:
                 break
             # A 503 while the guard and the rules settle is normal, whatever its recovering label.
-            assert status == 503 and started.get("error") in {"computer_recovering", "computer_isolation_missing"}, started
+            assert status == 503 and started.get("error") in {"computer_recovering", "computer_isolation_missing", "computer_busy"}, started
             time.sleep(2)
         assert status in {200, 503}, started
         deadline = time.time() + 60
