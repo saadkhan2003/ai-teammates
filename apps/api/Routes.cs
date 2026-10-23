@@ -442,24 +442,33 @@ public static class Routes
             if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
             var path = ctx.Request.Headers["x-path"].ToString();
             if (string.IsNullOrWhiteSpace(path)) path = "/workspace/upload.bin";
-            using var memory = new MemoryStream();
-            await ctx.Request.Body.CopyToAsync(memory, ct);
-            var b64 = Convert.ToBase64String(memory.ToArray());
+            if (!BotFileTransfer.IsSafePathHeader(path)) return Results.BadRequest(new { error = "invalid_path" });
+            byte[] bytes;
+            try { bytes = await BotFileTransfer.ReadBoundedAsync(ctx.Request.Body, BotFileTransfer.MaximumBytes, ct); }
+            catch (FileTransferTooLargeException) { return Results.StatusCode(StatusCodes.Status413PayloadTooLarge); }
+            var b64 = Convert.ToBase64String(bytes);
             var placement = await platform.PlacementForBot(id, ct);
             var (code, _, _) = await runtime.Run(placement.Computer, id, ["python3", "-c", BotFs.Script(ctx.Request.Headers["x-append"] == "1" ? "append_b64(sys.argv[1], sys.argv[2])" : "write_b64(sys.argv[1], sys.argv[2])"), path, b64], null, ct);
             if (code != 0) return Results.Json(new { error = code == 4 ? "path_escapes_workspace" : "write_failed" }, statusCode: code == 4 ? 400 : 500);
-            return Results.Json(new { ok = true, path, size = memory.Length });
+            return Results.Json(new { ok = true, path, size = bytes.Length, contentType = BotFileTransfer.SniffContentType(path, bytes) });
         });
 
         app.MapGet("/api/bots/{id:guid}/files/raw", async (HttpContext ctx, Guid id, string path, CancellationToken ct) =>
         {
             var user = await RequireUser(ctx, platform);
             if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (!BotFileTransfer.IsSafePathHeader(path)) return Results.BadRequest(new { error = "invalid_path" });
             var placement = await platform.PlacementForBot(id, ct);
             var (code, stdout, _) = await runtime.Run(placement.Computer, id, ["python3", "-c", BotFs.Script("read_b64(sys.argv[1])"), path], null, ct);
             if (code != 0 || string.IsNullOrWhiteSpace(stdout)) return Results.NotFound();
-            var bytes = Convert.FromBase64String(stdout.Trim());
-            return Results.File(bytes, "application/octet-stream", Path.GetFileName(path));
+            byte[] bytes;
+            try { bytes = Convert.FromBase64String(stdout.Trim()); }
+            catch (FormatException) { return Results.StatusCode(StatusCodes.Status502BadGateway); }
+            if (bytes.LongLength > BotFileTransfer.MaximumBytes) return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+            var content = BotFileTransfer.SniffContentType(path, bytes);
+            if (content.StartsWith("text/", StringComparison.Ordinal) && BotFileTransfer.BlockedByDlp(System.Text.Encoding.UTF8.GetString(bytes)))
+                return Results.Json(new { error = Dlp.Blocked }, statusCode: StatusCodes.Status403Forbidden);
+            return Results.File(bytes, content, Path.GetFileName(path));
         });
 
         app.MapGet("/api/bots/{id:guid}/memories", async (HttpContext ctx, Guid id) =>
