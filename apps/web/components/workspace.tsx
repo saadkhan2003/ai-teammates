@@ -40,6 +40,7 @@ import { BotAvatar } from "@/components/bot-avatar";
 import { BotAvatarPicker } from "@/components/bot-avatar-picker";
 import { defaultBotAvatar } from "@/lib/avatars";
 import { HISTORY_PAGE, mergeHistory } from "@/lib/history";
+import { clampWorkBudget, WORK_BUDGET_LIMITS } from "@/lib/work-budget";
 import type { ChatMessage } from "@/lib/types";
 import { RefreshNotice } from "@/components/refresh-notice";
 import { LibraryPane } from "@/components/library-pane";
@@ -620,7 +621,44 @@ function BotSettings({
   onSaved: () => void;
 }) {
   const [draft, setDraft] = useState({ name, role, instructions, model, avatar, avatarShape, avatarColor, notifications, peerMessaging });
+  const [budgetSteps, setBudgetSteps] = useState(200);
+  const [budgetMinutes, setBudgetMinutes] = useState(60);
+  const [pauseOnBudget, setPauseOnBudget] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [budgetError, setBudgetError] = useState<string | null>(null);
+  const [budgetSaved, setBudgetSaved] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    api<{ maxSteps: number; maxSeconds: number; pauseOnBudget: boolean }>(`/api/bots/${botId}/work-settings`)
+      .then(settings => {
+        if (!active) return;
+        setBudgetSteps(settings.maxSteps);
+        setBudgetMinutes(Math.max(1, Math.ceil(settings.maxSeconds / 60)));
+        setPauseOnBudget(settings.pauseOnBudget);
+      })
+      .catch(caught => {
+        if (active) setBudgetError(errorMessage(caught, "Could not load work settings."));
+      });
+    return () => { active = false; };
+  }, [botId]);
+
+  async function saveBudget() {
+    setBudgetError(null);
+    setBudgetSaved(false);
+    const values = clampWorkBudget(Number(budgetSteps), Number(budgetMinutes));
+    setBudgetSteps(values.maxSteps);
+    setBudgetMinutes(values.maxMinutes);
+    try {
+      await api(`/api/bots/${botId}/work-settings`, {
+        method: "PATCH",
+        body: JSON.stringify({ maxSteps: values.maxSteps, maxSeconds: values.maxMinutes * 60, pauseOnBudget }),
+      });
+      setBudgetSaved(true);
+    } catch (caught) {
+      setBudgetError(errorMessage(caught, "Could not save work budget."));
+    }
+  }
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -669,6 +707,24 @@ function BotSettings({
           onCheckedChange={(checked) => setDraft({ ...draft, peerMessaging: checked })}
         />
       </div>
+      <section className="grid gap-3 border-t border-border pt-3" aria-labelledby="work-budget-heading">
+        <div>
+          <h3 id="work-budget-heading" className="text-sm font-medium">Long-running work</h3>
+          <p className="text-xs text-muted-foreground">Limits apply to each task. Steps: 4–1,000 · Minutes: 1–360.</p>
+        </div>
+        <Label htmlFor="work-budget-steps">Max steps</Label>
+        <Input id="work-budget-steps" data-testid="work-budget-steps" type="number" min={WORK_BUDGET_LIMITS.steps.min} max={WORK_BUDGET_LIMITS.steps.max} step={1} value={budgetSteps} onChange={event => setBudgetSteps(Number(event.target.value))} />
+        <Label htmlFor="work-budget-minutes">Max minutes</Label>
+        <Input id="work-budget-minutes" data-testid="work-budget-minutes" type="number" min={WORK_BUDGET_LIMITS.minutes.min} max={WORK_BUDGET_LIMITS.minutes.max} step={1} value={budgetMinutes} onChange={event => setBudgetMinutes(Number(event.target.value))} />
+        <div className="flex items-center justify-between gap-3 text-sm">
+          <Label htmlFor="work-budget-pause">Pause when the budget is reached</Label>
+          <Switch id="work-budget-pause" data-testid="work-budget-pause" checked={pauseOnBudget} onCheckedChange={setPauseOnBudget} />
+        </div>
+        <p className="text-xs text-muted-foreground">Current budget: {clampWorkBudget(Number(budgetSteps), Number(budgetMinutes)).maxSteps} steps · {clampWorkBudget(Number(budgetSteps), Number(budgetMinutes)).maxMinutes} min</p>
+        {budgetError ? <p role="alert" className="text-sm text-destructive">{budgetError}</p> : null}
+        {budgetSaved ? <p role="status" className="text-sm text-muted-foreground">Work budget saved.</p> : null}
+        <Button type="button" data-testid="work-budget-save" size="sm" onClick={() => void saveBudget()}>Save work budget</Button>
+      </section>
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
       <Button type="submit" size="sm">
         Save

@@ -71,6 +71,49 @@ def _put_transcript(task, body):
         return exc.code
 
 
+def _worker_tool(body):
+    request = urllib.request.Request(
+        API + "/internal/tools/execute",
+        data=json.dumps(body).encode(),
+        method="POST",
+        headers={"Authorization": "Bearer " + WORKER, "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status, json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read())
+
+
+def test_shell_execute_deduped_by_idempotency_key():
+    client, bot, _, task = _setup()
+    try:
+        _psql(f"UPDATE tasks SET status='running',waiting_reason=NULL,lease_owner='dedupe-test',lease_until=now()+interval '1 minute',lease_epoch=1 WHERE id='{task}'")
+        path = f"/workspace/dedupe-{task}.txt"
+        key = task + ":dedupe-integration"
+        request = {
+            "taskId": task,
+            "botId": bot,
+            "epoch": 1,
+            "tool": "write_file",
+            "args": {"path": path, "content": "first execution"},
+            "idempotencyKey": key,
+        }
+        status, first = _worker_tool(request)
+        assert status == 200 and first.get("ok") is True, first
+        status, second = _worker_tool({**request, "args": {"path": path, "content": "second execution"}})
+        assert status == 200 and second.get("deduped") is True, second
+        assert _psql(f"SELECT count(*) FROM tool_execution_dedupe WHERE task_id='{task}' AND idempotency_key='{key}' AND status='completed'") == "1"
+        assert _psql(f"SELECT count(*) FROM task_steps WHERE task_id='{task}' AND tool='write_file'") == "1"
+
+        read_status, read_result = _worker_tool({
+            "taskId": task, "botId": bot, "epoch": 1, "tool": "read_file", "args": {"path": path}
+        })
+        assert read_status == 200 and read_result["output"]["content"] == "first execution", read_result
+    finally:
+        _cleanup(client, bot, task)
+
+
 def test_continue_raises_clamped_budget_and_audits_owner_action():
     client, bot, _, task = _setup()
     try:
@@ -190,6 +233,40 @@ def test_transcript_epoch_fence_rejects_stale_and_accepts_current_epoch():
         assert _put_transcript(task, {**body, "epoch": 6}) == 409
         assert _put_transcript(task, {**body, "epoch": 7}) == 200
         assert _psql(f"SELECT count(*) FROM task_transcript WHERE task_id='{task}'") == "1"
+    finally:
+        _cleanup(client, bot, task)
+
+
+def test_transcript_put_is_append_only():
+    client, bot, _, task = _setup()
+    try:
+        _psql(f"UPDATE tasks SET status='running',lease_epoch=7,lease_owner='test-worker',lease_until=now()+interval '1 minute' WHERE id='{task}'")
+        first = [{"role": "user", "content": "first"}, {"role": "assistant", "content": "second"}, {"role": "user", "content": "third"}]
+        assert _put_transcript(task, {"epoch": 7, "messages": first}) == 200
+        first_ids = _psql(f"SELECT string_agg(id::text,',' ORDER BY seq) FROM task_transcript WHERE task_id='{task}'")
+
+        extended = first + [{"role": "assistant", "content": "fourth"}, {"role": "user", "content": "fifth"}]
+        assert _put_transcript(task, {"epoch": 7, "messages": extended}) == 200
+        extended_ids = _psql(f"SELECT string_agg(id::text,',' ORDER BY seq) FROM task_transcript WHERE task_id='{task}'")
+        assert extended_ids.split(",")[:3] == first_ids.split(",")
+        assert _psql(f"SELECT count(*) FROM task_transcript WHERE task_id='{task}'") == "5"
+
+        rewritten = [{"role": "user", "content": "rewritten prefix"}, *extended[1:]]
+        assert _put_transcript(task, {"epoch": 7, "messages": rewritten}) == 200
+        assert _psql(f"SELECT count(*) FROM task_transcript WHERE task_id='{task}'") == "5"
+        assert _psql(f"SELECT content FROM task_transcript WHERE task_id='{task}' AND seq=0") == "rewritten prefix"
+    finally:
+        _cleanup(client, bot, task)
+
+
+def test_pause_on_budget_work_setting_persists():
+    client, bot, _, task = _setup()
+    try:
+        status, body = client.call("PATCH", f"/api/bots/{bot}/work-settings", {"pauseOnBudget": False})
+        assert status == 200, body
+        status, settings = client.call("GET", f"/api/bots/{bot}/work-settings")
+        assert status == 200, settings
+        assert settings["pauseOnBudget"] is False
     finally:
         _cleanup(client, bot, task)
 

@@ -66,3 +66,51 @@ test("a continued resume card has no actions", async ({ page }) => {
   await expect(page.getByTestId("resume-raise")).toHaveCount(0);
   await expect(page.getByTestId("resume-stop")).toHaveCount(0);
 });
+
+test("stopping an open budget card posts the task id and removes its actions", async ({ page }) => {
+  await showResumeMessage(page, { type: "resume_card", reason: "budget_reached", state: "open", taskId: TASK, stepsUsed: 50, maxSteps: 50, secondsUsed: 300, maxSeconds: 300, current: "Write the report" });
+  let postedUrl = "";
+  await page.route(`**/api/tasks/${TASK}/cancel`, async route => {
+    postedUrl = route.request().url();
+    expect(route.request().method()).toBe("POST");
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.getByTestId("resume-stop").click();
+  expect(postedUrl).toContain(`/api/tasks/${TASK}/cancel`);
+  await expect(page.getByTestId("resume-card")).toHaveAttribute("data-state", "stopped");
+  await expect(page.getByTestId("resume-card")).toContainText("Stopped.");
+  await expect(page.getByTestId("resume-continue")).toHaveCount(0);
+  await expect(page.getByTestId("resume-raise")).toHaveCount(0);
+  await expect(page.getByTestId("resume-stop")).toHaveCount(0);
+});
+
+test("a stopped budget card never shows actions", async ({ page }) => {
+  await showResumeMessage(page, { type: "resume_card", reason: "budget_reached", state: "stopped", taskId: TASK, stepsUsed: 50, maxSteps: 50, secondsUsed: 300, maxSeconds: 300, current: "Write the report" });
+  await expect(page.getByTestId("resume-continue")).toHaveCount(0);
+  await expect(page.getByTestId("resume-raise")).toHaveCount(0);
+  await expect(page.getByTestId("resume-stop")).toHaveCount(0);
+});
+
+test("long-running work settings save the clamped budget", async ({ page }) => {
+  await login(page);
+  await page.route("**/api/bots", route => route.fulfill({ json: { bots: [bot] } }));
+  await page.route("**/api/system/llm-status", route => route.fulfill({ json: { hasKey: true } }));
+  await page.route(`**/api/bots/${UI_BOT}/**`, route => route.fulfill({ json: [] }));
+  await page.route(`**/api/bots/${UI_BOT}/workspace`, route => route.fulfill({ json: { bot, conversationId: UI_BOT, tasks: [], messages: [], messagesHasMore: false, approvals: [], pages: [], holder: "agent", openrouterConnected: true } }));
+  let body: Record<string, unknown> | undefined;
+  await page.route(`**/api/bots/${UI_BOT}/work-settings`, async route => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({ json: { maxSteps: 200, maxSeconds: 3600, requireTests: false, pauseOnBudget: true } });
+      return;
+    }
+    body = route.request().postDataJSON() as Record<string, unknown>;
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.goto(`/bots/${UI_BOT}`);
+  await page.getByTestId("bot-settings-gear").click();
+  await page.getByTestId("work-budget-steps").fill("1200");
+  await page.getByTestId("work-budget-minutes").fill("500");
+  await page.getByTestId("work-budget-pause").click();
+  await page.getByTestId("work-budget-save").click();
+  await expect.poll(() => body).toEqual({ maxSteps: 1000, maxSeconds: 21600, pauseOnBudget: false });
+});

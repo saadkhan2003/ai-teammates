@@ -40,6 +40,8 @@ COPY db/025_library_actions.sql /migrations/025_library_actions.sql
 COPY db/026_library_shares.sql /migrations/026_library_shares.sql
 COPY db/028_long_run_resume.sql /migrations/028_long_run_resume.sql
 COPY db/029_resume_timing.sql /migrations/029_resume_timing.sql
+COPY db/030_tool_dedupe.sql /migrations/030_tool_dedupe.sql
+COPY db/031_pause_on_budget.sql /migrations/031_pause_on_budget.sql
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
     DOTNET_gcServer=0 \
     DOTNET_GCHeapHardLimit=0x10000000

@@ -4,6 +4,41 @@ namespace Teammates.UnitTests;
 
 public class ReliabilityTests
 {
+    [Theory]
+    [InlineData("shell", true)]
+    [InlineData("write_file", true)]
+    [InlineData("edit_file", true)]
+    [InlineData("delete_file", true)]
+    [InlineData("git_commit", true)]
+    [InlineData("setup_env", true)]
+    [InlineData("run_tests", true)]
+    [InlineData("read_file", false)]
+    [InlineData("shell", false)]
+    public void ToolDedupeOnlyAppliesToNonIdempotentToolsWithAKey(string tool, bool hasKey)
+    {
+        Assert.Equal(hasKey && tool != "read_file", Teammates.Api.ToolDedupe.Applies(tool, hasKey ? "key" : null));
+    }
+
+    [Theory]
+    [InlineData("completed", "replay")]
+    [InlineData("in_progress", "in_progress")]
+    [InlineData(null, "execute")]
+    [InlineData("unknown", "execute")]
+    public void ToolDedupeDecisionHandlesStoredStates(string? status, string expected)
+    {
+        Assert.Equal(expected, Teammates.Api.ToolDedupe.Decide(status));
+    }
+
+    [Theory]
+    [InlineData("in_progress", 300, "in_progress")]
+    [InlineData("in_progress", 300.01, "execute")]
+    [InlineData("completed", 600, "replay")]
+    [InlineData(null, 600, "execute")]
+    public void ToolDedupeDecisionReclaimsOnlyStaleInProgressClaims(string? status, double ageSeconds, string expected)
+    {
+        Assert.Equal(expected, Teammates.Api.ToolDedupe.Decide(status, ageSeconds));
+    }
+
     [Fact]
     public void ResumePolicyBoundsRetriesAndExcludesHumanStates()
     {
@@ -58,6 +93,22 @@ public class ReliabilityTests
         Assert.Equal(3600, RunBudget.Resolve(null,null,null,null).MaxSeconds);
         Assert.Equal(4, RunBudget.Resolve(1,1,null,null).MaxSteps);
         Assert.Equal(21600, RunBudget.Resolve(null,99999,null,null).MaxSeconds);
+        Assert.True(RunBudget.ResolvePauseOnBudget(null, null));
+        Assert.True(RunBudget.ResolvePauseOnBudget(null, true, false));
+        Assert.False(RunBudget.ResolvePauseOnBudget(null, false));
+        Assert.False(RunBudget.ResolvePauseOnBudget(false, true));
+        Assert.True(RunBudget.ResolvePauseOnBudget(true, false));
+        using var absent = JsonDocument.Parse("{}");
+        using var enabled = JsonDocument.Parse("{\"pauseOnBudget\":true}");
+        using var disabled = JsonDocument.Parse("{\"pauseOnBudget\":false}");
+        using var invalid = JsonDocument.Parse("{\"pauseOnBudget\":\"false\"}");
+        Assert.True(RunBudget.TryParsePauseOnBudget(absent.RootElement, out var unset));
+        Assert.Null(unset);
+        Assert.True(RunBudget.TryParsePauseOnBudget(enabled.RootElement, out var parsedTrue));
+        Assert.True(parsedTrue);
+        Assert.True(RunBudget.TryParsePauseOnBudget(disabled.RootElement, out var parsedFalse));
+        Assert.False(parsedFalse);
+        Assert.False(RunBudget.TryParsePauseOnBudget(invalid.RootElement, out _));
         Assert.Equal(StallDecision.Nudge, StallPolicy.Decide(TimeSpan.FromMinutes(5),0,TimeSpan.FromMinutes(5)));
         Assert.Equal(StallDecision.Block, StallPolicy.Decide(TimeSpan.FromMinutes(10),1,TimeSpan.FromMinutes(5)));
         Assert.False(TestGate.Check(true,null,false));
