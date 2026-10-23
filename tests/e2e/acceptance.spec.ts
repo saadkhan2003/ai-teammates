@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
+import { autoAllowBrowserOpens } from "./helpers";
 
 const owner = process.env.OWNER_USERNAME ?? "saad";
 const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
@@ -164,7 +165,8 @@ async function openPane(page: Page, tab: "Overview" | "Computer" | "Routines" | 
 async function openSecrets(page: Page) {
   if (!page.url().includes("/settings/secrets")) {
     await page.getByTestId("account-button").click();
-    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+    await page.getByRole("menuitem", { name: "Settings" }).click();
+    await expect(page.getByTestId("settings-modal")).toBeVisible();
     await page.getByRole("tab", { name: "Vault", exact: true }).click();
   }
   await expect(page).toHaveURL(/\/settings\/secrets/);
@@ -254,6 +256,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
     await page.getByTestId("new-bot").click();
     await page.getByRole("menuitem", { name: "New teammate" }).click();
     await page.getByTestId("bot-name").fill(name);
+    await page.getByTestId("bot-advanced-toggle").click();
     await page.getByTestId("bot-role").fill("Portal clerk");
     await page.getByTestId("bot-instructions").fill("Use the computer. Stop for approvals.");
     await page.getByTestId("bot-create").click();
@@ -262,6 +265,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
     botUrl = page.url();
     botId = botUrl.split("/bots/")[1].split(/[?#]/)[0];
     createdBotIds.push(botId);
+    autoAllowBrowserOpens(page, botId);
     await page.goto("/");
     await expect(page.getByTestId("sidebar").getByRole("link", { name })).toBeVisible();
     await shot(page, "bots-list");
@@ -735,6 +739,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
     await page.getByTestId("new-bot").click();
     await page.getByRole("menuitem", { name: "New teammate" }).click();
     await page.getByTestId("bot-name").fill(atlas);
+    await page.getByTestId("bot-advanced-toggle").click();
     await page.getByTestId("bot-role").fill("Second teammate");
     await page.getByTestId("bot-instructions").fill("Same tabs as every other bot.");
     await page.getByTestId("bot-create").click();

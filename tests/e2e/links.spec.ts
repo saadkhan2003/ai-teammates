@@ -37,7 +37,7 @@ test("every in-app link resolves", async ({ page }) => {
   }
 
   await page.goto("/settings", { waitUntil: "domcontentloaded" });
-  await page.getByRole("heading", { name: "Settings" }).waitFor();
+  await page.getByRole("heading", { name: "Settings", level: 1 }).waitFor();
   await collect(page, paths);
 
   const failures: string[] = [];

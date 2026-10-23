@@ -595,9 +595,9 @@ export function ComputerPane({
       data-testid="computer-tab"
       data-vnc-state={vncState}
       data-desktop-mode={mode}
-      className={cn("flex min-h-0 min-w-0 flex-col gap-3", !compact && "h-full", fullscreen && "fixed inset-0 z-[80] gap-2 overflow-hidden bg-background")}
+      className={cn("flex min-h-0 min-w-0 flex-col gap-3", !compact && "md:h-full", fullscreen && "fixed inset-0 z-[80] gap-2 overflow-hidden bg-background")}
     >
-      <div ref={stageRef} data-testid="desktop-stage" className={cn("flex min-h-0 min-w-0 flex-col gap-2 bg-background", !compact && "h-full min-h-0 flex-1")}>
+      <div ref={stageRef} data-testid="desktop-stage" className={cn("flex min-h-0 min-w-0 flex-col gap-2 bg-background", !compact && "md:h-full md:min-h-0 md:flex-1")}>
         {fullscreen ? (
           <div className="flex shrink-0 items-center gap-2">
             <p className="text-sm font-medium">Computer</p>
@@ -659,7 +659,7 @@ export function ComputerPane({
           </p>
         </div>
         )}
-        <div className={cn("grid w-full place-items-center", fillWindow && "min-h-0 w-full flex-1 [container-type:size]")}>
+        <div className={cn("grid w-full place-items-center", fillWindow && (fullscreen || nativeFs ? "min-h-0 w-full flex-1 [container-type:size]" : "md:min-h-0 md:w-full md:flex-1 md:[container-type:size]"))}>
         <div
           ref={frameRef}
           data-testid="desktop-frame"
@@ -667,7 +667,7 @@ export function ComputerPane({
           className={cn(
             "relative touch-none overflow-hidden bg-background",
             fillWindow
-              ? "h-full w-full"
+              ? (fullscreen || nativeFs ? "h-full w-full" : "aspect-[4/3] w-full md:aspect-auto md:h-full")
               : "aspect-[4/3] w-full",
             compact && "cursor-pointer rounded-lg",
           )}

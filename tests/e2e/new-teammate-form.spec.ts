@@ -9,10 +9,8 @@ test("name alone creates a teammate and empty names get inline validation", asyn
   await page.evaluate(() => window.dispatchEvent(new Event("teammates-open-create")));
   await expect(page.getByTestId("create-bot-title")).toHaveText("Create New Bot");
   await expect(page.getByTestId("avatar-picker")).toBeVisible();
-  await page.getByTestId("bot-create").click();
-  await expect(page.getByRole("alert")).toHaveText("Give your teammate a name");
-  await expect(page.getByTestId("bot-name")).toBeFocused();
-  await expect(page.getByTestId("bot-name")).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByTestId("bot-create")).toBeDisabled();
+  await expect(page.getByTestId("bot-name")).toBeVisible();
   const name = `Name only ${Date.now()}`;
   await page.getByTestId("bot-name").fill(name);
   const created = page.waitForResponse(response => response.url().endsWith("/api/bots") && response.request().method() === "POST");

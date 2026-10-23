@@ -8,6 +8,7 @@ test("chat empty state, missing-key banner, Markdown, composer shortcuts and col
   await expect(page.getByTestId("app-shell")).toBeVisible();
   const bot = "11111111-1111-4111-8111-111111111111";
   let messages: object[] = [];
+  await page.route(`**/api/bots/${bot}/**`, route => route.fulfill({ json: [] }));
   await page.route("**/api/system/llm-status", route => route.fulfill({ json: { hasKey: false } }));
   await page.route(`**/api/bots/${bot}/workspace`, route => route.fulfill({ json: {
     bot: { id: bot, name: "Polish", role: "Teammate" }, conversationId: bot,
