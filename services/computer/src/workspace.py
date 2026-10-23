@@ -37,6 +37,8 @@ def bot_root() -> Path:
 
 
 def locate_under(root: Path, raw: str) -> Path:
+    if "\x00" in (raw or ""):
+        raise ValueError("invalid_path")
     text = (raw or "").strip() or "."
     if text == "/workspace" or text == "/workspace/":
         path = root

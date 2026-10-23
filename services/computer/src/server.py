@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import os
 import time
 from contextlib import asynccontextmanager
@@ -46,6 +47,11 @@ async def lifespan(app: FastAPI):
     global hub
     start_fixtures()
     hub = BrowserHub(manager)
+    pty_spec = importlib.util.spec_from_file_location("computer_terminal_pty", Path(__file__).with_name("pty.py"))
+    assert pty_spec is not None and pty_spec.loader is not None
+    terminal_pty = importlib.util.module_from_spec(pty_spec)
+    pty_spec.loader.exec_module(terminal_pty)
+    terminal_task = asyncio.create_task(terminal_pty.serve_all())
     try:
         await manager.restore_all()
         computer_id = os.environ.get("COMPUTER_ID", "").strip()
@@ -56,6 +62,11 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         print(json.dumps({"level": "error", "msg": "restore failed", "error": str(exc)}), flush=True)
     yield
+    terminal_task.cancel()
+    try:
+        await terminal_task
+    except asyncio.CancelledError:
+        pass
     await hub.close()
 
 

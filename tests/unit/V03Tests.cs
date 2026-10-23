@@ -5,6 +5,16 @@ namespace Teammates.UnitTests;
 public class V03Tests
 {
     [Fact]
+    public async Task FileTransferBoundsUploadAndSniffsUnsafeContent()
+    {
+        await using var input = new MemoryStream(new byte[] { 1, 2, 3, 4 });
+        await Assert.ThrowsAsync<Teammates.Api.FileTransferTooLargeException>(() => Teammates.Api.BotFileTransfer.ReadBoundedAsync(input, 3, CancellationToken.None));
+        Assert.Equal("text/plain; charset=utf-8", Teammates.Api.BotFileTransfer.SniffContentType("note.txt", "hello"u8));
+        Assert.Equal("application/octet-stream", Teammates.Api.BotFileTransfer.SniffContentType("note.txt", new byte[] { 0, 1, 2 }));
+        Assert.True(Teammates.Api.BotFileTransfer.BlockedByDlp("seeded test secret sk-test-fake_1234567890"));
+    }
+
+    [Fact]
     public void BotWorkspacesDoNotOverlap()
     {
         var left = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
