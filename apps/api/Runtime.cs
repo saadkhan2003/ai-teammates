@@ -115,6 +115,12 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         try
         {
             var output = await Dispatch(owner, botId, taskId, tool, args, actorId, desktopEpoch ?? 0, ct);
+            if (output is JsonElement desktopResult && desktopResult.ValueKind == JsonValueKind.Object &&
+                desktopResult.TryGetProperty("code", out var desktopCode) && desktopCode.GetString() == "DESKTOP_BUSY")
+            {
+                await Step(taskId, tool, args, "DESKTOP_BUSY", false, new { status = "DESKTOP_BUSY" });
+                return Results.Json(new { code = "DESKTOP_BUSY" }, statusCode: 409);
+            }
             if (tool == "react_to_message")
             {
                 var json = JsonSerializer.Serialize(output);
@@ -134,6 +140,12 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         catch (ComputeException ex) when (ex.IsRecovering)
         {
             return Results.Json(new { error = ComputeException.RecoveringMessage }, statusCode: 503);
+        }
+        catch (ComputeException ex) when (ex.Code == ComputeErrorCode.FailedPrecondition &&
+            (tool is "browser_open" or "browser_extract" or "browser_click" or "browser_screenshot" or "type_secret" or "shell" or "setup_env"))
+        {
+            await Step(taskId, tool, args, "DESKTOP_BUSY", false, new { status = "DESKTOP_BUSY" });
+            return Results.Json(new { code = "DESKTOP_BUSY" }, statusCode: 409);
         }
         catch (ComputeException ex) when (ex.Code == ComputeErrorCode.PermissionDenied)
         {
@@ -205,11 +217,13 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
             case "shell":
             {
                 var command = Arg(args, "command");
-                var (code, stdout, stderr) = await Run(computer, botId, BotFs.ShellArgs(command), null, ct);
-                return new { exitCode = code, stdout = OutputRedactor.Redact(stdout), stderr = OutputRedactor.Redact(stderr) };
+                var response = await platform.Compute.ControlAsync(computer, $"/desktops/{placement.Desktop}/shell",
+                    JsonSerializer.Serialize(new { command, timeout = 30, actor_id = actorId, epoch = desktopEpoch }), ct);
+                using var shellResult = JsonDocument.Parse(response);
+                return shellResult.RootElement.Clone();
             }
             case "setup_env":
-                return await Setup(owner, botId, taskId, computer, args, ct);
+                return await Setup(owner, botId, taskId, computer, placement.Desktop, args, actorId, desktopEpoch, ct);
             case "type_secret":
                 return await TypeSecret(owner, botId, taskId, computer, args, actorId, desktopEpoch, ct);
             case "ask_user":
@@ -243,7 +257,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         }
     }
 
-    private async Task<object> Setup(Guid owner, Guid botId, Guid taskId, ComputerId computer, JsonElement args, CancellationToken ct)
+    private async Task<object> Setup(Guid owner, Guid botId, Guid taskId, ComputerId computer, string desktop, JsonElement args, string actorId, long desktopEpoch, CancellationToken ct)
     {
         var reference = Arg(args, "secret_ref");
         var command = Arg(args, "command");
@@ -264,9 +278,11 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
             value = "";
             throw new ToolHalt("denied", "command contains a resolved secret");
         }
-        var (code, stdout, stderr) = await Run(computer, botId, BotFs.ShellArgs(command), new Dictionary<string, string> { [envName] = value }, ct, [new SecretEnvBinding(envName, reference, botId.ToString())]);
+        var response = await platform.Compute.ControlAsync(computer, $"/desktops/{desktop}/setup-env",
+            JsonSerializer.Serialize(new { command, env = new Dictionary<string, string> { [envName] = value }, timeout = 30, actor_id = actorId, epoch = desktopEpoch }), ct);
         value = "";
-        return new { exitCode = code, stdout, stderr };
+        using var setupResult = JsonDocument.Parse(response);
+        return setupResult.RootElement.Clone();
     }
 
     private async Task<object> TypeSecret(Guid owner, Guid botId, Guid taskId, ComputerId computer, JsonElement args, string actorId, long desktopEpoch, CancellationToken ct)

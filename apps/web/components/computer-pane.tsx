@@ -543,6 +543,31 @@ export function ComputerPane({
     }
   }
 
+  async function forceRelease() {
+    const reason = window.prompt("Reason for releasing this desktop lease:")?.trim();
+    if (!reason) return;
+    setBusy("force-release");
+    setError(null);
+    try {
+      await api(`/api/computers/${botId}/lease/force-release`, {
+        method: "POST",
+        body: JSON.stringify({ reason, epoch: leaseEpoch.current }),
+      });
+      armedControl.current = false;
+      modeRef.current = "view";
+      setMode("view");
+      const closing = activeSocket ?? rfbRef.current;
+      rfbRef.current = null;
+      await enqueueSocket(() => releaseSocket(closing));
+      if (wantViewRef.current) await startView();
+      onChanged();
+    } catch (caught) {
+      setError(errorMessage(caught, "Could not release the desktop lease."));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function continueBot() {
     setBusy("continue");
     setError(null);
@@ -715,11 +740,12 @@ export function ComputerPane({
           ) : null}
           <div className="flex flex-wrap gap-2">
             <Button data-testid="take-control" className="min-h-11 flex-1" disabled={busy !== null} onClick={() => void takeControl()}>
-              Take control
+              Take over here
             </Button>
             <Button data-testid="hand-back" variant="secondary" className="min-h-11 flex-1 border-2 border-foreground font-semibold" disabled={busy !== null} onClick={() => void handBack()}>
               Hand back
             </Button>
+            {holder === "human" ? <Button data-testid="force-release" variant="destructive" className="min-h-11 flex-1" disabled={busy !== null} onClick={() => void forceRelease()}>Force release</Button> : null}
             <Button
               data-testid="desktop-fullscreen"
               variant="secondary"
@@ -798,7 +824,7 @@ export function ComputerPane({
                 <>
                   <Eye className="ml-2.5 h-4 w-4 text-neutral-500" aria-hidden />
                   <span data-testid="watch-only" className="pl-1 pr-2 text-neutral-400">Watching</span>
-                  <Button data-testid="take-control" size="sm" className="h-8 rounded-full bg-white px-4 font-medium text-neutral-900 hover:bg-neutral-200" disabled={busy !== null} onClick={() => void takeControl()}>Take control</Button>
+                  <Button data-testid="take-control" size="sm" className="h-8 rounded-full bg-white px-4 font-medium text-neutral-900 hover:bg-neutral-200" disabled={busy !== null} onClick={() => void takeControl()}>Take over here</Button>
                 </>
               )}
             </div>

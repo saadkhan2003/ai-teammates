@@ -681,9 +681,13 @@ public static class Routes
             }
             await platform.Compute.EnsureAwakeAsync(endpoint.ComputerId, ctx.RequestAborted);
             platform.Compute.NoteViewer(endpoint.ComputerId);
+            var isControl = ticket.Role == "control";
+            var leaseConnectionKey = $"{ticket.LeaseId:N}:{ticket.UserId:N}:{ticket.TabId}:{ticket.Epoch}";
+            var leaseLogger = ctx.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("DesktopLease");
             using var socket = await ctx.WebSockets.AcceptWebSocketAsync();
             using var tcp = new System.Net.Sockets.TcpClient();
             await tcp.ConnectAsync(endpoint.Host, endpoint.Port);
+            if (isControl) WebSocketCloseGrace.Connected(leaseConnectionKey);
             await using var stream = tcp.GetStream();
             var toTcp = Task.Run(async () =>
             {
@@ -714,14 +718,50 @@ public static class Routes
                     await socket.SendAsync(buffer.AsMemory(0, read), WebSocketMessageType.Binary, true, ctx.RequestAborted);
                 }
             });
-            await Task.WhenAny(toTcp, toWs);
+            var leaseMonitor = isControl ? Task.Run(async () =>
+            {
+                while (socket.State == WebSocketState.Open && !ctx.RequestAborted.IsCancellationRequested)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(1), ctx.RequestAborted);
+                    await using var leaseConn = await platform.Data.OpenConnectionAsync(ctx.RequestAborted);
+                    var lease = await DesktopLeaseRepository.StateAsync(leaseConn, ticket.LeaseId, 1, ctx.RequestAborted);
+                    var dbNow = await leaseConn.ExecuteScalarAsync<DateTimeOffset>(new CommandDefinition("SELECT clock_timestamp()", cancellationToken: ctx.RequestAborted));
+                    if (!DesktopLeaseRepository.IsActiveFor(lease, ticket.UserId, ticket.TabId, ticket.Epoch, dbNow))
+                    {
+                        socket.Abort();
+                        tcp.Close();
+                        break;
+                    }
+                }
+            }) : Task.CompletedTask;
+            Task[] forwarders = isControl ? [toTcp, toWs, leaseMonitor] : [toTcp, toWs];
+            await Task.WhenAny(forwarders);
             // Finish the RFB connection while x11vnc is still reading, then stop the
             // viewer, and only then complete the websocket close. The browser waits
             // on that close before it opens another socket, so a pane toggle cannot
             // leave a CLOSE_WAIT backlog behind a process that ignores SIGTERM.
             try { tcp.Close(); } catch { /* already closed */ }
             try { await Task.WhenAll(toTcp, toWs).WaitAsync(TimeSpan.FromSeconds(2)); } catch { /* copy loops end once the sockets close */ }
-            try { await platform.Compute.ReleaseViewerAsync(ticket.SessionToken, CancellationToken.None); } catch { /* the view server stops on its own */ }
+            if (isControl)
+            {
+                WebSocketCloseGrace.Disconnected(leaseConnectionKey, async () =>
+                {
+                    try
+                    {
+                        await using var conn = await platform.Data.OpenConnectionAsync(CancellationToken.None);
+                        var released = await DesktopLeaseRepository.ReleaseAsync(conn, ticket.LeaseId, 1, ticket.UserId, ticket.TabId, ticket.Epoch, CancellationToken.None);
+                        if (released == null) return;
+                        VncTicketStore.InvalidateLease(ticket.BotId, released.Epoch);
+                        await conn.ExecuteAsync("UPDATE control_locks SET holder='agent', epoch=@epoch, updated_at=now() WHERE bot_id=@id", new { id = ticket.BotId, epoch = released.Epoch });
+                        await platform.Compute.SetHolderAsync(endpoint.ComputerId, "fenced", (ulong)released.Epoch, CancellationToken.None);
+                        await platform.Compute.ReleaseViewerAsync(ticket.SessionToken, CancellationToken.None);
+                        await platform.Audit(ticket.UserId.ToString(), "desktop.lease.release", ticket.BotId, null, new { reason = "rw_websocket_grace_expired", epoch = released.Epoch });
+                        await platform.Publish(new { type = "computer.mode", botId = ticket.BotId, mode = "watching", epoch = released.Epoch });
+                    }
+                    catch (Exception ex) { leaseLogger.LogDebug("desktop websocket lease release deferred {Message}", OutputRedactor.Redact(ex.Message)); }
+                });
+            }
+            else try { await platform.Compute.ReleaseViewerAsync(ticket.SessionToken, CancellationToken.None); } catch { /* viewer session closes with its websocket */ }
             try { await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None); } catch { /* already closed */ }
         });
 

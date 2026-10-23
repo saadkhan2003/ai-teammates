@@ -10,6 +10,54 @@ namespace Teammates.Api;
 public sealed record VncTicket(string Token, Guid UserId, Guid BotId, string Role, DateTimeOffset ExpiresAt);
 public sealed record VncTicketEndpoint(DesktopEndpoint Endpoint, string SessionToken, Guid UserId, Guid BotId, Guid LeaseId, string Role, string TabId, long Epoch);
 
+/// <summary>Delays human lease release after the final RW websocket closes, allowing brief reconnects.</summary>
+public static class WebSocketCloseGrace
+{
+    private static readonly object Gate = new();
+    private static readonly Dictionary<string, int> Connections = new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, CancellationTokenSource> Pending = new(StringComparer.Ordinal);
+    public static Func<TimeSpan, CancellationToken, Task> Delay { get; set; } = Task.Delay;
+
+    public static void Connected(string key)
+    {
+        lock (Gate)
+        {
+            if (Pending.Remove(key, out var pending)) { pending.Cancel(); pending.Dispose(); }
+            Connections[key] = Connections.GetValueOrDefault(key) + 1;
+        }
+    }
+
+    public static void Disconnected(string key, Func<Task> onGraceExpired)
+    {
+        CancellationTokenSource token;
+        lock (Gate)
+        {
+            var left = Math.Max(0, Connections.GetValueOrDefault(key) - 1);
+            if (left > 0) { Connections[key] = left; return; }
+            Connections.Remove(key);
+            token = new CancellationTokenSource();
+            Pending[key] = token;
+        }
+        _ = ExpireAsync(key, token, onGraceExpired);
+    }
+
+    private static async Task ExpireAsync(string key, CancellationTokenSource token, Func<Task> callback)
+    {
+        try
+        {
+            await Delay(TimeSpan.FromSeconds(12), token.Token);
+            lock (Gate)
+            {
+                if (!Pending.TryGetValue(key, out var current) || !ReferenceEquals(current, token) || Connections.GetValueOrDefault(key) != 0) return;
+                Pending.Remove(key);
+            }
+            await callback();
+        }
+        catch (OperationCanceledException) { }
+        finally { token.Dispose(); }
+    }
+}
+
 /// <summary>Short lived, one-use VNC tickets. Raw values exist only in the response and memory transiently.</summary>
 public static class VncTicketStore
 {
@@ -68,6 +116,27 @@ public static class VncTicketRoutes
 {
     public static void Map(WebApplication app, Platform platform)
     {
+        app.MapPost("/api/computers/{id:guid}/lease/force-release", async (HttpContext ctx, Guid id, System.Text.Json.JsonElement body, CancellationToken ct) =>
+        {
+            var user = await Routes.RequireUser(ctx, platform);
+            if (user == null || !await Routes.Owns(platform, user.Value, id)) return Results.Unauthorized();
+            var reason = body.ValueKind == System.Text.Json.JsonValueKind.Object && body.TryGetProperty("reason", out var reasonValue) && reasonValue.ValueKind == System.Text.Json.JsonValueKind.String ? reasonValue.GetString()?.Trim() : null;
+            var expectedEpoch = body.ValueKind == System.Text.Json.JsonValueKind.Object && body.TryGetProperty("epoch", out var epochValue) && epochValue.TryGetInt64(out var parsed) ? parsed : -1;
+            if (string.IsNullOrWhiteSpace(reason) || reason.Length < 8 || reason.Length > 500)
+                return Results.BadRequest(new { error = "force_release_reason_required" });
+            await using var conn = await platform.Data.OpenConnectionAsync(ct);
+            var placement = await platform.PlacementForBot(id, ct);
+            if (!Guid.TryParse(placement.Computer.Value, out var computerId)) return Results.Conflict(new { error = "computer_unavailable" });
+            var released = await DesktopLeaseRepository.ForceReleaseAsync(conn, computerId, 1, expectedEpoch, ct);
+            if (released == null) return Results.Conflict(new { error = "lease_changed" });
+            VncTicketStore.InvalidateLease(id, released.Epoch);
+            await conn.ExecuteAsync("UPDATE control_locks SET holder='agent', epoch=@epoch, updated_at=now() WHERE bot_id=@id", new { id, epoch = released.Epoch });
+            await platform.Compute.SetHolderAsync(placement.Computer, "fenced", (ulong)released.Epoch, ct);
+            await platform.Audit(user.Value.ToString(), "desktop.lease.force_release", id, null, new { reason = OutputRedactor.Redact(reason), epoch = released.Epoch });
+            await platform.Publish(new { type = "computer.mode", botId = id, mode = "watching", epoch = released.Epoch });
+            return Results.Json(new { released = true, epoch = released.Epoch, continueRequired = true });
+        });
+
         app.MapPost("/api/computers/{id:guid}/lease", async (HttpContext ctx, Guid id, CancellationToken ct) =>
         {
             var user = await Routes.RequireUser(ctx, platform);

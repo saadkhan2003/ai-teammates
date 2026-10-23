@@ -85,7 +85,8 @@ def test_native_routes_require_auth_and_respect_human_control(runtime, monkeypat
     assert client.post("/desktops/bot-a/screenshot?display=3", headers=auth).status_code == 422
     assert client.post("/desktops/other/screenshot", headers=auth, json=stamped).status_code == 404
     runtime.manager.desktops["bot-a"].holder = "human"
-    runtime._fence("bot-a")._release_held = None
+    runtime.manager.desktops["bot-a"].epoch = 2
+    runtime._fence("bot-a")._release_held_callback = None
     asyncio.run(runtime._fence("bot-a").reconcile(LeaseSnapshot("human", "api-human", "tab-a", 2, 35)))
     before = command.await_count
     for endpoint in ("screenshot", "click", "type"):
@@ -93,6 +94,38 @@ def test_native_routes_require_auth_and_respect_human_control(runtime, monkeypat
         assert response.status_code == 409
         assert response.json()["detail"]["code"] == "DESKTOP_BUSY"
     assert command.await_count == before
+    assert client.post("/desktops/bot-a/shell", headers=auth, json={**stamped, "command": "true"}).status_code == 409
+    import types
+    server.hub = types.SimpleNamespace(open_tab=AsyncMock())
+    assert client.post("/desktops/bot-a/browser/open", headers=auth, json={**stamped, "url": "https://example.test"}).status_code == 409
+    server.hub.open_tab.assert_not_awaited()
+
+
+def test_shell_runner_terminates_process_group_after_bounded_drain(monkeypatch):
+    import signal
+    monkeypatch.syspath_prepend(str(ROOT / "services/computer/src"))
+    spec = importlib.util.spec_from_file_location("browser_cancel_test", ROOT / "services/computer/src/browser.py")
+    browser = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(browser)
+
+    class FakeProcess:
+        pid = 98765
+        returncode = None
+        def __init__(self): self.wait_count = 0
+        async def wait(self):
+            self.wait_count += 1
+            if self.wait_count == 1: raise asyncio.TimeoutError()
+            return -signal.SIGKILL
+
+    fake = FakeProcess()
+    kills = []
+    monkeypatch.setattr(browser.os, "killpg", lambda pid, sig: kills.append((pid, sig)))
+    asyncio.run(browser.terminate_process_group(fake))
+    assert kills == [(fake.pid, signal.SIGTERM), (fake.pid, signal.SIGKILL)]
+    assert fake.wait_count == 2
+    source = (ROOT / "services/computer/src/browser.py").read_text()
+    assert "start_new_session=True" in source
+    assert "await asyncio.wait_for(proc.wait(), grace_seconds)" in source
 
 
 def test_holder_changes_cover_both_displays(runtime, monkeypatch):

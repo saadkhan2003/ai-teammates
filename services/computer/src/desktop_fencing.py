@@ -40,7 +40,7 @@ class ActionOutcome(str, Enum):
 class DesktopFence:
     def __init__(self, release_held: Callable[[], object] | None = None, clock=time.monotonic):
         self._clock = clock
-        self._release_held = release_held
+        self._release_held_callback = release_held
         self._state = LeaseSnapshot("fenced", None, None, 0, 0)
         self._deadline = 0.0
         self._lock = asyncio.Lock()
@@ -69,12 +69,16 @@ class DesktopFence:
                 raise LeaseConflict(current)
             if state.epoch == current.epoch:
                 same_owner = (state.holder_kind, state.holder_user_id, state.tab_id) == (current.holder_kind, current.holder_user_id, current.tab_id)
+                same_fenced_none = state.holder_kind == "none" and current.holder_kind == "fenced" and current.holder_user_id is None and current.tab_id is None
                 expired_owner = self._expired_owner == (state.holder_kind, state.holder_user_id, state.tab_id)
-                if not same_owner and not (current.holder_kind == "fenced" and expired_owner):
+                if not same_owner and not same_fenced_none and not (current.holder_kind == "fenced" and expired_owner):
                     raise LeaseConflict(current)
             changed_owner = (state.holder_kind, state.holder_user_id, state.tab_id) != (current.holder_kind, current.holder_user_id, current.tab_id)
             if changed_owner and current.holder_kind in ("agent", "human"):
                 await self._cancel_locked(state.epoch)
+            elif current.holder_kind == "fenced":
+                # Reconcile after process restart begins with unknown physical input state.
+                await self._release_held()
             self._state = state
             self._deadline = self._clock() + state.ttl
             self._expired_owner = None
@@ -124,13 +128,22 @@ class DesktopFence:
                 if inspect.iscoroutine(awaitable):
                     awaitable.close()
                 raise LeaseConflict(state)
-            task = asyncio.ensure_future(awaitable)
+            action_started = False
+
+            async def invoke():
+                nonlocal action_started
+                action_started = True
+                return await awaitable
+
+            task = asyncio.ensure_future(invoke())
             self._actions[task] = (epoch, False)
         try:
             return await task
         except asyncio.CancelledError:
-            self.needs_observation = True
-            return ActionOutcome.CANCELLED_MAYBE_APPLIED
+            if action_started:
+                self.needs_observation = True
+                return ActionOutcome.CANCELLED_MAYBE_APPLIED
+            return ActionOutcome.CANCELLED_NOT_APPLIED
         finally:
             self._actions.pop(task, None)
 
@@ -147,10 +160,14 @@ class DesktopFence:
             except asyncio.TimeoutError:
                 for task in active:
                     task.cancel()
-        if self._release_held:
-            value = self._release_held()
-            if inspect.isawaitable(value):
-                await value
+        await self._release_held()
+
+    async def _release_held(self) -> None:
+        if self._release_held_callback is None:
+            return
+        value = self._release_held_callback()
+        if inspect.isawaitable(value):
+            await value
 
     async def cancel_for_epoch(self, epoch: int) -> str:
         async with self._lock:
@@ -173,8 +190,9 @@ class _MemoryLease:
     epoch: int
     expires_at: float
 
-    def as_snapshot(self) -> LeaseSnapshot:
-        return LeaseSnapshot(self.holder_kind, self.holder_user_id, self.tab_id, self.epoch, max(0, self.expires_at - time.monotonic()))
+    def as_snapshot(self, now: float | None = None) -> LeaseSnapshot:
+        return LeaseSnapshot(self.holder_kind, self.holder_user_id, self.tab_id, self.epoch,
+                             max(0, self.expires_at - (time.monotonic() if now is None else now)))
 
 
 class MemoryLeaseCAS:
@@ -201,10 +219,33 @@ class MemoryLeaseCAS:
             epoch = old.epoch if old else 0
             active = bool(old and old.holder_kind != "none" and old.expires_at > self._clock())
             same = bool(active and old.holder_user_id == user_id and old.tab_id == tab_id)
-            if epoch != expected_epoch or (active and not same):
+            if epoch != expected_epoch or (active and not same and old.holder_kind != "agent"):
                 return None
             next_epoch = epoch if same else epoch + 1
             row = _MemoryLease("human", user_id, tab_id, next_epoch, self._clock() + min(ttl, 45))
+            self._rows[key] = row
+            return copy.copy(row)
+
+    async def acquire_agent(self, computer_id: str, display: int, agent_id: str, expected_epoch: int, ttl: float = 90) -> _MemoryLease | None:
+        async with self._lock:
+            key = (computer_id, display)
+            old = self._rows.get(key)
+            epoch = old.epoch if old else 0
+            active = bool(old and old.holder_kind != "none" and old.expires_at > self._clock())
+            if epoch != expected_epoch or active:
+                return None
+            row = _MemoryLease("agent", agent_id, None, epoch + 1, self._clock() + min(ttl, 90))
+            self._rows[key] = row
+            return copy.copy(row)
+
+    async def renew(self, computer_id: str, display: int, user_id: str, tab_id: str, expected_epoch: int, ttl: float = 35) -> _MemoryLease | None:
+        async with self._lock:
+            key = (computer_id, display)
+            old = self._rows.get(key)
+            if (old is None or old.epoch != expected_epoch or old.holder_kind != "human" or
+                    old.holder_user_id != user_id or old.tab_id != tab_id or old.expires_at <= self._clock()):
+                return None
+            row = _MemoryLease("human", user_id, tab_id, old.epoch, self._clock() + min(ttl, 45))
             self._rows[key] = row
             return copy.copy(row)
 

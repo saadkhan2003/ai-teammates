@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -11,6 +12,31 @@ from urllib.parse import urlsplit
 import workspace
 from desktops import DesktopManager, cdp_port
 from pure import attention_reason, looks_like_phish, origin_of, redact, scrub_tree
+
+
+async def terminate_process_group(proc: asyncio.subprocess.Process, grace_seconds: float = 2) -> None:
+    if proc.returncode is not None:
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        await asyncio.wait_for(proc.wait(), grace_seconds)
+    except asyncio.TimeoutError:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        await asyncio.shield(proc.wait())
+    except asyncio.CancelledError:
+        # A repeated cancellation after the drain must not interrupt SIGKILL.
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        await asyncio.shield(proc.wait())
+        raise
 
 
 class BrowserHub:
@@ -442,13 +468,17 @@ async def run_command(bot_id: str, command: str, extra_env: dict[str, str] | Non
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         preexec_fn=drop,
+        start_new_session=True,
     )
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout)
         code = proc.returncode
     except asyncio.TimeoutError:
-        proc.kill()
+        await terminate_process_group(proc)
         return {"exitCode": -1, "stdout": "", "stderr": "timeout", "rejected": False}
+    except asyncio.CancelledError:
+        await terminate_process_group(proc)
+        raise
     scrub_tree(scrub, root)
     out = redact(stdout.decode(errors="replace")[-20000:], scrub)
     err = redact(stderr.decode(errors="replace")[-8000:], scrub)

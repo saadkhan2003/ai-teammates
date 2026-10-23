@@ -53,4 +53,45 @@ public sealed class VncTicketTests
         var endpoint = VncTicketStore.Consume(ticket.Token, bot, user, ip, out _);
         Assert.Null(endpoint);
     }
+
+    [Fact]
+    public async Task Last_control_socket_gets_grace_and_reconnect_cancels_release()
+    {
+        var oldDelay = WebSocketCloseGrace.Delay;
+        var waits = new System.Collections.Concurrent.ConcurrentQueue<TaskCompletionSource>();
+        WebSocketCloseGrace.Delay = (_, token) =>
+        {
+            var wait = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            token.Register(() => wait.TrySetCanceled(token));
+            waits.Enqueue(wait);
+            return wait.Task;
+        };
+        try
+        {
+            var released = 0;
+            var key = "grace-test-" + Guid.NewGuid().ToString("N");
+            WebSocketCloseGrace.Connected(key);
+            WebSocketCloseGrace.Connected(key);
+            WebSocketCloseGrace.Disconnected(key, () => { Interlocked.Increment(ref released); return Task.CompletedTask; });
+            Assert.Equal(0, released);
+            WebSocketCloseGrace.Disconnected(key, () => { Interlocked.Increment(ref released); return Task.CompletedTask; });
+            await WaitFor(() => waits.Count == 1);
+            WebSocketCloseGrace.Connected(key);
+            WebSocketCloseGrace.Disconnected(key, () => { Interlocked.Increment(ref released); return Task.CompletedTask; });
+            await WaitFor(() => waits.Count == 2);
+            waits.TryDequeue(out var cancelled);
+            cancelled!.TrySetResult();
+            waits.TryDequeue(out var active);
+            active!.TrySetResult();
+            await WaitFor(() => Volatile.Read(ref released) == 1);
+            Assert.Equal(1, released);
+        }
+        finally { WebSocketCloseGrace.Delay = oldDelay; }
+    }
+
+    private static async Task WaitFor(Func<bool> predicate)
+    {
+        for (var i = 0; i < 100 && !predicate(); i++) await Task.Delay(5);
+        Assert.True(predicate());
+    }
 }

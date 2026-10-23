@@ -70,6 +70,20 @@ public static class DesktopLeaseRepository
             new { computerId, display, userId, expectedEpoch }, cancellationToken: ct));
     }
 
+    public static async Task<DesktopLeaseRow?> ForceReleaseAsync(NpgsqlConnection conn, Guid computerId, int display,
+        long expectedEpoch, CancellationToken ct)
+    {
+        Validate(display, "force-release");
+        return await conn.QuerySingleOrDefaultAsync<DesktopLeaseRow>(new CommandDefinition("""
+            UPDATE desktop_lease SET holder_kind='none', holder_user_id=NULL, tab_id=NULL,
+              epoch=epoch+1, expires_at=clock_timestamp(), updated_at=clock_timestamp()
+            WHERE computer_id=@computerId AND display=@display AND epoch=@expectedEpoch AND holder_kind <> 'none'
+            RETURNING computer_id AS "ComputerId", display AS "Display", holder_kind AS "HolderKind",
+              holder_user_id AS "HolderUserId", tab_id AS "TabId", epoch AS "Epoch",
+              expires_at AS "ExpiresAt", updated_at AS "UpdatedAt"
+            """, new { computerId, display, expectedEpoch }, cancellationToken: ct));
+    }
+
     public static Task<DesktopLeaseRow?> StateAsync(NpgsqlConnection conn, Guid computerId, int display, CancellationToken ct) =>
         conn.QuerySingleOrDefaultAsync<DesktopLeaseRow>(new CommandDefinition("""
             SELECT computer_id AS "ComputerId", display AS "Display", holder_kind AS "HolderKind",
