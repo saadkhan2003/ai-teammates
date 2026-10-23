@@ -1,5 +1,7 @@
+import { LOBE_STATIC_PATH } from "@/lib/avatar-motion";
+
 export const BOT_AVATARS = [
-  { id: "blob1", path: "M50 7C68 7 88 20 88 45c0 22-14 43-37 46C28 94 9 76 9 52 9 27 27 7 50 7Z" },
+  { id: "blob1", path: LOBE_STATIC_PATH, morph: true },
   { id: "blob2", path: "M48 6C68 3 91 21 91 45c0 19-15 43-36 47C33 96 8 78 8 55 8 34 24 10 48 6Z" },
   { id: "blob3", path: "M24 12Q50 2 76 12L88 24Q98 50 88 76L76 88Q50 98 24 88L12 76Q2 50 12 24Z" },
   { id: "blob4", path: "M50 3C61 3 65 23 73 29c8 7 27 7 27 21s-19 14-27 21c-8 6-12 26-23 26S35 77 27 71C19 64 0 64 0 50s19-14 27-21C35 23 39 3 50 3Z" },
@@ -14,13 +16,14 @@ export const BOT_AVATARS = [
   { id: "blob13", path: "M50 4C61 4 63 19 73 25c10 7 24 4 28 17 4 12-8 21-15 31-7 10-10 23-23 24-13 1-19-11-29-18C23 72 8 67 7 54 6 41 20 35 29 26 37 18 38 4 50 4Z" },
   { id: "blob14", path: "M24 10Q50 0 76 10L90 27Q99 50 89 73L75 90Q50 100 25 90L10 74Q1 50 11 26Z" },
   { id: "blob15", path: "M50 4C70 4 94 22 92 44 90 64 67 95 47 94 28 93 7 70 8 50 9 29 29 4 50 4Z" },
-] as const;
+] as { id: string; path: string; morph?: boolean }[];
 
 export const BOT_COLORS = [
   { name: "White", hex: "#ffffff" }, { name: "Brown", hex: "#a66a38" }, { name: "Red", hex: "#ff3045" },
   { name: "Orange", hex: "#ff6a00" }, { name: "Amber", hex: "#f59e0b" }, { name: "Green", hex: "#10b981" },
   { name: "Teal", hex: "#14b8a6" }, { name: "Blue", hex: "#1687ff" }, { name: "Purple", hex: "#8b5cf6" },
   { name: "Pink", hex: "#ec2995" }, { name: "Grey", hex: "#858585" },
+  { name: "Yellow", hex: "#facc15" }, { name: "Black", hex: "#111111" }, { name: "Indigo", hex: "#4f46e5" },
 ] as const;
 
 export function defaultBotAvatar(id: string) {

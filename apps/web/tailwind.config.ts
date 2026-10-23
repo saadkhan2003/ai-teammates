@@ -11,6 +11,13 @@ const config: Config = {
         paper: "var(--card)",
         line: "var(--border)",
         clay: "var(--destructive)",
+        bot: {
+          DEFAULT: "var(--bot-accent)",
+          foreground: "var(--bot-accent-fg)",
+          text: "var(--bot-accent-text)",
+          soft: "var(--bot-accent-soft)",
+          border: "var(--bot-accent-border)",
+        },
         sage: "var(--sage)",
         "sage-soft": "var(--sage-soft)",
         copper: "var(--brand)",

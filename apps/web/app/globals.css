@@ -48,6 +48,12 @@
   --user-bubble-foreground: #f5f5f5;
   --assistant-bubble: #262626;
   --assistant-bubble-foreground: #f5f5f5;
+  --bot-accent: #e5253c;
+  --bot-accent-fg: #ffffff;
+  --bot-accent-text: #ff6b7b;
+  --bot-accent-ring: #ff6b7b;
+  --bot-accent-soft: rgba(229, 37, 60, 0.18);
+  --bot-accent-border: #ee6070;
   --app-height: 100dvh;
   --app-top: 0px;
   color-scheme: dark;
@@ -114,10 +120,6 @@ html.light {
   }
 }
 
-::selection {
-  background: color-mix(in srgb, var(--brand) 28%, transparent);
-  color: var(--foreground);
-}
 
 :focus-visible {
   outline: 2px solid var(--ring);
@@ -138,3 +140,21 @@ html.light {
   background: var(--background);
   padding: 0;
 }
+
+/* Shimmer: the bright band sweeps across the words, ~2 s loop, still when motion is reduced. */
+.shimmer-word {
+  color: color-mix(in srgb, var(--foreground) 45%, transparent);
+  animation: shimmer-word 2s linear infinite;
+  animation-delay: calc(var(--i) / var(--n) * 1.3s - 2s);
+}
+@keyframes shimmer-word {
+  0%, 55%, 100% { color: color-mix(in srgb, var(--foreground) 45%, transparent); }
+  25% { color: var(--foreground); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shimmer-word { animation: none; color: var(--foreground); }
+}
+
+/* Bot-accent scrollbar and selection */
+* { scrollbar-color: var(--bot-accent-soft, rgba(255, 48, 69, 0.18)) transparent; }
+::selection { background: var(--bot-accent-soft, rgba(255, 48, 69, 0.3)); }
