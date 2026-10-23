@@ -118,6 +118,9 @@ public static class EgressRelay
 
     private static async Task RelayBoth(WebSocket computer, WebSocket companion, CancellationToken ct)
     {
+        // The computer treats its route as the desktop only once a companion is paired, so say so first.
+        try { await computer.SendAsync(Encoding.UTF8.GetBytes("{\"type\":\"ready\"}"), WebSocketMessageType.Text, true, ct); }
+        catch (WebSocketException) { }
         await Task.WhenAny(Relay(computer, companion, ct), Relay(companion, computer, ct));
         try { if (computer.State == WebSocketState.Open) await computer.CloseAsync(WebSocketCloseStatus.NormalClosure, "relay closed", CancellationToken.None); } catch (WebSocketException) { }
         try { if (companion.State == WebSocketState.Open) await companion.CloseAsync(WebSocketCloseStatus.NormalClosure, "relay closed", CancellationToken.None); } catch (WebSocketException) { }

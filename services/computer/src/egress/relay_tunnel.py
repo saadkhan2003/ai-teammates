@@ -77,7 +77,7 @@ class RelayTunnelManager:
             try:
                 async with self.connector(self.url, additional_headers={"Authorization": "Bearer " + self.token}, open_timeout=15, close_timeout=5) as ws:
                     self.websocket = ws
-                    self.route_state.attached()
+                    # The API sends {"type":"ready"} once a desktop companion is paired; only then is the desktop the route.
                     await self._read_loop(ws)
             except asyncio.CancelledError:
                 raise
@@ -103,6 +103,9 @@ class RelayTunnelManager:
                 continue
             try: msg = json.loads(frame)
             except (ValueError, TypeError): continue
+            if isinstance(msg, dict) and msg.get("type") == "ready":
+                self.route_state.attached()
+                continue
             stream_id = msg.get("id")
             if not isinstance(stream_id, int): continue
             pending = self.pending.get(stream_id)

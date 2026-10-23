@@ -392,6 +392,10 @@ def test_acceptance_suite():
     )
     assert status == 200, bot
     bot_id = bot["id"]
+    # The computer egress proxy is default-deny (team_only, no entries): the portal fixture host must be allowed.
+    status, policy = client.call("PUT", "/api/network-policy", {"mode": "team_only", "entries": ["portal.example.edu"], "groups": []})
+    assert status == 200, policy
+    time.sleep(12)  # the computer proxy pulls the policy every 10 s
     stop_browser_approvals = threading.Event()
     auto_allow_browser_opens(bot_id, stop_browser_approvals)
     conversation = bot["conversationId"]

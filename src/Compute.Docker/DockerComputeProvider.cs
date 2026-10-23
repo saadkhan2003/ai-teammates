@@ -914,6 +914,8 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
                 "COMPUTER_ID=" + spec.Id.Value,
                 "COMPUTER_TOKEN=" + _options.ComputerToken,
                 "EGRESS_API_URL=http://api:8080",
+                // Dev fixture hostnames (ExtraHosts above) resolve to this computer's own loopback; the proxy may reach them on :8099 only.
+                "EGRESS_FIXTURE_HOSTS=portal.example.edu,auth.example.edu,evil.example,portal.example.edu.evil.test",
                 "COMPUTER_NAME=" + (spec.Labels.TryGetValue("name", out var label) ? label : "Teammate"),
                 "DISPLAY_NUM=1",
                 "COMPUTER_SECOND_DISPLAY=" + (_options.SecondDisplay ? "true" : "false"),

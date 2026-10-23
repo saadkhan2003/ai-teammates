@@ -125,3 +125,38 @@ def test_relay_tunnel_default_connector_disables_websockets_proxy():
     import inspect
     from egress import relay_tunnel
     assert "proxy=None" in inspect.getsource(relay_tunnel.RelayTunnelManager.run)
+
+
+def test_fixture_hosts_resolve_to_own_loopback_on_8099_only(monkeypatch):
+    import asyncio
+    import pytest
+    from egress import ssrf
+    monkeypatch.setenv("EGRESS_FIXTURE_HOSTS", "portal.example.edu")
+    infos = asyncio.run(ssrf.resolve_public("portal.example.edu", 8099))
+    assert infos[0][4] == ("127.0.0.1", 8099)
+    with pytest.raises(PermissionError):
+        asyncio.run(ssrf.resolve_public("127.0.0.1", 8099))          # a literal loopback is still blocked
+    monkeypatch.delenv("EGRESS_FIXTURE_HOSTS")
+    with pytest.raises((PermissionError, OSError)):
+        asyncio.run(ssrf.resolve_public("localhost", 8099))
+
+
+def test_relay_route_is_desktop_only_after_the_api_reports_a_paired_companion():
+    import asyncio
+    from egress.relay import RouteState
+    from egress.relay_tunnel import RelayTunnelManager
+
+    class Ws:
+        def __init__(self, frames): self.frames = frames
+        def __aiter__(self): return self._iter()
+        async def _iter(self):
+            for frame in self.frames: yield frame
+
+    async def scenario():
+        state = RouteState()
+        manager = RelayTunnelManager(api_url="https://api", computer_id="fake-id", token="fake", route_state=state, connector=lambda: None)
+        await manager._read_loop(Ws(['{"type":"noise"}']))
+        assert state.mode() == "default"          # connected to the API but no desktop paired
+        await manager._read_loop(Ws(['{"type":"ready"}']))
+        assert state.mode() == "desktop"
+    asyncio.run(scenario())

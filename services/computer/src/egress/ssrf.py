@@ -29,7 +29,19 @@ def is_blocked_ip(value: str) -> bool:
     return not ip.is_global
 
 
+FIXTURE_PORT = 8099
+
+
+def fixture_hosts() -> frozenset[str]:
+    """Dev fixture names the provider maps to this computer's own loopback (/etc/hosts)."""
+    import os
+    return frozenset(part.strip().lower() for part in os.environ.get("EGRESS_FIXTURE_HOSTS", "").split(",") if part.strip())
+
+
 async def resolve_public(host: str, port: int) -> list[tuple]:
+    # Exact fixture names on the fixture port reach only this container's own loopback server.
+    if port == FIXTURE_PORT and host.lower() in fixture_hosts():
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", port))]
     if not host or len(host) > 253 or any(c.isspace() for c in host):
         raise ValueError("invalid host")
     literal = _numeric_ip(host)
