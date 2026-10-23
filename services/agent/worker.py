@@ -118,6 +118,11 @@ class Worker:
             except httpx.HTTPStatusError:
                 await asyncio.sleep(1)
                 continue
+            except httpx.TransportError:
+                # The API is restarting or briefly unreachable; keep the worker alive.
+                log.warning("lease failed: API unreachable, retrying")
+                await asyncio.sleep(2)
+                continue
             tasks = _parse_tasks(payload)
             if not tasks:
                 # The API waits for a notification. A fast empty reply means it did not.
