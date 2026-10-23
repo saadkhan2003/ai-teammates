@@ -7,7 +7,6 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Callable
-from box_contract import port_for
 
 
 class Supervisor:
@@ -54,14 +53,15 @@ def run_forever(supervisor: Supervisor, interval: float = 5.0) -> None:
         time.sleep(interval)
 
 
-def _rfb_probe() -> bool:
+def _display_probe() -> bool:
+    """Health is the X server itself. x11vnc is on-demand (the API bridges RFB), so its port is normally closed."""
     import socket
     display = int(os.environ.get("DISPLAY_NUM", "1"))
-    override = os.environ.get("VNC_VIEW_PORT", "").strip()
-    port = int(override) + display - 1 if override else port_for("vnc", display)
     try:
-        with socket.create_connection(("127.0.0.1", port), timeout=1) as conn:
-            return conn.recv(12) == b"RFB 003.008\n"
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
+            conn.settimeout(1)
+            conn.connect(f"/tmp/.X11-unix/X{display}")
+        return True
     except OSError:
         return False
 
@@ -76,4 +76,4 @@ def _restart_xvfb() -> None:
 if __name__ == "__main__":
     display = int(os.environ.get("DISPLAY_NUM", "1"))
     state = Path(os.environ.get("BOX_STATUS_PATH", "/run/desk/status.json"))
-    run_forever(Supervisor(state, probe=_rfb_probe, restart=_restart_xvfb, threshold=2))
+    run_forever(Supervisor(state, probe=_display_probe, restart=_restart_xvfb, threshold=2))

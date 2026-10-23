@@ -170,3 +170,10 @@ def test_real_xvfb_x11vnc_rfb_handshake():
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=2)
+
+
+def test_supervisor_probes_the_x_socket_not_the_on_demand_vnc_port():
+    # x11vnc is down until a viewer connects; probing its port restarted Xvfb every 10 s.
+    source = (Path(__file__).parents[2] / "services/computer/src/supervisor.py").read_text()
+    assert "_display_probe" in source and "/tmp/.X11-unix/X" in source
+    assert "_rfb_probe" not in source and "create_connection" not in source

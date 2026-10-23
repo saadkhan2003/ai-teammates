@@ -105,7 +105,7 @@ def submit(client: Client, conversation: str, text: str, as_task=True) -> str:
 
 # The arch policy engine asks before write-class actions as well as new browser origins.
 # Anything the test decides itself (delete_file, type_secret, setup_env) stays out of this set.
-AUTO_ALLOW_ACTIONS = {"browser_open", "write_file"}
+AUTO_ALLOW_ACTIONS = {"browser_open", "write_file", "edit_file"}
 
 
 def auto_allow_browser_opens(bot: str, stop: threading.Event) -> threading.Thread:
