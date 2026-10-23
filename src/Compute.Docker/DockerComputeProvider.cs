@@ -888,7 +888,9 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
             // and loads the per-bot nftables rules (NET_ADMIN). Bot processes are unprivileged and no-new-privileges is set,
             // so they never hold these.
             CapAdd = new List<string> { "CHOWN", "SETUID", "SETGID", "DAC_OVERRIDE", "FOWNER", "KILL", "NET_ADMIN" },
-            PidsLimit = 256,
+            // Counts threads, not just processes: Chromium uses ~17 threads per renderer and ~50 in the browser process,
+            // so 256 starved the desktop (fork/thread failures, unhealthy computer) at ~8 tabs. Memory is still capped separately.
+            PidsLimit = 1024,
             ExtraHosts = new List<string>
             {
                 "portal.example.edu:127.0.0.1",

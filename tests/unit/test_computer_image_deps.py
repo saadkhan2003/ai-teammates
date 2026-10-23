@@ -40,3 +40,12 @@ def test_chrome_flags_are_shell_quoted_in_the_s6_run_script():
     quoted = " ".join(shlex.quote(flag) for flag in desktops.CHROME_FLAGS)
     assert "'--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost , EXCLUDE 127.0.0.1 , EXCLUDE ::1'" in quoted
     assert "shlex.quote(flag) for flag in CHROME_FLAGS" in (C / "src/desktops.py").read_text()
+
+
+def test_computer_pids_limit_leaves_room_for_chromium_threads():
+    import re
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[2] / "src" / "Compute.Docker" / "DockerComputeProvider.cs").read_text()
+    limit = int(re.search(r"PidsLimit = (\d+),", source).group(1))
+    assert limit >= 768  # pids cgroup counts threads; 256 starved Chromium with ~8 tabs
