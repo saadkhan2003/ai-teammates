@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git ripgrep patch \
         tmux \
         imagemagick librsvg2-bin \
-        util-linux \
+        util-linux nftables \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL -o /tmp/node.tar.xz "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
@@ -87,6 +87,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends e2fsprogs \
     && rm -rf /var/lib/apt/lists/*
 
 ENV S6_VERBOSITY=1 \
+    COMPUTER_BOT_NFT=required \
     S6_CMD_WAIT_FOR_SERVICES_MAXTIME=60000 \
     PYTHONUNBUFFERED=1 \
     MALLOC_ARENA_MAX=2 \

@@ -454,6 +454,7 @@ async def run_command(bot_id: str, command: str, extra_env: dict[str, str] | Non
         "HOME": str(home),
         "BOT_ROOT": str(root),
         "BOT_ID": workspace.safe_id(bot_id),
+        **workspace.dev_env(uid),
         "LANG": "C.UTF-8",
         "TERM": "xterm",
         # Shell tools and Chrome share the same local policy enforcement point.

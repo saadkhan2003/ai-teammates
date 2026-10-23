@@ -884,6 +884,10 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
             ShmSize = 64L * 1024 * 1024,
             SecurityOpt = security,
             CapDrop = new List<string> { "ALL" },
+            // Root inside the computer creates bot uids and chowns their dirs (CHOWN, SETUID, SETGID, DAC_OVERRIDE, FOWNER, KILL)
+            // and loads the per-bot nftables rules (NET_ADMIN). Bot processes are unprivileged and no-new-privileges is set,
+            // so they never hold these.
+            CapAdd = new List<string> { "CHOWN", "SETUID", "SETGID", "DAC_OVERRIDE", "FOWNER", "KILL", "NET_ADMIN" },
             PidsLimit = 256,
             ExtraHosts = new List<string>
             {

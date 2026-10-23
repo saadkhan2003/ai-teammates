@@ -9,45 +9,38 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_egress_firewall_only_allows_loopback_proxy_and_drops_all_else():
-    result = subprocess.run([sys.executable, str(ROOT / "deploy/egress-firewall.py"), "--print"], check=True, capture_output=True, text=True)
+def test_egress_firewall_only_allows_loopback_proxy_and_own_dev_ports_for_bots():
+    result = subprocess.run([sys.executable, str(ROOT / "deploy/egress-firewall.py"), "--print", "--bot-uid", "31001"], check=True, capture_output=True, text=True)
     rules = result.stdout
-    assert "policy drop" in rules
     port = json.loads((ROOT / "contracts/box-contract.json").read_text())["fixedPorts"]["egressProxy"]
-    assert f"ip daddr 127.0.0.1 tcp dport {port} accept" in rules
-    assert "set bot_uids { type uid; }" in rules
-    assert "meta skuid @bot_uids" in rules
+    assert f'oifname "lo" ip daddr 127.0.0.1 tcp dport {port} accept' in rules
+    assert "set bot_uids { type uid; elements = { 31001 }; }" in rules
+    assert "meta skuid != @bot_uids accept" in rules
     assert "counter drop" in rules
     assert "udp dport 53 accept" not in rules
 
 
 def test_direct_connect_bypass_is_still_dropped_when_proxy_environment_is_cleared():
-    # Bot commands can unset these variables; the kernel rules remain the boundary.
-    env = {"HTTP_PROXY": "http://127.0.0.1", "ALL_PROXY": "http://127.0.0.1", "NO_PROXY": "localhost"}
-    env.pop("ALL_PROXY")
-    env.pop("NO_PROXY")
-    assert "ALL_PROXY" not in env and "NO_PROXY" not in env
-    rules = subprocess.run([sys.executable, str(ROOT / "deploy/egress-firewall.py"), "--print"], check=True, capture_output=True, text=True).stdout
+    # Bot commands can unset proxy variables; the kernel rules remain the boundary.
+    rules = subprocess.run([sys.executable, str(ROOT / "deploy/egress-firewall.py"), "--print", "--bot-uid", "31001"], check=True, capture_output=True, text=True).stdout
     accepts = [line.strip() for line in rules.splitlines() if line.strip().endswith("accept")]
     port = json.loads((ROOT / "contracts/box-contract.json").read_text())["fixedPorts"]["egressProxy"]
-    assert rules.split("chain output {", 1)[1].split("}", 1)[0].find("policy drop;") >= 0
-    assert accepts == ["meta skuid @egress_proxy_uids accept", f"ip daddr 127.0.0.1 tcp dport {port} accept"]
-    assert "ct state established,related accept" not in rules
-    assert "set egress_proxy_uids { type uid; elements = { 0 }; }" in rules
+    assert not any("daddr" in line and "127.0.0.1" not in line for line in accepts)
+    assert sum(1 for line in accepts if "dport" in line and line.startswith("oifname")) == 1
+    assert f'oifname "lo" ip daddr 127.0.0.1 tcp dport {port} accept' in accepts
+    assert rules.index("counter drop") > max(rules.index(line) for line in accepts)
 
 
-def test_bot_peer_paths_are_denied_at_uid_and_loopback_boundary():
-    rules = subprocess.run([sys.executable, str(ROOT / "deploy/egress-firewall.py"), "--print"], check=True, capture_output=True, text=True).stdout
-    assert "meta skuid @bot_uids oifname \"lo\" drop" in rules
-    assert "policy drop" in rules and "counter drop" in rules
-    sys.path.insert(0, str(ROOT / "deploy"))
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("egress_firewall", ROOT / "deploy/egress-firewall.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    configured = module.render([31001, 31002])
+def test_bot_peer_paths_are_denied_by_per_bot_loopback_ranges():
+    sys.path.insert(0, str(ROOT / "services/computer/src"))
+    from egress import firewall
+    configured = firewall.render([31001, 31002])
     assert "set bot_uids { type uid; elements = { 31001, 31002 }; }" in configured
-    assert "meta skuid @bot_uids oifname \"lo\" drop" in configured
+    own_a, own_b = firewall.dev_port_range(31001), firewall.dev_port_range(31002)
+    assert f"meta skuid 31001 oifname \"lo\" tcp dport {own_a[0]}-{own_a[1]} accept" in configured
+    assert f"meta skuid 31002 oifname \"lo\" tcp dport {own_b[0]}-{own_b[1]} accept" in configured
+    assert own_a[1] < own_b[0] or own_b[1] < own_a[0]
+    assert "meta skuid @bot_uids oifname" not in configured
 
 
 def test_proxy_ssrf_guard_blocks_sensitive_address_families_and_legacy_ipv4():

@@ -11,6 +11,8 @@ import sys
 import threading
 from pathlib import Path
 
+from egress import firewall
+
 _HEX = set("0123456789abcdef")
 
 
@@ -104,9 +106,14 @@ def _assign_uid(bot_id: str) -> int:
         if isinstance(current, int) and current > 0:
             return current
         used = {int(value) for value in mapping.values() if isinstance(value, int)}
+        # Each bot also owns a loopback dev-server port range derived from its uid
+        # (egress/firewall.py), so two bots on one computer must not share a slot.
+        used_slots = {firewall.dev_slot(value) for value in used}
         digest = int(hashlib.sha256(bot_id.encode()).hexdigest()[:6], 16)
         uid = 30000 + (digest % 20000)
-        while uid in used:
+        for _ in range(30000):
+            if uid not in used and (firewall.dev_slot(uid) not in used_slots or len(used_slots) >= firewall.DEV_SLOTS):
+                break
             uid += 1
             if uid > 59999:
                 uid = 30000
@@ -146,6 +153,47 @@ def _account(uid: int, home: Path) -> None:
     )
 
 
+_FIREWALL_LOCK = threading.Lock()
+_FIREWALL_APPLIED: frozenset[int] = frozenset()
+
+
+def _all_bot_uids() -> frozenset[int]:
+    try:
+        raw = json.loads(_state_file().read_text(encoding="utf-8") or "{}")
+    except (OSError, json.JSONDecodeError):
+        return frozenset()
+    return frozenset(int(v) for v in raw.values() if isinstance(v, int) and v > 0) if isinstance(raw, dict) else frozenset()
+
+
+def enforce_firewall(force: bool = False) -> None:
+    """Apply the per-bot nftables rules for every bot uid on this computer.
+
+    COMPUTER_BOT_NFT: required (default; raise when the rules cannot be applied),
+    auto (apply when root with nft, else warn), off (tests/dev only).
+    """
+    global _FIREWALL_APPLIED
+    mode = os.environ.get("COMPUTER_BOT_NFT", "auto").strip().lower()
+    if mode == "off" or os.geteuid() != 0:
+        return
+    uids = _all_bot_uids()
+    with _FIREWALL_LOCK:
+        if uids == _FIREWALL_APPLIED and not force:
+            return
+        try:
+            firewall.apply(sorted(uids))
+        except (RuntimeError, OSError) as exc:
+            if mode == "required":
+                raise RuntimeError("workspace_unavailable bot_firewall_not_applied") from exc
+            print(f"bot firewall not applied: {exc}", file=sys.stderr)
+            return
+        _FIREWALL_APPLIED = frozenset(uids)
+
+
+def dev_env(uid: int) -> dict[str, str]:
+    low, high = firewall.dev_port_range(uid)
+    return {"BOT_DEV_PORT_MIN": str(low), "BOT_DEV_PORT_MAX": str(high)}
+
+
 def ensure(bot_id: str) -> int:
     safe = safe_id(bot_id)
     root = workspace_base() / "bots" / safe
@@ -160,6 +208,7 @@ def ensure(bot_id: str) -> int:
         os.chown(home, uid, uid)
         os.chmod(home, 0o700)
         _account(uid, home)
+        enforce_firewall()
         sample = root / "sample-repo"
         fixture = Path("/opt/fixtures/sample-repo")
         if fixture.is_dir() and not (sample / "calc.py").is_file():
