@@ -91,6 +91,7 @@ test("phone layout, events, and live desktop", async ({ page }, testInfo) => {
   expect(tabOverflow).toBeGreaterThan(0);
 
   await openPane(page, "Computer");
+  await page.getByTestId("desktop-frame").click();
   await expect(page.getByTestId("watch-only")).toBeVisible();
   await expect(page.getByTestId("computer-tab")).toHaveAttribute("data-desktop-mode", "view");
   await expect(page.getByTestId("vnc-status")).toHaveText("Connected", { timeout: 90_000 });
@@ -111,7 +112,7 @@ test("phone layout, events, and live desktop", async ({ page }, testInfo) => {
   await shot("computer");
 
   await page.getByTestId("take-control").click();
-  await expect(page.getByText("The pointer is yours.")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("control-pill")).toHaveAttribute("data-mode", "control", { timeout: 30_000 });
   await expect(page.getByTestId("watch-only")).toBeHidden();
   await page.getByTestId("desktop-keyboard-toggle").click();
   await expect(page.getByTestId("desktop-keyboard")).toBeVisible();
@@ -119,8 +120,9 @@ test("phone layout, events, and live desktop", async ({ page }, testInfo) => {
   await expect.poll(async () => page.evaluate(() => document.fullscreenElement !== null)).toBe(true);
   await page.getByTestId("desktop-fullscreen").click();
   await page.getByTestId("hand-back").click();
-  await expect(page.getByText("View only, until you take control.")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("control-pill")).toHaveAttribute("data-mode", "view", { timeout: 30_000 });
   await expect(page.getByTestId("watch-only")).toBeVisible();
+  await page.getByTestId("computer-minimise").click();
 
   await page.getByTestId("info-pane-close").click();
   const marker = `mobile ping ${Date.now().toString().slice(-6)}`;

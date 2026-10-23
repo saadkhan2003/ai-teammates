@@ -454,17 +454,20 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
 
     await openPane(page, "Computer");
     await expect(page.getByTestId("attention-banner")).toBeVisible();
+    await page.getByTestId("desktop-frame").click();
+    await expect(page.getByTestId("control-pill")).toHaveAttribute("data-mode", "view");
     await page.getByTestId("take-control").click();
-    await expect(page.getByText("The pointer is yours.")).toBeVisible();
-    await expect(page.getByText("You have the computer.")).toBeVisible();
+    await expect(page.getByTestId("control-pill")).toHaveAttribute("data-mode", "control", { timeout: 30_000 });
+    await expect(page.getByText("You're in control")).toBeVisible();
     await expect(page.getByTestId("computer-tab")).toHaveAttribute("data-vnc-state", "connected", { timeout: 30_000 });
     await page.waitForTimeout(1000);
     await shot(page, "take-control");
     await page.getByTestId("human-click").click();
     await page.getByTestId("resolve-attention").click();
     await page.getByTestId("hand-back").click();
-    await expect(page.getByText("View only, until you take control.")).toBeVisible();
-    await expect(page.getByText("The agent has the computer.")).toBeVisible();
+    await expect(page.getByTestId("control-pill")).toHaveAttribute("data-mode", "view", { timeout: 30_000 });
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("control-pill")).toHaveCount(0);
     await expect(page.getByTestId("human-click")).toHaveCount(0);
     await expect(page.getByTestId("computer-tab")).toHaveAttribute("data-vnc-state", "connected", { timeout: 30_000 });
     const cleared = await expectDone(page, botId, captcha, 120_000);
@@ -532,13 +535,17 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
       const text = (await assistants.nth(index).innerText()).trim();
       expect(text.length).toBeGreaterThan(0);
     }
-    const message = assistants.filter({ has: page.locator('[data-testid="reaction-picker"]') }).last();
-    const picker = message.locator('[data-testid="reaction-picker"]');
-    await picker.getByRole("button", { name: "👍" }).click();
+    const message = assistants.last();
+    const pickEmoji = async (emoji: string) => {
+      await message.hover();
+      await message.getByTestId("msg-react").click();
+      await page.getByTestId("reaction-picker").getByRole("button", { name: `React ${emoji}` }).click();
+    };
+    await pickEmoji("👍");
     await expect(message.locator('[data-testid="reaction-pill"][data-emoji="👍"][data-actor="user"]')).toBeVisible();
-    await picker.getByRole("button", { name: "👍" }).click();
+    await pickEmoji("👍");
     await expect(message.locator('[data-testid="reaction-pill"][data-actor="user"]')).toHaveCount(0);
-    await picker.getByRole("button", { name: "❤️" }).click();
+    await pickEmoji("❤️");
     await expect(message.locator('[data-testid="reaction-pill"][data-emoji="❤️"][data-actor="user"]')).toBeVisible();
     await expect(message.locator('[data-testid="reaction-pill"][data-actor="user"]')).toHaveCount(1);
     await page.waitForTimeout(1500);

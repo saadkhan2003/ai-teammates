@@ -38,6 +38,9 @@ import { cn, errorMessage } from "@/lib/utils";
 import { BotAvatar } from "@/components/bot-avatar";
 import { BotAvatarPicker } from "@/components/bot-avatar-picker";
 import { defaultBotAvatar } from "@/lib/avatars";
+import { LibraryPane } from "@/components/library-pane";
+import { ShareMenu } from "@/components/share-menu";
+import { RecordingBanner, useTeachTask } from "@/components/teach-task";
 
 const ComputerPane = dynamic(() => import("@/components/computer-pane").then((mod) => mod.ComputerPane), {
   ssr: false,
@@ -79,6 +82,7 @@ async function loadList<T>(path: string, normalize: (data: unknown) => T[]): Pro
 const INFO_TABS = [
   ["overview", "Overview"],
   ["computer", "Computer"],
+  ["library", "Library"],
   ["routines", "Routines"],
   ["files", "Files/Media"],
   ["skills", "Skills"],
@@ -89,9 +93,27 @@ const INFO_TABS = [
 
 export function Workspace({ botId }: { botId: string }) {
   const [workspace, setWorkspace] = useState<WorkspaceData | null>(null);
-  const [pane, setPane] = useState(false);
+  const [pane, setPaneRaw] = useState(false);
+  const [paneMounted, setPaneMounted] = useState(false);
+  const pillRef = useRef<HTMLButtonElement>(null);
+  const setPane = useCallback((next: boolean | ((value: boolean) => boolean)) => {
+    setPaneRaw(current => {
+      const value = typeof next === "function" ? next(current) : next;
+      if (value !== current && typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches) {
+        try { window.localStorage.setItem("teammates-pane", value ? "open" : "closed"); } catch { /* storage unavailable */ }
+      }
+      return value;
+    });
+  }, []);
+  const togglePane = () => setPane(value => !value);
+  useEffect(() => {
+    if (pane) { setPaneMounted(true); return; }
+    const timer = window.setTimeout(() => setPaneMounted(false), 220);
+    return () => window.clearTimeout(timer);
+  }, [pane]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [desktopFull, setDesktopFull] = useState(false);
+  const [autoControlKey, setAutoControlKey] = useState(0);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [files, setFiles] = useState<ListState<FileEntry>>(emptyList);
@@ -165,7 +187,10 @@ export function Workspace({ botId }: { botId: string }) {
     }).catch(() => undefined));
     setWorkspace(null);
     setWorkspaceError(null);
-    setPane(window.matchMedia("(min-width: 768px)").matches);
+    const desktop = window.matchMedia("(min-width: 768px)").matches;
+    let stored: string | null = null;
+    try { stored = window.localStorage.getItem("teammates-pane"); } catch { /* storage unavailable */ }
+    setPaneRaw(desktop && stored !== "closed");
     void loadWorkspace();
     void loadAux(["artifacts", "routines"]);
     const preload = window.setTimeout(() => {
@@ -217,7 +242,14 @@ export function Workspace({ botId }: { botId: string }) {
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") { setDesktopFull(false); setSettingsOpen(false); setPane(false); }
+      if (event.key === "Escape") {
+        const target = event.target as HTMLElement | null;
+        const inPane = !!target?.closest?.("[data-testid='info-pane']");
+        const onPill = !!target?.closest?.("[data-testid='bot-name-button']");
+        const neutral = !target || target === document.body;
+        setDesktopFull(false); setSettingsOpen(false);
+        if (inPane || onPill || neutral) { setPaneRaw(open => { if (open) { try { if (window.matchMedia("(min-width: 768px)").matches) window.localStorage.setItem("teammates-pane", "closed"); } catch { /* storage unavailable */ } window.setTimeout(() => document.querySelector<HTMLElement>("[data-testid='bot-name-button']")?.focus(), 0); } return false; }); }
+      }
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "i") {
         event.preventDefault();
         setPane((value) => !value);
@@ -234,6 +266,13 @@ export function Workspace({ botId }: { botId: string }) {
     if (detailTab === "skills") void loadAux(["skills"]);
     if (detailTab === "routines") void loadAux(["routines"]);
   }, [pane, detailTab, loadAux]);
+
+  const teach = useTeachTask({
+    botId,
+    conversationId: workspace?.conversationId,
+    onBegin: () => { setDesktopFull(true); setAutoControlKey(value => value + 1); },
+    onSent: () => void loadWorkspace(),
+  });
 
   if (!ready) {
     return (
@@ -262,19 +301,23 @@ export function Workspace({ botId }: { botId: string }) {
   const provider = workspace.llmProvider || "";
   const bot = workspace.bot;
   const requests = (workspace.secretRequests ?? []) as SecretRequest[];
-  const computerExpanded = desktopFull || detailTab === "computer";
+  const computerExpanded = desktopFull;
 
   return (
     <div className="flex h-full min-h-0">
+      {teach.startedAt ? <RecordingBanner botName={bot?.name || "Teammate"} shape={bot?.avatarShape} color={bot?.avatarColor} startedAt={teach.startedAt} onCancel={() => void teach.cancel()} /> : null}
       <section className="flex min-w-0 flex-1 flex-col">
         <header className="relative flex h-12 items-center justify-center border-b border-border px-3">
           <button
             type="button"
             data-testid="bot-name-button"
-            className="inline-flex max-w-[70%] items-center gap-2 rounded-md border border-border bg-card px-3 py-1 text-sm font-medium shadow-sm"
-            onClick={() => setPane((value) => !value)}
+            aria-expanded={pane}
+            aria-controls="info-pane"
+            aria-label={`${bot?.name || "Teammate"} details`}
+            className="inline-flex max-w-[70%] items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-sm font-medium shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => togglePane()}
           >
-            <BotAvatar botId={bot?.id} shape={bot?.avatarShape} color={bot?.avatarColor} size={20} />
+            <BotAvatar animated botId={bot?.id} shape={bot?.avatarShape} color={bot?.avatarColor} size={20} primary={bot?.isPrimary} />
             <span className="truncate">{bot?.name || "Teammate"}</span>
           </button>
           {bot?.status ? (
@@ -297,6 +340,9 @@ export function Workspace({ botId }: { botId: string }) {
             await loadWorkspace();
           }}
           botName={bot?.name || "Teammate"}
+          botId={botId}
+          avatar={{ shape: bot?.avatarShape || defaultBotAvatar(bot?.id || botId).shape, color: bot?.avatarColor || defaultBotAvatar(bot?.id || botId).color, primary: bot?.isPrimary }}
+          taskTitle={(workspace.tasks ?? []).find(task => ["running", "planning"].includes((task.status ?? "").toLowerCase()))?.title}
           onSent={() => void loadWorkspace()}
           working={(workspace.tasks ?? []).some((task) => ["running", "planning", "queued"].includes((task.status ?? "").toLowerCase()))}
           extras={
@@ -360,14 +406,19 @@ export function Workspace({ botId }: { botId: string }) {
           }
         />
       </section>
-      {pane ? (
+      <div className={cn("contents md:block md:shrink-0 md:overflow-hidden md:transition-[width] md:duration-200 motion-reduce:md:transition-none", pane ? "md:w-[min(380px,42vw)]" : "md:w-0")}>
+      {paneMounted ? (
         <aside
+          id="info-pane"
           data-testid="info-pane"
           data-view="details"
-          className="fixed inset-0 z-30 flex w-full min-w-0 flex-col border-border bg-background pt-[env(safe-area-inset-top)] md:static md:z-0 md:w-[380px] md:max-w-[42vw] md:border-l md:pt-0"
+          data-state={pane ? "open" : "closed"}
+          aria-hidden={pane ? undefined : true}
+          className={cn("fixed inset-0 z-30 flex w-full min-w-0 flex-col border-border bg-background pt-[env(safe-area-inset-top)] transition-opacity duration-200 motion-reduce:transition-none md:static md:z-0 md:w-[min(380px,42vw)] md:border-l md:pt-0", !pane && "pointer-events-none opacity-0 max-md:hidden")}
         >
           <div className="flex h-11 items-center gap-1 border-b border-border px-2">
             <p className="min-w-0 flex-1 truncate px-1 text-sm font-medium">{bot?.name}</p>
+            <ShareMenu botId={botId} onCreated={() => window.dispatchEvent(new Event("teammates-bots-changed"))} />
             <Button
               type="button"
               data-testid="bot-settings-gear"
@@ -411,6 +462,10 @@ export function Workspace({ botId }: { botId: string }) {
             />
           ) : (
             <div className={cn("min-h-0 flex-1 overflow-y-auto", desktopFull && "overflow-visible")}>
+              <div className="flex flex-col items-center gap-1 border-b border-border px-3 py-3" data-testid="panel-identity">
+                <BotAvatar animated botId={bot?.id} shape={bot?.avatarShape} color={bot?.avatarColor} size={72} primary={bot?.isPrimary} />
+                <BioField botId={botId} bio={bot?.bio ?? ""} onSaved={() => void loadWorkspace()} />
+              </div>
               <div className={cn("border-b border-border", !computerExpanded && "p-3", computerExpanded && "flex min-h-[max(480px,70dvh)] flex-col")}>
                 <ComputerPane
                   botId={botId}
@@ -420,6 +475,9 @@ export function Workspace({ botId }: { botId: string }) {
                   compact={!computerExpanded}
                   caption={bot?.name || "Teammate"}
                   fullscreen={desktopFull}
+                  recording={teach.recording}
+                  autoControlKey={autoControlKey}
+                  onHandedBack={() => void teach.finish()}
                   onExpand={() => setDesktopFull(true)}
                   onExitFullscreen={() => setDesktopFull(false)}
                   onChanged={() => void loadWorkspace()}
@@ -453,6 +511,7 @@ export function Workspace({ botId }: { botId: string }) {
               </section>
               <Tabs value={detailTab} onValueChange={setDetailTab} className="flex flex-col">
                 <TabsList aria-label="Bot details" className="mx-1 h-auto w-auto justify-start gap-0 overflow-x-auto rounded-none bg-transparent p-0">
+                  <TabsTrigger value="library" className="min-h-11 shrink-0 rounded-md px-2.5">Library</TabsTrigger>
                   {INFO_TABS.map(([value, label]) => (
                     <TabsTrigger
                       key={value}
@@ -473,7 +532,20 @@ export function Workspace({ botId }: { botId: string }) {
                     </div>
                   </TabsContent>
                   <TabsContent value="computer">
-                    <p className="text-sm text-muted-foreground">The live desktop is above. Take control when you need the pointer.</p>
+                    <p className="text-sm text-muted-foreground">The live desktop is above. Click it to open the full view, where you can take control.</p>
+                    <div className="mt-3 rounded-lg border border-border p-3">
+                      <p className="text-sm font-medium">Teach a task</p>
+                      <p className="mt-1 text-xs text-muted-foreground">Show {bot?.name || "your teammate"} how it is done on the desktop. It records the screen, then learns the steps as a reusable skill and deletes the video.</p>
+                      <Button type="button" data-testid="teach-start" size="sm" className="mt-2" disabled={teach.busy || teach.recording} onClick={() => void teach.start()}>Teach a task</Button>
+                    </div>
+                  </TabsContent>
+                  <TabsContent value="library">
+                    <LibraryPane botId={botId} botName={bot?.name || "Teammate"} botShape={bot?.avatarShape} botColor={bot?.avatarColor} files={files.items} artifacts={artifacts.items} loaded={files.loaded && artifacts.loaded} />
+                    <div className="mt-5 border-t border-border pt-4">
+                      <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Manage files</h3>
+                      <FilesPane botId={botId} files={files.items} error={files.error} loaded={files.loaded} onChanged={() => void loadAux(["files"])} />
+                      <ArtifactsPane artifacts={artifacts.items} error={artifacts.error} loaded={artifacts.loaded} onRetry={() => void loadAux(["artifacts"])} />
+                    </div>
                   </TabsContent>
                   <TabsContent value="routines">
                     <RoutinesPane botId={botId} routines={routines.items} error={routines.error} loaded={routines.loaded} onChanged={() => void loadAux(["routines"])} />
@@ -502,6 +574,7 @@ export function Workspace({ botId }: { botId: string }) {
           )}
         </aside>
       ) : null}
+      </div>
     </div>
   );
 }
@@ -578,4 +651,27 @@ function BotSettings({
       </Button>
     </form>
   );
+}
+
+function BioField({ botId, bio, onSaved }: { botId: string; bio: string; onSaved: () => void }) {
+  const [value, setValue] = useState(bio);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => setValue(bio), [bio]);
+  async function save() {
+    const next = value.replace(/\s+/g, " ").trim();
+    if (next === bio) { setError(null); return; }
+    try {
+      await api(`/api/bots/${botId}`, { method: "PATCH", body: JSON.stringify({ bio: next }) });
+      setError(null);
+      onSaved();
+      window.dispatchEvent(new Event("teammates-bots-changed"));
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not save."); setValue(bio); }
+  }
+  return <div className="w-full text-center">
+    <input data-testid="bot-bio" aria-label="Bot title" maxLength={60} value={value} placeholder="Add a title"
+      onChange={event => setValue(event.target.value)} onBlur={() => void save()}
+      onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); (event.target as HTMLInputElement).blur(); } if (event.key === "Escape") { event.stopPropagation(); setValue(bio); (event.target as HTMLInputElement).blur(); } }}
+      className="w-full truncate rounded-md bg-transparent px-2 py-1 text-center text-sm text-muted-foreground placeholder:text-muted-foreground/60 hover:bg-bot-soft focus:bg-bot-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+    {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
+  </div>;
 }

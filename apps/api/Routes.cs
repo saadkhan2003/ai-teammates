@@ -191,7 +191,7 @@ public static class Routes
                 var idText = message["id"]?.ToString();
                 if (message.TryGetValue("metadata", out var metaRaw) && metaRaw is string metaText && metaText.Length > 2)
                 {
-                    try { var meta = JsonSerializer.Deserialize<JsonElement>(metaText); message["parts"] = meta.TryGetProperty("parts", out var pe) ? pe : null; } catch { message["parts"] = null; }
+                    try { var meta = JsonSerializer.Deserialize<JsonElement>(metaText); message["parts"] = meta.TryGetProperty("parts", out var pe) ? pe : null; message["skill"] = meta.TryGetProperty("skill", out var se) ? se : null; message["attachments"] = meta.TryGetProperty("attachments", out var ae) ? ae : null; } catch { message["parts"] = null; }
                 }
                 message.Remove("metadata");
                 message["deleted"] = message.TryGetValue("deletedAt", out var del) && del != null;
@@ -267,6 +267,14 @@ public static class Routes
                     return Results.Json(new { error = "Blocked by the data policy. Card numbers, IDs, and secrets are not sent." }, statusCode: 422);
                 instruction = content;
                 title = MessageParts.Clip(content, 80);
+                if (body.TryGetProperty("skill", out var skillEl) && skillEl.ValueKind == JsonValueKind.String)
+                {
+                    var recording = body.TryGetProperty("recording", out var recEl) ? recEl.GetString() : null;
+                    if (skillEl.GetString() != DemoSkill.Id || !DemoSkill.ValidRecording(recording)) return Results.Json(new { error = "invalid_skill" }, statusCode: 400);
+                    instruction = DemoSkill.Instruction(content, recording!);
+                    metadata = DemoSkill.Metadata(recording!);
+                    asTask = true;
+                }
             }
             var messageId = await conn.ExecuteScalarAsync<Guid>("INSERT INTO messages (conversation_id, role, content, metadata, reply_to_message_id) VALUES (@id, 'user', @content, @metadata::jsonb, @replyTo) RETURNING id", new { id, content, metadata, replyTo });
             var kind = asTask ? "work" : "chat";
@@ -434,7 +442,7 @@ public static class Routes
             await ctx.Request.Body.CopyToAsync(memory, ct);
             var b64 = Convert.ToBase64String(memory.ToArray());
             var placement = await platform.PlacementForBot(id, ct);
-            var (code, _, _) = await runtime.Run(placement.Computer, id, ["python3", "-c", BotFs.Script("write_b64(sys.argv[1], sys.argv[2])"), path, b64], null, ct);
+            var (code, _, _) = await runtime.Run(placement.Computer, id, ["python3", "-c", BotFs.Script(ctx.Request.Headers["x-append"] == "1" ? "append_b64(sys.argv[1], sys.argv[2])" : "write_b64(sys.argv[1], sys.argv[2])"), path, b64], null, ct);
             if (code != 0) return Results.Json(new { error = code == 4 ? "path_escapes_workspace" : "write_failed" }, statusCode: code == 4 ? 400 : 500);
             return Results.Json(new { ok = true, path, size = memory.Length });
         });

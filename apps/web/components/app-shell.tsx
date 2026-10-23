@@ -56,6 +56,8 @@ import { applyTheme, type ThemeMode } from "@/lib/theme";
 import { cn, errorMessage } from "@/lib/utils";
 import { matchShortcut } from "@/lib/shortcuts";
 import { defaultBotAvatar } from "@/lib/avatars";
+import { applyAccent } from "@/lib/accent";
+import { TemplateImport } from "@/components/template-import";
 
 type RosterBot = {
   id: string;
@@ -65,6 +67,8 @@ type RosterBot = {
   avatar: string;
   avatarShape: string;
   avatarColor: string;
+  isPrimary: boolean;
+  bio: string;
   attention: boolean;
 };
 
@@ -82,6 +86,8 @@ function readBots(data: unknown): RosterBot[] {
         avatar: String(record.avatar ?? ""),
         avatarShape: String(record.avatarShape ?? ""),
         avatarColor: String(record.avatarColor ?? ""),
+        isPrimary: record.isPrimary === true,
+        bio: String(record.bio ?? ""),
         attention: record.attention === true,
       };
     })
@@ -232,7 +238,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       if (action === "back") router.back(); if (action === "forward") router.forward();
       if (action === "connect") { setPluginTab("marketplace"); setPluginsOpen(true); }
       if (action === "focus-chat") document.querySelector<HTMLElement>("[data-testid='composer']")?.focus();
-      if (action === "selection") { const selected = window.getSelection()?.toString().trim(); if (selected) { const composer = document.querySelector<HTMLTextAreaElement>("[data-testid='composer']"); if (composer) { composer.value += `\n> ${selected.replace(/\n/g, "\n> ")}`; composer.dispatchEvent(new Event("input", { bubbles: true })); composer.focus(); } } }
+      if (action === "selection") { event.preventDefault(); window.dispatchEvent(new Event("teammates-add-selection")); }
       if (action === "previous-bot" || action === "next-bot") { const index = bots.findIndex(bot => bot.id === activeBot?.id); const next = (index + (action === "next-bot" ? 1 : -1) + bots.length) % bots.length; if (bots[next]) router.push(`/bots/${bots[next].id}`); }
       if (action === "zoom-in" || action === "zoom-out" || action === "zoom-reset") { const value = action === "zoom-reset" ? 1 : Math.max(.75, Math.min(1.5, Number(localStorage.getItem("teammates-zoom") || 1) + (action === "zoom-in" ? .1 : -.1))); localStorage.setItem("teammates-zoom", String(value)); document.documentElement.style.zoom = String(value); }
       if (action === "fullscreen") { if (document.fullscreenElement) void document.exitFullscreen(); else void document.documentElement.requestFullscreen?.(); }
@@ -252,6 +258,16 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [bots]);
 
   const unread = notes.filter((note) => !note.readAt).length;
+
+  const activeBot = bots.find((bot) => pathname === `/bots/${bot.id}`);
+  const accentColor = activeBot ? (activeBot.avatarColor || defaultBotAvatar(activeBot.id).color) : null;
+  useEffect(() => {
+    const apply = () => applyAccent(accentColor, document.documentElement.classList.contains("light") ? "light" : "dark");
+    apply();
+    const observer = new MutationObserver(apply);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, [accentColor]);
 
   if (pathname === "/login" || pathname === "/invite") return <>{children}</>;
 
@@ -288,8 +304,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   }
 
   const compact = collapsed && !mobile;
-  const activeBot = bots.find((bot) => pathname === `/bots/${bot.id}`);
-
   function toggleRail() {
     setCollapsed((value) => {
       const next = !value;
@@ -346,9 +360,10 @@ export function AppShell({ children }: { children: ReactNode }) {
       {compact || !activeBot ? null : (
         <div className="flex flex-col items-center px-3 pb-3">
           <div className="grid h-16 w-16 place-items-center rounded-md border border-sidebar-border bg-background text-base font-medium">
-            <BotAvatar botId={activeBot.id} shape={activeBot.avatarShape} color={activeBot.avatarColor} size={48} />
+            <BotAvatar animated botId={activeBot.id} shape={activeBot.avatarShape} color={activeBot.avatarColor} size={48} primary={activeBot.isPrimary} />
           </div>
           <p className="mt-2 max-w-full truncate text-sm font-medium">{activeBot.name}</p>
+          {activeBot.bio ? <p data-testid="sidebar-bio" title={activeBot.bio} className="mt-1 max-w-full truncate rounded-full bg-sidebar-accent px-2.5 py-0.5 text-xs text-muted-foreground">{activeBot.bio}</p> : null}
         </div>
       )}
       <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-1.5 pb-3">
@@ -380,7 +395,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                               compact && "justify-center px-1",
                             )}
                           >
-                            <BotAvatar botId={bot.id} shape={bot.avatarShape} color={bot.avatarColor} size={32} />
+                            <BotAvatar botId={bot.id} shape={bot.avatarShape} color={bot.avatarColor} size={32} primary={bot.isPrimary} />
                             <span className={cn("min-w-0 flex-1", compact && "sr-only")}>
                               <span className="block truncate font-medium">{bot.name}</span>
                               {bot.role ? <span className="block truncate text-xs text-muted-foreground">{bot.role}</span> : null}
@@ -643,11 +658,35 @@ function CreateTeammateDialog({
 }) {
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
+  const [bio, setBio] = useState("");
   const [instructions, setInstructions] = useState("");
   const [avatarShape, setAvatarShape] = useState("blob3");
   const [avatarColor, setAvatarColor] = useState("#ff3045");
   const [creating, setCreating] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open || !window.location.hash.startsWith("#template=")) return;
+    setValueFromFragment();
+  }, [open]);
+
+  function applyTemplate(template: Record<string, unknown>) {
+    setName(typeof template.name === "string" ? template.name : "");
+    setRole(typeof template.role === "string" ? template.role : "");
+    setInstructions(typeof template.instructions === "string" ? template.instructions : "");
+    setAvatarShape(typeof template.avatarShape === "string" ? template.avatarShape : "blob3");
+    setAvatarColor(typeof template.avatarColor === "string" ? template.avatarColor : "#ff3045");
+    setFormError(null);
+  }
+
+  async function setValueFromFragment() {
+    try {
+      const encoded = window.location.hash.slice("#template=".length);
+      const json = decodeURIComponent(escape(atob(encoded.replace(/-/g, "+").replace(/_/g, "/"))));
+      const clean = await api<Record<string, unknown>>("/api/templates/preview", { method: "POST", body: json });
+      applyTemplate(clean);
+    } catch (caught) { setFormError(errorMessage(caught, "This template link could not be imported.")); }
+  }
 
   async function createBot(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -661,10 +700,11 @@ function CreateTeammateDialog({
     try {
       await api("/api/bots", {
         method: "POST",
-        body: JSON.stringify({ name: name.trim(), role: role.trim(), instructions: instructions.trim(), avatarShape, avatarColor }),
+        body: JSON.stringify({ name: name.trim(), role: role.trim(), instructions: instructions.trim(), avatarShape, avatarColor, ...(bio.trim() ? { bio: bio.trim() } : {}) }),
       });
       setName("");
       setRole("");
+      setBio("");
       setInstructions("");
       setAvatarShape("blob3");
       setAvatarColor("#ff3045");
@@ -687,6 +727,7 @@ function CreateTeammateDialog({
           <DialogDescription className="sr-only">Choose an avatar and name your bot. Role and instructions are optional.</DialogDescription>
         </DialogHeader>
         <form data-testid="create-bot-form" className="flex max-h-[80vh] flex-col gap-3 overflow-y-auto" onSubmit={createBot} noValidate>
+          <TemplateImport onTemplate={applyTemplate} />
           <BotAvatarPicker shape={avatarShape} color={avatarColor} onChange={(shape, color) => { setAvatarShape(shape); setAvatarColor(color); }} />
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="bot-name">Name your Bot</Label>
@@ -696,6 +737,10 @@ function CreateTeammateDialog({
           <Collapsible>
           <CollapsibleTrigger type="button" data-testid="bot-advanced-toggle" className="text-sm text-muted-foreground underline">Advanced (optional)</CollapsibleTrigger>
           <CollapsibleContent className="mt-3 grid gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="bot-bio">Bio (optional)</Label>
+            <Input id="bot-bio" data-testid="bot-bio-input" maxLength={60} value={bio} onChange={(event) => setBio(event.target.value)} placeholder="Short title, up to 60 characters" />
+          </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="bot-role" className="flex items-center gap-2">
               <span className="grid h-6 w-6 place-items-center rounded-md bg-primary text-[11px] text-primary-foreground">B</span>
@@ -737,6 +782,7 @@ function CreateTeammateDialog({
 const shortcutGroups = [
   ["Essentials", [["Search", "Ctrl K  or  Ctrl Shift F"], ["New Bot", "Ctrl N"], ["Send", "Enter"], ["Go to Bot", "Ctrl 1–9"], ["Compact sidebar", "Ctrl B"], ["Settings", "Ctrl ,"], ["Keyboard shortcuts", "Ctrl /"]]],
   ["Chat", [["Focus chat", "Ctrl I"], ["Find in chat", "Ctrl F"], ["Dictate", "Ctrl D"], ["Add selection to chat", "Ctrl L"]]],
+  ["Message", [["Reply (message focused)", "R"], ["React", "E"], ["Copy", "C"], ["More actions", "Enter or Shift F10"], ["Previous / next message", "↑ / ↓"], ["Close menu", "Esc"]]],
   ["Navigation", [["Previous / next Bot", "Alt ↑ / Alt ↓"], ["Back / forward", "Ctrl [ / Ctrl ]"], ["Switch Bots", "Hold Ctrl  Tab"]]],
   ["Panels", [["Details", "Ctrl Alt B"], ["Skills", "Ctrl Shift W"], ["Connect apps", "Ctrl Shift M"]]],
   ["Window", [["Zoom", "Ctrl + / Ctrl − / Ctrl 0"], ["Full screen", "F11"]]],
