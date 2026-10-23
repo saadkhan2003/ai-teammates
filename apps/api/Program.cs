@@ -213,27 +213,38 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
             {
                 await runtime.RecoverOutbound(stoppingToken);
                 await using var conn = await platform.Data.OpenConnectionAsync(stoppingToken);
-                var expiredLeaseUsers = VncTicketStore.ExpireHumanLeases(DateTimeOffset.UtcNow).ToHashSet();
-                var databaseExpired = await conn.QueryAsync<Guid>("SELECT DISTINCT b.owner_id FROM bots b JOIN control_locks l ON l.bot_id=b.id WHERE l.holder='human' AND l.updated_at < now() - interval '120 seconds'");
+                var expiredLeaseUsers = (await conn.QueryAsync<Guid>("""
+                    WITH expired AS (
+                      UPDATE desktop_lease SET holder_kind='none', holder_user_id=NULL, tab_id=NULL,
+                        epoch=epoch+1, expires_at=clock_timestamp(), updated_at=clock_timestamp()
+                      WHERE holder_kind='human' AND expires_at <= clock_timestamp()
+                      RETURNING computer_id
+                    ) SELECT DISTINCT uc.user_id FROM expired e JOIN user_computers uc ON uc.computer_id=e.computer_id
+                    """)).ToHashSet();
+                var databaseExpired = await conn.QueryAsync<Guid>("SELECT DISTINCT b.owner_id FROM bots b JOIN control_locks l ON l.bot_id=b.id WHERE l.holder='human' AND l.updated_at < now() - interval '45 seconds'");
                 expiredLeaseUsers.UnionWith(databaseExpired);
                 foreach (var userId in expiredLeaseUsers)
                 {
-                    VncTicketStore.ReleaseHuman(userId, userId);
-                    await conn.ExecuteAsync("UPDATE control_locks SET holder='agent', updated_at=now() WHERE bot_id IN (SELECT id FROM bots WHERE owner_id=@user)", new { user = userId });
-                    var resumed = await conn.ExecuteAsync("UPDATE tasks SET status='queued', waiting_reason=NULL, lease_owner=NULL, lease_until=NULL, lease_epoch=lease_epoch+1, updated_at=now() WHERE bot_id IN (SELECT id FROM bots WHERE owner_id=@user) AND status='waiting_human' AND waiting_reason IN ('takeover','captcha_or_mfa')", new { user = userId });
+                    await conn.ExecuteAsync("""
+                        UPDATE control_locks SET holder='agent', epoch=GREATEST(epoch, COALESCE((
+                          SELECT MAX(l.epoch) FROM desktop_lease l JOIN user_computers uc ON uc.computer_id=l.computer_id
+                          WHERE uc.user_id=@user), epoch)), updated_at=now()
+                        WHERE bot_id IN (SELECT id FROM bots WHERE owner_id=@user)
+                        """, new { user = userId });
+                    var resumed = await conn.ExecuteAsync("UPDATE tasks SET waiting_reason='await_continue', lease_owner=NULL, lease_until=NULL, updated_at=now() WHERE bot_id IN (SELECT id FROM bots WHERE owner_id=@user) AND status='waiting_human' AND waiting_reason IN ('takeover','captcha_or_mfa','You''re in control — tell me when to continue')", new { user = userId });
                     var computer = await conn.ExecuteScalarAsync<Guid?>("SELECT computer_id FROM user_computers WHERE user_id=@user", new { user = userId });
                     if (computer != null)
                     {
                         var epoch = await conn.ExecuteScalarAsync<long?>("SELECT epoch FROM control_locks WHERE bot_id IN (SELECT desktop_bot_id FROM user_computers WHERE user_id=@user)", new { user = userId }) ?? 1;
-                        try { await platform.Compute.SetHolderAsync(new ComputerId(computer.Value.ToString()), "agent", (ulong)epoch, stoppingToken); }
+                        try { await platform.Compute.SetHolderAsync(new ComputerId(computer.Value.ToString()), "fenced", (ulong)epoch, stoppingToken); }
                         catch (Exception ex) { logger.LogDebug("expired desktop lease release deferred {Message}", OutputRedactor.Redact(ex.Message)); }
                     }
-                    await platform.Audit(userId.ToString(), "desktop.lease.release", null, null, new { expired = true });
+                    await platform.Audit(userId.ToString(), "desktop.lease.expire", null, null, new { expired = true });
                     await platform.Publish(new { type = "computer.mode", mode = "watching" });
-                    if (resumed > 0) platform.Tasks.Pulse();
                 }
                 var expired = await conn.ExecuteAsync("UPDATE tasks SET status='queued', lease_owner=NULL, lease_until=NULL, waiting_reason='lease_expired', updated_at=now() WHERE status='running' AND lease_until < now()");
                 if (expired > 0) platform.Tasks.Pulse();
+                await ReconcileDesktopLeases(conn, stoppingToken);
                 await ResumeRecoveredComputers(stoppingToken);
                 if (++_tick % 10 == 0) await SampleComputers(stoppingToken);
                 if (_tick % 15 == 0)
@@ -339,6 +350,33 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
                 await platform.ResumeRecoveringTasks(computer);
             else
                 await platform.BeginComputerRecovery(computer, ct);
+        }
+    }
+
+    private async Task ReconcileDesktopLeases(NpgsqlConnection conn, CancellationToken ct)
+    {
+        await conn.ExecuteAsync("""
+            UPDATE desktop_lease SET expires_at=clock_timestamp()+interval '90 seconds', updated_at=clock_timestamp()
+            WHERE holder_kind='agent'
+            """);
+        var leases = await conn.QueryAsync<(Guid ComputerId, Guid DesktopBotId, string HolderKind, long Epoch)>("""
+            SELECT uc.computer_id AS "ComputerId", uc.desktop_bot_id AS "DesktopBotId",
+                   l.holder_kind AS "HolderKind", l.epoch AS "Epoch"
+            FROM user_computers uc JOIN desktop_lease l ON l.computer_id=uc.computer_id AND l.display=1
+            """);
+        foreach (var lease in leases)
+        {
+            var holder = lease.HolderKind switch { "human" => "human", "agent" => "agent", _ => "fenced" };
+            try
+            {
+                await conn.ExecuteAsync("UPDATE control_locks SET holder=@holder, epoch=GREATEST(epoch,@epoch), updated_at=now() WHERE bot_id=@bot", new { holder, epoch = lease.Epoch, bot = lease.DesktopBotId });
+                await platform.Compute.SetHolderAsync(new ComputerId(lease.ComputerId.ToString()), holder, (ulong)lease.Epoch, ct);
+            }
+            catch (Exception ex)
+            {
+                // Keep the computer fenced when the API cannot converge its cached state.
+                logger.LogDebug("desktop lease reconciliation deferred {Message}", OutputRedactor.Redact(ex.Message));
+            }
         }
     }
 

@@ -14,7 +14,7 @@ public sealed class VncTicketTests
         var user = Guid.NewGuid();
         var bot = Guid.NewGuid();
         var ip = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData("fake-ip"u8));
-        var ticket = VncTicketStore.Issue(user, bot, user, "watch", Endpoint(bot), "fake-session", ip);
+        var ticket = VncTicketStore.Issue(user, bot, user, "watch", "tab-fake", 4, Endpoint(bot), "fake-session", ip);
         Assert.True(ticket.Token.Length >= 32);
 
         Assert.Null(VncTicketStore.Consume(ticket.Token, Guid.NewGuid(), user, ip, out var wrongWindow));
@@ -25,6 +25,8 @@ public sealed class VncTicketTests
         Assert.Equal(401, ok);
         Assert.NotNull(endpoint);
         Assert.Equal(bot, endpoint.BotId);
+        Assert.Equal("tab-fake", endpoint.TabId);
+        Assert.Equal(4, endpoint.Epoch);
         Assert.Null(VncTicketStore.Consume(ticket.Token, bot, user, ip, out var replay));
         Assert.Equal(401, replay);
     }
@@ -35,23 +37,20 @@ public sealed class VncTicketTests
         var user = Guid.NewGuid();
         var bot = Guid.NewGuid();
         var ip = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData("expired-fake-ip"u8));
-        var ticket = VncTicketStore.Issue(user, bot, user, "watch", Endpoint(bot), "fake-session", ip, DateTimeOffset.UtcNow.AddSeconds(-61));
+        var ticket = VncTicketStore.Issue(user, bot, user, "watch", "tab-fake", 4, Endpoint(bot), "fake-session", ip, DateTimeOffset.UtcNow.AddSeconds(-61));
         Assert.Null(VncTicketStore.Consume(ticket.Token, bot, user, ip, out var status));
         Assert.Equal(401, status);
     }
 
     [Fact]
-    public void Control_ticket_requires_a_live_human_lease()
+    public void Control_ticket_is_bound_to_tab_and_epoch_and_invalidated_on_owner_change()
     {
         var user = Guid.NewGuid();
         var bot = Guid.NewGuid();
         var ip = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData("other-fake-ip"u8));
-        var ticket = VncTicketStore.Issue(user, bot, user, "control", Endpoint(bot), "fake-session", ip);
-        Assert.Null(VncTicketStore.Consume(ticket.Token, bot, user, ip, out var denied));
-        Assert.Equal(409, denied);
-        Assert.True(VncTicketStore.TryAcquireHuman(user, user, DateTimeOffset.UtcNow));
+        var ticket = VncTicketStore.Issue(user, bot, user, "control", "tab-1", 5, Endpoint(bot), "fake-session", ip);
+        VncTicketStore.InvalidateLease(bot, 6);
         var endpoint = VncTicketStore.Consume(ticket.Token, bot, user, ip, out _);
-        Assert.NotNull(endpoint);
-        VncTicketStore.ReleaseHuman(user, user);
+        Assert.Null(endpoint);
     }
 }

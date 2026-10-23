@@ -30,6 +30,7 @@ COPY db/015_bot_messaging.sql /migrations/015_bot_messaging.sql
 COPY db/016_chat_actions.sql /migrations/016_chat_actions.sql
 COPY db/017_primary.sql /migrations/017_primary.sql
 COPY db/018_bio.sql /migrations/018_bio.sql
+COPY db/019_desktop_lease.sql /migrations/019_desktop_lease.sql
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
     DOTNET_gcServer=0 \
     DOTNET_GCHeapHardLimit=0x10000000

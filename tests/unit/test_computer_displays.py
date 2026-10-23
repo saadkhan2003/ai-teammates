@@ -61,6 +61,9 @@ def test_native_routes_require_auth_and_respect_human_control(runtime, monkeypat
     runtime = server
     from desktops import Desktop
     runtime.manager.desktops["bot-a"] = Desktop("bot-a", 1)
+    import asyncio
+    from desktop_fencing import LeaseSnapshot
+    asyncio.run(server._fence("bot-a").reconcile(LeaseSnapshot("agent", "agent:service", None, 1, 90)))
     select = AsyncMock(return_value=runtime.manager.desktops["bot-a"])
     command = AsyncMock(return_value=b"png")
     monkeypatch.setattr(runtime.manager, "select_display", select)
@@ -69,23 +72,24 @@ def test_native_routes_require_auth_and_respect_human_control(runtime, monkeypat
     auth = {"Authorization": "Bearer unit-test-only"}
     for endpoint in ("screenshot", "click", "type", "displays"):
         assert client.post(f"/desktops/bot-a/{endpoint}", json={}).status_code == 401
-    response = client.post("/desktops/bot-a/screenshot?display=2", headers=auth)
+    stamped = {"actor_id": "agent:test", "epoch": 1}
+    response = client.post("/desktops/bot-a/screenshot?display=2", headers=auth, json=stamped)
     assert response.status_code == 200 and response.content == b"png"
     assert command.call_args.args[0:2] == ("bot-a", 2)
-    assert client.post("/desktops/bot-a/click?display=2", headers=auth, json={"x": 10, "y": 20}).status_code == 200
+    assert client.post("/desktops/bot-a/click?display=2", headers=auth, json={**stamped, "x": 10, "y": 20}).status_code == 200
     assert command.call_args.args[2] == ["xdotool", "mousemove", "--sync", "10", "20", "click", "1"]
-    assert client.post("/desktops/bot-a/type?display=2", headers=auth, json={"text": "hello"}).status_code == 200
+    assert client.post("/desktops/bot-a/type?display=2", headers=auth, json={**stamped, "text": "hello"}).status_code == 200
     assert command.call_args.args[3] == b"hello"
     assert "hello" not in command.call_args.args[2]
-    assert client.post("/desktops/bot-a/click", headers=auth, json={"x": -1, "y": 2}).status_code == 400
+    assert client.post("/desktops/bot-a/click", headers=auth, json={**stamped, "x": -1, "y": 2}).status_code == 400
     assert client.post("/desktops/bot-a/screenshot?display=3", headers=auth).status_code == 422
-    assert client.post("/desktops/other/screenshot", headers=auth).status_code == 404
+    assert client.post("/desktops/other/screenshot", headers=auth, json=stamped).status_code == 404
     runtime.manager.desktops["bot-a"].holder = "human"
-    import asyncio
-    asyncio.run(runtime._lease("bot-a").acquire("api-human", "human"))
+    runtime._fence("bot-a")._release_held = None
+    asyncio.run(runtime._fence("bot-a").reconcile(LeaseSnapshot("human", "api-human", "tab-a", 2, 35)))
     before = command.await_count
     for endpoint in ("screenshot", "click", "type"):
-        response = client.post(f"/desktops/bot-a/{endpoint}?display=2", headers=auth, json={})
+        response = client.post(f"/desktops/bot-a/{endpoint}?display=2", headers=auth, json=stamped)
         assert response.status_code == 409
         assert response.json()["detail"]["code"] == "DESKTOP_BUSY"
     assert command.await_count == before
@@ -101,6 +105,19 @@ def test_holder_changes_cover_both_displays(runtime, monkeypatch):
     monkeypatch.setattr(runtime.manager, "_set_display_holder", calls)
     asyncio.run(runtime.manager.set_holder("bot-a", "agent", 5))
     assert [c.args for c in calls.call_args_list] == [(primary, "agent", 5), (secondary, "agent", 5)]
+
+
+def test_holder_rejects_stale_epoch_but_allows_same_holder_retry(runtime, monkeypatch):
+    from desktops import Desktop, StaleDesktopEpoch
+    primary = Desktop("bot-a", 1, holder="human", epoch=6)
+    runtime.manager.desktops["bot-a"] = primary
+    with pytest.raises(StaleDesktopEpoch) as error:
+        asyncio.run(runtime.manager.set_holder("bot-a", "agent", 5))
+    assert (error.value.holder, error.value.epoch) == ("human", 6)
+    calls = AsyncMock()
+    monkeypatch.setattr(runtime.manager, "_set_display_holder", calls)
+    asyncio.run(runtime.manager.set_holder("bot-a", "human", 6))
+    assert calls.await_count == 1
 
 
 def test_generated_secondary_services_use_same_uid_and_no_port_collision(runtime, monkeypatch, tmp_path):

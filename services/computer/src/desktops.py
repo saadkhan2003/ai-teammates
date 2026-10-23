@@ -24,6 +24,13 @@ class Desktop:
     chrome: bool = False
 
 
+class StaleDesktopEpoch(PermissionError):
+    def __init__(self, holder: str, epoch: int):
+        super().__init__("stale desktop fencing epoch")
+        self.holder = holder
+        self.epoch = epoch
+
+
 @dataclass
 class TokenBook:
     entries: dict[str, str] = field(default_factory=dict)
@@ -183,6 +190,7 @@ class DesktopManager:
         self.desktops: dict[str, Desktop] = {}
         self.secondary: dict[str, Desktop] = {}
         self._display_lock = asyncio.Lock()
+        self._active_processes: dict[int, set[asyncio.subprocess.Process]] = {}
         self.tokens = TokenBook()
         self._locks: dict[str, asyncio.Lock] = {}
 
@@ -377,23 +385,35 @@ class DesktopManager:
                     self.secondary[bot_id] = desk
             return self.secondary[bot_id]
 
-    async def native_command(self, bot_id: str, display: int, argv: list[str], data: bytes | None = None) -> bytes:
+    async def native_command(self, bot_id: str, display: int, argv: list[str], data: bytes | None = None,
+                             actor_id: str | None = None, epoch: int | None = None) -> bytes:
         import shlex
         desk = await self.select_display(bot_id, display)
         if self.desktops[bot_id].holder != "agent":
+            if actor_id is not None:
+                raise StaleDesktopEpoch(self.desktops[bot_id].holder, self.desktops[bot_id].epoch)
             raise PermissionError("human holds control")
+        if actor_id is not None and (epoch != desk.epoch or desk.holder != "agent"):
+            raise StaleDesktopEpoch(desk.holder, desk.epoch)
+        if actor_id is None and desk.holder not in {"agent", "human"}:
+            raise PermissionError("desktop is fenced")
         uid, _root, home = workspace.prepare(bot_id)
         proc = await asyncio.create_subprocess_exec(
             *shlex.split(_as_bot(uid)), *argv,
             env={"DISPLAY": f":{desk.display}", "HOME": str(home), "PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"},
             stdin=asyncio.subprocess.PIPE if data is not None else asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, start_new_session=True)
+        self._active_processes.setdefault(desk.display, set()).add(proc)
         try:
             output, _ = await asyncio.wait_for(proc.communicate(data), timeout=15)
+        except asyncio.TimeoutError as exc:
+            await self._terminate_process(proc)
+            raise RuntimeError("desktop command timed out") from exc
         except BaseException:
-            proc.kill()
-            await proc.wait()
+            await self._terminate_process(proc)
             raise
+        finally:
+            self._active_processes.get(desk.display, set()).discard(proc)
         if proc.returncode:
             raise RuntimeError("desktop command failed")
         return output
@@ -432,8 +452,20 @@ class DesktopManager:
             await self._set_display_holder(desk, holder, epoch)
 
     async def _set_display_holder(self, desk: Desktop, holder: str, epoch: int) -> None:
-        desk.holder = holder
+        if holder not in {"agent", "human", "fenced"} or epoch < 0:
+            raise ValueError("invalid desktop holder")
+        if epoch == desk.epoch and holder == desk.holder:
+            return
+        if epoch <= desk.epoch:
+            raise StaleDesktopEpoch(desk.holder, desk.epoch)
+        # Fence local state before touching services. On failure the desktop remains
+        # closed to agent actions until a later API reconciliation succeeds.
+        old_holder, old_epoch = desk.holder, desk.epoch
+        desk.holder = "fenced"
         desk.epoch = epoch
+        if holder == "human" and old_holder == "agent":
+            await self._cancel_display_actions(desk)
+        desk.holder = holder
         service = f"/run/service/vncrw-{desk.display}"
         if holder == "human":
             if not Path(service).exists():
@@ -447,6 +479,48 @@ class DesktopManager:
             if Path(service).exists():
                 await _svc("-d", service)
                 await asyncio.sleep(0.4)
+
+    async def _cancel_display_actions(self, desk: Desktop) -> None:
+        # The active command runner owns process groups and terminates them on
+        # cancellation. Release every modifier and button before enabling RW VNC.
+        active = tuple(self._active_processes.get(desk.display, ()))
+        for proc in active:
+            await self._terminate_process(proc)
+        cleanup = (["xdotool", "keyup", key] for key in ("Shift_L", "Control_L", "Alt_L", "Super_L", "Shift_R", "Control_R", "Alt_R", "Super_R"))
+        cleanup = [*cleanup, *( ["xdotool", "mouseup", button] for button in ("1", "2", "3") )]
+        await asyncio.gather(*(self._raw_input(desk, command) for command in cleanup), return_exceptions=True)
+
+    @staticmethod
+    async def _terminate_process(proc: asyncio.subprocess.Process) -> None:
+        import os
+        import signal
+        if proc.returncode is not None:
+            return
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=2)
+        except asyncio.TimeoutError:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            await proc.wait()
+
+    async def _raw_input(self, desk: Desktop, argv: list[str]) -> None:
+        import shlex
+        uid, _root, home = workspace.prepare(desk.bot_id)
+        proc = await asyncio.create_subprocess_exec(
+            *shlex.split(_as_bot(uid)), *argv,
+            env={"DISPLAY": f":{desk.display}", "HOME": str(home), "PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"},
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=0.5)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            proc.kill()
+            await proc.wait()
 
     def _uid(self) -> int:
         import pwd
