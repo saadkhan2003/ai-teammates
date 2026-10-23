@@ -50,6 +50,7 @@ import { api, asList } from "@/lib/api";
 import { subscribeEvents } from "@/lib/events";
 import { applyTheme, type ThemeMode } from "@/lib/theme";
 import { cn, errorMessage } from "@/lib/utils";
+import { matchShortcut } from "@/lib/shortcuts";
 
 type RosterBot = {
   id: string;
@@ -102,6 +103,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [pluginTab, setPluginTab] = useState<"marketplace" | "yours">("yours");
   const [aboutOpen, setAboutOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [quickSwitch, setQuickSwitch] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -193,25 +196,39 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    const section = new URLSearchParams(window.location.search).get("settings");
+    if (section) {
+      const route = ({ general: "/settings", computer: "/settings/computer", vault: "/settings/secrets", usage: "/settings/usage", updates: "/settings/updates" } as Record<string, string>)[section];
+      if (route) router.replace(route);
+    }
+  }, [router]);
+
+  useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      const key = event.key.toLowerCase();
-      if ((event.metaKey || event.ctrlKey) && key === "k") {
-        event.preventDefault();
-        setPalette(true);
-      }
-      if ((event.metaKey || event.ctrlKey) && key === "/") {
-        event.preventDefault();
-        setShortcutsOpen(true);
-      }
-      if ((event.metaKey || event.ctrlKey) && event.key === ",") {
-        event.preventDefault();
-        setPalette(false);
-        router.push("/settings");
-      }
+      const target = event.target as HTMLElement | null;
+      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) && !event.ctrlKey && !event.metaKey && !event.altKey) return;
+      const action = matchShortcut(event);
+      if (!action) return;
+      event.preventDefault();
+      if (action === "search") setPalette(true);
+      if (action === "new-bot") setCreateOpen(true);
+      if (action === "go-bot") { const index = Number(event.key) - 1; if (bots[index]) router.push(`/bots/${bots[index].id}`); }
+      if (action === "compact") toggleRail();
+      if (action === "settings") router.push("/settings");
+      if (action === "shortcuts") setShortcutsOpen(true);
+      if (action === "switch-bots") setQuickSwitch(true);
+      if (action === "back") router.back(); if (action === "forward") router.forward();
+      if (action === "connect") { setPluginTab("marketplace"); setPluginsOpen(true); }
+      if (action === "focus-chat") document.querySelector<HTMLElement>("[data-testid='composer']")?.focus();
+      if (action === "selection") { const selected = window.getSelection()?.toString().trim(); if (selected) { const composer = document.querySelector<HTMLTextAreaElement>("[data-testid='composer']"); if (composer) { composer.value += `\n> ${selected.replace(/\n/g, "\n> ")}`; composer.dispatchEvent(new Event("input", { bubbles: true })); composer.focus(); } } }
+      if (action === "previous-bot" || action === "next-bot") { const index = bots.findIndex(bot => bot.id === activeBot?.id); const next = (index + (action === "next-bot" ? 1 : -1) + bots.length) % bots.length; if (bots[next]) router.push(`/bots/${bots[next].id}`); }
+      if (action === "zoom-in" || action === "zoom-out" || action === "zoom-reset") { const value = action === "zoom-reset" ? 1 : Math.max(.75, Math.min(1.5, Number(localStorage.getItem("teammates-zoom") || 1) + (action === "zoom-in" ? .1 : -.1))); localStorage.setItem("teammates-zoom", String(value)); document.documentElement.style.zoom = String(value); }
+      if (action === "fullscreen") { if (document.fullscreenElement) void document.exitFullscreen(); else void document.documentElement.requestFullscreen?.(); }
+      if (action === "dictate") { const Speech = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition; if (!Speech) toast.error("Speech recognition is not supported in this browser."); else { const recognition = new Speech(); recognition.onresult = (result: any) => { const composer = document.querySelector<HTMLTextAreaElement>("[data-testid='composer']"); if (composer) { composer.value += result.results[0][0].transcript; composer.dispatchEvent(new Event("input", { bubbles: true })); } }; recognition.start(); } }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [router]);
+  }, [router, bots, pathname]);
 
   const groups = useMemo(() => {
     const map = new Map<string, RosterBot[]>();
@@ -447,7 +464,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               <DropdownMenuSubContent>
                 <DropdownMenuItem onSelect={() => window.open("/docs/COMPANION.md", "_blank")}><CircleHelp /> Help Center</DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => setShortcutsOpen(true)}>⌨ Keyboard shortcuts</DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => toast.info("Feedback is available in the next release.")}>✉ Send Feedback</DropdownMenuItem>
+                <DropdownMenuItem data-testid="send-feedback" onSelect={() => setFeedbackOpen(true)}>✉ Send Feedback</DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => setAboutOpen(true)}><Info /> About</DropdownMenuItem>
               </DropdownMenuSubContent>
             </DropdownMenuSub>
@@ -597,6 +614,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           </DialogContent>
         </Dialog>
         <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+        <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
+        <Dialog open={quickSwitch} onOpenChange={setQuickSwitch}><DialogContent data-testid="quick-switcher"><DialogHeader><DialogTitle>Switch teammate</DialogTitle></DialogHeader><div className="grid gap-1">{bots.map(bot => <Button key={bot.id} variant="ghost" className="justify-start" onClick={() => { router.push(`/bots/${bot.id}`); setQuickSwitch(false); }}>{bot.name}</Button>)}</div></DialogContent></Dialog>
       </div>
     </TooltipProvider>
   );
@@ -716,4 +735,16 @@ function ShortcutsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
       </DialogContent>
     </Dialog>
   );
+}
+
+function FeedbackDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function submit(event: FormEvent) {
+    event.preventDefault(); setBusy(true);
+    try { await api("/api/feedback", { method: "POST", body: JSON.stringify({ message, category: "general" }) }); toast.success("Feedback sent."); setMessage(""); onOpenChange(false); }
+    catch (error) { toast.error(errorMessage(error, "Could not send feedback.")); }
+    finally { setBusy(false); }
+  }
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent data-testid="feedback-dialog"><DialogHeader><DialogTitle>Send feedback</DialogTitle><DialogDescription>Share a note with the AI Teammates team.</DialogDescription></DialogHeader><form onSubmit={(event) => void submit(event)} className="space-y-3"><Textarea data-testid="feedback-message" value={message} onChange={event => setMessage(event.target.value)} maxLength={5000} required placeholder="What should we know?" /><Button data-testid="feedback-submit" type="submit" disabled={busy || !message.trim()}>{busy ? "Sending…" : "Send feedback"}</Button></form></DialogContent></Dialog>;
 }

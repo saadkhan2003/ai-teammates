@@ -128,10 +128,11 @@ public sealed class Platform
             await conn.ExecuteAsync(provider);
             await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('010') ON CONFLICT DO NOTHING");
         }
-        if (await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id='012'") == 0)
+        foreach (var (mid, file) in new[] { ("011", "011_devices.sql"), ("012", "012_reliability.sql"), ("013", "013_feedback.sql") })
         {
-            await conn.ExecuteAsync(await File.ReadAllTextAsync("/migrations/012_reliability.sql"));
-            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('012') ON CONFLICT DO NOTHING");
+            if (await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id=@mid", new { mid }) != 0) continue;
+            await conn.ExecuteAsync(await File.ReadAllTextAsync("/migrations/" + file));
+            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES (@mid) ON CONFLICT DO NOTHING", new { mid });
         }
         var count = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM users");
         if (count == 0)

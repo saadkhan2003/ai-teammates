@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         xdotool xterm procps \
         fonts-dejavu-core fonts-liberation \
         git ripgrep patch \
-        imagemagick \
+        imagemagick librsvg2-bin \
         util-linux \
     && rm -rf /var/lib/apt/lists/*
 
@@ -82,7 +82,7 @@ RUN chmod +x /etc/s6-overlay/scripts/bots-init /opt/desk/bin/start-panels \
     && find /etc/s6-overlay/s6-rc.d -name run -exec chmod +x {} \; \
     && chmod 0755 /opt/desk/src \
     && mkdir -p /usr/share/backgrounds /opt/desk/icons \
-    && convert -background none /usr/share/backgrounds/teammates.svg /usr/share/backgrounds/teammates.png \
+    && rsvg-convert /usr/share/backgrounds/teammates.svg -o /usr/share/backgrounds/teammates.png \
     && convert -size 64x64 xc:none -fill '#3b82f6' -draw 'circle 32,32 32,8' \
         -fill '#22c55e' -draw 'circle 18,40 18,30' -fill '#eab308' -draw 'circle 46,40 46,30' \
         -fill '#ef4444' -draw 'circle 32,22 32,14' /opt/desk/icons/chromium.png \

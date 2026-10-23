@@ -130,6 +130,7 @@ catch (Exception ex)
 Routes.Map(app, platform, runtime);
 SecurityRoutes.Map(app, platform, loginFlow);
 Devices.Map(app, platform);
+Feedback.Map(app, platform);
 app.Run();
 
 public sealed class BrokerSecretResolver : IExecSecretResolver
