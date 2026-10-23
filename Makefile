@@ -1,7 +1,7 @@
-.PHONY: install up test test-unit test-contract test-integration test-e2e test-desktop-speed test-lowend eval-real
+.PHONY: install up test test-unit test-contract test-integration test-e2e test-desktop-speed test-lowend eval-real contract-check
 
 NODE_BIN := $(shell ls -d /home/ubuntu/.nvm/versions/node/*/bin 2>/dev/null | tail -1)
-export PATH := $(NODE_BIN):/home/ubuntu/.dotnet:$(PATH)
+export PATH := /workspace/dotnet:$(NODE_BIN):/home/ubuntu/.dotnet:$(PATH)
 export PYTHONPATH := /home/ubuntu/.local/lib/python3.12/site-packages$(if $(PYTHONPATH),:$(PYTHONPATH),)
 export PLAYWRIGHT_BROWSERS_PATH := /home/ubuntu/.cache/ms-playwright
 export DOTNET_CLI_TELEMETRY_OPTOUT := 1
@@ -41,3 +41,15 @@ test-lowend:
 
 eval-real:
 	python3 evals/eval_real.py
+
+contract-check:
+	@set -eu; tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+	  node scripts/gen-box-contract.mjs --out "$$tmp"; \
+	  diff -ru apps/api/BoxContract.g.cs "$$tmp/apps/api/BoxContract.g.cs"; \
+	  diff -ru services/computer/src/box_contract.py "$$tmp/services/computer/src/box_contract.py"; \
+	  diff -ru services/computer/scripts/box-contract.sh "$$tmp/services/computer/scripts/box-contract.sh"; \
+	  diff -ru apps/web/lib/box-contract.ts "$$tmp/apps/web/lib/box-contract.ts"
+	node scripts/check-no-port-literals.mjs
+	node scripts/gen-box-contract.test.mjs
+	python3 -m pytest -q tests/unit/test_box_contract.py
+	dotnet test tests/unit/Teammates.UnitTests.csproj --nologo --filter FullyQualifiedName~BoxContractTests
