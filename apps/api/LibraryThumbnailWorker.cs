@@ -64,7 +64,7 @@ public sealed class LibraryThumbnailWorker(Platform platform, ILogger<LibraryThu
             var key = $"thumbs/{row.BotId}/{row.Id}.webp";
             var webpBytes = await response.Content.ReadAsByteArrayAsync(ct);
             await using var webp = new MemoryStream(webpBytes, writable: false);
-            await platform.S3.PutObjectAsync(new PutObjectRequest { BucketName = platform.Bucket, Key = key, InputStream = webp, ContentType = "image/webp" }, ct);
+            await platform.S3.PutObjectAsync(new PutObjectRequest { BucketName = platform.Bucket, Key = key, InputStream = webp, ContentType = "image/webp", UseChunkEncoding = false }, ct);
             await conn.ExecuteAsync(new CommandDefinition("UPDATE library_items SET thumb_key=@key,thumb_state='ready' WHERE id=@id AND thumb_state='pending'", new { key, id = row.Id }, tx, cancellationToken: ct));
             await tx.CommitAsync(ct);
         }

@@ -603,7 +603,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         var text = OutputRedactor.Redact(Encoding.UTF8.GetString(bytes));
         var stored = Encoding.UTF8.GetBytes(text);
         var key = $"artifacts/{botId}/{Guid.NewGuid():n}/{name}";
-        await platform.S3.PutObjectAsync(new PutObjectRequest { BucketName = platform.Bucket, Key = key, InputStream = new MemoryStream(stored), ContentType = "text/plain" }, ct);
+        await platform.S3.PutObjectAsync(new PutObjectRequest { BucketName = platform.Bucket, Key = key, InputStream = new MemoryStream(stored), ContentType = "text/plain", UseChunkEncoding = false }, ct);
         var sha = Convert.ToHexString(SHA256.HashData(stored)).ToLowerInvariant();
         await using var conn = await platform.Data.OpenConnectionAsync(ct);
         var id = await conn.ExecuteScalarAsync<Guid>(
