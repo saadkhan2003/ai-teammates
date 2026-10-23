@@ -155,7 +155,7 @@ def _alive(names: list[str]) -> list[str]:
 
 
 def _isolation_name() -> str:
-    raw = _docker("ps", "-a", "--filter", "label=com.docker.compose.service=isolation", "--format", "{{.Names}}")
+    raw = _docker("ps", "-a", "--filter", "label=com.docker.compose.service=isolation", "--filter", f"label=com.docker.compose.project={STACK}", "--format", "{{.Names}}")
     names = [line.strip() for line in raw.splitlines() if line.strip()]
     assert names, "isolation guard is not deployed"
     return names[0]
