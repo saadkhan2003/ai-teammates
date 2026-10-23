@@ -171,6 +171,7 @@ html.light {
 }
 @keyframes motion-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @keyframes motion-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes motion-pop-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(0.97); } }
 @keyframes motion-pop { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: none; } }
 /* Message arrival and approval cards: fade and slide up. */
 .motion-rise { animation: motion-rise var(--motion-base) var(--ease-out) both; }
@@ -178,6 +179,8 @@ html.light {
 .motion-fade { animation: motion-fade var(--motion-slow) var(--ease-out) both; }
 /* Full computer view opening. */
 .motion-pop { animation: motion-pop var(--motion-base) var(--ease-out) both; }
+/* Full computer view closing. */
+.motion-pop-out { animation: motion-pop-out var(--motion-base) var(--ease-in-out) both; }
 /* Cards and rows: quiet hover and press. */
 .motion-card { transition: background-color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), box-shadow var(--motion-base) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
 .motion-card:hover { transform: translateY(-1px); }

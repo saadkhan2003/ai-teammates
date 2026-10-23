@@ -108,7 +108,7 @@ export function ComputerPane({
   onChanged,
   compact = false,
   caption,
-  fullscreen = false,
+  fullscreen: fullscreenProp = false,
   onExpand,
   onExitFullscreen,
   recording = false,
@@ -130,6 +130,19 @@ export function ComputerPane({
   autoControlKey?: number;
   onHandedBack?: () => void;
 }) {
+  // Leaving the full view plays a short fade-and-shrink before the panel layout comes back.
+  const [exiting, setExiting] = useState(false);
+  const wasFull = useRef(fullscreenProp);
+  useEffect(() => {
+    const was = wasFull.current;
+    wasFull.current = fullscreenProp;
+    if (fullscreenProp) { setExiting(false); return; }
+    if (!was || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    setExiting(true);
+    const timer = window.setTimeout(() => setExiting(false), 200);
+    return () => window.clearTimeout(timer);
+  }, [fullscreenProp]);
+  const fullscreen = fullscreenProp || exiting;
   const screenRef = useRef<HTMLDivElement>(null);
   const rfbRef = useRef<RfbClient | null>(null);
   const sessionRef = useRef(0);
@@ -633,7 +646,7 @@ export function ComputerPane({
       data-testid="computer-tab"
       data-vnc-state={vncState}
       data-desktop-mode={mode}
-      className={cn("flex min-h-0 min-w-0 flex-col gap-3", !compact && "md:flex-1", fullscreen && "motion-pop dark fixed inset-0 z-[80] gap-3 overflow-hidden bg-neutral-950 p-3 text-neutral-100 sm:p-5")}
+      className={cn("flex min-h-0 min-w-0 flex-col gap-3", !compact && "md:flex-1", fullscreen && !exiting && "motion-pop", exiting && "motion-pop-out pointer-events-none", fullscreen && "dark fixed inset-0 z-[80] gap-3 overflow-hidden bg-neutral-950 p-3 text-neutral-100 sm:p-5")}
     >
       <div ref={stageRef} data-testid="desktop-stage" className={cn("relative flex min-h-0 min-w-0 flex-col gap-2 bg-background", !compact && "md:min-h-[14rem] md:flex-1", fullscreen && "flex-1 bg-neutral-950")}>
         {fullscreen ? (
