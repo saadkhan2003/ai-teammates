@@ -43,7 +43,7 @@ type TaskRow = {
 };
 
 function capture(args: string[], timeout = 120_000): string {
-  const result = spawnSync("sudo", args, { encoding: "utf8", maxBuffer: 32 * 1024 * 1024, timeout });
+  const result = spawnSync("sudo", args, { encoding: "utf8", maxBuffer: 256 * 1024 * 1024, timeout });
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(`${args.join(" ")} exited ${result.status}: ${(result.stderr || "").slice(0, 400)}`);
@@ -692,7 +692,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
     const slug = await computerSlug(page, botId);
     let logs = "";
     for (const name of ["teammates-api-1", "teammates-agent-1", "teammates-mock-openrouter-1", slug]) {
-      logs += capture(["docker", "logs", name], 60_000);
+      logs += capture(["docker", "logs", "--tail", "20000", name], 60_000);
     }
     assertClean("docker logs", logs);
     const columns = capture([
