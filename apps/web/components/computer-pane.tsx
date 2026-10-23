@@ -647,9 +647,9 @@ export function ComputerPane({
       data-testid="computer-tab"
       data-vnc-state={vncState}
       data-desktop-mode={mode}
-      className={cn("flex min-h-0 min-w-0 flex-col gap-3", !compact && "md:flex-1", fullscreen && !exiting && "motion-pop", exiting && "motion-pop-out pointer-events-none", fullscreen && "dark fixed inset-0 z-[80] gap-0 overflow-hidden bg-[#141414] px-3 pb-3 pt-10 text-neutral-100 sm:px-6")}
+      className={cn("flex min-h-0 min-w-0 flex-col gap-3", !compact && "md:flex-1", fullscreen && !exiting && "motion-pop", exiting && "motion-pop-out pointer-events-none", fullscreen && "dark fixed inset-0 z-[80] gap-0 overflow-hidden bg-[#141414] px-3 pb-[11px] pt-[33px] text-neutral-100 sm:px-6")}
     >
-      <div ref={stageRef} data-testid="desktop-stage" className={cn("relative flex min-h-0 min-w-0 flex-col gap-2 bg-background", !compact && "md:min-h-[14rem] md:flex-1", fullscreen && "flex-1 bg-transparent")}>
+      <div ref={stageRef} data-testid="desktop-stage" className={cn("relative flex min-h-0 min-w-0 flex-col gap-2 bg-background", !compact && "md:min-h-[14rem] md:flex-1", fullscreen && "flex-1 gap-[3px] bg-transparent")}>
         {fullscreen ? (
           <div className="absolute inset-x-0 -top-8 flex h-7 items-center justify-end gap-1" data-testid="computer-topbar">
             <p className="sr-only">{caption || "Teammate"}&apos;s computer</p>
@@ -747,20 +747,20 @@ export function ComputerPane({
         ) : null}
         {fullscreen && collapsedView ? <p className="grid flex-1 place-items-center text-sm text-neutral-400">The desktop is collapsed.</p> : null}
         {fullscreen ? (
-          <div data-testid="control-pill" data-mode={mode} role="status" className="flex shrink-0 justify-center pt-2">
-            <div className="flex h-10 items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] p-1 text-sm">
+          <div data-testid="control-pill" data-mode={mode} role="status" className="flex shrink-0 justify-center">
+            <div className="flex h-10 items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] p-[3px] text-sm sm:h-[26px] sm:text-[11px]">
               {mode === "control" ? (
                 <>
                   <span className="ml-2 h-2 w-2 rounded-full bg-bot" aria-hidden />
                   <span className="px-1 font-medium">You&apos;re in control</span>
                   <span className="hidden pr-1 text-xs text-neutral-400 sm:inline">{caption || "Teammate"} is paused</span>
-                  <Button data-testid="hand-back" size="sm" className="h-8 rounded-full bg-red-600 px-4 text-white hover:bg-red-500" disabled={busy !== null} onClick={() => void handBack()}>Stop</Button>
+                  <Button data-testid="hand-back" size="sm" className="h-8 rounded-full bg-red-600 px-4 text-sm sm:h-5 sm:px-2.5 sm:text-[11px] text-white hover:bg-red-500" disabled={busy !== null} onClick={() => void handBack()}>Stop</Button>
                 </>
               ) : (
                 <>
-                  <Eye className="ml-2.5 h-4 w-4 text-neutral-500" aria-hidden />
+                  <Eye className="ml-2 h-3 w-3 text-neutral-500" aria-hidden />
                   <span data-testid="watch-only" className="pl-1 pr-2 text-neutral-400">Watching</span>
-                  <Button data-testid="take-control" size="sm" className="h-8 rounded-full bg-white px-4 font-medium text-neutral-900 hover:bg-neutral-200" disabled={busy !== null} onClick={() => void takeControl()}>Take control</Button>
+                  <Button data-testid="take-control" size="sm" className="h-8 rounded-full bg-white px-4 text-sm font-medium sm:h-5 sm:px-2.5 sm:text-[11px] text-neutral-900 hover:bg-neutral-200" disabled={busy !== null} onClick={() => void takeControl()}>Take control</Button>
                 </>
               )}
             </div>

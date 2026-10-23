@@ -22,6 +22,7 @@ class Desktop:
     holder: str = "agent"
     epoch: int = 1
     chrome: bool = False
+    hidden: bool = False
 
 
 @dataclass
@@ -339,6 +340,27 @@ class DesktopManager:
         await asyncio.sleep(0.3)
         await _svc("-u", f"/run/service/chrome-{n}")
         await _wait_port(cdp_port(n))
+        # Idle desktop = wallpaper + dock. The window is restored when the bot uses the browser.
+        desk.hidden = True
+        asyncio.get_running_loop().create_task(self._browser_window(n, "hide"))
+
+    async def _browser_window(self, n: int, action: str) -> None:
+        env = dict(os.environ, DISPLAY=f":{n}")
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "/opt/desk/bin/browser-window", action, env=env,
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(proc.wait(), timeout=40)
+        except Exception:
+            pass
+
+    async def show_browser(self, bot_id: str) -> None:
+        desk = self.desktops.get(bot_id)
+        if desk is None or not desk.hidden:
+            return
+        desk.hidden = False
+        await self._browser_window(desk.display, "show")
 
     async def restart_chrome(self, bot_id: str) -> None:
         desk = self.desktops[bot_id]
@@ -348,6 +370,7 @@ class DesktopManager:
         else:
             await _svc("-r", service)
             await _wait_port(cdp_port(desk.display))
+            desk.hidden = False
         desk.chrome = True
 
     def list_displays(self, bot_id: str) -> list[dict]:

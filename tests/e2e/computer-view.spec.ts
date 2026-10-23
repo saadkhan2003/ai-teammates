@@ -38,7 +38,7 @@ test("computer thumbnail opens a dark full view; collapse, minimise and Esc work
   await expect(topbar).toBeVisible();
   const root = page.getByTestId("computer-tab");
   const bg = await root.evaluate((el) => getComputedStyle(el).backgroundColor);
-  expect(bg).toBe("rgb(10, 10, 10)");
+  expect(bg).toBe("rgb(20, 20, 20)");
   await expect(page.getByTestId("control-pill")).toHaveAttribute("data-mode", "view");
   await expect(page.getByTestId("take-control")).toBeVisible();
 

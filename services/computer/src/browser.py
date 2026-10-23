@@ -112,6 +112,7 @@ class BrowserHub:
             pass
 
     async def open_tab(self, bot_id: str, url: str, wait: str | None) -> dict:
+        await self.desks.show_browser(bot_id)
         browser = await self.connect(bot_id)
         context = self._context(browser)
         await self._trim_tabs(bot_id, context)
@@ -301,6 +302,7 @@ class BrowserHub:
         return {"ok": code == 0, "x": x, "y": y}
 
     async def screenshot(self, bot_id: str, target_id: str | None) -> bytes:
+        await self.desks.show_browser(bot_id)
         page = await self._resolve_page(bot_id, target_id)
         return await page.screenshot(type="png")
 

@@ -65,11 +65,12 @@ COPY desktop/start-wm /opt/desk/bin/start-wm
 COPY desktop/icons/ /opt/desk/icons-src/
 COPY desktop/launch-browser /opt/desk/bin/launch-browser
 COPY desktop/launch-files /opt/desk/bin/launch-files
+COPY desktop/browser-window /opt/desk/bin/browser-window
 COPY desktop/launch-terminal /opt/desk/bin/launch-terminal
 COPY desktop/chromium.desktop /opt/desk/applications/chromium.desktop
 COPY desktop/files.desktop /opt/desk/applications/files.desktop
 COPY desktop/terminal.desktop /opt/desk/applications/terminal.desktop
-RUN chmod +x /etc/s6-overlay/scripts/bots-init /opt/desk/bin/start-panels /opt/desk/bin/start-wm \
+RUN chmod +x /etc/s6-overlay/scripts/bots-init /opt/desk/bin/start-panels /opt/desk/bin/start-wm /opt/desk/bin/browser-window \
         /opt/desk/bin/launch-browser /opt/desk/bin/launch-files /opt/desk/bin/launch-terminal \
     && find /etc/s6-overlay/s6-rc.d -name run -exec chmod +x {} \; \
     && chmod 0755 /opt/desk/src \
