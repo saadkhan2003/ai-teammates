@@ -1,0 +1,11 @@
+## G3 live acceptance results (archgaps stack only, Oct 24 2026, Asia/Karachi)
+Commits: 7119d65 (DbClock, ticketed-control test), 7a07333 (pids 1024), 42bfffd (NO_PROXY loopback, /continue), 725fe38 (COMPUTE_STACK scoping).
+Real bugs found and fixed: vnc-ticket/human-input 500 (DateTime->DateTimeOffset), Chromium starved by pids=256, computer Playwright blocked by egress proxy for loopback CDP, and the archgaps API adopting/counting the live `teammates` computers because Reload() listed every `teammates.managed` container on the shared daemon (now scoped by teammates.stack label; live stack containers are unlabeled and unchanged). The live stack was never modified.
+
+Results (honest):
+- Unit: 226 passed, 1 skipped, 0 failed.
+- Integration `test_acceptance.py` (acc8, log wt-logs/acc8.log): FAIL. Gets through bot creation, secrets, browser burst, parallel browser, code-fix, ticketed take-control and hand-back, then fails at "Hidden feedback" never appearing in task_transcript. Cause (unverified): feedback is marked consumed at lease time (apps/api/Routes.cs ~1028); the artifact task ran with attempt=2, so attempt 1 consumed the feedback and died before persisting a transcript, and the retry loaded an empty-of-note transcript. Likely fix: re-deliver feedback where consumed_at IS NULL OR task_id = this task.
+- Rest of integration (wt-logs/integ-rest.log): 26 passed, 2 skipped, 6 failed. Failures: test_bot_messaging x2 (tasks timed out), test_computer_network (URLError vs expected 'open ' message), test_computer_recovery (tool call did not finish), test_stdio_sandbox (401), test_workspace_isolation ("desktop not ready" 404 on computer API). Not root-caused; several likely share one cause (computer/tool tasks stalling).
+- Playwright and dedicated leak suite: NOT run in this pass.
+- Postgres ticket/lease store tests (.NET, G1): passed earlier in G1; not rerun here.
+Still open: I1 (gVisor/Firecracker, laptop); Cloudflare dashboard setup is manual; SSE buffers per API instance; IPv6 untested in nft probe; unit tests are sensitive to exported STACK/ISOLATION_CHAIN (run with env -u); acceptance needs DB+computer reset between runs. KVM: /dev/kvm works nested; ~6 microVMs at 2 GB fit; full 8vCPU/16GB spec does not.
