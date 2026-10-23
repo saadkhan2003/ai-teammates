@@ -30,6 +30,7 @@ public sealed class Platform
     public int MaxAutoResumesPerHour { get; }
     public int CodingRounds { get; }
     public int CodingRoundsCumulative { get; }
+    public int ChatRounds { get; }
     public int StallSoftSeconds { get; }
     public int StallHardSeconds { get; }
     public bool PauseOnBudget { get; }
@@ -62,6 +63,7 @@ public sealed class Platform
         MaxAutoResumesPerHour = ConfigInt(config, "Resume:MaxAutoResumesPerHour", 5, 1, 20);
         CodingRounds = ConfigInt(config, "RunBudget:CodingRounds", 12, 1, 100);
         CodingRoundsCumulative = ConfigInt(config, "RunBudget:CodingRoundsCumulative", 60, CodingRounds, 500);
+        ChatRounds = ConfigInt(config, "RunBudget:ChatRounds", 12, 1, 500);
         StallSoftSeconds = ConfigInt(config, "STALL_SOFT_SECONDS", 180, 30, 86400);
         StallHardSeconds = Math.Max(StallSoftSeconds + 1, ConfigInt(config, "STALL_HARD_SECONDS", 600, 31, 172800));
         PauseOnBudget = !bool.TryParse(config["RunBudget:PauseOnBudget"], out var pause) || pause;

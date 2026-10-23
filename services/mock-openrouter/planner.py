@@ -75,7 +75,7 @@ def _shell_append_plan(messages: list) -> dict:
     """Append once, then perform further work so resume can observe ambiguity."""
     text = _first_user(messages)
     path = "/workspace/shell-append-demo.log"
-    if not any(item.get("role") == "tool" and "shell" in str(item.get("name") or "") for item in messages):
+    if not any(item.get("role") == "tool" and "shell" in _tool_name(item, messages) for item in messages):
         return _tool("shell", {"command": f"echo x >> {path}"})
     if not _has_result_for(messages, path, "read_file"):
         return _tool("read_file", {"path": path})
@@ -97,14 +97,14 @@ def _long_run_progress(messages: list) -> int:
                 pass
         if item.get("role") != "tool":
             continue
-        if "read_file" in str(item.get("name") or ""):
+        if "read_file" in _tool_name(item, messages):
             completed.update(int(value) for value in re.findall(r"long-run-step-(\d{5})", _result_path(item, messages)))
     return max(completed, default=0)
 
 
 def _has_result_for(messages: list, path: str, tool_name: str) -> bool:
     marker = path.rsplit("/", 1)[-1]
-    return any(item.get("role") == "tool" and tool_name in str(item.get("name") or "") and marker in _result_path(item, messages) for item in messages)
+    return any(item.get("role") == "tool" and tool_name in _tool_name(item, messages) and marker in _result_path(item, messages) for item in messages)
 
 
 def _has_shell_command(messages: list, marker: str) -> bool:
@@ -118,6 +118,20 @@ def _has_shell_command(messages: list, marker: str) -> bool:
             except (TypeError, ValueError):
                 continue
     return False
+
+
+def _tool_name(result: dict, messages: list) -> str:
+    """Tool results usually carry only tool_call_id; resolve the name from the matching call."""
+    if result.get("name"):
+        return str(result.get("name"))
+    call_id = str(result.get("tool_call_id") or result.get("toolCallId") or "")
+    for message in messages:
+        calls = message.get("tool_calls", message.get("toolCalls", []))
+        for call in calls if isinstance(calls, list) else []:
+            if call_id and str(call.get("id") or "") == call_id:
+                function = call.get("function") if isinstance(call.get("function"), dict) else {}
+                return str(function.get("name") or call.get("name") or "")
+    return ""
 
 
 def _result_path(result: dict, messages: list) -> str:

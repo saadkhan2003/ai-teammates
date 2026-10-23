@@ -1209,7 +1209,7 @@ public static class Routes
                 }
                 var placement = await platform.PlacementForBot(task.BotId);
                 var dns = DockerComputeProvider.ContainerName(placement.Computer);
-                var maxRounds = task.Kind == "coding" ? platform.CodingRoundsCumulative : 12;
+                var maxRounds = task.Kind == "coding" ? platform.CodingRoundsCumulative : platform.ChatRounds;
                 object? resume = null;
                 if (previousReason is "lease_expired" or "computer_recovered" or "network_interrupted" or "attempt_limit" or "stalled")
                 {
@@ -1219,7 +1219,7 @@ public static class Routes
                         (string?)ledger["snapshotRef"], (string?)ledger["snapshotAt"]);
                     resume = new { brief, interrupted = previousReason is "lease_expired" or "computer_recovered" or "network_interrupted" or "stalled" };
                 }
-                rows.Add(new { id = task.Id, botId = task.BotId, computerId = placement.Computer.Value, cdpUrl = $"http://{dns}:9222", instruction = task.Instruction, kind = task.Kind, attempt = task.Attempt, epoch = task.Epoch, checkpoint = checkpointJson, force_compact = task.ForceCompact, conversationId = task.ConversationId, messageId = task.SourceMessageId, feedback, skill = skillJson, resume, budget = new { maxSteps = resolvedBudget.MaxSteps, maxSeconds = resolvedBudget.MaxSeconds, maxAttemptSteps = Math.Min(400, resolvedBudget.MaxSteps), maxAttemptSeconds = Math.Min(1800, resolvedBudget.MaxSeconds), maxRounds = task.Kind == "coding" ? platform.CodingRounds : 12, maxRoundsCumulative = maxRounds, pauseOnBudget, label = resolvedBudget.Label } });
+                rows.Add(new { id = task.Id, botId = task.BotId, computerId = placement.Computer.Value, cdpUrl = $"http://{dns}:9222", instruction = task.Instruction, kind = task.Kind, attempt = task.Attempt, epoch = task.Epoch, checkpoint = checkpointJson, force_compact = task.ForceCompact, conversationId = task.ConversationId, messageId = task.SourceMessageId, feedback, skill = skillJson, resume, budget = new { maxSteps = resolvedBudget.MaxSteps, maxSeconds = resolvedBudget.MaxSeconds, maxAttemptSteps = Math.Min(400, resolvedBudget.MaxSteps), maxAttemptSeconds = Math.Min(1800, resolvedBudget.MaxSeconds), maxRounds = task.Kind == "coding" ? platform.CodingRounds : platform.ChatRounds, maxRoundsCumulative = maxRounds, pauseOnBudget, label = resolvedBudget.Label } });
                 wake.Add(placement.Computer.Value);
             }
             await tx.CommitAsync();
