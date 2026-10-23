@@ -77,7 +77,7 @@ test("routines list shows schedule words and an accent-coloured switch that pers
     await page.setViewportSize({ width: 360, height: 780 });
     await rows.first().getByRole("button", { name: /Open Morning brief/ }).click();
     await expect(drawer).toBeVisible();
-    expect(await drawer.evaluate((el) => el.getBoundingClientRect().right)).toBeLessThanOrEqual(360);
+    await expect.poll(() => drawer.evaluate((el) => el.getBoundingClientRect().right)).toBeLessThanOrEqual(360);
     await drawer.getByRole("button", { name: "Pause" }).click();
     await expect(drawer.getByTestId("routine-status")).toContainText("Paused");
     await drawer.getByRole("button", { name: "Resume" }).click();
@@ -87,10 +87,11 @@ test("routines list shows schedule words and an accent-coloured switch that pers
     await expect(drawer).toHaveCount(0);
     await expect.poll(async () => (await page.request.get(`/api/bots/${botId}/routines`).then((r) => r.json()) as Array<{ name: string }>).some((r) => r.name.startsWith("Morning brief"))).toBe(false);
 
+    await page.setViewportSize({ width: 1280, height: 800 });
     await page.reload();
-    await expect(page.getByTestId("routines-section").getByTestId("routine-row").nth(1).getByTestId("routine-toggle")).toHaveAttribute("aria-checked", "false");
-    await page.getByTestId("routines-section").getByTestId("routine-row").nth(1).getByTestId("routine-toggle").click();
-    await expect(page.getByTestId("routines-section").getByTestId("routine-row").nth(1).getByTestId("routine-toggle")).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByTestId("routines-section").getByTestId("routine-row").nth(0).getByTestId("routine-toggle")).toHaveAttribute("aria-checked", "false");
+    await page.getByTestId("routines-section").getByTestId("routine-row").nth(0).getByTestId("routine-toggle").click();
+    await expect(page.getByTestId("routines-section").getByTestId("routine-row").nth(0).getByTestId("routine-toggle")).toHaveAttribute("aria-checked", "true");
   } finally {
     await page.request.delete(`/api/bots/${botId}`);
   }

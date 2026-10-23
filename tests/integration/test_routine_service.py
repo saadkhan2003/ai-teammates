@@ -75,4 +75,4 @@ def test_edit_fields_recompute_the_next_run(session, bot):
     r = session.patch(f"{API}/api/routines/{rid}", json={"cron": "30 9 * * *"})
     assert r.status_code == 200, r.text
     assert r.json()["routine"]["after"]["cron"] == "30 9 * * *"
-    assert r.json()["routine"]["after"]["nextRunAt"][11:16] == "04:30"
+    assert "04:30" <= r.json()["routine"]["after"]["nextRunAt"][11:16] <= "04:45"  # plus up to 15 min of jitter
