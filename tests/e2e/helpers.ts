@@ -6,8 +6,18 @@ export async function login(page: Page) {
   const username = page.getByTestId("login-username");
   await expect(shell.or(username)).toBeVisible();
   if (await shell.isVisible()) return;
-  await username.fill(process.env.OWNER_USERNAME ?? "saad");
-  await page.getByTestId("login-password").fill(process.env.OWNER_PASSWORD ?? "teammates-dev");
+  const user = process.env.OWNER_USERNAME ?? "saad";
+  const pass = process.env.OWNER_PASSWORD ?? "teammates-dev";
+  const password = page.getByTestId("login-password");
+  // The login page is server-rendered; a fill before hydration is wiped by React and an empty username is
+  // submitted. Wait for the page to settle and re-fill until both values stick before submitting.
+  await page.waitForLoadState("networkidle").catch(() => undefined);
+  await expect(async () => {
+    await username.fill(user);
+    await password.fill(pass);
+    await expect(username).toHaveValue(user, { timeout: 500 });
+    await expect(password).toHaveValue(pass, { timeout: 500 });
+  }).toPass({ timeout: 15_000 });
   await page.getByTestId("login-submit").click();
   await expect(shell).toBeVisible();
 }
