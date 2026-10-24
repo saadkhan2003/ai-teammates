@@ -24,3 +24,9 @@ Still open: I1 (gVisor/Firecracker, laptop); Cloudflare dashboard setup is manua
 - security login form: request_login still sees "You're in control" (DESKTOP_BUSY). Open; the lease was free once the run ended.
 - mobile ×3 (iphone-13, pixel-7, android-360): an approval inserted with no task_id does not render a send_email approval card. Open.
 Fixed this round: teach hand-back now goes through the pane's lease-aware handBack, and the API returns 400 instead of 500 for a missing body (product); the fullscreen attention banner no longer covers Stop on phones (product); globalSetup sets the egress policy; settings-computer uses anonymous storageState.
+
+## pw10 / pw11 (2026-10-24, PKT)
+- pw10 51/54, pw11 51/54. Mobile seed fixed (test), lease auto-claim fixed (product, 0368331), acceptance #9 passes.
+- security: direct extract needed fenced actor/epoch (test fix ddc9401). It passes alone; in the full suite browser_open into the computer hangs ~2 min after private-hosts (cause open).
+- acceptance #17: backup/restore scripts were hardcoded to teammates-postgres-1 (the live stack); fixed to $STACK in 1132e81, and restore_check now passes on archgaps. pw10/pw11 ran pg_dump plus the agent_restore DROP/CREATE against live postgres; the live agent DB itself was not modified.
+- pw11 settings-computer: the owner login was rejected (new, uninvestigated).
