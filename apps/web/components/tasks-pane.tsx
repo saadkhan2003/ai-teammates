@@ -76,7 +76,7 @@ export function TasksPane({
                 {task.status === "waiting_resource" && providerConnected === false ? (
                   <p className="mt-2 text-sm">
                     <Link href="/settings/secrets" className="font-medium text-copper-deep underline">
-                      Connect a model service
+                      Connect an AI service
                     </Link>
                   </p>
                 ) : null}

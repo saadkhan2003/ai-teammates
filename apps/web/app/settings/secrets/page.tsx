@@ -145,7 +145,7 @@ export default function SecretsPage() {
       setValue("");
       setTestResult(null);
       if (created.id) setSelectedId(created.id);
-      toast.success("Model service key saved.");
+      toast.success("AI service key saved.");
       await load();
     } catch (caught) {
       setFormError(errorMessage(caught, "Could not save that key."));
@@ -269,7 +269,7 @@ export default function SecretsPage() {
       <header>
         <h2 className="text-sm font-medium">Vault</h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          Values are write-only. Teammates never receive raw secret values.
+          Values are write-only. Bots see a secret reference, never the raw value.
         </p>
       </header>
 
@@ -290,7 +290,7 @@ export default function SecretsPage() {
       {!loading && !error && !openRouter ? (
         <Card>
           <CardHeader>
-            <CardTitle>Model Service Key</CardTitle>
+            <CardTitle>AI service key</CardTitle>
           </CardHeader>
           <CardContent>
             <form className="flex flex-col gap-4" onSubmit={saveOpenRouter}>
@@ -306,7 +306,7 @@ export default function SecretsPage() {
                   required
                 />
               </div>
-              <p>Used securely for teammate requests. Teammates never receive the raw key.</p>
+              <p>Used securely by the AI service. Bots never receive the raw key.</p>
               <TestReadout result={testResult} />
               {formError ? (
                 <p role="alert" className="text-sm text-clay">
@@ -329,11 +329,11 @@ export default function SecretsPage() {
       {!loading && !error && openRouter ? (
         <Card>
           <CardHeader>
-            <CardTitle>Model service</CardTitle>
+            <CardTitle>AI service</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <p data-testid="connected-banner" className="text-sage">Connected ✓</p>
-            <p data-testid="masked-suffix">Key ending in: ...{openRouter.maskedSuffix}</p>
+            <p data-testid="masked-suffix">Key ending in: …{openRouter.maskedSuffix}</p>
             <TestReadout result={testResult} />
             {formError ? (
               <p role="alert" className="text-sm text-clay">
@@ -458,11 +458,10 @@ export default function SecretsPage() {
                   <p className="break-all font-medium">
                     secret://{secret.namespace}/{secret.name}
                   </p>
-                  <p className="text-sm text-muted-foreground">
-                    {secret.type} · {secret.maskedSuffix ? `····${secret.maskedSuffix}` : "••••"} · last used {formatWhen(secret.lastUsedAt)}
-                    {secret.revokedAt ? " · revoked" : ""}
-                  </p>
                 </button>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {secret.type}, ending …{secret.maskedSuffix || "unavailable"}, last used {formatWhen(secret.lastUsedAt)}{secret.revokedAt ? ", revoked" : ""}
+                </p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {secret.revokedAt ? null : (
                     <Button data-testid="secret-revoke" type="button" size="sm" variant="secondary" disabled={busy !== null} onClick={() => void revoke(secret)}>

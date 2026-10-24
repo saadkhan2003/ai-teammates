@@ -90,10 +90,10 @@ export default function UsagePage() {
         <section className="rounded-lg border border-line bg-paper p-5 text-sm">
           <h2 className="text-lg font-semibold">Quota</h2>
           <p className="mt-2 text-muted-foreground">
-            Bots {quota.bots ?? 0}/{quota.maxBots ?? "—"} · Secrets {quota.secrets ?? 0}/{quota.maxSecrets ?? "—"} · Computers {quota.computers ?? 0}/{quota.maxComputers ?? "—"}
+            Bots {quota.bots ?? 0}/{quota.maxBots ?? "—"}, Secrets {quota.secrets ?? 0}/{quota.maxSecrets ?? "—"}, Computers {quota.computers ?? 0}/{quota.maxComputers ?? "—"}
           </p>
           <p className="text-muted-foreground">
-            Memory {quota.memoryBytes ? `${Math.round(quota.memoryBytes / (1024 * 1024))} MB` : "—"} · CPU {quota.cpuMillis ?? "—"} ms
+            Memory {quota.memoryBytes ? `${Math.round(quota.memoryBytes / (1024 * 1024))} MB` : "—"}, CPU {quota.cpuMillis ?? "—"} ms
           </p>
         </section>
       ) : null}
@@ -111,7 +111,7 @@ export default function UsagePage() {
               <article key={row.id || row.username} className="border-t border-line py-3 text-sm">
                 <p className="break-words font-medium">{row.username}</p>
                 <p className="text-muted-foreground">
-                  {row.role} · {row.modelCalls ?? 0} calls · ${Number(row.costUsd ?? 0).toFixed(4)} · {Math.round(Number(row.latencyMs ?? 0))} ms
+                  {row.role}, {row.modelCalls ?? 0} calls, ${Number(row.costUsd ?? 0).toFixed(4)}, {Math.round(Number(row.latencyMs ?? 0))} ms
                 </p>
               </article>
             ))}

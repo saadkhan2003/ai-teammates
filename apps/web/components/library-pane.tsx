@@ -191,8 +191,14 @@ export function LibraryPane({ botId, botName, botShape, botColor }: { botId: str
     const image = item.kind === "image" || item.kind === "screenshots";
     return <li key={item.id} data-library-item={item.id} className="group relative flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-[var(--bot-accent-soft)] focus-within:bg-[var(--bot-accent-soft)] motion-reduce:transition-none" onMouseEnter={() => setHover(item)} onMouseLeave={() => setHover(null)} onFocus={() => setHover(item)} onBlur={() => setHover(null)}>
       <span data-testid={item.kind === "unknown" ? "library-unknown-icon" : undefined} data-kind={item.kind} className={`relative grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-md border border-border bg-background ${item.kind === "unknown" ? "text-muted-foreground" : "text-foreground"}`}>
-        {image && item.thumbUrl ? <><Icon aria-hidden="true" className="absolute h-4 w-4 text-muted-foreground" /><img className="relative h-full w-full object-cover opacity-0 transition-opacity duration-300 motion-reduce:transition-none" onLoad={event => event.currentTarget.classList.replace("opacity-0", "opacity-100")} src={item.thumbUrl} alt="" loading="lazy" /></> : <Icon aria-hidden="true" className={`h-4 w-4 ${item.kind === "unknown" ? "text-muted-foreground" : "text-muted-foreground"}`} />}
-        {item.kind === "pdf" && <span aria-hidden="true" className="absolute inset-x-0 bottom-0 h-1 bg-red-500" />}
+        {image && item.thumbUrl ? (
+          <>
+            <Icon aria-hidden="true" className="absolute h-4 w-4 text-muted-foreground" />
+            {/* impeccable-disable-next-line: item.thumbUrl is checked by the parent JSX condition; detector misses that guard */}
+            <img className="relative h-full w-full object-cover opacity-0 transition-opacity duration-300 motion-reduce:transition-none" onLoad={event => event.currentTarget.classList.replace("opacity-0", "opacity-100")} src={item.thumbUrl} alt="" loading="lazy" />
+          </>
+        ) : <Icon aria-hidden="true" className={`h-4 w-4 ${item.kind === "unknown" ? "text-muted-foreground" : "text-muted-foreground"}`} />}
+        {item.kind === "pdf" && <span aria-hidden="true" className="absolute inset-x-0 bottom-0 h-1 bg-destructive" />}
       </span>
       <button type="button" className="min-w-0 flex-1 truncate text-left text-sm outline-none focus-visible:ring-1 focus-visible:ring-[var(--bot-accent-ring)]" title={item.name} onClick={() => setPreview(item)}>{item.name}</button>
       <a href={href} download={item.name} aria-label={`Download ${item.name}`} className="grid h-7 w-7 shrink-0 place-items-center rounded-sm text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"><Download className="h-4 w-4" /></a>

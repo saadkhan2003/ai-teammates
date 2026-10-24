@@ -1,10 +1,10 @@
 import fs from "node:fs";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { login } from "./helpers";
 
 const shots = "/workspace/shots-rich-ui";
-async function setTheme(page, theme: "light" | "dark") {
-  await page.evaluate((value) => {
+async function setTheme(page: Page, theme: "light" | "dark") {
+  await page.evaluate((value: "light" | "dark") => {
     localStorage.setItem("teammates-theme", value);
     document.documentElement.classList.toggle("light", value === "light");
     document.documentElement.dataset.theme = value;
@@ -12,7 +12,7 @@ async function setTheme(page, theme: "light" | "dark") {
   await page.reload();
 }
 
-test("renders every structured widget and keeps heavy widgets lazy", async ({ page }) => {
+test("renders every structured widget and keeps heavy widgets lazy", async ({ page }: { page: Page }) => {
   test.setTimeout(120_000);
   fs.mkdirSync(shots, { recursive: true });
   await login(page);
@@ -35,7 +35,7 @@ test("renders every structured widget and keeps heavy widgets lazy", async ({ pa
   }
 });
 
-test("admin analytics chart loads on the usage page", async ({ page }) => {
+test("admin analytics chart loads on the usage page", async ({ page }: { page: Page }) => {
   test.setTimeout(60_000);
   fs.mkdirSync(shots, { recursive: true });
   await login(page);
@@ -51,7 +51,7 @@ test("admin analytics chart loads on the usage page", async ({ page }) => {
   }
 });
 
-test("mock bot streams all widget types and gates widget actions", async ({ page }) => {
+test("mock bot streams all widget types and gates widget actions", async ({ page }: { page: Page }) => {
   test.setTimeout(1_200_000);
   await login(page);
   const created = await page.request.post("/api/bots", { data: { name: `WidgetE2E ${Date.now()}`, role: "Widget demo teammate" } });
