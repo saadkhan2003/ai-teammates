@@ -20,6 +20,25 @@ export function CopyId({ id, label }: { id: string; label: string }) {
   </button>;
 }
 
+const BOTS_SHOWN = 5;
+
+/** One owner: total row, live bots (top 5, then "Show more"), and deleted bots folded into one row. */
+function OwnerRows({ owner: o }: { owner: OwnerSpend }) {
+  const [all, setAll] = useState(false); const [deletedOpen, setDeletedOpen] = useState(false);
+  const live = o.bots.filter(b => b.bot_id && b.bot_name); const deleted = o.bots.filter(b => b.bot_id && !b.bot_name); const system = o.bots.filter(b => !b.bot_id);
+  const shown = all ? live : live.slice(0, BOTS_SHOWN);
+  const sum = (rows: BotSpend[], k: "today" | "month") => rows.reduce((n, r) => n + Number(r[k]), 0);
+  const row = (b: BotSpend, label: React.ReactNode) => <tr key={b.bot_id ?? "none"}><td className="p-1 pl-5">{label}</td><td className="p-1">{usd(b.today)}</td><td className="p-1">{usd(b.month)}</td></tr>;
+  return <tbody className="border-t border-border" data-testid="spend-owner">
+    <tr className="font-medium"><td className="p-1">{o.owner_name || "Unknown owner"}{o.owner_username && o.owner_username !== o.owner_name ? <span className="ml-1 font-normal text-muted-foreground">({o.owner_username})</span> : null}<CopyId id={o.owner_id} label="owner" /><span className="ml-2 font-normal text-muted-foreground">{o.bots.length} bot{o.bots.length === 1 ? "" : "s"}</span></td><td className="p-1">{usd(o.today)}</td><td className="p-1">{usd(o.month)}</td></tr>
+    {shown.map(b => row(b, <>{b.bot_name}<CopyId id={b.bot_id!} label="bot" /></>))}
+    {live.length > BOTS_SHOWN && <tr><td className="p-1 pl-5" colSpan={3}><button type="button" className="text-xs underline" onClick={() => setAll(v => !v)}>{all ? "Show fewer bots" : `Show ${live.length - BOTS_SHOWN} more bots`}</button></td></tr>}
+    {deleted.length > 0 && <tr className="text-muted-foreground"><td className="p-1 pl-5"><button type="button" className="underline" aria-expanded={deletedOpen} onClick={() => setDeletedOpen(v => !v)}>{deleted.length} deleted bot{deleted.length === 1 ? "" : "s"}</button></td><td className="p-1">{usd(sum(deleted, "today"))}</td><td className="p-1">{usd(sum(deleted, "month"))}</td></tr>}
+    {deletedOpen && deleted.map(b => row(b, <span className="pl-4 text-muted-foreground">Deleted bot<CopyId id={b.bot_id!} label="bot" /></span>))}
+    {system.map(b => row(b, <span className="text-muted-foreground">No bot (system)</span>))}
+  </tbody>;
+}
+
 export function SpendTable({ pageSize = 10, onLoaded }: { pageSize?: number; onLoaded?: (s: SpendPage) => void }) {
   const [page, setPage] = useState(1); const [data, setData] = useState<SpendPage>(); const [error, setError] = useState("");
   const load = useCallback(async (p: number) => {
@@ -35,10 +54,7 @@ export function SpendTable({ pageSize = 10, onLoaded }: { pageSize?: number; onL
     <div className="overflow-x-auto"><table className="w-full text-left text-xs">
       <thead><tr><th className="p-1">Owner / bot</th><th className="p-1">Today</th><th className="p-1">Month</th></tr></thead>
       {data?.owners.length === 0 && <tbody><tr><td className="p-1" colSpan={3}>No model spend this month.</td></tr></tbody>}
-      {data?.owners.map(o => <tbody key={o.owner_id} className="border-t border-border">
-        <tr className="font-medium"><td className="p-1">{o.owner_name || "Unknown owner"}{o.owner_username && o.owner_username !== o.owner_name ? <span className="ml-1 text-muted-foreground">({o.owner_username})</span> : null}<CopyId id={o.owner_id} label="owner" /></td><td className="p-1">{usd(o.today)}</td><td className="p-1">{usd(o.month)}</td></tr>
-        {o.bots.map(b => <tr key={b.bot_id ?? "none"}><td className="p-1 pl-5">{b.bot_id ? <>{b.bot_name || "Deleted bot"}<CopyId id={b.bot_id} label="bot" /></> : <span className="text-muted-foreground">No bot (system)</span>}</td><td className="p-1">{usd(b.today)}</td><td className="p-1">{usd(b.month)}</td></tr>)}
-      </tbody>)}
+      {data?.owners.map(o => <OwnerRows key={o.owner_id} owner={o} />)}
     </table></div>
     {pages > 1 && <div className="mt-2 flex items-center gap-2 text-xs">
       <button className={button} disabled={page <= 1} onClick={() => setPage(p => p - 1)}>Previous</button>
