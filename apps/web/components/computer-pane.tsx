@@ -199,6 +199,8 @@ export function ComputerPane({
   const [mode, setMode] = useState<DesktopMode>("view");
   const [error, setError] = useState<string | null>(null);
   const [connectFailed, setConnectFailed] = useState(false);
+  const [desktopAsleep, setDesktopAsleep] = useState(false);
+  const wakeRequested = useRef(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(true);
   const [online, setOnline] = useState(true);
@@ -305,13 +307,38 @@ export function ComputerPane({
     });
   }
 
-  async function startView() {
+  // Headless computers: the desktop only starts for browser or desktop work, Watch or Take
+  // control. Opening the panel checks first and shows "Desktop asleep" instead of waking it.
+  async function desktopIsAsleep(): Promise<boolean> {
+    try {
+      const state = await api<{ desktop?: string }>("/api/computer/desktop");
+      return state?.desktop === "asleep";
+    } catch {
+      return false;
+    }
+  }
+
+  async function startView(force = false) {
     if (!wantViewRef.current) return;
     if (liveRef.current || openingRef.current || pendingRef.current) return;
     pendingRef.current = true;
     clearReconnect();
     const gen = ++connectGen.current;
     setError(null);
+    if (!force && !wakeRequested.current && (await desktopIsAsleep())) {
+      if (gen === connectGen.current) {
+        pendingRef.current = false;
+        setConnecting(false);
+        setConnectFailed(false);
+        setDesktopAsleep(true);
+      }
+      return;
+    }
+    if (gen !== connectGen.current || !wantViewRef.current) {
+      pendingRef.current = false;
+      return;
+    }
+    setDesktopAsleep(false);
     setConnecting(true);
     try {
       await openView("view", `/api/computers/${botIdRef.current}/vnc-ticket?role=watch`, gen);
@@ -379,8 +406,23 @@ export function ComputerPane({
   }, [botId]);
 
   useEffect(() => {
-    if (vncState === "connected") { setConnecting(false); setConnectFailed(false); }
+    if (vncState === "connected") { setConnecting(false); setConnectFailed(false); setDesktopAsleep(false); wakeRequested.current = false; }
   }, [vncState]);
+
+  // While the desktop sleeps, look again every few seconds; connect once a task wakes it.
+  useEffect(() => {
+    if (!desktopAsleep) return;
+    const timer = window.setInterval(() => {
+      if (!wantViewRef.current || document.visibilityState !== "visible") return;
+      void desktopIsAsleep().then((asleep) => {
+        if (asleep || !wantViewRef.current) return;
+        setDesktopAsleep(false);
+        void startView();
+      });
+    }, 5000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [desktopAsleep]);
 
   useEffect(() => {
     const update = () => setOnline(navigator.onLine);
@@ -390,13 +432,16 @@ export function ComputerPane({
     return () => { window.removeEventListener("online", update); window.removeEventListener("offline", update); };
   }, []);
 
-  const phase: ComputerPhase = !online ? "offline" : vncState === "connected" ? "live" : error || connectFailed ? "error" : connecting ? "connecting" : "sleeping";
+  const phase: ComputerPhase = !online ? "offline" : vncState === "connected" ? "live" : desktopAsleep ? "desktop-asleep" : error || connectFailed ? "error" : connecting ? "connecting" : "sleeping";
 
   function retryConnect() {
     wantViewRef.current = true;
     reconnectAttempt.current = 0;
     clearReconnect();
-    void startView();
+    // Watch: this is the one panel action that starts a sleeping desktop.
+    wakeRequested.current = true;
+    setDesktopAsleep(false);
+    void startView(true);
   }
 
   const paneOpened = useRef(false);
@@ -843,7 +888,7 @@ export function ComputerPane({
             style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%`, left: pan.x, top: pan.y }}
             aria-label="Bot desktop"
           />
-          {(compact && !fullscreen && phase !== "live") || (fullscreen && (phase === "error" || phase === "offline")) ? (
+          {(compact && !fullscreen && phase !== "live") || (fullscreen && (phase === "error" || phase === "offline" || phase === "desktop-asleep")) ? (
             <ComputerState phase={phase} name={caption || "Teammate"} avatar={avatar} onRetry={retryConnect} />
           ) : null}
           {compact && !fullscreen ? <DisplayDots count={displays} /> : null}

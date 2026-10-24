@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-export type ComputerPhase = "connecting" | "live" | "error" | "sleeping" | "offline";
+export type ComputerPhase = "connecting" | "live" | "error" | "sleeping" | "offline" | "desktop-asleep";
 
 /** Our own dark wallpaper: soft vignette plus one light swoosh. Pure SVG, no external image. */
 export function Wallpaper({ className }: { className?: string }) {
@@ -43,6 +43,7 @@ export function ComputerState({
   const copy = {
     connecting: { title: "Waking up…", sub: "Connecting" },
     sleeping: { title: `${name}'s computer is resting`, sub: "It wakes up when a task needs it" },
+    "desktop-asleep": { title: "Desktop asleep", sub: "Wakes on demand. Jobs and files keep running." },
     error: { title: "Couldn't connect", sub: "The computer isn't answering" },
     offline: { title: "You're offline", sub: "Reconnecting when the network is back" },
   }[phase];
@@ -60,7 +61,7 @@ export function ComputerState({
           <div className={cn("grid h-10 w-10 place-items-center", phase === "connecting" && "animate-pulse motion-reduce:animate-none")}>{avatar}</div>
           <p data-testid="computer-state-title" className="text-xs font-medium text-neutral-300">{copy.title}</p>
           <p data-testid="computer-state-sub" className="text-[11px] leading-none text-neutral-500">{copy.sub}</p>
-          {phase === "error" || phase === "sleeping" ? (
+          {phase === "error" || phase === "sleeping" || phase === "desktop-asleep" ? (
             <Button
               type="button"
               data-no-expand
@@ -70,7 +71,7 @@ export function ComputerState({
               className="mt-1 h-6 rounded-full px-3 text-[11px]"
               onClick={(event) => { event.stopPropagation(); onRetry(); }}
             >
-              {phase === "error" ? "Retry" : "Wake up"}
+              {phase === "error" ? "Retry" : phase === "desktop-asleep" ? "Watch" : "Wake up"}
             </Button>
           ) : null}
         </div>

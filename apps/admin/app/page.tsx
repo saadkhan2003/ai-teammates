@@ -1,5 +1,6 @@
 "use client";
 import { AiOverview } from "@/components/ai-controls";
+import { ComputerHealth } from "@/components/computer-health";
 
 import { useAdmin } from "@/components/admin-state";
 
@@ -32,6 +33,7 @@ export default function AdminDashboard() {
           </article>
         ))}
       </section>
+      <ComputerHealth />
       <section data-testid="admin-chart" className="rounded-[12px] border border-border bg-card p-4 shadow-(--shadow-card)">
         <h3 className="text-base font-medium">Model calls</h3>
         <p className="mt-1 text-sm text-muted-foreground">Calls recorded for each account.</p>
