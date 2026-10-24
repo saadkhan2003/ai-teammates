@@ -49,12 +49,39 @@ public static partial class AiAdmin
             var metrics = await conn.QueryAsync("SELECT role,provider_id,coalesce(served_model,model) AS model,count(*) AS calls,avg(CASE WHEN ok THEN 0.0 ELSE 1.0 END) AS error_rate,avg(CASE WHEN fallback_used THEN 1.0 ELSE 0.0 END) AS fallback_rate,percentile_cont(0.5) WITHIN GROUP(ORDER BY latency_ms) AS p50,percentile_cont(0.95) WITHIN GROUP(ORDER BY latency_ms) AS p95 FROM model_calls WHERE created_at>now()-interval '24 hours' GROUP BY role,provider_id,coalesce(served_model,model)");
             return Json(new { breakers = registry.Breakers.Health(), metrics = metrics.Select(Row), scope = "this API instance; latency and rates cover all instances over 24h" });
         });
-        group.MapGet("/spend", async () =>
+        group.MapGet("/spend", async (int? page, int? page_size) =>
         {
+            // Grouped by owner, owners paginated (busiest first); names come from users/bots, ids stay for copy.
+            var size = Math.Clamp(page_size ?? 10, 1, 50);
+            var at = Math.Max(page ?? 1, 1);
             await using var conn = await platform.Data.OpenConnectionAsync();
-            var rows = await conn.QueryAsync("SELECT owner_id,bot_id,coalesce(sum(cost_usd) FILTER(WHERE created_at>=date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'),0) AS today,coalesce(sum(cost_usd),0) AS month FROM model_calls WHERE created_at>=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' GROUP BY owner_id,bot_id");
+            const string month = "date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'";
+            const string day = "date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'";
+            var totals = await conn.QuerySingleAsync($"SELECT count(DISTINCT owner_id) AS owners,coalesce(sum(cost_usd) FILTER(WHERE created_at>={day}),0) AS today,coalesce(sum(cost_usd),0) AS month FROM model_calls WHERE created_at>={month}");
+            var rows = (await conn.QueryAsync($@"WITH spend AS (SELECT owner_id,bot_id,coalesce(sum(cost_usd) FILTER(WHERE created_at>={day}),0) AS today,coalesce(sum(cost_usd),0) AS month FROM model_calls WHERE created_at>={month} GROUP BY owner_id,bot_id),
+                owners AS (SELECT owner_id,sum(today) AS owner_today,sum(month) AS owner_month FROM spend GROUP BY owner_id ORDER BY sum(month) DESC,owner_id LIMIT @size OFFSET @offset)
+                SELECT s.owner_id,s.bot_id,s.today,s.month,o.owner_today,o.owner_month,
+                       coalesce(nullif(u.display_name,''),u.username) AS owner_name,u.username AS owner_username,b.name AS bot_name
+                FROM spend s JOIN owners o ON o.owner_id=s.owner_id LEFT JOIN users u ON u.id=s.owner_id LEFT JOIN bots b ON b.id=s.bot_id
+                ORDER BY o.owner_month DESC,s.owner_id,s.month DESC,s.bot_id", new { size, offset = (at - 1) * size })).Select(Row).ToList();
+            var grouped = rows.GroupBy(r => r["owner_id"]?.ToString() ?? "").Select(g => new
+            {
+                owner_id = g.Key,
+                owner_name = g.First()["owner_name"] as string,
+                owner_username = g.First()["owner_username"] as string,
+                today = g.First()["owner_today"],
+                month = g.First()["owner_month"],
+                bots = g.Select(r => new { bot_id = r["bot_id"]?.ToString(), bot_name = r["bot_name"] as string, today = r["today"], month = r["month"] }),
+            });
             var active = (await registry.Snapshot()).Versions.FirstOrDefault(v => v.IsActive);
-            return Json(new { spend = rows.Select(Row), caps = active?.Config.Budgets, plan = "default", currency = "USD", cache_seconds = 3 });
+            return Json(new
+            {
+                spend = rows.Select(r => new Dictionary<string, object?> { ["owner_id"] = r["owner_id"], ["bot_id"] = r["bot_id"], ["owner_name"] = r["owner_name"], ["bot_name"] = r["bot_name"], ["today"] = r["today"], ["month"] = r["month"] }),
+                owners = grouped,
+                total = new { today = ((IDictionary<string, object>)totals)["today"], month = ((IDictionary<string, object>)totals)["month"] },
+                page = at, page_size = size, total_owners = ((IDictionary<string, object>)totals)["owners"],
+                caps = active?.Config.Budgets, plan = "default", currency = "USD", cache_seconds = 3,
+            });
         });
         group.MapPut("/kill-switch", (HttpContext ctx, JsonElement body) => Write(platform, Actor(ctx), "kill_switch.updated", async (conn, tx) =>
         {

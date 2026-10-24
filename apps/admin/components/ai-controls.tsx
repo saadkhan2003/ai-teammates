@@ -2,18 +2,19 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { button, card, input, type State, type Target, type Version } from "@/lib/ai";
+import { SpendTable, type SpendPage } from "@/components/spend-table";
 
 type Metrics = { role: string; model: string; calls: number; error_rate: number; fallback_rate: number; p50: number; p95: number };
 type Alert = { model: string; reason: string; expiration_date?: string };
-type Spend = { spend: { owner_id: string; bot_id: string; today: number; month: number }[]; caps: unknown };
+type Spend = SpendPage;
 type Kill = { mode: string; safe_model?: Target };
 export function AiOverview() {
   const [state, setState] = useState<State>(); const [kill, setKill] = useState<Kill>({ mode: "off" });
   const [safe, setSafe] = useState(""); const [alerts, setAlerts] = useState<Alert[]>([]); const [spend, setSpend] = useState<Spend>();
   const [metrics, setMetrics] = useState<Metrics[]>([]); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
-    const [s, k, a, d, h] = await Promise.all([api<State>("/api/admin/ai"), api<Kill>("/api/admin/ai/kill-switch"), api<Alert[]>("/api/admin/ai/alerts"), api<Spend>("/api/admin/ai/spend"), api<{ metrics: Metrics[] }>("/api/admin/ai/health")]);
-    setState(s && Array.isArray(s.providers) ? s : undefined); setKill(k?.mode ? k : { mode: "off" }); setAlerts(Array.isArray(a) ? a : []); setSpend(d && Array.isArray(d.spend) ? d : undefined); setMetrics(Array.isArray(h?.metrics) ? h.metrics : []);
+    const [s, k, a, h] = await Promise.all([api<State>("/api/admin/ai"), api<Kill>("/api/admin/ai/kill-switch"), api<Alert[]>("/api/admin/ai/alerts"), api<{ metrics: Metrics[] }>("/api/admin/ai/health")]);
+    setState(s && Array.isArray(s.providers) ? s : undefined); setKill(k?.mode ? k : { mode: "off" }); setAlerts(Array.isArray(a) ? a : []); setMetrics(Array.isArray(h?.metrics) ? h.metrics : []);
     if (k?.safe_model) setSafe(`${k.safe_model.provider}|${k.safe_model.model}`);
   }, []);
   useEffect(() => { void load().catch(e => setError(e.message)); }, [load]);
@@ -27,8 +28,8 @@ export function AiOverview() {
     <div className="space-y-3 rounded-[6px] border border-border p-3"><h4 className="font-semibold">Kill switch · {kill.mode}</h4><p className="text-sm">Stop pauses new requests cleanly. Safe mode pins all roles to the selected model. Controls apply on the next request.</p><div className="flex flex-wrap gap-2"><button disabled={busy} className={button} onClick={() => void control("stop")}>Stop all model calls</button><button disabled={busy} className={button} onClick={() => void control("off")}>Resume configured calls</button></div><label className="grid gap-1 text-sm">Designated safe model<select className={input} value={safe} onChange={e => setSafe(e.target.value)}><option value="">Choose safe model</option>{(state?.providers ?? []).filter(p => p.enabled).flatMap(p => p.models.map(m => <option key={`${p.id}|${m.id}`} value={`${p.id}|${m.id}`}>{p.name} / {m.label || m.id}</option>))}</select></label><button disabled={busy || !safe} className={button} onClick={() => void control("safe")}>Pin every role to safe model</button></div>
     {alerts.length > 0 && <div role="alert" className="rounded-[6px] border border-amber-500 p-3"><h4 className="font-medium">Deprecation alerts</h4><ul>{alerts.map((a, i) => <li key={i}>{a.model}: {a.reason.replaceAll("_", " ")}{a.expiration_date ? ` · ${a.expiration_date}` : ""}</li>)}</ul></div>}
     <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr>{["Role", "Live model", "Last change", "Errors / fallback (24h)"].map(t => <th key={t} className="p-2">{t}</th>)}</tr></thead><tbody>{Object.entries(state?.active_config?.roles ?? (state?.bootstrap_config ? { chat: { primary: { provider: "", model: state.bootstrap_config.model }, fallbacks: [] } } : {})).map(([role, value]) => { const m = metrics.filter(m => m.role === role || role === "chat" && m.role === "planner" || role === "quick" && m.role === "compactor" || role === "vision" && m.role === "video"); const calls = m.reduce((n, r) => n + Number(r.calls), 0); return <tr key={role}><td className="p-2">{role}</td><td className="p-2">{kill.mode === "stop" ? "Paused" : kill.mode === "safe" ? kill.safe_model?.model : value.primary.model}</td><td className="p-2">Version {state?.version}<br />{state?.last_change ? new Date(state.last_change).toLocaleString() : "Environment defaults"}</td><td className="p-2">{calls ? `${(m.reduce((n, r) => n + Number(r.error_rate) * Number(r.calls), 0) / calls * 100).toFixed(1)}% / ${(m.reduce((n, r) => n + Number(r.fallback_rate) * Number(r.calls), 0) / calls * 100).toFixed(1)}%` : "No calls yet"}</td></tr>; })}</tbody></table></div>
-    <h4 className="font-medium">Today’s spend vs caps (USD, UTC)</h4><p className="text-sm">Total today: ${spend?.spend.reduce((n, r) => n + Number(r.today), 0).toFixed(6) ?? "0"}. Plan: default. Per owner and bot, including monthly totals:</p>
-    <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr><th>Owner / bot</th><th>Today</th><th>Month</th></tr></thead><tbody>{spend?.spend.map(r => <tr key={`${r.owner_id}:${r.bot_id}`}><td>{r.owner_id}<br />{r.bot_id}</td><td>${Number(r.today).toFixed(6)}</td><td>${Number(r.month).toFixed(6)}</td></tr>)}</tbody></table></div><pre className="overflow-x-auto text-xs">{JSON.stringify(spend?.caps ?? { plans: {}, users: {}, bots: {} }, null, 2)}</pre>
+    <h4 className="font-medium">Today’s spend vs caps (USD, UTC)</h4><p className="text-sm">Total today: ${Number(spend?.total.today ?? 0).toFixed(6)}. Plan: default. Grouped by owner, with each bot and monthly totals:</p>
+    <SpendTable onLoaded={setSpend} /><pre className="overflow-x-auto text-xs">{JSON.stringify(spend?.caps ?? { plans: {}, users: {}, bots: {} }, null, 2)}</pre>
   </section>;
 }
 
