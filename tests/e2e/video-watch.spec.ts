@@ -9,55 +9,113 @@ const VIDEO_QUESTION = "What happens in the attached video?";
 const attachment = "[attached: /workspace/uploads/video-watch.mp4]";
 const bot = { id: BOT, name: "ATLAS", role: "Chief of staff", section: "Teammates", avatar: "", avatarShape: "blob1", avatarColor: "#ff3045", isPrimary: true, bio: "Runs the day", attention: false };
 
-function sendIdleDesktopFrame(socket: import("@playwright/test").WebSocketRoute) {
-  const bytes = (...values: number[]) => new Uint8Array(values);
-  let stage = 0;
-  socket.send("RFB 003.008\n");
-  socket.onMessage((message) => {
-    if (typeof message === "string") {
-      socket.send(bytes(1, 1) as never); // One security type: no authentication.
-      return;
-    }
-    if (stage === 0) {
-      stage = 1;
-      socket.send(bytes(0, 0, 0, 0) as never); // SecurityResult: success.
-      return;
-    }
-    if (stage === 1) {
-      stage = 2;
-      const name = new TextEncoder().encode("Idle desktop");
-      const serverInit = new Uint8Array(24 + name.length);
-      const view = new DataView(serverInit.buffer);
-      view.setUint16(0, 320);
-      view.setUint16(2, 200);
-      serverInit.set([32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0], 4);
-      view.setUint32(20, name.length);
-      serverInit.set(name, 24);
-      socket.send(serverInit as never);
-      return;
-    }
+async function installIdleDesktopSocket(page: Page) {
+  await page.addInitScript(() => {
+    const NativeWebSocket = window.WebSocket;
+    class IdleDesktopSocket extends EventTarget {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSING = 2;
+      static readonly CLOSED = 3;
+      readonly url: string;
+      readonly protocol = "";
+      readonly extensions = "";
+      readonly bufferedAmount = 0;
+      binaryType: BinaryType = "arraybuffer";
+      readyState = IdleDesktopSocket.CONNECTING;
+      onopen: ((event: Event) => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onclose: ((event: CloseEvent) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      private stage = 0;
 
-    // A simple neutral desktop frame: muted gray-blue background with a subtle
-    // darker band. This keeps the computer panel representative without a live stack.
-    const width = 320;
-    const height = 200;
-    const update = new Uint8Array(4 + 12 + width * height * 4);
-    const view = new DataView(update.buffer);
-    update[0] = 0; // FramebufferUpdate
-    view.setUint16(2, 1);
-    view.setUint16(8, width);
-    view.setUint16(10, height);
-    view.setUint32(12, 0); // Raw encoding
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const offset = 16 + (y * width + x) * 4;
-        const band = y > 145 && y < 154;
-        update[offset] = band ? 99 : 143;
-        update[offset + 1] = band ? 87 : 116;
-        update[offset + 2] = band ? 76 : 104;
+      constructor(url: string | URL) {
+        super();
+        this.url = String(url);
+        queueMicrotask(() => {
+          this.readyState = IdleDesktopSocket.OPEN;
+          const opened = new Event("open");
+          this.onopen?.(opened);
+          this.dispatchEvent(opened);
+          this.receiveText("RFB 003.008\n");
+        });
+      }
+
+      send(data: string | ArrayBuffer | ArrayBufferView) {
+        if (typeof data === "string") {
+          this.stage = 1;
+          this.receive(new Uint8Array([1, 1])); // One security type: no authentication.
+        } else if (this.stage === 1) {
+          this.stage = 2;
+          this.receive(new Uint8Array([0, 0, 0, 0])); // SecurityResult: success.
+        } else if (this.stage === 2) {
+          this.stage = 3;
+          const name = new TextEncoder().encode("Idle desktop");
+          const serverInit = new Uint8Array(24 + name.length);
+          const view = new DataView(serverInit.buffer);
+          view.setUint16(0, 320);
+          view.setUint16(2, 200);
+          serverInit.set([32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0], 4);
+          view.setUint32(20, name.length);
+          serverInit.set(name, 24);
+          this.receive(serverInit);
+        } else {
+          this.receive(this.framebufferUpdate());
+        }
+      }
+
+      close() {
+        this.readyState = IdleDesktopSocket.CLOSED;
+        const closed = new CloseEvent("close", { code: 1000, reason: "idle desktop fixture closed" });
+        this.onclose?.(closed);
+        this.dispatchEvent(closed);
+      }
+
+      private receive(bytes: Uint8Array) {
+        const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+        const message = new MessageEvent("message", { data });
+        this.onmessage?.(message);
+        this.dispatchEvent(message);
+      }
+
+      private receiveText(data: string) {
+        const message = new MessageEvent("message", { data });
+        this.onmessage?.(message);
+        this.dispatchEvent(message);
+      }
+
+      private framebufferUpdate() {
+        // A muted gray-blue placeholder with a subtle darker band.
+        const width = 320;
+        const height = 200;
+        const update = new Uint8Array(4 + 12 + width * height * 4);
+        const view = new DataView(update.buffer);
+        update[0] = 0;
+        view.setUint16(2, 1);
+        view.setUint16(8, width);
+        view.setUint16(10, height);
+        view.setUint32(12, 0);
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const offset = 16 + (y * width + x) * 4;
+            const band = y > 145 && y < 154;
+            update[offset] = band ? 99 : 143;
+            update[offset + 1] = band ? 87 : 116;
+            update[offset + 2] = band ? 76 : 104;
+          }
+        }
+        return update;
       }
     }
-    socket.send(update as never);
+
+    const routedWebSocket = new Proxy(NativeWebSocket, {
+      construct(target, args) {
+        const url = String(args[0]);
+        if (url.includes("/vnc/websockify")) return new IdleDesktopSocket(url);
+        return Reflect.construct(target, args);
+      },
+    });
+    (window as unknown as { WebSocket: typeof WebSocket }).WebSocket = routedWebSocket;
   });
 }
 
@@ -70,7 +128,7 @@ async function openVideoChat(page: Page, theme: "light" | "dark") {
     token: "e2e-idle-desktop", mode: "view", epoch: 1,
     state: "running", online: true, screen: { width: 320, height: 200, placeholder: true },
   } }));
-  page.routeWebSocket("**/vnc/websockify**", socket => sendIdleDesktopFrame(socket));
+  await installIdleDesktopSocket(page);
 
   const messages: Array<Record<string, unknown>> = [];
   let messageNo = 0;
