@@ -57,7 +57,7 @@ test("owner manages the shared Skills library in both themes", async ({ page }) 
     await expect(row).toBeVisible();
     await screenshot(page, "skills-list", "light");
     await row.click();
-    await expect(page.getByTestId("skill-detail").getByText("Check totals")).toBeVisible();
+    await expect(page.getByTestId("skill-detail").locator("article").getByText("Check totals")).toBeVisible();
     await expect(page.getByText("examples/checklist.txt")).toBeVisible();
     await screenshot(page, "skills-view", "light");
     await page.getByTestId("skill-edit").click();
@@ -65,7 +65,7 @@ test("owner manages the shared Skills library in both themes", async ({ page }) 
     await screenshot(page, "skills-edit", "light");
     await page.getByTestId("skill-body").fill("# Review the queue\n\n- Check two queues\n- Note exceptions");
     await page.getByTestId("skill-save").click();
-    await expect(page.getByTestId("skill-detail").getByText("Check two queues")).toBeVisible();
+    await expect(page.getByTestId("skill-detail").locator("article").getByText("Check two queues")).toBeVisible();
     await expect(page.getByTestId("skill-detail").getByText("Version 2")).toBeVisible();
     await expect(page.getByTestId("skill-detail").getByText("Version 1")).toBeVisible();
     await expect(page.getByTestId("skill-detail").getByText("Version 0")).toHaveCount(0);

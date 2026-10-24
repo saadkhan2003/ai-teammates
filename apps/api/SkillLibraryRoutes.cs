@@ -112,7 +112,7 @@ public static class SkillLibraryRoutes
             var owner = await Routes.RequireUser(ctx, platform);
             if (owner is null) return Results.Unauthorized();
             await using var c = await platform.Data.OpenConnectionAsync();
-            var row = await c.QuerySingleOrDefaultAsync("SELECT id,name,title,when_to_use AS \"whenToUse\",kind,source,version,allow_bot_edit AS \"allowBotEdit\",created_by AS \"createdBy\",created_at AS \"createdAt\",updated_at AS \"updatedAt\",body,files FROM skill_library WHERE id=@id AND owner_id=@owner AND archived_at IS NULL", new { id, owner });
+            var row = await c.QuerySingleOrDefaultAsync("SELECT id,name,title,when_to_use AS \"whenToUse\",kind,source,version,allow_bot_edit AS \"allowBotEdit\",created_by AS \"createdBy\",created_at AS \"createdAt\",updated_at AS \"updatedAt\",bot_id AS \"botId\",body,files FROM skill_library WHERE id=@id AND owner_id=@owner AND archived_at IS NULL", new { id, owner });
             return row is null ? Results.NotFound() : Results.Json(row);
         });
 
