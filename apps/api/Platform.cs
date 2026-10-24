@@ -189,11 +189,11 @@ public sealed class Platform
         return await conn.ExecuteScalarAsync<Guid?>("SELECT user_id FROM sessions WHERE token_hash=@h AND expires_at > now()", new { h = hash });
     }
 
-    public async Task<bool> LoginBlocked(string ip)
+    public async Task<bool> LoginBlocked(string ip, bool testLogin = false)
     {
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(ip.Length <= 128 ? ip : ip[..128]));
         await using var conn = await Data.OpenConnectionAsync();
-        var limits = LoginRateLimiter.LimitsFor(TestHooks);
+        var limits = LoginRateLimiter.LimitsFor(TestHooks && testLogin);
         return await conn.ExecuteScalarAsync<bool>("SELECT count(*) FILTER (WHERE failed) >= @failures OR count(*) >= @attempts FROM login_rate_events WHERE ip_hash=@hash AND created_at > clock_timestamp() - interval '10 minutes'", new { hash, failures = limits.Failures, attempts = limits.Attempts });
     }
 

@@ -3,6 +3,7 @@ import json
 import os
 import urllib.error
 import urllib.request
+import uuid
 
 from stack import BASE
 from stack import API
@@ -54,7 +55,10 @@ def test_audit_chain_hook_is_on_the_api_only():
 
 
 def test_login_rate_limit_and_policy_roundtrip():
-    forwarded = {"X-Forwarded-For": "203.0.113.77"}
+    # A fresh documentation-range address makes strict limiter checks repeatable
+    # without clearing another test's events on the shared isolated stack.
+    suffix = uuid.uuid4().hex[:16]
+    forwarded = {"X-Forwarded-For": "2001:db8::" + ":".join(suffix[i:i + 4] for i in range(0, 16, 4))}
     for _ in range(8):
         status, _ = call(API, "POST", "/api/auth/login", {"username": "nobody-edge", "password": "nope"}, forwarded)
         assert status == 401

@@ -12,6 +12,8 @@ export default defineConfig({
   expect: { timeout: 20_000 },
   use: {
     baseURL: process.env.BASE_URL!,
+    // Only ENABLE_TEST_HOOKS stacks honor this explicit login-limit opt-in.
+    extraHTTPHeaders: { "X-Teammates-Test-Login": "true" },
     storageState: "./.auth/owner.json",
     actionTimeout: 20_000,
     channel: "chrome",

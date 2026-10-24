@@ -2,6 +2,8 @@
 
 PolicyGate, DLP, per-bot isolation (Bot Isolation Policy: per-bot network and files, bots talk only via the messaging layer), per-bot Linux UIDs and private workspace modes remain required. Reliability guards do not bypass any of those controls.
 
+Login limits remain 30 attempts or 8 failures per client address per 10 minutes, including on test stacks by default. Only stacks with `ENABLE_TEST_HOOKS=true` honor `X-Teammates-Test-Login: true`, which selects a separate test-traffic bucket with limits of 3000 attempts or 800 failures. Integration login clients and Playwright opt in explicitly; limiter tests omit the header. Production ignores it.
+
 VNC and terminal API tickets are stored by SHA-256 hash in Postgres and consumed by one atomic update. The database clock decides their 60-second lifetime, and user, bot, and (for VNC) IP bindings are checked during consumption so a wrong claim does not burn a ticket. VNC session tokens carried between API instances are AES-GCM encrypted with the shared API master key. Expired ticket rows are removed by every instance's safe periodic cleanup.
 
 Browser consent is scoped to the task and the full origin (scheme, hostname, port). Opening a new origin creates an Allow once / Deny approval, including trusted test portals. A previous task's `seen_domains` rows no longer authorize browsing. Skill replay uses the same authorization path. Browser approval does not grant credential use. Persistent credential grants continue to apply only to credential actions; there is no implicit persistent browser grant.
@@ -22,5 +24,5 @@ Plugin writes and purchases retain the outbound-action ledger. Remote plugin cal
 - A task started by a peer cannot spend its own authority. PolicyGate raises ALLOW to ASK for payments, signing, deletes, credential use, external posts, messages and bot management. The approval is relayed to the chat of the user's own bot that started the thread.
 - Cycle detection, idempotency keys, depth, per-task, per-thread and hourly limits, and the quota-based chain budget stop loops and spend.
 - Each bot keeps its own workspace. A message carries text only, and no file or secret crosses between bots.
-- Memory provenance is set by the server (`message:<id>`). A model-supplied label cannot replace it.
+- Memory provenance is set by the server (`sourceMessageId` and `sourceTaskId` in the paginated memories API). A model-supplied label cannot replace it.
 - Cloning a bot copies plugin enablement and never secrets.

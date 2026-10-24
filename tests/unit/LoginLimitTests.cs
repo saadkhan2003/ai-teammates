@@ -28,7 +28,23 @@ public sealed class LoginLimitTests
         for (var i = 100; i < LoginRateLimiter.LimitsFor(true).Failures; i++) test.NoteFailure("ip", now);
         Assert.True(test.IsBlocked("ip", now));
         var platform = File.ReadAllText(Path.Combine(MigrationManifestTests.Root(), "apps/api/Platform.cs"));
-        Assert.Contains("LoginRateLimiter.LimitsFor(TestHooks)", platform);
+        Assert.Contains("LoginRateLimiter.LimitsFor(TestHooks && testLogin)", platform);
         Assert.Contains("config[\"ENABLE_TEST_HOOKS\"], \"true\"", platform);
+    }
+
+    [Fact]
+    public void Relaxation_requires_both_test_hooks_and_explicit_header()
+    {
+        var headers = new Microsoft.AspNetCore.Http.HeaderDictionary();
+        Assert.False(LoginRateLimiter.RelaxFor(true, headers));
+        headers[LoginRateLimiter.TestHeader] = "true";
+        Assert.False(LoginRateLimiter.RelaxFor(false, headers));
+        Assert.True(LoginRateLimiter.RelaxFor(true, headers));
+        headers[LoginRateLimiter.TestHeader] = "false";
+        Assert.False(LoginRateLimiter.RelaxFor(true, headers));
+        var strict = new LoginRateLimiter();
+        var now = DateTimeOffset.UtcNow;
+        for (var i = 0; i < 8; i++) strict.NoteFailure("ip", now);
+        Assert.True(strict.IsBlocked("ip", now));
     }
 }

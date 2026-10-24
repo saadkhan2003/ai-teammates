@@ -424,10 +424,16 @@ class DesktopManager:
         if bot_id not in self.desktops:
             raise KeyError(bot_id)
         width, height = geometry()
-        count = MAX_WINDOWS if os.environ.get("COMPUTER_SECOND_DISPLAY", "true").lower() == "true" else 1
+        # The second display is a lazy v0.4 capability. Additional windows are
+        # listed only once opened; MAX_WINDOWS is a capacity, not an allocation.
+        displays = {1}
+        second_enabled = os.environ.get("COMPUTER_SECOND_DISPLAY", "true").lower() == "true"
+        if second_enabled:
+            displays.add(2)
+        displays.update(n for owner, n in self.windows if owner == bot_id and (n != 2 or second_enabled))
         return [{"display": n, "width": width, "height": height,
                  "ready": n == 1 or (bot_id, n) in self.windows or (n == 2 and bot_id in self.secondary)}
-                for n in range(1, count + 1)]
+                for n in sorted(displays)]
 
     async def select_display(self, bot_id: str, display: int = 1) -> Desktop:
         if isinstance(display, bool) or not isinstance(display, int) or not 1 <= display <= MAX_WINDOWS:

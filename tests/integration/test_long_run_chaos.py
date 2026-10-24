@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import time
 import uuid
@@ -12,6 +13,7 @@ import pytest
 
 from test_acceptance import API, OPENROUTER, _psql, login, submit
 from test_bot_messaging import _bot, _workspace
+from test_long_run_resume import _allow_write_paths
 
 
 def _stack_available() -> bool:
@@ -42,6 +44,8 @@ def _demo(text: str, budget: int | None = None):
         "namespace": "openrouter", "name": "default", "type": "API_KEY", "value": OPENROUTER,
     })[0] == 200
     bot = _bot(client, "Chaos " + uuid.uuid4().hex[:6])
+    steps = int(re.search(r"LONG RUN DEMO\s+(\d+)", text).group(1))
+    _allow_write_paths(bot, [f"/workspace/long-run-step-{index:05d}.txt" for index in range(1, steps + 1)])
     conversation = _workspace(client, bot)["conversationId"]
     if budget is not None:
         assert client.call("PATCH", f"/api/bots/{bot}/work-settings", {"maxSteps": budget, "pauseOnBudget": True})[0] == 200

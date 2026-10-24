@@ -198,8 +198,9 @@ def test_memory_provenance_points_at_the_message_it_came_from():
         assert wait_task(client, a, task)["status"] == "completed"
         status, memories = client.call("GET", f"/api/bots/{a}/memories")
         assert status == 200
-        mine = next(m for m in memories if "Helix" in m["content"])
+        mine = next(m for m in memories["items"] if "Helix" in m["content"])
         user_message = next(m for m in _workspace(client, a)["messages"] if m["role"] == "user")
-        assert mine["source"] == f"message:{user_message['id']}", mine
+        assert mine["sourceMessageId"] == user_message["id"], mine
+        assert mine["sourceTaskId"] == task, mine
     finally:
         _cleanup(client, a, b)

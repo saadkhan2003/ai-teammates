@@ -2,7 +2,7 @@
 import datetime as dt
 import uuid
 
-from test_acceptance import submit, wait_task
+from test_acceptance import _psql, submit, wait_task
 from test_bot_messaging import _approval, _cleanup, _pair, _until, _workspace
 
 
@@ -48,6 +48,7 @@ def test_update_without_reading_is_refused_before_any_card():
         assert wait_task(client, a, task)["status"] == "completed"
         assert _no_approval(client, a, "update_routine")
         assert _get(client, rid)["cron"] == "0 8 * * *"
+        assert _psql(f"SELECT count(*) FROM audit_events WHERE task_id='{task}' AND action='tool.denied' AND detail->>'tool'='update_routine'") == "1"
     finally:
         _cleanup(client, a, b)
 

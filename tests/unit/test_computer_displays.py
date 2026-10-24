@@ -33,6 +33,7 @@ def test_secondary_is_lazy_and_keeps_bot_identity(runtime, monkeypatch):
     manager.desktops["bot-a"] = Desktop("bot-a", 1)
     spawn = AsyncMock()
     monkeypatch.setattr(manager, "_spawn_display", spawn)
+    assert [d["display"] for d in manager.list_displays("bot-a")] == [1, 2]
     assert manager.list_displays("bot-a")[1]["ready"] is False
     async def run():
         desk = await manager.select_display("bot-a", 2)
@@ -289,7 +290,11 @@ def test_windows_allocate_distinct_contract_ports_and_destroy_independently(runt
     async def run():
         a, b, c = await asyncio.gather(*(manager.select_display("bot-a", n) for n in (2, 3, 4)))
         assert len({a.display, b.display, c.display}) == 3
+        manager.desktops["bot-b"] = Desktop("bot-b", 8)
+        assert [d["display"] for d in manager.list_displays("bot-a")] == [1, 2, 3, 4]
+        assert [d["display"] for d in manager.list_displays("bot-b")] == [1, 2]
         await manager.destroy("bot-a", 3)
+        assert [d["display"] for d in manager.list_displays("bot-a")] == [1, 2, 4]
         assert manager.status("bot-a", 3) == {"ready": False}
         assert manager.status("bot-a", 2)["ready"] is True
         assert manager.status("bot-a", 4)["ready"] is True
@@ -322,3 +327,80 @@ def test_takeover_stops_native_recording(runtime, monkeypatch, tmp_path):
     asyncio.run(fence.reconcile(LeaseSnapshot("human", "owner", "tab", 2, 35)))
     assert process.returncode == -9
     process.wait.assert_awaited_once()
+
+
+@pytest.mark.parametrize("frames,ready", [([b"frame=0\n", b"frame=1\n"], True), ([b"progress=end\n"], False)])
+def test_recording_requires_first_frame_before_success(runtime, frames, ready):
+    from types import SimpleNamespace
+    spec = importlib.util.spec_from_file_location("recording_handshake_test", ROOT / "services/computer/src/server.py")
+    server = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(server)
+    process = SimpleNamespace(stdout=SimpleNamespace(readline=AsyncMock(side_effect=[*frames, b""])))
+    if ready:
+        asyncio.run(server._recording_ready(process))
+    else:
+        with pytest.raises(RuntimeError, match="before producing a frame"):
+            asyncio.run(server._recording_ready(process))
+
+
+def test_recording_runs_as_workspace_uid_with_supported_launcher(runtime, monkeypatch, tmp_path):
+    import os
+    from types import SimpleNamespace
+    spec = importlib.util.spec_from_file_location("recording_launcher_test", ROOT / "services/computer/src/server.py")
+    server = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(server)
+    server.manager = runtime.manager
+    monkeypatch.setattr(server, "selected_display", AsyncMock(return_value=SimpleNamespace(display=1)))
+    monkeypatch.setattr(server.workspace, "prepare", lambda bot: (os.getuid(), tmp_path, tmp_path))
+    probe = SimpleNamespace(communicate=AsyncMock(return_value=(b"libvpx-vp9", b"")))
+    recorder = SimpleNamespace(stdout=SimpleNamespace(readline=AsyncMock(side_effect=[b"frame=1\n", b""])), returncode=None)
+    spawn = AsyncMock(side_effect=[probe, recorder])
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", spawn)
+    result = asyncio.run(server._start_recording("bot-a", {"name": "demo", "maxSeconds": 10}, 1))
+    assert result["ok"] is True
+    argv = spawn.call_args.args
+    assert argv[:8] == ("setpriv", "--reuid", str(os.getuid()), "--regid", str(os.getuid()), "--clear-groups", "--inh-caps=-all", "ffmpeg")
+    assert argv[-1] == str(tmp_path / "recordings/demo.webm")
+    assert spawn.call_args.kwargs["env"]["HOME"] == str(tmp_path)
+    assert "COMPUTER_TOKEN" not in spawn.call_args.kwargs["env"]
+
+
+@pytest.mark.parametrize("failure", ["exit", "cancel"])
+def test_failed_or_cancelled_recording_start_reaps_process(runtime, monkeypatch, tmp_path, failure):
+    import os
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    spec = importlib.util.spec_from_file_location("recording_failure_test", ROOT / "services/computer/src/server.py")
+    server = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(server)
+    monkeypatch.setattr(server, "selected_display", AsyncMock(return_value=SimpleNamespace(display=1)))
+    monkeypatch.setattr(server.workspace, "prepare", lambda bot: (os.getuid(), tmp_path, tmp_path))
+    probe = SimpleNamespace(communicate=AsyncMock(return_value=(b"libvpx-vp9", b"")))
+    recorder = SimpleNamespace(returncode=None, kill=lambda: setattr(recorder, "returncode", -9), wait=AsyncMock())
+    entered = asyncio.Event()
+
+    async def progress():
+        entered.set()
+        if failure == "cancel":
+            await asyncio.Future()
+        return b""
+
+    recorder.stdout = SimpleNamespace(readline=progress)
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", AsyncMock(side_effect=[probe, recorder]))
+
+    async def run():
+        task = asyncio.create_task(server._start_recording("bot-a", {"maxSeconds": 10}, 1))
+        await entered.wait()
+        if failure == "cancel":
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            with pytest.raises(HTTPException) as error:
+                await task
+            assert error.value.status_code == 503
+        assert "bot-a" not in server.recordings
+
+    asyncio.run(run())
+    assert recorder.returncode == -9
+    recorder.wait.assert_awaited_once()

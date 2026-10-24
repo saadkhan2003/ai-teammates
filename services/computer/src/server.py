@@ -479,12 +479,37 @@ async def _start_recording(bot_id: str, body: dict, display: int):
         path = path.with_name(f"{path.stem}-{int(time.time())}{path.suffix}")
     width, height = geometry()
     args = ffmpeg_argv(desk.display, width, height, str(path), max_seconds, encoder)
+    args[1:1] = ["-progress", "pipe:1", "-nostats"]
     process = await asyncio.create_subprocess_exec(
-        "/command/s6-setuidgid", "--reuid", str(uid), "--regid", str(uid), "--clear-groups", *args,
+        "setpriv", "--reuid", str(uid), "--regid", str(uid), "--clear-groups", "--inh-caps=-all", *args,
         env={"DISPLAY": f":{desk.display}", "HOME": str(home), "PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"},
-        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+    try:
+        await asyncio.wait_for(_recording_ready(process), timeout=10)
+    except (RuntimeError, asyncio.TimeoutError, asyncio.CancelledError) as exc:
+        if process.returncode is None:
+            process.kill()
+        await process.wait()
+        if isinstance(exc, asyncio.CancelledError):
+            raise
+        raise HTTPException(status_code=503, detail="recording could not start")
+    # Progress is bounded by maxSeconds; drain it so a long recording cannot
+    # block on a full pipe after the first-frame handshake.
+    asyncio.create_task(_drain_recording_progress(process))
     recordings[bot_id] = (process, path, time.monotonic(), root)
     return {"ok": True, "name": path.name, "path": workspace.publish_under(root, path), "maxSeconds": max_seconds}
+
+
+async def _recording_ready(process):
+    while line := await process.stdout.readline():
+        if line.startswith(b"frame=") and int(line.split(b"=", 1)[1]) > 0:
+            return
+    raise RuntimeError("recorder exited before producing a frame")
+
+
+async def _drain_recording_progress(process):
+    while await process.stdout.readline():
+        pass
 
 
 @app.post("/desktops/{bot_id}/record/stop")
@@ -503,6 +528,8 @@ async def record_stop(bot_id: str, body: dict, _: None = Depends(require_token))
             process.kill()
             await process.wait()
     size = path.stat().st_size if path.is_file() else 0
+    if size == 0:
+        raise HTTPException(status_code=503, detail="recording produced no video")
     return {"ok": True, "path": workspace.publish_under(root, path), "bytes": size, "seconds": round(time.monotonic() - started, 2), "name": path.name}
 
 
