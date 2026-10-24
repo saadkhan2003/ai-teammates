@@ -1,0 +1,238 @@
+.avatar-motion {
+  position: relative;
+  display: block;
+  flex: none;
+  overflow: visible;
+}
+
+.avatar-motion-spin,
+.avatar-motion-breathe,
+.avatar-motion-eyes,
+.avatar-row-scaler,
+.avatar-eyes-static {
+  position: absolute;
+  inset: 0;
+}
+
+.avatar-motion-spin,
+.avatar-motion-breathe,
+.avatar-motion-eyes {
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+
+.avatar-motion-spin {
+  transform: rotate(var(--avatar-spin, 0deg));
+}
+
+.avatar-motion-breathe {
+  transform: scale(var(--avatar-sx, 1), var(--avatar-sy, 1));
+}
+
+.avatar-motion-eyes {
+  transform-origin: 50% 47%;
+  transform: translate3d(
+      calc((var(--avatar-dart-x, 0) + var(--look-x, 0)) * var(--avatar-unit, 0.4px)),
+      calc((var(--avatar-dart-y, 0) + var(--look-y, 0)) * var(--avatar-unit, 0.4px)),
+      0
+    )
+    scaleY(var(--avatar-blink, 1));
+}
+
+.avatar-motion svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.avatar-shape,
+.avatar-shape-alt {
+  transition: opacity 160ms linear;
+}
+
+.avatar-shape-alt {
+  opacity: 0;
+}
+
+.avatar-hero {
+  position: relative;
+  width: fit-content;
+  height: fit-content;
+}
+
+.avatar-hero-tint {
+  position: absolute;
+  inset: -6px;
+  z-index: 0;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--avatar-fill, var(--foreground)) 34%, var(--foreground) 7%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.45s linear;
+}
+
+.avatar-hero:hover .avatar-hero-tint,
+.avatar-hero:focus-within .avatar-hero-tint {
+  opacity: 1;
+}
+
+.avatar-motion-live {
+  z-index: 1;
+}
+
+.avatar-hover-card {
+  position: fixed;
+  z-index: 80;
+  width: max-content;
+  max-width: 220px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--card-foreground);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 14%);
+  opacity: 0;
+  pointer-events: none;
+  translate: 0 -50%;
+  transition: opacity 1s linear;
+}
+
+.avatar-hover-name {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.avatar-hover-preview {
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.avatar-motion-row:hover .avatar-shape,
+.avatar-motion-row:focus-within .avatar-shape {
+  opacity: 0;
+}
+
+.avatar-motion-row:hover .avatar-shape-alt,
+.avatar-motion-row:focus-within .avatar-shape-alt {
+  opacity: 1;
+}
+
+.avatar-motion-row:hover .avatar-row-scaler,
+.avatar-motion-row:focus-within .avatar-row-scaler {
+  animation: avatar-row-wiggle 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+@keyframes avatar-row-wiggle {
+  0% {
+    transform: scale(1) rotate(0deg);
+  }
+  40% {
+    transform: scale(1.16, 0.9) rotate(-8deg);
+  }
+  70% {
+    transform: scale(0.94, 1.14) rotate(7deg);
+  }
+  100% {
+    transform: scale(1.1) rotate(0deg);
+  }
+}
+
+.avatar-composer-presence {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+}
+
+.avatar-status-line {
+  margin: 0;
+  animation: avatar-status-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.avatar-status-shimmer {
+  display: inline-block;
+  background-image: linear-gradient(
+    100deg,
+    var(--muted-foreground) 0%,
+    var(--muted-foreground) 38%,
+    var(--foreground) 50%,
+    var(--muted-foreground) 62%,
+    var(--muted-foreground) 100%
+  );
+  background-size: 220% 100%;
+  background-position: 100% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.2;
+  animation: avatar-status-shimmer 8s linear infinite;
+}
+
+@keyframes avatar-status-in {
+  from {
+    opacity: 0;
+    transform: translate3d(-12px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+/* 25% of 8s is a 2s sweep. The rest of the loop holds. */
+@keyframes avatar-status-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  25% {
+    background-position: -100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .avatar-motion-spin,
+  .avatar-motion-breathe,
+  .avatar-motion-eyes {
+    transform: none;
+    will-change: auto;
+  }
+
+  .avatar-hero-tint,
+  .avatar-hover-card,
+  .avatar-shape,
+  .avatar-shape-alt {
+    transition: none;
+  }
+
+  .avatar-motion-row:hover .avatar-row-scaler,
+  .avatar-motion-row:focus-within .avatar-row-scaler {
+    animation: none;
+    transform: scale(1.08);
+  }
+
+  .avatar-status-line {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .avatar-status-shimmer {
+    animation: none;
+    background: none;
+    color: var(--muted-foreground);
+    -webkit-text-fill-color: var(--muted-foreground);
+  }
+}

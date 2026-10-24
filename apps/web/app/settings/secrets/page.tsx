@@ -312,7 +312,7 @@ export default function SecretsPage() {
                   {formError}
                 </p>
               ) : null}
-              <div className="flex flex-col gap-2 sm:flex-row">
+              <div className="flex flex-wrap items-center justify-end gap-2">
                 <Button data-testid="test-connection" type="button" variant="secondary" disabled={busy !== null} onClick={() => void testDraft()}>
                   Test connection
                 </Button>
@@ -339,13 +339,15 @@ export default function SecretsPage() {
                 {formError}
               </p>
             ) : null}
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="secondary" disabled={busy !== null} onClick={() => void testSaved(openRouter)}>
-                Test
-              </Button>
-              <Button data-testid="rotate-secret" type="button" variant="secondary" disabled={busy !== null} onClick={() => void rotate(openRouter)}>
-                Rotate
-              </Button>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="secondary" disabled={busy !== null} onClick={() => void testSaved(openRouter)}>
+                  Test
+                </Button>
+                <Button data-testid="rotate-secret" type="button" variant="secondary" disabled={busy !== null} onClick={() => void rotate(openRouter)}>
+                  Rotate
+                </Button>
+              </div>
               <Button data-testid="delete-secret" type="button" variant="destructive" disabled={busy !== null} onClick={() => void remove(openRouter)}>
                 Delete
               </Button>
@@ -431,7 +433,7 @@ export default function SecretsPage() {
                   {formError}
                 </p>
               ) : null}
-              <div className="sm:col-span-2">
+              <div className="flex justify-end sm:col-span-2">
                 <Button type="submit" disabled={busy !== null}>
                   Add secret
                 </Button>

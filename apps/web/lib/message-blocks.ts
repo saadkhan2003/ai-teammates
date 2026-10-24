@@ -6,7 +6,9 @@ export type MessageBlock =
   | { kind: "memory"; action: "saved" | "forgot"; text: string }
   | { kind: "form"; title: string; fields: FormField[] }
   | { kind: "file"; name: string; url?: string; mime?: string }
-  | { kind: "image"; name: string; url: string };
+  | { kind: "image"; name: string; url: string }
+  | { kind: "video"; name: string; url: string }
+  | { kind: "coding-jobs" };
 
 export type FormField = { name: string; label: string; secret?: boolean };
 
@@ -61,11 +63,15 @@ function asBlock(value: unknown): MessageBlock | null {
   if (type === "file" || type === "attachment") {
     return { kind: "file", name: String(record.name ?? "File"), url: typeof record.url === "string" ? record.url : undefined, mime: typeof record.mime === "string" ? record.mime : undefined };
   }
-  if (type === "image") {
+  if (type === "image" || type === "video") {
     const url = String(record.url ?? "");
     if (!url) return null;
-    return { kind: "image", name: String(record.name ?? "Image"), url };
+    const video = type === "video" || /\.(mp4|webm|mov)(\?|$)/i.test(url);
+    return video
+      ? { kind: "video", name: String(record.name ?? "Video"), url }
+      : { kind: "image", name: String(record.name ?? "Image"), url };
   }
+  if (type === "coding-jobs" || type === "coding") return { kind: "coding-jobs" };
   return null;
 }
 
@@ -80,7 +86,7 @@ export function messageBlocks(content: string): MessageBlock[] {
     }
   }
   const blocks: MessageBlock[] = [];
-  const pattern = /```(question|form|file|image|memory)\n([\s\S]*?)```/g;
+  const pattern = /```(question|form|file|image|video|memory|coding-jobs)\n([\s\S]*?)```/g;
   let last = 0;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(content))) {
@@ -107,7 +113,11 @@ function splitInline(text: string): MessageBlock[] {
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text))) {
     if (match.index > last) blocks.push({ kind: "text", text: text.slice(last, match.index) });
-    if (match[2]) blocks.push({ kind: "image", name: match[1] || "Image", url: match[2] });
+    if (match[2]) {
+      const url = match[2];
+      if (/\.(mp4|webm|mov)(\?|$)/i.test(url)) blocks.push({ kind: "video", name: match[1] || "Video", url });
+      else blocks.push({ kind: "image", name: match[1] || "Image", url });
+    }
     else blocks.push({ kind: "file", name: match[3], url: match[4] });
     last = match.index + match[0].length;
   }

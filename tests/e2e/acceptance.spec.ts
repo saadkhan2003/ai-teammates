@@ -144,7 +144,7 @@ async function expectDone(page: Page, botId: string, taskId: string, timeout = 1
   return task;
 }
 
-async function openPane(page: Page, tab: "Overview" | "Computer" | "Routines" | "Files/Media" | "Skills" | "Memory" | "Tasks") {
+async function openPane(page: Page, tab: "Overview" | "Details" | "Library" | "Computer" | "Routines" | "Files/Media" | "Skills" | "Memory" | "Tasks" | "Plugins") {
   const pane = page.getByTestId("info-pane");
   const toggle = page.getByTestId("bot-name-button");
   if (!(await pane.isVisible().catch(() => false))) {
@@ -157,10 +157,18 @@ async function openPane(page: Page, tab: "Overview" | "Computer" | "Routines" | 
     if (!opened) await toggle.click();
   }
   await expect(pane).toBeVisible();
-  const trigger = pane.getByRole("tab", { name: tab, exact: true });
-  await trigger.scrollIntoViewIfNeeded();
-  await trigger.click();
-  await expect(trigger).toHaveAttribute("data-state", "active");
+  const libraryTabs = ["Routines", "Files/Media", "Skills", "Memory", "Tasks", "Plugins"];
+  const primaryName = tab === "Overview" ? "Details" : libraryTabs.includes(tab) ? "Library" : tab;
+  const primary = pane.getByRole("tab", { name: primaryName, exact: true });
+  await primary.scrollIntoViewIfNeeded();
+  await primary.click();
+  await expect(primary).toHaveAttribute("data-state", "active");
+  if (libraryTabs.includes(tab)) {
+    const nested = pane.getByRole("tab", { name: tab, exact: true });
+    await nested.scrollIntoViewIfNeeded();
+    await nested.click();
+    await expect(nested).toHaveAttribute("data-state", "active");
+  }
 }
 
 async function openSecrets(page: Page) {
@@ -173,10 +181,10 @@ async function openSecrets(page: Page) {
   await expect(page).toHaveURL(/\/settings\/secrets/);
 }
 
-async function send(page: Page, text: string, asTask: boolean) {
+async function send(page: Page, text: string, _asTask = false) {
   const composer = page.getByTestId("composer");
   await composer.fill(text);
-  await page.getByTestId(asTask ? "assign-task" : "send-chat").click();
+  await page.getByTestId("send-chat").click();
   await expect(composer).toHaveValue("");
 }
 
@@ -533,6 +541,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
       expect(text.length).toBeGreaterThan(0);
     }
     const message = assistants.filter({ has: page.locator('[data-testid="reaction-picker"]') }).last();
+    await message.hover();
     const picker = message.locator('[data-testid="reaction-picker"]');
     await picker.getByRole("button", { name: "👍" }).click();
     await expect(message.locator('[data-testid="reaction-pill"][data-emoji="👍"][data-actor="user"]')).toBeVisible();
@@ -715,7 +724,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
   });
 
   await test.step("sidebar, info pane tabs, theme, and command palette", async () => {
-    const tabs = ["Overview", "Computer", "Routines", "Files/Media", "Skills", "Memory", "Tasks"] as const;
+    const tabs = ["Details", "Library", "Computer"] as const;
     await page.goto("/login");
     await shot(page, "dark-login");
     await page.goto("/");

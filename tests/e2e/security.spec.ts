@@ -67,11 +67,11 @@ async function waitTask(page: Page, botId: string, taskId: string, timeout = 180
   throw new Error(`timeout ${taskId} status=${last?.status ?? "missing"}`);
 }
 
-async function send(page: Page, text: string, asTask: boolean) {
+async function send(page: Page, text: string, _asTask = false) {
   const composer = page.getByTestId("composer");
   await composer.fill(text);
-  await page.getByTestId(asTask ? "assign-task" : "send-chat").click();
-  if (asTask) await expect(composer).toHaveValue("");
+  await page.getByTestId("send-chat").click();
+  await expect(composer).toHaveValue("");
 }
 
 async function assignTracked(page: Page, botId: string, text: string) {

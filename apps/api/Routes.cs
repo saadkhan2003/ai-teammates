@@ -93,7 +93,24 @@ public static class Routes
             if (user == null) return Results.Unauthorized();
             await using var conn = await platform.Data.OpenConnectionAsync();
             var me = await conn.QuerySingleAsync<(string Username, string Role, string Status, string DisplayName)>("SELECT username, role, status, display_name FROM users WHERE id=@id", new { id = user });
-            return Results.Json(new { id = user, username = me.Username, role = me.Role, status = me.Status, displayName = me.DisplayName });
+            var theme = ThemeChoice.Normalize(await conn.ExecuteScalarAsync<string>("SELECT theme FROM user_preferences WHERE user_id=@id", new { id = user })) ?? ThemeChoice.Default;
+            return Results.Json(new { id = user, username = me.Username, role = me.Role, status = me.Status, displayName = me.DisplayName, theme });
+        });
+
+        app.MapPut("/api/settings/appearance", async (HttpContext ctx, JsonElement body) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            var theme = ThemeChoice.Normalize(body.TryGetProperty("theme", out var themeEl) ? themeEl.GetString() : null);
+            if (theme == null) return Results.BadRequest(new { error = "invalid_theme" });
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            await conn.ExecuteAsync(
+                """
+                INSERT INTO user_preferences (user_id, theme, updated_at) VALUES (@id, @theme, now())
+                ON CONFLICT (user_id) DO UPDATE SET theme=EXCLUDED.theme, updated_at=now()
+                """,
+                new { id = user, theme });
+            return Results.Json(new { theme });
         });
 
         app.MapGet("/api/bots", async (HttpContext ctx) =>
@@ -182,7 +199,7 @@ public static class Routes
             var bot = Platform.ToDict(await conn.QuerySingleAsync("SELECT id, name, role, instructions, status, model, avatar, avatar_shape, avatar_color, section, notifications_enabled FROM bots WHERE id=@id", new { id }));
             var conversationId = await conn.ExecuteScalarAsync<Guid>("SELECT id FROM conversations WHERE bot_id=@id ORDER BY created_at LIMIT 1", new { id });
             var tasks = (await conn.QueryAsync("SELECT id, title, instruction, status, kind, model_calls, waiting_reason, error, error_code, result::text AS result FROM tasks WHERE bot_id=@id ORDER BY created_at DESC LIMIT 50", new { id })).Select(Platform.ToDict);
-            var messages = (await conn.QueryAsync("SELECT id, role, content, created_at FROM messages WHERE conversation_id=@conversation ORDER BY created_at LIMIT 200", new { conversation = conversationId })).Select(Platform.ToDict).ToList();
+            var messages = (await conn.QueryAsync("SELECT id, role, content, created_at, reply_to_id FROM messages WHERE conversation_id=@conversation ORDER BY created_at LIMIT 200", new { conversation = conversationId })).Select(Platform.ToDict).ToList();
             var reactionRows = (await conn.QueryAsync("SELECT r.id, r.message_id, r.actor_type::text AS actor_type, r.actor_id, r.emoji, r.created_at FROM message_reactions r JOIN messages m ON m.id=r.message_id WHERE m.conversation_id=@conversation ORDER BY r.created_at", new { conversation = conversationId })).Select(Platform.ToDict).ToList();
             foreach (var message in messages)
             {
@@ -191,8 +208,9 @@ public static class Routes
             }
             var approvals = (await conn.QueryAsync("SELECT id, action, target, reason, status, risk_class, summary FROM approvals WHERE bot_id=@id AND status='pending' ORDER BY created_at", new { id })).Select(Platform.ToDict);
             var pages = (await conn.QueryAsync("SELECT target_id, url, title FROM browser_pages WHERE bot_id=@id ORDER BY updated_at", new { id })).Select(Platform.ToDict);
+            var codingJobs = (await conn.QueryAsync("SELECT id, title, status, step, pr_number, pr_url, branch, files_changed, additions, deletions, task_id, updated_at FROM coding_jobs WHERE bot_id=@id ORDER BY created_at", new { id })).Select(Platform.ToDict);
             var holder = await conn.ExecuteScalarAsync<string>("SELECT holder FROM control_locks WHERE bot_id=@id", new { id }) ?? "agent";
-            var connected = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM secrets WHERE owner_user_id=@owner AND provider='openrouter' AND name='default' AND revoked_at IS NULL", new { owner = user }) > 0;
+            var connected = string.Equals(platform.LlmProvider, "mock", StringComparison.OrdinalIgnoreCase) || await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM secrets WHERE owner_user_id=@owner AND provider='openrouter' AND name='default' AND revoked_at IS NULL", new { owner = user }) > 0;
             var secretRequests = (await conn.QueryAsync("SELECT id, suggested_ref, type, reason, status FROM secret_requests WHERE bot_id=@id AND status='pending' ORDER BY created_at", new { id })).Select(Platform.ToDict);
             var loginRequests = (await conn.QueryAsync("SELECT id, domain, url, fields::text AS fields, status, expires_at FROM login_prompts WHERE bot_id=@id AND status='pending' AND expires_at > now() ORDER BY created_at", new { id })).Select(row =>
             {
@@ -201,7 +219,7 @@ public static class Routes
                     dict["fields"] = JsonSerializer.Deserialize<JsonElement>(fieldJson);
                 return dict;
             });
-            return Results.Json(new { bot, conversationId, tasks, messages, approvals, pages, holder, secretRequests, loginRequests, llmProvider = platform.LlmProvider, openrouterConnected = connected });
+            return Results.Json(new { bot, conversationId, tasks, messages, approvals, pages, holder, secretRequests, loginRequests, codingJobs, llmProvider = platform.LlmProvider, openrouterConnected = connected });
         });
 
         app.MapPost("/api/conversations/{id:guid}/messages", async (HttpContext ctx, Guid id, JsonElement body) =>
@@ -215,7 +233,14 @@ public static class Routes
             if (Dlp.HasStrict(content))
                 return Results.Json(new { error = "Blocked by the data policy. Card numbers, IDs, and secrets are not sent." }, statusCode: 422);
             var asTask = body.TryGetProperty("asTask", out var flag) && flag.ValueKind == JsonValueKind.True;
-            var messageId = await conn.ExecuteScalarAsync<Guid>("INSERT INTO messages (conversation_id, role, content) VALUES (@id, 'user', @content) RETURNING id", new { id, content });
+            if (ChatReply.TryRead(body, out var replyTo, out var replyInvalid) == false && replyInvalid)
+                return Results.BadRequest(new { error = "invalid_reply" });
+            if (replyTo != Guid.Empty)
+            {
+                var sameConversation = await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM messages WHERE id=@reply AND conversation_id=@id)", new { reply = replyTo, id });
+                if (!sameConversation) return Results.BadRequest(new { error = "reply_not_found" });
+            }
+            var messageId = await conn.ExecuteScalarAsync<Guid>("INSERT INTO messages (conversation_id, role, content, reply_to_id) VALUES (@id, 'user', @content, @reply) RETURNING id", new { id, content, reply = replyTo == Guid.Empty ? (Guid?)null : replyTo });
             var kind = asTask ? "work" : "chat";
             var priority = asTask ? 0 : 10;
             var taskId = await conn.ExecuteScalarAsync<Guid>(
@@ -250,7 +275,8 @@ public static class Routes
             if (user == null) return Results.Unauthorized();
             await using var conn = await platform.Data.OpenConnectionAsync();
             var secretId = await conn.ExecuteScalarAsync<Guid?>("SELECT id FROM secrets WHERE owner_user_id=@owner AND provider='openrouter' AND name='default' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>now())", new { owner = user });
-            return Results.Json(new { hasKey = secretId != null, provider = platform.LlmProvider, model = platform.ModelName, secretId });
+            var mock = string.Equals(platform.LlmProvider, "mock", StringComparison.OrdinalIgnoreCase);
+            return Results.Json(new { hasKey = secretId != null, openrouterConnected = secretId != null || mock, provider = platform.LlmProvider, model = platform.ModelName, secretId });
         });
 
         app.MapGet("/api/bots/{id:guid}/tasks", async (HttpContext ctx, Guid id) =>
@@ -321,6 +347,50 @@ public static class Routes
 
         app.MapPost("/api/bots/{id:guid}/computer/view-token", (HttpContext ctx, Guid id, CancellationToken ct) => Desktop(ctx, platform, id, false, ct));
         app.MapPost("/api/bots/{id:guid}/computer/take-control", (HttpContext ctx, Guid id, CancellationToken ct) => Desktop(ctx, platform, id, true, ct));
+        app.MapGet("/api/bots/{id:guid}/computer/power", async (HttpContext ctx, Guid id, CancellationToken ct) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            try
+            {
+                var placement = await platform.PlacementForBot(id, ct);
+                var status = await platform.Compute.GetStatusAsync(placement.Computer, ct);
+                return Results.Json(new { status = status.State.ToString().ToLowerInvariant() });
+            }
+            catch (ComputeException)
+            {
+                return Results.Json(new { status = "absent" });
+            }
+        });
+        app.MapPost("/api/bots/{id:guid}/computer/wake", async (HttpContext ctx, Guid id, CancellationToken ct) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            try
+            {
+                var placement = await platform.PlacementForBot(id, ct);
+                await platform.Compute.EnsureAwakeAsync(placement.Computer, ct);
+                return Results.Json(new { status = "running" });
+            }
+            catch (ComputeException ex)
+            {
+                return Results.Json(new { error = ex.Code.ToString() }, statusCode: 503);
+            }
+        });
+        app.MapGet("/api/bots/{id:guid}/coding-jobs/{jobId:guid}", async (HttpContext ctx, Guid id, Guid jobId) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            var row = await conn.QuerySingleOrDefaultAsync("SELECT id, title, status, step, pr_number, pr_url, branch, files_changed, additions, deletions, task_id, updated_at FROM coding_jobs WHERE id=@job AND bot_id=@id", new { job = jobId, id });
+            return row == null ? Results.NotFound() : Results.Json(Platform.ToDict(row));
+        });
+        app.MapPost("/api/bots/{id:guid}/coding-jobs", async (HttpContext ctx, Guid id, JsonElement body, CancellationToken ct) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            return Results.Json(await CodingJobs.Upsert(platform, id, null, body, ct));
+        });
         app.MapPost("/api/bots/{id:guid}/computer/hand-back", async (HttpContext ctx, Guid id, CancellationToken ct) =>
         {
             var user = await RequireUser(ctx, platform);
@@ -498,6 +568,8 @@ public static class Routes
             await using var conn = await platform.Data.OpenConnectionAsync();
             if (body.TryGetProperty("nextRunAt", out var next))
                 await conn.ExecuteAsync("UPDATE routines SET next_run_at=@next FROM bots b WHERE routines.id=@id AND routines.bot_id=b.id AND b.owner_id=@owner", new { id, owner = user, next = next.GetDateTimeOffset() });
+            if (body.TryGetProperty("enabled", out var enabled) && enabled.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                await conn.ExecuteAsync("UPDATE routines SET enabled=@enabled FROM bots b WHERE routines.id=@id AND routines.bot_id=b.id AND b.owner_id=@owner", new { id, owner = user, enabled = enabled.GetBoolean() });
             return Results.Json(new { ok = true });
         });
 
@@ -1030,6 +1102,14 @@ public static class Routes
             return n == 0 ? Results.StatusCode(409) : Results.Json(new { ok = true });
         });
 
+        app.MapPost("/internal/coding-jobs", async (HttpContext ctx, JsonElement body, CancellationToken ct) =>
+        {
+            if (!Worker(ctx, platform)) return Results.Unauthorized();
+            if (!body.TryGetProperty("botId", out var botEl) || !botEl.TryGetGuid(out var botId))
+                return Results.BadRequest(new { error = "bot_required" });
+            Guid? taskId = body.TryGetProperty("taskId", out var taskEl) && taskEl.TryGetGuid(out var parsed) ? parsed : null;
+            return Results.Json(await CodingJobs.Upsert(platform, botId, taskId, body, ct));
+        });
         app.MapPost("/internal/model/complete", (HttpContext ctx, JsonElement body, CancellationToken ct) => Worker(ctx, platform) ? runtime.Model(body, ct) : Task.FromResult<IResult>(Results.Unauthorized()));
         app.MapPost("/internal/tools/authorize", (HttpContext ctx, JsonElement body, CancellationToken ct) => Worker(ctx, platform) ? runtime.Authorize(body, ct) : Task.FromResult<IResult>(Results.Unauthorized()));
         app.MapPost("/internal/tools/execute", (HttpContext ctx, JsonElement body, CancellationToken ct) => Worker(ctx, platform) ? runtime.Execute(body, ct) : Task.FromResult<IResult>(Results.Unauthorized()));

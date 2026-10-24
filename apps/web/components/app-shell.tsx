@@ -1,13 +1,16 @@
 "use client";
 
-import { Bell, ChevronRight, CircleHelp, Info, Menu, PanelLeft, PanelLeftClose, Plug, Plus, Search, Settings, Upload, X } from "lucide-react";
+import { Bell, ChevronRight, CircleHelp, Info, Menu, MoreHorizontal, PanelLeft, PanelLeftClose, Plus, Search, Settings, Upload, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, type UIEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { AvatarClock } from "@/components/avatar-motion/avatar-clock";
+import { HeroAvatar } from "@/components/avatar-motion/hero-avatar";
+import { MotionAvatar } from "@/components/avatar-motion/motion-avatar";
 import { BotAvatar } from "@/components/bot-avatar";
 import { BotAvatarPicker } from "@/components/bot-avatar-picker";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -50,7 +53,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { api, asList } from "@/lib/api";
 import { subscribeEvents } from "@/lib/events";
-import { applyTheme, type ThemeMode } from "@/lib/theme";
+import { saveTheme, type ThemeMode } from "@/lib/theme";
 import { cn, errorMessage } from "@/lib/utils";
 import { matchShortcut } from "@/lib/shortcuts";
 import { defaultBotAvatar } from "@/lib/avatars";
@@ -60,11 +63,14 @@ type RosterBot = {
   name: string;
   role: string;
   section: string;
+  status: string;
   avatar: string;
   avatarShape: string;
   avatarColor: string;
   attention: boolean;
 };
+
+type ConnectedApp = { id: string; name: string };
 
 type Note = { id: string; title: string; body: string; readAt?: string | null };
 
@@ -77,6 +83,7 @@ function readBots(data: unknown): RosterBot[] {
         name: String(record.name ?? "Bot"),
         role: String(record.role ?? ""),
         section: String(record.section ?? "Teammates"),
+        status: String(record.status ?? "idle"),
         avatar: String(record.avatar ?? ""),
         avatarShape: String(record.avatarShape ?? ""),
         avatarColor: String(record.avatarColor ?? ""),
@@ -91,11 +98,38 @@ function initials(name: string) {
   return parts.map((part) => part[0]?.toUpperCase() ?? "").join("") || "T";
 }
 
+function readApps(data: unknown): ConnectedApp[] {
+  return asList(data, ["plugins", "items"])
+    .map((entry) => {
+      const record = (entry ?? {}) as Record<string, unknown>;
+      return { id: String(record.id ?? ""), name: String(record.name ?? "App") };
+    })
+    .filter((app) => app.id)
+    .slice(0, 3);
+}
+
+function statusDotClass(status: string, attention: boolean) {
+  const value = status.toLowerCase();
+  if (["failed", "error", "offline"].includes(value)) return "bg-destructive";
+  if (attention || ["running", "working", "planning", "queued", "busy"].includes(value)) return "bg-brand";
+  return "bg-success";
+}
+
+function appHue(name: string) {
+  let hash = 0;
+  for (const char of name) hash = (hash * 33 + char.charCodeAt(0)) % 360;
+  return hash;
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [bots, setBots] = useState<RosterBot[]>([]);
   const [username, setUsername] = useState("Account");
+  const [displayName, setDisplayName] = useState("Account");
+  const [avatarUrl, setAvatarUrl] = useState("");
+  const [apps, setApps] = useState<ConnectedApp[]>([]);
+  const rosterScrollTimer = useRef<number | null>(null);
   const [open, setOpen] = useState(false);
   const [mobile, setMobile] = useState(false);
   const [palette, setPalette] = useState(false);
@@ -115,13 +149,18 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const load = useCallback(async () => {
     try {
-      const [botData, me, noteData] = await Promise.all([
+      const [botData, me, noteData, pluginData] = await Promise.all([
         api<unknown>("/api/bots"),
-        api<{ username?: string }>("/api/auth/me").catch(() => ({ username: "Account" })),
+        api<{ username?: string; displayName?: string; avatarUrl?: string }>("/api/auth/me").catch(() => ({ username: "Account", displayName: "Account", avatarUrl: "" })),
         api<unknown>("/api/notifications").catch(() => []),
+        api<unknown>("/api/plugins").catch(() => []),
       ]);
       setBots(readBots(botData));
-      setUsername(me.username || "Account");
+      const name = me.displayName || me.username || "Account";
+      setUsername(me.username || name);
+      setDisplayName(name);
+      setAvatarUrl(typeof me.avatarUrl === "string" ? me.avatarUrl : "");
+      setApps(readApps(pluginData));
       setNotes(
         asList(noteData, ["items", "notifications"]).map((entry) => {
           const record = (entry ?? {}) as Record<string, unknown>;
@@ -284,6 +323,16 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const compact = collapsed && !mobile;
   const activeBot = bots.find((bot) => pathname === `/bots/${bot.id}`);
+  const accountName = displayName || username;
+
+  function onRosterScroll(event: UIEvent<HTMLElement>) {
+    const node = event.currentTarget;
+    node.dataset.scrolling = "true";
+    if (rosterScrollTimer.current) window.clearTimeout(rosterScrollTimer.current);
+    rosterScrollTimer.current = window.setTimeout(() => {
+      delete node.dataset.scrolling;
+    }, 700);
+  }
 
   function toggleRail() {
     setCollapsed((value) => {
@@ -296,12 +345,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   const roster = (
     <div className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
       <div className={cn("flex gap-1.5 px-2 pb-2 pt-3", compact ? "flex-col items-center" : "items-center")}>
-        <Button variant="outline" size="icon" className="h-9 w-9 rounded-md bg-background" aria-label="Search" onClick={() => setPalette(true)}>
+        <Button variant="outline" size="icon" className="h-9 w-9 rounded-full border-border bg-card text-card-foreground shadow-sm" aria-label="Search" onClick={() => setPalette(true)}>
           <Search />
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button data-testid="new-bot" variant="outline" size="icon" className="h-9 w-9 rounded-md bg-background" aria-label="New">
+            <Button data-testid="new-bot" variant="outline" size="icon" className="h-9 w-9 rounded-full border-border bg-card text-card-foreground shadow-sm" aria-label="New">
               <Plus />
             </Button>
           </DropdownMenuTrigger>
@@ -324,12 +373,35 @@ export function AppShell({ children }: { children: ReactNode }) {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="icon" data-testid="notifications" aria-label="Notifications" className="relative h-9 w-9 rounded-full border-border bg-card text-card-foreground shadow-sm">
+              <Bell />
+              {unread > 0 ? <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-brand" /> : null}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-64">
+            <div className="flex items-center justify-between px-2 py-1.5">
+              <p className="text-xs font-medium">Notifications</p>
+              <button type="button" className="text-xs text-muted-foreground" onClick={() => void markRead()}>
+                Mark read
+              </button>
+            </div>
+            {notes.length === 0 ? <p className="px-2 py-2 text-xs text-muted-foreground">Nothing waiting.</p> : null}
+            {notes.map((note) => (
+              <DropdownMenuItem key={note.id} className="flex flex-col items-start gap-0.5">
+                <span className="text-sm">{note.title}</span>
+                {note.body ? <span className="text-xs text-muted-foreground">{note.body}</span> : null}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
         {mobile ? null : (
           <Button
             data-testid="rail-toggle"
             variant="outline"
             size="icon"
-            className="h-9 w-9 rounded-md bg-background"
+            className="h-9 w-9 rounded-full border-border bg-card text-card-foreground shadow-sm"
             aria-label={compact ? "Expand sidebar" : "Collapse sidebar"}
             onClick={toggleRail}
           >
@@ -338,14 +410,16 @@ export function AppShell({ children }: { children: ReactNode }) {
         )}
       </div>
       {compact || !activeBot ? null : (
-        <div className="flex flex-col items-center px-3 pb-3">
-          <div className="grid h-16 w-16 place-items-center rounded-md border border-sidebar-border bg-background text-base font-medium">
-            <BotAvatar botId={activeBot.id} shape={activeBot.avatarShape} color={activeBot.avatarColor} size={48} />
-          </div>
-          <p className="mt-2 max-w-full truncate text-sm font-medium">{activeBot.name}</p>
+        <div data-testid="selected-bot-tile" className="flex flex-col items-center px-3 pb-3 text-center">
+          <span className="relative grid h-[60px] w-[60px] place-items-center rounded-[8px] bg-accent">
+            <HeroAvatar botId={activeBot.id} name={activeBot.name} shape={activeBot.avatarShape} color={activeBot.avatarColor} size={44} />
+            <span className={cn("absolute bottom-1 right-1 size-2.5 rounded-full border-2 border-sidebar", statusDotClass(activeBot.status, activeBot.attention))} />
+          </span>
+          <span className="mt-2 max-w-full truncate text-xs font-semibold uppercase tracking-wide">{activeBot.name}</span>
+          <span className="max-w-full truncate text-xs text-muted-foreground">{activeBot.role || activeBot.status}</span>
         </div>
       )}
-      <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-1.5 pb-3">
+      <nav className="sidebar-scroll min-h-0 flex-1 space-y-1 overflow-y-auto px-1.5 pb-3" onScroll={onRosterScroll}>
         {groups.length === 0 ? <p className={cn("px-2 py-3 text-xs text-muted-foreground", compact && "sr-only")}>No teammates yet</p> : null}
         {groups.map(([section, items]) => (
           <Collapsible key={section} defaultOpen>
@@ -360,7 +434,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 {items.map((bot) => {
                   const active = pathname === `/bots/${bot.id}`;
                   return (
-                    <li key={bot.id}>
+                    <li key={bot.id} className="group relative">
                       <ContextMenu>
                         <ContextMenuTrigger asChild>
                           <Link
@@ -369,12 +443,19 @@ export function AppShell({ children }: { children: ReactNode }) {
                             aria-current={active ? "page" : undefined}
                             title={bot.name}
                             className={cn(
-                              "flex items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-sidebar-accent",
-                              active && "bg-sidebar-accent",
-                              compact && "justify-center px-1",
+                              "avatar-motion-row flex items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-accent",
+                              active && "bg-accent",
+                              compact ? "justify-center px-1" : "pr-8",
                             )}
                           >
-                            <BotAvatar botId={bot.id} shape={bot.avatarShape} color={bot.avatarColor} size={32} />
+                            <span className="relative shrink-0">
+                              <MotionAvatar slot={bot.id} variant="row" botId={bot.id} shape={bot.avatarShape} color={bot.avatarColor} size={32} label={bot.name} />
+                              <span
+                                data-testid="bot-status-dot"
+                                data-status={bot.attention ? "attention" : bot.status}
+                                className={cn("absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full border-2 border-sidebar", statusDotClass(bot.status, bot.attention))}
+                              />
+                            </span>
                             <span className={cn("min-w-0 flex-1", compact && "sr-only")}>
                               <span className="block truncate font-medium">{bot.name}</span>
                               {bot.role ? <span className="block truncate text-xs text-muted-foreground">{bot.role}</span> : null}
@@ -398,6 +479,31 @@ export function AppShell({ children }: { children: ReactNode }) {
                           <ContextMenuItem onSelect={() => setPendingDelete(bot)}>Delete</ContextMenuItem>
                         </ContextMenuContent>
                       </ContextMenu>
+                      {compact ? null : (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              type="button"
+                              data-testid="bot-row-menu"
+                              aria-label={`More actions for ${bot.name}`}
+                              className="absolute right-1 top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded-md text-muted-foreground opacity-0 hover:bg-background focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent side="right" align="start">
+                            <DropdownMenuItem
+                              onSelect={() => {
+                                setOpen(false);
+                                router.push(`/bots/${bot.id}`);
+                              }}
+                            >
+                              Open
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onSelect={() => setPendingDelete(bot)}>Delete</DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
                     </li>
                   );
                 })}
@@ -406,54 +512,24 @@ export function AppShell({ children }: { children: ReactNode }) {
           </Collapsible>
         ))}
       </nav>
-      <div className={cn("flex items-center gap-1 border-t border-sidebar-border p-2", compact && "flex-col")}>
-        <Button
-          type="button"
-          data-testid="open-plugins"
-          variant="ghost"
-          className={cn("h-9 px-2", compact && "w-9 px-0")}
-          onClick={() => {
-            setPluginTab("yours");
-            setPluginsOpen(true);
-            setOpen(false);
-          }}
-        >
-          <Plug />
-          {compact ? <span className="sr-only">Plugins</span> : <span>Plugins</span>}
-        </Button>
+      <div data-testid="sidebar-footer" className={cn("group/footer grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5 overflow-hidden bg-sidebar p-2", compact && "flex flex-col", !compact && "group-hover/footer:grid-cols-[auto_minmax(0,1fr)]")}>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button data-testid="notifications" variant="ghost" size="icon" className="relative h-9 w-9 shrink-0" aria-label="Notifications">
-              <Bell />
-              {unread > 0 ? <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-md bg-brand" /> : null}
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent side="top" align="start" className="w-64">
-            <div className="flex items-center justify-between px-2 py-1.5">
-              <p className="text-xs font-medium">Notifications</p>
-              <button type="button" className="text-xs text-muted-foreground" onClick={() => void markRead()}>
-                Mark read
-              </button>
-            </div>
-            {notes.length === 0 ? <p className="px-2 py-2 text-xs text-muted-foreground">Nothing waiting.</p> : null}
-            {notes.map((note) => (
-              <DropdownMenuItem key={note.id} className="flex flex-col items-start gap-0.5">
-                <span className="text-sm">{note.title}</span>
-                {note.body ? <span className="text-xs text-muted-foreground">{note.body}</span> : null}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
+            <button
+              type="button"
               data-testid="account-button"
-              variant="ghost"
-              className={cn("h-10 min-w-0 flex-1 justify-start gap-2 px-1.5", compact && "w-9 flex-none justify-center px-0")}
+              title={accountName}
+              className={cn(
+                "flex h-11 w-full min-w-0 items-center gap-2 overflow-hidden rounded-full border border-border bg-card px-1.5 text-card-foreground shadow-sm transition-all duration-200 hover:shadow-md",
+                compact ? "w-11 justify-center px-0" : "group-hover/footer:w-11 group-hover/footer:justify-center",
+              )}
             >
-              <Avatar className="h-7 w-7"><AvatarFallback className="text-[10px]">{initials(username)}</AvatarFallback></Avatar>
-              {compact ? <span className="sr-only">{username}</span> : <span className="min-w-0 truncate text-sm">{username}</span>}
-            </Button>
+              <Avatar className="h-8 w-8 shrink-0">
+                {avatarUrl ? <AvatarImage src={avatarUrl} alt="" /> : null}
+                <AvatarFallback className="text-[11px]">{initials(accountName)}</AvatarFallback>
+              </Avatar>
+              <span className={cn("min-w-0 flex-1 truncate text-left text-sm font-medium", compact ? "sr-only" : "group-hover/footer:sr-only")}>{accountName}</span>
+            </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align="start" className="w-64" data-testid="account-menu">
             <DropdownMenuSub>
@@ -478,12 +554,43 @@ export function AppShell({ children }: { children: ReactNode }) {
             <DropdownMenuItem onSelect={() => void api("/api/auth/logout", { method: "POST" }).then(() => router.push("/login"))}>Log out</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        <button
+          type="button"
+          data-testid="open-plugins"
+          aria-label="Connect apps"
+          title={apps.length ? apps.map((app) => app.name).join(", ") : "Connect apps"}
+          className={cn(
+            "flex h-11 min-w-0 shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-1.5 text-card-foreground shadow-sm transition-all duration-200 hover:shadow-md",
+            compact ? "w-11 justify-center px-0" : "group-hover/footer:min-w-0 group-hover/footer:flex-1",
+          )}
+          onClick={() => {
+            setPluginTab("yours");
+            setPluginsOpen(true);
+            setOpen(false);
+          }}
+        >
+          <span className="flex shrink-0 items-center -space-x-2">
+            {(apps.length ? apps : [{ id: "connect", name: "+" }]).map((app) => (
+              <span
+                key={app.id}
+                className="grid size-7 place-items-center rounded-full border-2 border-card text-[10px] font-medium text-white"
+                style={{ backgroundColor: `hsl(${appHue(app.name)} 55% 42%)` }}
+              >
+                {app.name.slice(0, 1).toUpperCase()}
+              </span>
+            ))}
+          </span>
+          {compact ? null : (
+            <span className="max-w-0 overflow-hidden whitespace-nowrap text-sm font-medium opacity-0 transition-all group-hover/footer:max-w-[8rem] group-hover/footer:opacity-100">Connect apps</span>
+          )}
+        </button>
       </div>
     </div>
   );
 
   return (
     <TooltipProvider delayDuration={300}>
+      <AvatarClock />
       <div
         data-testid="app-shell"
         className="flex min-h-0 bg-background pt-[env(safe-area-inset-top)] text-foreground"
@@ -500,7 +607,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <aside
             data-testid="sidebar"
             data-rail={compact ? "icons" : "list"}
-            className={cn("hidden shrink-0 border-r border-sidebar-border md:flex", compact ? "w-16" : "w-[260px]")}
+            className={cn("hidden shrink-0 overflow-x-hidden md:flex", compact ? "w-16" : "w-[232px]")}
           >
             {roster}
           </aside>
@@ -524,8 +631,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         <Dialog open={pluginsOpen} onOpenChange={setPluginsOpen}>
           <DialogContent data-testid="plugins-modal" className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
             <DialogHeader>
-              <DialogTitle>Plugins</DialogTitle>
-              <DialogDescription>One registry for MCP servers, OpenAPI APIs, built-ins, and OAuth apps.</DialogDescription>
+              <DialogTitle>Connect apps</DialogTitle>
+              <DialogDescription>Apps connected to your account. Install more from the marketplace.</DialogDescription>
             </DialogHeader>
             <div className="flex gap-1">
               {(["marketplace", "yours"] as const).map((tab) => (
@@ -576,7 +683,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     <CommandItem
                       key={mode}
                       onSelect={() => {
-                        applyTheme(mode);
+                        void saveTheme(mode).catch(() => undefined);
                         setPalette(false);
                         toast.success(`Theme set to ${mode}.`);
                       }}
@@ -758,5 +865,5 @@ function FeedbackDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     catch (error) { toast.error(errorMessage(error, "Could not send feedback.")); }
     finally { setBusy(false); }
   }
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent data-testid="feedback-dialog"><DialogHeader><DialogTitle>Send feedback</DialogTitle><DialogDescription>Share a note with the AI Teammates team.</DialogDescription></DialogHeader><form onSubmit={(event) => void submit(event)} className="space-y-3"><Textarea data-testid="feedback-message" value={message} onChange={event => setMessage(event.target.value)} maxLength={5000} required placeholder="What should we know?" /><Button data-testid="feedback-submit" type="submit" disabled={busy || !message.trim()}>{busy ? "Sending…" : "Send feedback"}</Button></form></DialogContent></Dialog>;
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent data-testid="feedback-dialog"><DialogHeader><DialogTitle>Send feedback</DialogTitle><DialogDescription>Share a note with the AI Teammates team.</DialogDescription></DialogHeader><form onSubmit={(event) => void submit(event)} className="space-y-4"><Textarea data-testid="feedback-message" value={message} onChange={event => setMessage(event.target.value)} maxLength={5000} required placeholder="What should we know?" /><DialogFooter><Button data-testid="feedback-submit" type="submit" disabled={busy || !message.trim()}>{busy ? "Sending…" : "Send feedback"}</Button></DialogFooter></form></DialogContent></Dialog>;
 }

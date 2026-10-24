@@ -21,10 +21,18 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         var owner = await OwnerOf(botId);
         var messages = body.GetProperty("messages");
         var secret = await platform.Resolve(owner, "secret://openrouter/default", "model_gateway", botId, null, taskId, "model_gateway");
+        string key;
         if (secret == null)
-            return Results.Json(new { status = "waiting_resource", reason = "connect_openrouter" });
-        var key = Encoding.UTF8.GetString(secret);
-        CryptographicOperations.ZeroMemory(secret);
+        {
+            if (!string.Equals(platform.LlmProvider, "mock", StringComparison.OrdinalIgnoreCase))
+                return Results.Json(new { status = "waiting_resource", reason = "connect_openrouter" });
+            key = "sk-or-mock-local-not-a-real-key";
+        }
+        else
+        {
+            key = Encoding.UTF8.GetString(secret);
+            CryptographicOperations.ZeroMemory(secret);
+        }
         var redacted = RedactMessages(messages, key);
         var payload = ProviderWire.Completion(platform.ModelName, redacted, await ToolsFor(botId, ct));
         using var request = new HttpRequestMessage(HttpMethod.Post, platform.OpenRouterBase + "/chat/completions");
@@ -231,6 +239,8 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
                 return await OutboundLog.Run(platform, owner, botId, taskId, tool, ActionClasses.ExternalPost, args, () => Task.FromResult<object>(new { delivered = false, held = true }), ct);
             case "react_to_message":
                 return await Reactions.BotTool(platform, botId, Arg(args, "message_id").Length > 0 ? Arg(args, "message_id") : Arg(args, "messageId"), Arg(args, "emoji"));
+            case "report_coding_job":
+                return await CodingJobs.Upsert(platform, botId, taskId, args, ct);
             default:
                 if (PluginIds.IsPluginTool(tool))
                     return await PluginCatalog.InvokeEnabled(platform, owner, botId, taskId, tool, args, ct);

@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 
 from browser import BrowserHub
+from coding_jobs import coding_job_body
 from guard import invalid_reason, login_result, present_tool, scrub, should_halt, strip_text
 from plugins import call_allowed, enabled_names
 from run_guard import RunGuard
@@ -30,6 +31,10 @@ SYSTEM = (
     "It never replaces an answer, a result, or an error explanation. "
     "Use emoji in text replies sparingly, not in every message. "
     "Use none in formal or tense contexts, when the user is frustrated, or in error and approval messages. "
+    "When you start or update a coding job, call report_coding_job with its title and status. "
+    "status is queued, running, tests, finished, merged, or failed. "
+    "Put the live line in step, for example Running test suites. Send the same title to update that job. "
+    "When the job has a branch or pull request, include branch, pr_number, pr_url, files_changed, additions, and deletions. "
     "When you need a decision, call ask_user with a short prompt and 1 to 6 options. "
     "Do not ask that question as plain text. "
     "Mark a destructive option with style danger. "
@@ -362,6 +367,8 @@ class Worker:
         name = call["name"]
         args = _bind_target(task, call["arguments"])
         log.info("tool name=%s task=%s", name, _task_id(task))
+        if name == "report_coding_job":
+            return await self._report_coding_job(task, args)
         if name in BROWSER_TOOLS:
             if authorize:
                 gate = await self._authorize(task, name, args)
@@ -457,6 +464,15 @@ class Worker:
                 names.add(name)
         task["_plugin_tools"] = names
         return names
+
+    async def _report_coding_job(self, task: dict, args: dict) -> dict:
+        body = coding_job_body(_bot_id(task), _task_id(task), args)
+        try:
+            job = await self.request_json("POST", "/internal/coding-jobs", body)
+        except Exception as exc:
+            log.warning("coding job type=%s", type(exc).__name__)
+            return {"ok": False, "reason": "job_status_failed"}
+        return {"ok": True, "status": body["status"], "step": body["step"], "job": job if isinstance(job, dict) else {}}
 
     async def _execute_api(self, task: dict, tool: str, args: dict) -> dict | None:
         if tool.startswith("plugin_") and not call_allowed(tool, await self._enabled_plugins(task)):

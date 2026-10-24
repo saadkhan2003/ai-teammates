@@ -2,7 +2,8 @@
   "name": "teammates-e2e",
   "private": true,
   "scripts": {
-    "test": "playwright test"
+    "test": "playwright test",
+    "test:avatar-motion": "playwright test --config avatar-motion.playwright.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "1.55.0"

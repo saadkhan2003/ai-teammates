@@ -17,6 +17,7 @@ up:
 test-unit:
 	dotnet test tests/unit/Teammates.UnitTests.csproj --nologo
 	python3 -m pytest -q tests/unit
+	cd apps/web && npm ci && node --test lib/chat-ui.test.mjs
 
 test-contract:
 	dotnet test tests/compute-contract/Compute.ContractTests.csproj --nologo

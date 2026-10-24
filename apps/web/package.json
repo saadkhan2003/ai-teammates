@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "test:avatar-motion": "node --experimental-strip-types --import ../../tests/unit/register-ts.mjs --test lib/avatar-motion.test.ts"
   },
   "dependencies": {
     "@novnc/novnc": "1.5.0",

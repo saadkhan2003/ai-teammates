@@ -9,13 +9,13 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
-import { applyTheme, readTheme, type ThemeMode } from "@/lib/theme";
+import { applyAccent, parseTheme, readTheme, saveTheme, type ThemeMode } from "@/lib/theme";
 
 const ACCENTS = [
-  { id: "blue", dark: "#8eb6ff", light: "#3b6fd8" },
-  { id: "sage", dark: "#8fd0a8", light: "#1f7a45" },
-  { id: "sand", dark: "#e6c27a", light: "#8a5a12" },
-  { id: "clay", dark: "#f0a8a0", light: "#9f2d2d" },
+  { id: "blue", swatch: "#8eb6ff" },
+  { id: "sage", swatch: "#8fd0a8" },
+  { id: "sand", swatch: "#e6c27a" },
+  { id: "clay", swatch: "#f0a8a0" },
 ];
 
 const LOCALES = [
@@ -29,14 +29,14 @@ const LOCALES = [
 const ZONES = ["UTC", "America/New_York", "America/Los_Angeles", "Europe/London", "Europe/Paris", "Asia/Karachi", "Asia/Tokyo"];
 
 const THEMES: { id: ThemeMode; label: string }[] = [
-  { id: "system", label: "Follow system" },
   { id: "light", label: "Light" },
   { id: "dark", label: "Dark" },
+  { id: "system", label: "System" },
 ];
 
 export default function GeneralSettingsPage() {
   const router = useRouter();
-  const [mode, setMode] = useState<ThemeMode>("dark");
+  const [mode, setMode] = useState<ThemeMode>("system");
   const [username, setUsername] = useState("");
   const [role, setRole] = useState("");
   const [locale, setLocale] = useState("en");
@@ -50,27 +50,23 @@ export default function GeneralSettingsPage() {
     setZone(window.localStorage.getItem("teammates-timezone") || "UTC");
     setAlerts(window.localStorage.getItem("teammates-desktop-notifications") === "on");
     setAccent(window.localStorage.getItem("teammates-accent-id") || "blue");
-    void api<{ username?: string; role?: string }>("/api/auth/me")
+    void api<{ username?: string; role?: string; theme?: string }>("/api/auth/me")
       .then((me) => {
         setUsername(me.username ?? "");
         setRole(me.role ?? "");
+        const saved = parseTheme(me.theme);
+        if (saved) setMode(saved);
       })
       .catch(() => undefined);
   }, []);
 
   function choose(next: ThemeMode) {
     setMode(next);
-    applyTheme(next);
-    paintAccent(accent, next);
+    void saveTheme(next).catch(() => undefined);
   }
 
-  function paintAccent(id: string, theme: ThemeMode = mode) {
-    const swatch = ACCENTS.find((item) => item.id === id) ?? ACCENTS[0];
-    const light = theme === "light" || (theme === "system" && !window.matchMedia("(prefers-color-scheme: dark)").matches);
-    const color = light ? swatch.light : swatch.dark;
-    document.documentElement.style.setProperty("--brand", color);
-    window.localStorage.setItem("teammates-accent", color);
-    window.localStorage.setItem("teammates-accent-id", id);
+  function paintAccent(id: string) {
+    applyAccent(id, mode);
     setAccent(id);
   }
 
@@ -103,28 +99,21 @@ export default function GeneralSettingsPage() {
   }
 
   return (
-    <div className="grid gap-4">
+    <>
       <Card>
-        <CardHeader className="p-4">
+        <CardHeader>
           <CardTitle className="text-sm">Account</CardTitle>
         </CardHeader>
-        <CardContent className="flex items-center justify-between gap-3 p-4 pt-0">
-          <div>
-            <p className="text-sm font-medium">{username || "Signed in"}</p>
-            {role ? <p className="text-xs text-muted-foreground">{role}</p> : null}
-          </div>
-          <form onSubmit={signOut}>
-            <Button type="submit" variant="outline" size="sm">
-              Sign out
-            </Button>
-          </form>
+        <CardContent>
+          <p className="text-sm font-medium">{username || "Signed in"}</p>
+          {role ? <p className="mt-1 text-xs text-muted-foreground">{role}</p> : null}
         </CardContent>
       </Card>
       <Card>
-        <CardHeader className="p-4">
-          <CardTitle className="text-sm">Theme</CardTitle>
+        <CardHeader>
+          <CardTitle className="text-sm">Appearance</CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-wrap gap-2 p-4 pt-0">
+        <CardContent className="flex flex-wrap gap-2">
           {THEMES.map((item) => (
             <Button
               key={item.id}
@@ -140,67 +129,74 @@ export default function GeneralSettingsPage() {
         </CardContent>
       </Card>
       <Card>
-        <CardHeader className="p-4">
+        <CardHeader>
           <CardTitle className="text-sm">Accent colour</CardTitle>
         </CardHeader>
-        <CardContent className="flex gap-2 p-4 pt-0">
-          {ACCENTS.map((swatch) => (
+        <CardContent className="flex gap-2">
+          {ACCENTS.map((item) => (
             <button
-              key={swatch.id}
+              key={item.id}
               type="button"
-              aria-label={swatch.id}
-              aria-pressed={accent === swatch.id}
-              className="h-7 w-7 rounded-md border border-border"
-              style={{ background: swatch.dark }}
-              onClick={() => paintAccent(swatch.id)}
+              aria-label={item.id}
+              aria-pressed={accent === item.id}
+              className="size-7 rounded-md border border-border"
+              style={{ background: item.swatch }}
+              onClick={() => paintAccent(item.id)}
             />
           ))}
         </CardContent>
       </Card>
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="flex flex-col gap-1.5">
-          <Label>Language</Label>
-          <Select value={locale} onValueChange={chooseLocale}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {LOCALES.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label>Timezone</Label>
-          <Select value={zone} onValueChange={chooseZone}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {ZONES.map((item) => (
-                <SelectItem key={item} value={item}>
-                  {item}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-      <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
-        <div>
-          <p className="text-sm">Notifications</p>
-          <p className="text-xs text-muted-foreground">Desktop alerts for this browser.</p>
-        </div>
-        <Switch checked={alerts} onCheckedChange={(checked) => void chooseAlerts(checked)} aria-label="Notifications" />
-      </div>
       <Card>
-        <CardHeader className="p-4">
+        <CardHeader>
+          <CardTitle className="text-sm">Preferences</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="flex flex-col gap-2">
+              <Label>Language</Label>
+              <Select value={locale} onValueChange={chooseLocale}>
+                <SelectTrigger className="min-h-11">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {LOCALES.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label>Timezone</Label>
+              <Select value={zone} onValueChange={chooseZone}>
+                <SelectTrigger className="min-h-11">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ZONES.map((item) => (
+                    <SelectItem key={item} value={item}>
+                      {item}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="flex min-h-11 items-center justify-between gap-3 border-t border-border pt-4">
+            <div>
+              <p className="text-sm">Notifications</p>
+              <p className="text-xs text-muted-foreground">Desktop alerts for this browser.</p>
+            </div>
+            <Switch checked={alerts} onCheckedChange={(checked) => void chooseAlerts(checked)} aria-label="Notifications" />
+          </div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
           <CardTitle className="text-sm">Approval rules</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-1 p-4 pt-0 text-sm text-muted-foreground">
+        <CardContent className="space-y-1 text-sm text-muted-foreground">
           <p>The server enforces these. They are not switches on this page.</p>
           <ul className="list-disc space-y-1 pl-4">
             <li>Shell commands and environment setup are denied.</li>
@@ -211,15 +207,36 @@ export default function GeneralSettingsPage() {
           </ul>
         </CardContent>
       </Card>
-      <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
-        <div>
-          <p className="text-sm">Security keys</p>
-          <p className="text-xs text-muted-foreground">API keys and plugin credentials live in the vault.</p>
-        </div>
-        <Button variant="outline" size="sm" asChild>
-          <Link href="/settings/secrets">Open vault</Link>
-        </Button>
-      </div>
-    </div>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">Security</CardTitle>
+        </CardHeader>
+        <CardContent className="flex min-h-11 items-center justify-between gap-3">
+          <div>
+            <p className="text-sm">Security keys</p>
+            <p className="text-xs text-muted-foreground">API keys and plugin credentials live in the vault.</p>
+          </div>
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/settings/secrets">Open vault</Link>
+          </Button>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">Session</CardTitle>
+        </CardHeader>
+        <CardContent className="flex min-h-11 items-center justify-between gap-3">
+          <div>
+            <p className="text-sm">Sign out</p>
+            <p className="text-xs text-muted-foreground">Ends this browser session.</p>
+          </div>
+          <form onSubmit={signOut}>
+            <Button type="submit" variant="destructive" size="sm">
+              Sign out
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+    </>
   );
 }

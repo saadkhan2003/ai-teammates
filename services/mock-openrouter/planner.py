@@ -57,6 +57,14 @@ def _steps(text: str, messages: list) -> list[Step]:
         ]
     if stripped == "What should I call you?" or stripped.startswith("What should I call you?"):
         return [("final", "I'm your teammate. Call me whatever fits the work.")]
+    if stripped.startswith("Start coding jobs"):
+        return [
+            ("tool", "report_coding_job", {"title": "UI batch", "status": "running", "step": "Editing the composer"}),
+            ("tool", "report_coding_job", {"title": "UI batch", "status": "tests", "step": "Running test suites"}),
+            ("tool", "report_coding_job", {"title": "UI batch", "status": "merged", "step": "", "pr_number": "4", "pr_url": "https://example.com/pull/4", "branch": "cursor/bot-app-awareness", "files_changed": "31", "additions": "1113", "deletions": "26"}),
+            ("tool", "report_coding_job", {"title": "API reactions", "status": "finished", "step": ""}),
+            ("final", "Coding jobs are up to date."),
+        ]
     if stripped == "thanks!":
         return [
             ("tool", "react_to_message", {"message_id": _message_id(messages), "emoji": "👍"}),

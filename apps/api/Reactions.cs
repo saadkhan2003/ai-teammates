@@ -4,6 +4,12 @@ using Npgsql;
 
 namespace Teammates.Api;
 
+public static class ReactionRules
+{
+    public static bool BotMayReact(string? messageRole) =>
+        string.Equals(messageRole, "user", StringComparison.Ordinal);
+}
+
 public static class Reactions
 {
     public static async Task<IResult> Post(HttpContext ctx, Platform platform, Guid messageId, JsonElement body)
@@ -67,7 +73,7 @@ public static class Reactions
         if (message == null) return Outcome.Fail(404, "message_not_found");
         var participant = actorType == "user" ? actorId == message.OwnerId : actorId == message.BotId;
         if (!participant) return Outcome.Fail(403, "not_participant");
-        if (actorType == "bot" && message.Role != "user") return Outcome.Fail(400, "not_user_message");
+        if (actorType == "bot" && !ReactionRules.BotMayReact(message.Role)) return Outcome.Fail(400, "not_user_message");
 
         var existing = await conn.QuerySingleOrDefaultAsync<ReactionRow>(
             """
