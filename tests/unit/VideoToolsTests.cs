@@ -62,6 +62,24 @@ public sealed class VideoToolsTests
     }
 
     [Fact]
+    public void VideoAnalysisRedactionPreservesValidJsonAndEscapedText()
+    {
+        using var analysis = JsonDocument.Parse("""
+            {"summary":"contains sk-or-v1-CanarySecret123456 and \"quoted\" text \\\\ path","timeline":[{"text":"safe \"quoted\" value"}],"duration":12.5}
+            """);
+
+        var redacted = VideoTools.RedactJsonStrings(analysis.RootElement);
+        using var roundTrip = JsonDocument.Parse(redacted);
+
+        Assert.Equal(12.5, roundTrip.RootElement.GetProperty("duration").GetDouble());
+        var summary = roundTrip.RootElement.GetProperty("summary").GetString()!;
+        Assert.DoesNotContain("CanarySecret123456", summary);
+        Assert.Contains("[REDACTED]", summary);
+        Assert.Contains("\"quoted\" text \\\\ path", summary);
+        Assert.Equal("safe \"quoted\" value", roundTrip.RootElement.GetProperty("timeline")[0].GetProperty("text").GetString());
+    }
+
+    [Fact]
     public void VideoCacheIdentityChangesWithEffectiveModelsAndSettings()
     {
         var original = VideoTools.SettingsVersion(Teammates.Api.Platform.DefaultRealModel, "whisper", "provider-a", "chunk=300");

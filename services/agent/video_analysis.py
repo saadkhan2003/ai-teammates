@@ -219,10 +219,13 @@ async def transcribe_chunks(path: Path, duration: float, client, *, model=None, 
                     await _run("ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", cursor, "-i", path, "-t", part_seconds,
                                "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", chunk, timeout=120)
                     size = chunk.stat().st_size
-                    if size < 24_000_000:
+                    if size < 25_000_000:
                         break
                     chunk.unlink(missing_ok=True)
-                    part_seconds *= min(0.8, 23_000_000 / size)
+                    # Always re-encode the half-sized part and check its actual byte size.
+                    # Bitrate and container overhead vary, so one estimate cannot guarantee
+                    # the strict provider limit.
+                    part_seconds *= 0.5
                     if part_seconds < 1:
                         raise ValueError("audio_chunk_size_limit")
                 body = {"model": model, "audio_seconds": part_seconds, "input_audio": {"data": base64.b64encode(chunk.read_bytes()).decode(), "format": "mp3"},

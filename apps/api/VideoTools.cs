@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Teammates.Compute;
 
 namespace Teammates.Api;
 
@@ -29,6 +30,53 @@ public static class VideoTools
         new[] { "videoId", "duration", "summary", "timeline", "audioSkipReason", "sttProvider", "sttSeconds", "frameCount" }
             .Where(key => analysis.TryGetProperty(key, out _))
             .ToDictionary(key => key, key => analysis.GetProperty(key).Clone());
+
+    /// <summary>
+    /// Redacts user supplied strings without treating serialized JSON as plain text.
+    /// Redacting raw JSON can replace characters inside quoted values and corrupt the document.
+    /// </summary>
+    public static string RedactJsonStrings(JsonElement value)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream)) WriteRedacted(value, writer);
+        return Encoding.UTF8.GetString(stream.ToArray());
+    }
+
+    private static void WriteRedacted(JsonElement value, Utf8JsonWriter writer)
+    {
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.Object:
+                writer.WriteStartObject();
+                foreach (var property in value.EnumerateObject())
+                {
+                    writer.WritePropertyName(property.Name);
+                    WriteRedacted(property.Value, writer);
+                }
+                writer.WriteEndObject();
+                break;
+            case JsonValueKind.Array:
+                writer.WriteStartArray();
+                foreach (var item in value.EnumerateArray()) WriteRedacted(item, writer);
+                writer.WriteEndArray();
+                break;
+            case JsonValueKind.String:
+                writer.WriteStringValue(OutputRedactor.Redact(value.GetString()));
+                break;
+            case JsonValueKind.Number:
+                value.WriteTo(writer);
+                break;
+            case JsonValueKind.True:
+                writer.WriteBooleanValue(true);
+                break;
+            case JsonValueKind.False:
+                writer.WriteBooleanValue(false);
+                break;
+            default:
+                writer.WriteNullValue();
+                break;
+        }
+    }
 
     // Cache identity includes effective API models and worker preprocessing settings.
     public static string SettingsVersion(string summaryModel, string sttModel, string sttProvider, string processingSettings)

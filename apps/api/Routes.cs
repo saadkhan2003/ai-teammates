@@ -1870,7 +1870,7 @@ public static class Routes
             JsonElement videoAnalysis = default;
             if (body.TryGetProperty("videoAnalysis", out var videoJson) && videoJson.ValueKind == JsonValueKind.Object)
             {
-                using var filtered = JsonDocument.Parse(OutputRedactor.Redact(videoJson.GetRawText()));
+                using var filtered = JsonDocument.Parse(VideoTools.RedactJsonStrings(videoJson));
                 videoAnalysis = filtered.RootElement.Clone();
             }
             var metadata = videoAnalysis.ValueKind == JsonValueKind.Object

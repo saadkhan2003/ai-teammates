@@ -47,7 +47,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         using var doc = JsonDocument.Parse(raw);
         var message = doc.RootElement.GetProperty("choices")[0].GetProperty("message");
         var normalized = ProviderWire.Normalize(message);
-        var normalizedText = OutputRedactor.Redact(normalized.GetRawText(), []);
+        var normalizedText = VideoTools.RedactJsonStrings(normalized);
         var usage = ProviderWire.ReadUsage(doc.RootElement);
         await StoreModel(owner, botId, taskId, redacted, true, (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds, usage, role);
         await using var conn = await platform.Data.OpenConnectionAsync(ct);
@@ -160,7 +160,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
             if (!body.TryGetProperty("analysis", out var analysis)) return Results.BadRequest();
             if (analysis.ValueKind != JsonValueKind.Object) return Results.BadRequest();
             if (string.IsNullOrEmpty(contentSha)) return Results.BadRequest(new { error = "content_hash_required" });
-            var json = OutputRedactor.Redact(analysis.GetRawText());
+            var json = VideoTools.RedactJsonStrings(analysis);
             await conn.ExecuteAsync("""
                 INSERT INTO video_analyses(owner_id,bot_id,source_item_id,source_ref,content_sha256,settings_version,analysis)
                 VALUES(@owner,@bot,@item,@sourceRef,@sha,@version,CAST(@json AS jsonb))
@@ -229,7 +229,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
 
     private static Task<int> RememberVideoCard(NpgsqlConnection conn, Guid sessionId, JsonElement analysis) =>
         conn.ExecuteAsync("UPDATE video_tool_sessions SET analysis=CAST(@card AS jsonb) WHERE id=@sessionId",
-            new { sessionId, card = OutputRedactor.Redact(JsonSerializer.Serialize(VideoTools.Card(analysis))) });
+            new { sessionId, card = VideoTools.RedactJsonStrings(JsonSerializer.SerializeToElement(VideoTools.Card(analysis))) });
 
     public async Task<IResult> Authorize(JsonElement body, CancellationToken ct)
     {
