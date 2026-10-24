@@ -2,6 +2,14 @@
 
 Saad approved building the long-run resume and memory-notes designs in full. Where a design left a question open, the build uses the safe default the design recommends. Each default is a config value or a single code path, so changing it is small. Tell the build agent which line to change.
 
+## Bot model (owner confirmed 2026-10-24)
+
+The default and recommended real bot model is `anthropic/claude-haiku-5.5`.
+Set `MODEL_PLANNER=anthropic/claude-haiku-5.5` when enabling OpenRouter;
+`VIDEO_SUMMARY_MODEL` falls back to the planner model. Compose, unit tests and
+isolated stacks keep `LLM_PROVIDER=mock` and `MODEL_PLANNER=mock/planner`.
+Embedding and transcription models retain their separate settings.
+
 ## Long-run resume (docs/LONG_RUN_RESUME_DESIGN.md, section 8)
 | # | Question | Default used | How to change |
 |---|---|---|---|

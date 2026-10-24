@@ -8,7 +8,7 @@ Before running, point the API at OpenRouter and restart it:
 
   LLM_PROVIDER=openrouter
   OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-  MODEL_PLANNER=<a tool-capable model id>
+  MODEL_PLANNER=anthropic/claude-haiku-5.5
 
 The mock stack cannot grade a real model.
 """

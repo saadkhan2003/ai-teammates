@@ -20,6 +20,8 @@ public static class ToolSchema
     [
         Fn("browser_open", "Open a URL in the bot browser", Req("url", "string", "Absolute URL"), Opt("wait", "string", "CSS selector to wait for")),
         Fn("browser_extract", "Read text from the current page", Opt("selector", "string", "CSS selector")),
+        Fn("watch_video", "Analyze an attached, library, or workspace video. Use its library item id or a workspace path.", Opt("video_id", "string", "Video library item id"), Opt("source", "string", "File path under this bot's workspace")),
+        Fn("ask_video", "Ask a follow-up about an analyzed library or workspace video", Req("question", "string", "Question about the video"), Opt("video_id", "string", "Video library item id"), Opt("source", "string", "File path under this bot's workspace"), Opt("around_ts", "number", "Focus on frames near this timestamp in seconds")),
         Fn("browser_click", "Click an element", Req("selector", "string", "CSS selector")),
         Fn("computer_screenshot", "Capture the desktop screen as task evidence"),
         Fn("computer_click", "Click at model-space desktop coordinates", Req("x", "number", "Horizontal coordinate from 0 to 1279"), Req("y", "number", "Vertical coordinate from 0 to 799"), Opt("button", "number", "Mouse button 1, 2, or 3")),
@@ -159,6 +161,13 @@ public static class ToolSchema
         {
             if (!args.TryGetProperty("x", out var x) || !x.TryGetDouble(out var xv) || xv < 0 || xv >= 1280) return tool + " x must be from 0 to 1279";
             if (!args.TryGetProperty("y", out var y) || !y.TryGetDouble(out var yv) || yv < 0 || yv >= 800) return tool + " y must be from 0 to 799";
+        }
+        if (tool is "watch_video" or "ask_video")
+        {
+            var hasVideoId = args.TryGetProperty("video_id", out var videoId) && videoId.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(videoId.GetString());
+            var hasSource = args.TryGetProperty("source", out var source) && source.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(source.GetString());
+            if (!hasVideoId && !hasSource) return tool + " requires video_id or source";
+            if (!VideoTools.SafeSource(VideoTools.Source(args))) return tool + " requires a safe video source";
         }
         if (tool == "computer_click" && args.TryGetProperty("button", out var button) && (!button.TryGetInt32(out var buttonValue) || buttonValue is < 1 or > 3)) return "computer_click button must be 1, 2, or 3";
         if (tool == "computer_scroll" && (!args.TryGetProperty("dy", out var dy) || !dy.TryGetInt32(out var delta) || delta is < -20 or > 20 or 0)) return "computer_scroll dy must be from -20 to 20, excluding zero";

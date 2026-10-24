@@ -26,6 +26,7 @@ public sealed class Platform
     public bool TestHooks { get; }
     public string OpenRouterBase { get; }
     public string LlmProvider { get; }
+    public const string DefaultRealModel = "anthropic/claude-haiku-5.5";
     public string ModelName { get; }
     public IConfiguration Configuration { get; }
     public IConfiguration Config => Configuration;
@@ -63,7 +64,7 @@ public sealed class Platform
         TestHooks = string.Equals(config["ENABLE_TEST_HOOKS"], "true", StringComparison.OrdinalIgnoreCase);
         OpenRouterBase = (config["OPENROUTER_BASE_URL"] ?? "http://mock-openrouter:8090/api/v1").TrimEnd('/');
         LlmProvider = config["LLM_PROVIDER"] ?? "mock";
-        ModelName = config["MODEL_PLANNER"] ?? "mock/planner";
+        ModelName = PlannerModel(config["LLM_PROVIDER"], config["MODEL_PLANNER"]);
         MaxParallel = int.TryParse(config["MAX_PARALLEL_TASKS_PER_USER"], out var max) ? max : 6;
         MaxAutoResumesPerHour = ConfigInt(config, "Resume:MaxAutoResumesPerHour", 5, 1, 20);
         CodingRounds = ConfigInt(config, "RunBudget:CodingRounds", 12, 1, 100);
@@ -77,6 +78,11 @@ public sealed class Platform
             : TimeSpan.FromMinutes(10);
         _ = _unused;
     }
+
+    public static string PlannerModel(string? provider, string? configuredModel) =>
+        !string.IsNullOrWhiteSpace(configuredModel) ? configuredModel
+            : string.IsNullOrWhiteSpace(provider) || string.Equals(provider, "mock", StringComparison.OrdinalIgnoreCase)
+                ? "mock/planner" : DefaultRealModel;
 
     private static int ConfigInt(IConfiguration config, string key, int fallback, int min, int max) =>
         int.TryParse(config[key], out var value) ? Math.Clamp(value, min, max) : fallback;
@@ -133,6 +139,7 @@ public sealed class Platform
         "039_desktop_lease.sql",
         "040_tickets_state.sql",
         "041_skill_library.sql",
+        "042_video_analyses.sql",
     ];
 
     private async Task MigrateAndSeedLocked(string ownerUser, string ownerPassword)

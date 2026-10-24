@@ -21,6 +21,7 @@ from grounding import check_answer, observed_urls
 from retry import send_with_retry
 from resume import apply_resume
 from compaction import apply_summary, archive_range, build_summary_prompt, estimate_tokens, mask_observations, should_compact, context_exhausted, split_for_summary
+from video_analysis import analyze_video, answer_video_question
 
 log = logging.getLogger("worker")
 
@@ -164,6 +165,10 @@ class ComputerRecovering(Exception):
     """The computer is being rebuilt. The task should wait instead of retrying."""
 
 
+class VideoResourceWait(Exception):
+    """A video model request needs the owner to connect OpenRouter."""
+
+
 class Worker:
     def __init__(self, *, exit_ip: str | None = None, geo_lookup=None) -> None:
         self.api_url = os.environ.get("API_URL", "http://api:8080").rstrip("/")
@@ -252,6 +257,8 @@ class Worker:
                 raise
         except ComputerRecovering:
             await self._status(task, "waiting_resource", reason=RECOVERING)
+        except VideoResourceWait:
+            await self._status(task, "waiting_resource", reason="connect_openrouter")
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 409 and _desktop_busy(exc.response):
                 await self._status(task, "waiting_human", reason="You're in control — tell me when to continue")
@@ -478,7 +485,7 @@ class Worker:
                 task["_stepsUsed"] = guard.steps
                 task["_lastToolCallId"] = str(pending.get("id") or "")[:100]
                 task["_toolInFlightSince"] = datetime.now(timezone.utc).isoformat()
-                task["_toolTimeoutSeconds"] = 120
+                task["_toolTimeoutSeconds"] = 600 if pending.get("name") == "watch_video" else 120
                 task["_callSlot"] = _call_slot(messages, pending)
                 try:
                     result = await self._invoke(task, pending, authorize=True)
@@ -748,7 +755,98 @@ class Worker:
                 return None
             if gate.get("decision") != "allow":
                 return {"ok": False, "status": "denied", "reason": gate.get("reason") or "gate_unavailable"}
+        if name in {"watch_video", "ask_video"}:
+            authorized = await self._execute_api(task, name, args)
+            if authorized is None or authorized.get("ok") is False:
+                return authorized
+            session = authorized.get("output", {}).get("videoSession")
+            if not session:
+                return {"ok": False, "status": "denied", "reason": "video_authorization_required"}
+            result = await self._video_tool(task, name, args, session)
+            if name == "watch_video" and isinstance(result, dict) and result.get("ok") is not False:
+                task["_video_analysis"] = result
+            return result
         return await self._execute_api(task, name, args)
+
+    async def _video_tool(self, task: dict, name: str, args: dict, session: str) -> dict:
+        assert self.client is not None
+        bot_id, task_id = _bot_id(task), _task_id(task)
+        import uuid
+        source = str(args.get("video_id") or args.get("source") or "")
+        if not source:
+            return {"ok": False, "reason": "video_source_required"}
+        try:
+            item_id = str(uuid.UUID(source))
+            is_library_item = True
+        except ValueError:
+            item_id = ""
+            is_library_item = False
+        scope = {"botId": bot_id, "taskId": task_id, "epoch": _epoch(task),
+                 "videoId": item_id} if is_library_item else {"botId": bot_id, "taskId": task_id, "epoch": _epoch(task), "sourcePath": source}
+        from video_analysis import processing_settings
+        scope.update(videoSession=session, processingSettings=processing_settings())
+        if not is_library_item and (source.startswith(("http://", "https://")) or ".." in source.split("/")):
+            return {"ok": False, "reason": "unsafe_video_source"}
+        source_bytes = None
+        if is_library_item:
+            cache = await self.request_json("POST", "/internal/video/cache/get", scope)
+        else:
+            source_response = await self.request("POST", "/internal/video/source", scope)
+            source_response.raise_for_status()
+            source_bytes = source_response.content
+            import hashlib
+            scope["contentSha"] = hashlib.sha256(source_bytes).hexdigest()
+            cache = await self.request_json("POST", "/internal/video/cache/get", scope)
+        if name == "ask_video":
+            analysis = cache.get("analysis") if isinstance(cache, dict) else None
+            if not analysis:
+                return {"ok": False, "reason": "video_not_analyzed"}
+            async def model_call(kind, content):
+                payload = {**scope, "kind": kind}
+                if kind == "stt": payload["audio"] = content["input_audio"]["data"]
+                else: payload["content"] = content
+                return await self._video_model_request(task, payload)
+            answer = await answer_video_question(analysis, str(args.get("question", "")), model_call,
+                                                float(args["around_ts"]) if args.get("around_ts") is not None else None)
+            return {"ok": True, "answer": answer, "videoId": item_id or source}
+        if cache.get("analysis"):
+            analysis = cache["analysis"]
+            return {key: analysis[key] for key in ("videoId", "duration", "summary", "timeline", "audioSkipReason", "sttProvider", "sttSeconds", "frameCount") if key in analysis} | {"cacheHit": True}
+        await self.request("POST", "/internal/video/event", {**scope, "type": "video_analysis_started", "detail": {"sourceItemId": item_id}})
+        if source_bytes is None:
+            response = await self.request("POST", "/internal/video/source", scope)
+            response.raise_for_status()
+            source_bytes = response.content
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory(prefix="video-source-") as raw:
+            path = Path(raw) / "source.video"
+            path.write_bytes(source_bytes)
+            if not is_library_item:
+                import hashlib
+                scope["contentSha"] = hashlib.sha256(source_bytes).hexdigest()
+            async def model_call(kind, content):
+                payload = {**scope, "kind": kind}
+                if kind == "stt": payload["audio"] = content["input_audio"]["data"]
+                else: payload["content"] = content
+                await self.request("POST", "/internal/video/event", {**scope, "type": "video_model_call", "detail": {"kind": kind}})
+                return await self._video_model_request(task, payload)
+            async def progress():
+                # Renew the bounded in-flight window only after real preprocessing progress.
+                task["_toolInFlightSince"] = datetime.now(timezone.utc).isoformat()
+                task["_lastProgressAt"] = task["_toolInFlightSince"]
+            result = await analyze_video(path, model_call, progress=progress)
+        saved = await self.request_json("POST", "/internal/video/cache/put", {**scope, "analysis": result})
+        await self.request("POST", "/internal/video/event", {**scope, "type": "video_analysis_complete", "detail": {"duration": result.get("duration"), "frameCount": result.get("frameCount"), "sttSeconds": result.get("sttSeconds"), "cacheHit": False}})
+        return {key: result[key] for key in ("videoId", "duration", "summary", "timeline", "audioSkipReason", "sttProvider", "sttSeconds", "frameCount") if key in result} | {"cacheStored": bool(saved.get("ok")), "cacheHit": False}
+
+    async def _video_model_request(self, task: dict, payload: dict) -> dict:
+        result = await self.request_json("POST", "/internal/video/model", payload)
+        if result.get("status") == "waiting_resource":
+            raise VideoResourceWait()
+        if result.get("status") == "error":
+            raise RuntimeError("video model request failed")
+        return result
 
     async def _authorize(self, task: dict, tool: str, args: dict):
         body = await self.request_json(
@@ -897,6 +995,8 @@ class Worker:
             raise
         if isinstance(payload, dict):
             task["_lastPromptTokens"] = int(payload.get("lastPromptTokens") or 0)
+            if isinstance(payload.get("videoAnalysis"), dict):
+                task["_video_analysis"] = payload["videoAnalysis"]
         return _messages_of(payload)
 
     async def _put_transcript(self, task: dict, messages: list) -> None:
@@ -918,10 +1018,13 @@ class Worker:
         await self.request("POST", f"/internal/tasks/{_task_id(task)}/status", body)
 
     async def _complete(self, task: dict, text: str) -> str | None:
+        body = {"workerId": self.worker_id, "epoch": _epoch(task), "text": text}
+        if isinstance(task.get("_video_analysis"), dict):
+            body["videoAnalysis"] = task["_video_analysis"]
         response = await self.request(
             "POST",
             f"/internal/tasks/{_task_id(task)}/complete",
-            {"workerId": self.worker_id, "epoch": _epoch(task), "text": text},
+            body,
             allow_status=(422,),
         )
         if response.status_code == 422 and response.json().get("error") == "tests_required":

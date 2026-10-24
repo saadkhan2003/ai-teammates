@@ -696,7 +696,7 @@ function BotSettings({
       <Label htmlFor="settings-description">Description</Label>
       <Textarea id="settings-description" value={draft.instructions} onChange={(event) => setDraft({ ...draft, instructions: event.target.value })} />
       <Label htmlFor="settings-model">Model</Label>
-      <Input id="settings-model" value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="Provider default" />
+      <Input id="settings-model" value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="anthropic/claude-haiku-5.5" />
       <div className="flex items-center justify-between gap-3 text-sm">
         <Label htmlFor="settings-notifications">Notifications</Label>
         <Switch

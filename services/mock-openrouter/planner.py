@@ -220,6 +220,9 @@ def _result_path(result: dict, messages: list) -> str:
 
 def _steps(text: str, messages: list) -> list[Step]:
     stripped = text.strip()
+    video_match = re.fullmatch(r"VIDEO_V1_TEST:([0-9a-f-]{36})", stripped, re.IGNORECASE)
+    if video_match:
+        return [("tool", "watch_video", {"video_id": video_match.group(1)}), ("final", "Video test complete.")]
     if stripped.startswith("This is a scheduled run, not a user message.") and "\n\n" in stripped:
         inner = stripped.split("\n\n", 1)[1].strip()
         if "NOTHING_NEW test" in inner:

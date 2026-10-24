@@ -45,6 +45,7 @@ export type ChatMessage = {
   parts?: MessagePartView[] | null;
   skill?: { id: string; label: string } | null;
   attachments?: Array<{ path: string; name: string; mime?: string }> | null;
+  videoAnalysis?: { summary?: string; duration?: number; timeline?: Array<{ timestamp?: number; summary?: string }> } | null;
   deleted?: boolean;
   requestId?: string | null;
   taskStatus?: string | null;

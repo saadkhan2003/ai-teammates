@@ -69,6 +69,8 @@ Already built: stop after 10 min idle, 15 s resume target. For a hosted fleet:
 ### 4.1 What was measured
 Local runs outside the repo (`/workspace/ai-teammates-live/`, not committed; the portal pages are test fixtures, so real web tasks will use more tokens):
 - The 9-task eval run in `eval_results.json` (recorded against the mock/shim planner, not a paid model) used 1-5 model calls per task, about 2.6 on average. Real models may differ.
+> Default-model update (2026-10-24): real bots now use `anthropic/claude-haiku-5.5`. The measurements below remain historical and do not measure the new default.
+
 - `openai/gpt-4.1-mini`: about 1,100 prompt and 32 completion tokens per call, about $0.00046 per call, median latency about 1.05 s (measured, 22 calls).
 - Flash-class models in the comparison runs (DeepSeek, GLM, MiMo): about 1,900-2,900 prompt tokens and $0.0001-0.0002 per call, median latency 0.7-3.4 s (measured, 30-48 calls each, single runs).
 

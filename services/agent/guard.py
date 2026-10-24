@@ -121,6 +121,15 @@ def present_tool(name: str, args: dict | None, result):
     """Browser text and shell output that fetched a page are untrusted data."""
     if not isinstance(result, dict):
         return result
+    if name in {"watch_video", "ask_video"}:
+        def mark_video(value):
+            if isinstance(value, list):
+                return [mark_video(item) for item in value]
+            if isinstance(value, dict):
+                return {key: wrap_untrusted(item, "video") if key in {"summary", "text", "content", "transcript", "answer"} and isinstance(item, str)
+                        else mark_video(item) for key, item in value.items()}
+            return value
+        return dict(mark_video(result), untrusted=True)
     if name in {"browser_open", "browser_extract", "browser_click", "browser_screenshot"} and "text" in result:
         marked = dict(result)
         marked["text"] = wrap_untrusted(str(result.get("text") or ""), "web")

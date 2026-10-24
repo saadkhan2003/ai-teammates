@@ -48,6 +48,15 @@ class Handler(BaseHTTPRequestHandler):
         if token is None:
             self._send(401, {"error": "unauthorized"})
             return
+        if path == "/api/v1/audio/transcriptions":
+            try:
+                payload = json.loads(raw.decode("utf-8") if raw else "{}")
+            except json.JSONDecodeError:
+                self._send(400, {"error": "invalid json"})
+                return
+            provider = (payload.get("provider") or {}).get("order", ["mock"])[0]
+            self._send(200, {"text": "Mock transcription.", "segments": [{"start": 0, "end": 1, "text": "Mock transcription."}], "provider": provider})
+            return
         if path != "/api/v1/chat/completions":
             self._send(404, {"error": "not_found"})
             return

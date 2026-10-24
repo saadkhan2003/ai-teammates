@@ -18,6 +18,8 @@ if command -v iptables-legacy >/dev/null 2>&1; then
 fi
 echo "Master key is secrets/secrets_master_key. Back it up outside the database."
 echo "Next: sudo docker compose up -d --build"
+# Production BYOK planner: MODEL_PLANNER=anthropic/claude-haiku-5.5.
+# The generated local configuration keeps MODEL_PLANNER=mock/planner.
 # Disable xtrace before handling an optional inherited model key.
 set +x
 if [[ -n "${OPENROUTER_API_KEY:-}" ]]; then

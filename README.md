@@ -77,7 +77,7 @@ make test-e2e           # Playwright, system Chrome
 make test               # all of the above
 ```
 
-`make eval-real` is not part of `make test` or CI, and it was not run in this workspace. It exits if `OPENROUTER_API_KEY` is missing. Point `LLM_PROVIDER=openrouter` and `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1`, restart the API, then run it. The script reads the key from the environment only long enough to store it through SecretBroker as `secret://openrouter/default` (create, or rotate if one is already saved). It never prints the key. See [Real-model eval](#real-model-eval).
+`make eval-real` is not part of `make test` or CI, and it was not run in this workspace. It exits if `OPENROUTER_API_KEY` is missing. Point `LLM_PROVIDER=openrouter`, `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1` and `MODEL_PLANNER=anthropic/claude-haiku-5.5` (the real default), restart the API, then run it. The script reads the key from the environment only long enough to store it through SecretBroker as `secret://openrouter/default` (create, or rotate if one is already saved). It never prints the key. See [Real-model eval](#real-model-eval).
 
 CI lints the proto (`buf lint`, and `buf breaking` once the proto exists on `main`), and runs unit plus fake contract tests. It does not boot the full stack.
 
