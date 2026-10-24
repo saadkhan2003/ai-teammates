@@ -364,7 +364,7 @@ public sealed class Platform
             """,
             new { id, owner });
         if (row == null) return null;
-        var result = ToDict(row);
+        Dictionary<string, object?> result = ToDict(row);
         if (result.GetValueOrDefault("provider") as string == "openrouter") result["provider"] = "ai_connection";
         return result;
     }
