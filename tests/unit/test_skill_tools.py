@@ -12,6 +12,9 @@ from worker import Worker
 @pytest.mark.parametrize("tool,args,output", [
     ("load_skill", {"name": "research"}, {"name": "research", "body": "# Research", "version": 3}),
     ("write_skill", {"name": "daily-review", "title": "Daily review", "when_to_use": "When reviewing work", "body": "# Review"}, {"id": "skill-1", "version": 1}),
+    ("read_skill_file", {"name": "research", "path": "sources.txt"}, {"name": "research", "path": "sources.txt", "content": "sources"}),
+    ("save_skill", {"name": "daily-review", "description": "When reviewing work", "body": "# Review"}, {"id": "skill-1", "version": 1}),
+    ("delete_skill", {"name": "daily-review"}, {"deleted": True, "name": "daily-review"}),
 ])
 def test_skill_tools_use_preexec_then_fenced_execute(tool, args, output):
     async def run():
@@ -36,7 +39,7 @@ def test_skill_tools_use_preexec_then_fenced_execute(tool, args, output):
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("tool", ["load_skill", "write_skill"])
+@pytest.mark.parametrize("tool", ["load_skill", "write_skill", "read_skill_file", "save_skill", "delete_skill"])
 @pytest.mark.parametrize("decision", ["deny", "ask", "malformed", "unavailable"])
 def test_skill_tools_do_not_execute_when_gate_does_not_allow(tool, decision):
     async def run():
@@ -97,6 +100,8 @@ def test_prompt_gets_only_catalog_lines_once_and_never_bodies():
         assert first["content"] == "I can use research."
         assert messages[0]["role"] == "system"
         assert "research: gather and cite facts" in messages[0]["content"]
+        assert "Before acting, load the matching skill" in messages[0]["content"]
+        assert "read_skill_file(name, path)" in messages[0]["content"]
         assert "# Private guide body" not in messages[0]["content"]
         await worker._complete_model(task, messages)
         assert seen.count(("GET", "/internal/skills/bot-1/catalog")) == 1

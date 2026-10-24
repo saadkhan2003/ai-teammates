@@ -1,9 +1,9 @@
 """Skills v2 owner privacy, revision and DLP acceptance coverage (mock stack)."""
 import uuid
 import pytest
-from test_acceptance import _psql, login
+from test_acceptance import OPENROUTER, _psql, login, submit, wait_task
 from test_acceptance import worker_call
-from test_bot_messaging import _bot, _cleanup, _workspace
+from test_bot_messaging import _approval, _bot, _cleanup, _workspace
 
 
 def _skill_task(client, bot, args):
@@ -142,4 +142,40 @@ def test_direct_skill_write_honors_owner_deny_and_ask_policy():
             assert int(_psql(f"SELECT count(*) FROM audit_events WHERE task_id='{envelope['taskId']}' AND action='{action}'") or "0") >= 1
     finally:
         assert client.call("PUT", "/api/policy", original)[0] == 200
+        _cleanup(client, bot)
+
+
+def test_mock_bot_saves_skill_catalogs_it_and_waits_for_delete_approval():
+    client = login()
+    assert client.call("POST", "/api/secrets", {"namespace": "openrouter", "name": "default", "type": "API_KEY", "value": OPENROUTER})[0] == 200
+    bot = _bot(client, "SkillMock" + uuid.uuid4().hex[:5])
+    slug = "mock-skill-" + uuid.uuid4().hex[:8]
+    try:
+        ws = _workspace(client, bot)
+        save_task = submit(client, ws["conversationId"], f"SAVE SKILL V2 DEMO name={slug}")
+        assert wait_task(client, bot, save_task)["status"] == "completed"
+        assert client.call("GET", f"/api/skill-library")[0] == 200
+        catalog = worker_call("GET", f"/internal/skills/{bot}/catalog")["catalog"]
+        assert any(line.startswith(slug + ": Use when testing deterministic skill saving.") for line in catalog)
+        assert worker_call("GET", f"/internal/skills/{bot}/{slug}")["body"].startswith("# Mock skill")
+        other_name = "skill-owner-" + uuid.uuid4().hex[:7]
+        other_password = "integration-password"
+        worker_call("POST", "/internal/test/users", {"username": other_name, "password": other_password})
+        from test_acceptance import Client
+        other = Client()
+        assert other.call("POST", "/api/auth/login", {"username": other_name, "password": other_password}, auth=False)[0] == 200
+        other_skills = other.call("GET", "/api/skill-library")[1]
+        assert all(row["name"] != slug for row in other_skills)
+
+        delete_task = submit(client, _workspace(client, bot)["conversationId"], f"DELETE SKILL V2 DEMO name={slug}")
+        approval = _approval(client, bot, "delete_skill")
+        assert approval["riskClass"] == "delete"
+        assert _psql(f"SELECT count(*) FROM skill_library WHERE owner_id=(SELECT owner_id FROM bots WHERE id='{bot}') AND name='{slug}' AND archived_at IS NULL") == "1"
+        assert client.call("POST", f"/api/approvals/{approval['id']}/decide", {"decision": "allow_once"})[0] == 200
+        assert wait_task(client, bot, delete_task)["status"] == "completed"
+        assert not any(line.startswith(slug + ":") for line in worker_call("GET", f"/internal/skills/{bot}/catalog")["catalog"])
+        with pytest.raises(AssertionError, match="404"):
+            worker_call("GET", f"/internal/skills/{bot}/{slug}")
+
+    finally:
         _cleanup(client, bot)

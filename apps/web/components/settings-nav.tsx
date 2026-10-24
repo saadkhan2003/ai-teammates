@@ -13,6 +13,7 @@ const tabs = [
   { href: "/settings/computer", label: "Computer" },
   { href: "/settings/secrets", label: "Vault" },
   { href: "/settings/plugins", label: "Plugins" },
+  { href: "/settings/skills", label: "Skills" },
   { href: "/settings/usage", label: "Usage & Billing" },
   { href: "/settings/updates", label: "Updates" },
   { href: "/system", label: "System", testId: "nav-system", admin: true },

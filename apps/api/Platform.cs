@@ -140,6 +140,7 @@ public sealed class Platform
         "040_tickets_state.sql",
         "041_skill_library.sql",
         "042_video_analyses.sql",
+        "055_skills_v2.sql",
     ];
 
     private async Task MigrateAndSeedLocked(string ownerUser, string ownerPassword)
