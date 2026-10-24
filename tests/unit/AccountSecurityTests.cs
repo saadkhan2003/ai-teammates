@@ -1,9 +1,25 @@
 using Teammates.Api;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Routing;
 
 namespace Teammates.UnitTests;
 
 public sealed class AccountSecurityTests
 {
+    [Fact]
+    public async Task AccountRoutesBuildTheirRealEndpointDataSources()
+    {
+        var builder = WebApplication.CreateBuilder();
+        await using var app = builder.Build();
+        AccountRoutes.Map(app, null!);
+
+        // Accessing Endpoints forces minimal API RequestDelegateFactory to inspect every
+        // mapped signature, including body inference rules, without starting dependencies.
+        var endpoints = app.DataSources.SelectMany(source => source.Endpoints).ToArray();
+        Assert.Contains(endpoints, endpoint => endpoint is RouteEndpoint route && route.RoutePattern.RawText == "/api/account");
+        Assert.Contains(endpoints, endpoint => endpoint is RouteEndpoint route && route.RoutePattern.RawText == "/api/support/tickets/{id:guid}");
+    }
+
     [Fact]
     public void TotpMatchesRfc6238TruncatedSha1Vector()
     {

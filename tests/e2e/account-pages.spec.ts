@@ -49,5 +49,25 @@ test("account, support, legal, status, changelog and pricing pages", async ({ pa
   });
   await capture(page, "/changelog", "14-changelog", () => expect(page.getByTestId("changelog-page")).toBeVisible());
   await capture(page, "/pricing", "15-pricing-pkr", () => expect(page.getByTestId("pricing-page")).toBeVisible());
-  await capture(page, "/settings/incidents", "16-admin-incidents", () => expect(page.getByTestId("incidents-admin")).toBeVisible());
+  await capture(page, "/settings/billing", "16-billing", () => expect(page.getByTestId("billing-page")).toBeVisible());
+  await page.evaluate(async () => {
+    const response = await fetch("/api/admin/billing/config", {
+      method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ currencyRatePkrPerUsd: 280, plans: [
+        { name: "Starter", priceUsd: 5, interval: "month", description: "Test sample plan", features: ["A few teammates", "Standard support"] },
+        { name: "Team", priceUsd: 15, interval: "month", description: "Test sample plan", features: ["More teammates", "Priority support"] },
+      ] }),
+    });
+    if (!response.ok) throw new Error("Could not configure test pricing");
+  });
+  await capture(page, "/pricing", "17-pricing-configured", () => expect(page.getByText("PKR 1,400")).toBeVisible());
+  await page.evaluate(async () => {
+    const response = await fetch("/api/admin/billing/config", {
+      method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ currencyRatePkrPerUsd: null, plans: [] }),
+    });
+    if (!response.ok) throw new Error("Could not clear test pricing");
+  });
+  await capture(page, "/pricing", "18-pricing-unconfigured", () => expect(page.getByText("Pricing has not been set yet")).toBeVisible());
+  await capture(page, "/settings/incidents", "19-admin-incidents", () => expect(page.getByTestId("incidents-admin")).toBeVisible());
 });

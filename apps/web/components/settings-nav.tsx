@@ -21,6 +21,7 @@ const tabs = [
   { href: "/settings/secrets", label: "Vault" },
   { href: "/settings/plugins", label: "Plugins" },
   { href: "/settings/usage", label: "Usage & Billing" },
+  { href: "/settings/billing", label: "Billing overview" },
   { href: "/settings/updates", label: "Updates" },
   { href: "/system", label: "System", testId: "nav-system", admin: true },
   { href: "/settings/support", label: "Support inbox", admin: true },

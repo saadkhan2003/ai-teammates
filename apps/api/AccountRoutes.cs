@@ -15,6 +15,46 @@ public static class AccountRoutes
 
     public static void Map(WebApplication app, Platform platform)
     {
+        app.MapGet("/api/pricing", async () =>
+        {
+            await using var db = await platform.Data.OpenConnectionAsync();
+            var config = await db.QuerySingleOrDefaultAsync<(decimal? Rate, string Plans)>("SELECT currency_rate_pkr_per_usd AS rate,plans::text FROM billing_configuration WHERE id=true");
+            object plans = config.Plans is null ? Array.Empty<object>() : JsonSerializer.Deserialize<JsonElement>(config.Plans);
+            return Results.Json(new { currencyRatePkrPerUsd = config.Rate, plans });
+        });
+        app.MapGet("/api/billing", async (HttpContext ctx) =>
+        {
+            var user = await User(ctx, platform); if (user is null) return Results.Unauthorized();
+            await using var db = await platform.Data.OpenConnectionAsync();
+            var usage = await db.QuerySingleAsync<(long Calls, decimal Cost, double Latency)>("SELECT count(*) AS calls,coalesce(sum(cost_usd),0) AS cost,coalesce(avg(latency_ms),0)::float8 AS latency FROM model_calls WHERE owner_id=@user AND created_at >= date_trunc('month',now())", new { user });
+            var breakdown = await db.QueryAsync("SELECT role AS category,count(*) AS calls,coalesce(sum(cost_usd),0) AS cost_usd FROM model_calls WHERE owner_id=@user AND created_at >= date_trunc('month',now()) GROUP BY role ORDER BY cost_usd DESC", new { user });
+            var planConfig = await db.QuerySingleOrDefaultAsync<(decimal? Rate, string Plans)>("SELECT currency_rate_pkr_per_usd AS rate,plans::text FROM billing_configuration WHERE id=true");
+            return Results.Json(new { plan = (string?)null, creditBalance = (decimal?)null, periodStart = DateTimeOffset.UtcNow.Date.AddDays(1 - DateTimeOffset.UtcNow.Day), periodEnd = DateTimeOffset.UtcNow.Date.AddMonths(1).AddDays(1 - DateTimeOffset.UtcNow.Day), usage = new { modelCalls = usage.Calls, costUsd = usage.Cost, latencyMs = usage.Latency }, breakdown, invoices = Array.Empty<object>(), pricingConfigured = planConfig.Plans is not null && planConfig.Plans != "[]" });
+        });
+        app.MapGet("/api/admin/billing/config", async (HttpContext ctx) =>
+        {
+            var (user, denied) = await Staff(ctx, platform); if (denied is not null) return denied;
+            await using var db = await platform.Data.OpenConnectionAsync();
+            var config = await db.QuerySingleOrDefaultAsync<(decimal? Rate, string Plans)>("SELECT currency_rate_pkr_per_usd AS rate,plans::text FROM billing_configuration WHERE id=true");
+            object plans = config.Plans is null ? Array.Empty<object>() : JsonSerializer.Deserialize<JsonElement>(config.Plans);
+            return Results.Json(new { currencyRatePkrPerUsd = config.Rate, plans });
+        });
+        app.MapPut("/api/admin/billing/config", async (HttpContext ctx, JsonElement body) =>
+        {
+            var (user, denied) = await Staff(ctx, platform); if (denied is not null) return denied; if (!SameOrigin(ctx)) return Results.StatusCode(403);
+            decimal? rate = body.TryGetProperty("currencyRatePkrPerUsd", out var rateElement) && rateElement.ValueKind == JsonValueKind.Number ? rateElement.GetDecimal() : null;
+            if (rate is <= 0 or > 100000) return Results.BadRequest(new { error = "invalid_exchange_rate" });
+            if (!body.TryGetProperty("plans", out var plans) || plans.ValueKind != JsonValueKind.Array || plans.GetArrayLength() > 20) return Results.BadRequest(new { error = "invalid_plans" });
+            foreach (var plan in plans.EnumerateArray())
+            {
+                if (plan.ValueKind != JsonValueKind.Object || !plan.TryGetProperty("name", out var name) || name.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(name.GetString()) || name.GetString()!.Length > 80) return Results.BadRequest(new { error = "invalid_plans" });
+                if (plan.TryGetProperty("priceUsd", out var price) && price.ValueKind != JsonValueKind.Null && (price.ValueKind != JsonValueKind.Number || price.GetDecimal() < 0 || price.GetDecimal() > 1000000)) return Results.BadRequest(new { error = "invalid_plans" });
+            }
+            var plansJson = plans.GetRawText(); await using var db = await platform.Data.OpenConnectionAsync();
+            await db.ExecuteAsync("INSERT INTO billing_configuration(id,currency_rate_pkr_per_usd,plans,updated_by,updated_at) VALUES(true,@rate,@plans::jsonb,@user,now()) ON CONFLICT(id) DO UPDATE SET currency_rate_pkr_per_usd=excluded.currency_rate_pkr_per_usd,plans=excluded.plans,updated_by=excluded.updated_by,updated_at=now()", new { rate, plans = plansJson, user });
+            await platform.Audit(user!.Value.ToString(), "billing.configuration_updated", null, null, new { planCount = plans.GetArrayLength(), rateConfigured = rate.HasValue });
+            return Results.Json(new { ok = true });
+        });
         app.MapPost("/api/auth/login/totp", async (HttpContext ctx, JsonElement body) =>
         {
             if (!SameOrigin(ctx)) return Results.StatusCode(403);
@@ -193,13 +233,13 @@ public static class AccountRoutes
             var user = await User(ctx, platform); if (user is null) return Results.Unauthorized(); await using var db = await platform.Data.OpenConnectionAsync();
             return Results.Json(await db.QueryAsync("SELECT id,category,subject,status,created_at,updated_at FROM support_tickets WHERE user_id=@user ORDER BY updated_at DESC", new { user }));
         });
-        app.MapGet("/api/support/tickets/{id:guid}", async (HttpContext ctx, Guid id) => TicketDetail(ctx, platform, id, false));
+        app.MapGet("/api/support/tickets/{id:guid}", async (HttpContext ctx, Guid id) => await TicketDetail(ctx, platform, id, false));
         app.MapGet("/api/admin/support/tickets", async (HttpContext ctx) =>
         {
             var (user, denied) = await Staff(ctx, platform); if (denied is not null) return denied; await using var db = await platform.Data.OpenConnectionAsync();
             return Results.Json(await db.QueryAsync("SELECT t.id,t.category,t.subject,t.status,t.created_at,t.updated_at,u.username FROM support_tickets t JOIN users u ON u.id=t.user_id ORDER BY t.updated_at DESC LIMIT 200"));
         });
-        app.MapGet("/api/admin/support/tickets/{id:guid}", async (HttpContext ctx, Guid id) => TicketDetail(ctx, platform, id, true));
+        app.MapGet("/api/admin/support/tickets/{id:guid}", async (HttpContext ctx, Guid id) => await TicketDetail(ctx, platform, id, true));
         app.MapPost("/api/admin/support/tickets/{id:guid}/messages", async (HttpContext ctx, Guid id, JsonElement body) =>
         {
             var (user, denied) = await Staff(ctx, platform); if (denied is not null) return denied; if (!SameOrigin(ctx)) return Results.StatusCode(403);

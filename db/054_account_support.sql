@@ -47,3 +47,11 @@ CREATE TABLE IF NOT EXISTS status_incidents (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS billing_configuration (
+    id boolean PRIMARY KEY DEFAULT true CHECK (id),
+    currency_rate_pkr_per_usd numeric(12,4),
+    plans jsonb NOT NULL DEFAULT '[]'::jsonb,
+    updated_by uuid REFERENCES users(id) ON DELETE SET NULL,
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
