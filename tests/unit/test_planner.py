@@ -116,6 +116,19 @@ def test_shell_append_demo_has_one_append_then_reads_the_result():
     assert read_args["path"] == "/workspace/shell-append-demo.log"
 
 
+def test_poison_step_demo_retries_shell_until_success_then_finishes():
+    user = {"role": "user", "content": "POISON STEP DEMO"}
+    name, args, _ = _call([user])
+    assert (name, args["path"]) == ("write_file", "/workspace/poison-before.txt")
+    written = [user, {"role": "assistant", "tool_calls": [{"id": "write", "function": {"name": name, "arguments": json.dumps(args)}}]}, {"role": "tool", "name": "write_file", "tool_call_id": "write", "content": '{"ok":true}'}]
+    name, args, _ = _call(written)
+    assert (name, args["command"]) == ("shell", "echo poison-step-marker")
+    unknown = written + [{"role": "assistant", "tool_calls": [{"id": "shell1", "function": {"name": "shell", "arguments": json.dumps(args)}}]}, {"role": "tool", "name": "shell", "tool_call_id": "shell1", "content": '{"status":"unknown_outcome"}'}]
+    assert _call(unknown)[:2] == ("shell", args)
+    success = unknown + [{"role": "assistant", "tool_calls": [{"id": "shell2", "function": {"name": "shell", "arguments": json.dumps(args)}}]}, {"role": "tool", "name": "shell", "tool_call_id": "shell2", "content": '{"ok":true,"status":"completed"}'}]
+    assert plan(success)["choices"][0]["finish_reason"] == "stop"
+
+
 def test_slow_long_run_inserts_a_delay_once_per_step():
     user = {"role": "user", "content": "LONG RUN DEMO 2 SLOW"}
     name, args, _ = _call([user])

@@ -595,6 +595,10 @@ class Worker:
         name = call["name"]
         args = _bind_target(task, call["arguments"])
         log.info("tool name=%s task=%s", name, _task_id(task))
+        poison_marker = os.environ.get("WORKER_POISON_MARKER", "")
+        if name == "shell" and poison_marker and poison_marker in str(args.get("command") or ""):
+            log.warning("test poison marker matched shell task=%s; exiting", _task_id(task))
+            os._exit(137)
         if name in BROWSER_TOOLS:
             if authorize:
                 gate = await self._authorize(task, name, args)

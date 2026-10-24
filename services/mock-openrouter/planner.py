@@ -38,6 +38,8 @@ def _plan(messages: list) -> dict:
     long_run = re.search(r"LONG RUN DEMO\s+(\d+)", _first_user(transcript), re.IGNORECASE)
     if long_run:
         return _long_run_plan(transcript, min(500, int(long_run.group(1))))
+    if "POISON STEP DEMO" in _first_user(transcript).upper():
+        return _poison_step_plan(transcript)
     if "SHELL APPEND DEMO" in _first_user(transcript).upper():
         return _shell_append_plan(transcript)
     done = sum(1 for item in transcript if item.get("role") == "tool")
@@ -89,6 +91,28 @@ def _shell_append_plan(messages: list) -> dict:
     if not _has_result_for(messages, path, "read_file"):
         return _tool("read_file", {"path": path})
     return _final("Shell append demo finished.")
+
+
+def _poison_step_plan(messages: list) -> dict:
+    path = "/workspace/poison-before.txt"
+    if not _has_result_for(messages, path, "write_file"):
+        return _tool("write_file", {"path": path, "content": "before poison step\n"})
+    if not _has_successful_shell_result(messages):
+        return _tool("shell", {"command": "echo poison-step-marker"})
+    return _final("Poison step demo finished.")
+
+
+def _has_successful_shell_result(messages: list) -> bool:
+    for item in messages:
+        if item.get("role") != "tool" or "shell" not in _tool_name(item, messages):
+            continue
+        try:
+            result = json.loads(_content_text(item.get("content")))
+        except (ValueError, TypeError):
+            continue
+        if isinstance(result, dict) and result.get("status") != "unknown_outcome" and result.get("ok") is not False:
+            return True
+    return False
 
 
 def _long_run_progress(messages: list) -> int:

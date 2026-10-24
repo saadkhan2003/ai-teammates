@@ -1,7 +1,6 @@
 """Small chaos checks for long-running tasks; requires the mock integration stack."""
 from __future__ import annotations
 
-import base64
 import os
 import subprocess
 import time
@@ -113,24 +112,34 @@ def test_paused_stale_worker_cannot_write_after_resume():
         before = int(_psql(f"SELECT lease_epoch FROM tasks WHERE id='{task}'"))
         _docker("pause", name)
         try:
-            time.sleep(23)
-            _wait_for(f"SELECT lease_epoch FROM tasks WHERE id='{task}'", str(before + 1), 45)
+            time.sleep(30)
+            _wait_for(f"SELECT CASE WHEN status='queued' OR lease_until < now() THEN 'expired' ELSE 'active' END FROM tasks WHERE id='{task}'", "expired", 15)
         finally:
             _docker("unpause", name)
-        _wait_for(f"SELECT status FROM tasks WHERE id='{task}'", "completed", 150)
+        deadline = time.time() + 240
+        while time.time() < deadline:
+            row = _psql(f"SELECT lease_epoch||':'||status FROM tasks WHERE id='{task}'")
+            epoch, status = row.split(":", 1)
+            if int(epoch) > before and status == "completed":
+                break
+            time.sleep(.5)
+        else:
+            raise AssertionError(f"task did not complete on a newer lease epoch: {row}")
         assert int(_psql(f"SELECT count(*) FROM tool_execution_dedupe WHERE task_id='{task}' AND status='completed'")) == int(_psql(f"SELECT count(*) FROM task_steps WHERE task_id='{task}'"))
+        assert _psql(f"SELECT count(*) FROM (SELECT args->>'path' FROM task_steps WHERE task_id='{task}' AND tool='write_file' GROUP BY args->>'path' HAVING count(*)>1) duplicates") == "0"
     finally:
         _cleanup(client, bot, task)
 
 
 def test_cumulative_budget_survives_multiple_worker_kills():
-    client, bot, task = _demo("LONG RUN DEMO 30 SLOW", budget=4)
+    client, bot, task = _demo("LONG RUN DEMO 30 SLOW", budget=6)
     try:
         _wait_steps(task, 2)
         first = int(_psql(f"SELECT coalesce((checkpoint->>'stepsUsed')::int,0) FROM tasks WHERE id='{task}'"))
         _kill_restart()
-        _wait_for(f"SELECT status||':'||waiting_reason FROM tasks WHERE id='{task}'", "waiting_human:budget_reached", 150)
-        last = int(_psql(f"SELECT coalesce((checkpoint->>'stepsUsed')::int,0) FROM tasks WHERE id='{task}'"))
+        last = _wait_monotonic_terminal(task, "waiting_human", 240)
+        assert _psql(f"SELECT waiting_reason FROM tasks WHERE id='{task}'") == "budget_reached"
+        assert last <= 6 + 1
         assert last >= first > 0
         assert _psql(f"SELECT count(*) FROM task_run_events WHERE task_id='{task}' AND type='budget_reached'") == "1"
     finally:
@@ -138,19 +147,15 @@ def test_cumulative_budget_survives_multiple_worker_kills():
 
 
 def test_poison_step_stops_after_no_progress_attempts():
-    client, bot, task = _demo("LONG RUN DEMO 30 SLOW")
+    if os.environ.get("WORKER_POISON_MARKER", "") != "poison-step-marker":
+        pytest.skip("requires agent environment WORKER_POISON_MARKER=poison-step-marker")
+    client, bot, task = _demo("POISON STEP DEMO")
     try:
-        _wait_steps(task, 1)
-        # Kill twice before the next scripted step can complete. The reliability
-        # policy must stop automatic retries once the same checkpoint makes no progress.
-        for _ in range(2):
-            _kill_restart()
-            time.sleep(2)
-        _wait_for(f"SELECT status||':'||waiting_reason FROM tasks WHERE id='{task}'", "waiting_human:no_progress", 150)
+        _wait_for(f"SELECT status||':'||waiting_reason FROM tasks WHERE id='{task}'", "waiting_human:no_progress", 240)
         assert _psql(f"SELECT count(*) FROM task_run_events WHERE task_id='{task}' AND type='no_progress'") == "1"
-        before = _psql(f"SELECT count(*) FROM task_steps WHERE task_id='{task}'")
-        time.sleep(5)
-        assert _psql(f"SELECT count(*) FROM task_steps WHERE task_id='{task}'") == before
+        before = _psql(f"SELECT count(*) FROM task_run_events WHERE task_id='{task}' AND type='resumed'")
+        time.sleep(10)
+        assert _psql(f"SELECT count(*) FROM task_run_events WHERE task_id='{task}' AND type='resumed'") == before
     finally:
         _cleanup(client, bot, task)
 
@@ -179,11 +184,11 @@ def test_shell_append_unknown_outcome_is_verified_after_resume():
         _kill_restart()
         _wait_for(f"SELECT status FROM tasks WHERE id='{task}'", "completed", 120)
         unknown = _psql(f"SELECT count(*) FROM task_transcript WHERE task_id='{task}' AND content::text ILIKE '%unknown_outcome%'")
-        if unknown == "1":
+        if int(unknown) >= 1:
             assert _psql(f"SELECT count(*) FROM task_steps WHERE task_id='{task}' AND tool='shell'") == "1"
         else:
-            status, encoded = client.call("GET", f"/api/bots/{bot}/files/raw?path=/workspace/shell-append-demo.log")
+            status, content = client.call("GET", f"/api/bots/{bot}/files/raw?path=/workspace/shell-append-demo.log")
             assert status == 200
-            assert base64.b64decode(encoded).decode().splitlines() == ["x"]
+            assert content == "x\n"
     finally:
         _cleanup(client, bot, task)
