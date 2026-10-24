@@ -54,6 +54,15 @@
   --bot-accent-ring: #ff6b7b;
   --bot-accent-soft: rgba(229, 37, 60, 0.18);
   --bot-accent-border: #ee6070;
+  --info: #1d9bf0;
+  --info-soft: rgba(29, 155, 240, 0.15);
+  --success: #34d399;
+  --success-soft: rgba(52, 211, 153, 0.15);
+  --warning: #f59e0b;
+  --warning-soft: rgba(245, 158, 11, 0.15);
+  --terminal: #05070a;
+  --terminal-foreground: #d1fae5;
+  --terminal-muted: #8b949e;
   --app-height: 100dvh;
   --app-top: 0px;
   color-scheme: dark;
@@ -99,6 +108,12 @@ html.light {
   --user-bubble-foreground: #ffffff;
   --assistant-bubble: #ebebeb;
   --assistant-bubble-foreground: #111111;
+  --info: #0b7ac4;
+  --info-soft: rgba(11, 122, 196, 0.12);
+  --success: #047857;
+  --success-soft: rgba(4, 120, 87, 0.12);
+  --warning: #b45309;
+  --warning-soft: rgba(180, 83, 9, 0.12);
   color-scheme: light;
 }
 
