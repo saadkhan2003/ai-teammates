@@ -1,7 +1,11 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { Workspace } from "@/components/workspace";
+import dynamic from "next/dynamic";
+
+const Workspace = dynamic(() => import("@/components/workspace").then((module) => module.Workspace), {
+  loading: () => <div aria-hidden="true" className="h-full min-h-0 animate-pulse bg-primary/5" />,
+});
 
 export default function BotPage() {
   const params = useParams<{ id: string }>();

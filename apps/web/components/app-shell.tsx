@@ -4,13 +4,13 @@ import { initPerf } from "@/lib/perf";
 import { ListSkeleton } from "@/components/ui/skeleton";
 import { Bell, ChevronRight, CircleHelp, Info, Menu, PanelLeft, PanelLeftClose, Plug, Plus, Search, Settings, Upload, X } from "lucide-react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { usePathname, useRouter } from "next/navigation";
-import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { BotAvatar } from "@/components/bot-avatar";
 import { RefreshNotice } from "@/components/refresh-notice";
 import { REFRESH_EVENT, wireConnectionEvents } from "@/lib/connection";
-import { BotAvatarPicker } from "@/components/bot-avatar-picker";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -49,7 +49,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
-import { PluginsPane } from "@/components/plugins-pane";
 import { Textarea } from "@/components/ui/textarea";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { api, asList } from "@/lib/api";
@@ -59,7 +58,11 @@ import { cn, errorMessage } from "@/lib/utils";
 import { matchShortcut } from "@/lib/shortcuts";
 import { defaultBotAvatar } from "@/lib/avatars";
 import { applyAccent } from "@/lib/accent";
-import { TemplateImport } from "@/components/template-import";
+import { get as getPrefetch, put as putPrefetch } from "@/lib/prefetch-cache.mjs";
+
+const PluginsPane = dynamic(() => import("@/components/plugins-pane").then((module) => module.PluginsPane));
+const BotAvatarPicker = dynamic(() => import("@/components/bot-avatar-picker").then((module) => module.BotAvatarPicker));
+const TemplateImport = dynamic(() => import("@/components/template-import").then((module) => module.TemplateImport));
 
 type RosterBot = {
   id: string;
@@ -264,8 +267,18 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [bots]);
 
   const unread = notes.filter((note) => !note.readAt).length;
+  const warmingWorkspaces = useRef(new Set<string>());
 
   const activeBot = bots.find((bot) => pathname === `/bots/${bot.id}`);
+  const warmBotWorkspace = useCallback((botId: string) => {
+    const key = `/api/bots/${botId}/workspace`;
+    if (getPrefetch(key) !== undefined || warmingWorkspaces.current.has(key)) return;
+    warmingWorkspaces.current.add(key);
+    void api<unknown>(key)
+      .then((value) => putPrefetch(key, value))
+      .catch(() => {})
+      .finally(() => warmingWorkspaces.current.delete(key));
+  }, []);
   const accentColor = activeBot ? (activeBot.avatarColor || defaultBotAvatar(activeBot.id).color) : null;
   useEffect(() => {
     const apply = () => applyAccent(accentColor, document.documentElement.classList.contains("light") ? "light" : "dark");
@@ -393,6 +406,9 @@ export function AppShell({ children }: { children: ReactNode }) {
                         <ContextMenuTrigger asChild>
                           <Link
                             href={`/bots/${bot.id}`}
+                            prefetch
+                            onMouseEnter={() => warmBotWorkspace(bot.id)}
+                            onFocus={() => warmBotWorkspace(bot.id)}
                             onClick={() => setOpen(false)}
                             aria-current={active ? "page" : undefined}
                             title={bot.name}
