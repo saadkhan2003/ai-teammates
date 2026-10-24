@@ -793,7 +793,7 @@ class Worker:
         if is_library_item:
             cache = await self.request_json("POST", "/internal/video/cache/get", scope)
         else:
-            source_response = await self.request("POST", "/internal/video/source", scope)
+            source_response = await self.request("POST", "/internal/video/source", scope, allow_status=(400, 403, 404, 413))
             if source_response.status_code >= 400:
                 return {"ok": False, "reason": "video_unavailable", "error": "I couldn't open that video. Check the path and make sure the file belongs to this teammate's workspace."}
             source_bytes = source_response.content
@@ -834,7 +834,7 @@ class Worker:
             return result
         await self.request("POST", "/internal/video/event", {**scope, "type": "video_analysis_started", "detail": {"sourceItemId": item_id}})
         if source_bytes is None:
-            response = await self.request("POST", "/internal/video/source", scope)
+            response = await self.request("POST", "/internal/video/source", scope, allow_status=(400, 403, 404, 413))
             if response.status_code >= 400:
                 return {"ok": False, "reason": "video_unavailable", "error": "I couldn't open that attached video. Try attaching it again."}
             source_bytes = response.content
