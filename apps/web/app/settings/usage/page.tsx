@@ -64,7 +64,7 @@ export default function UsagePage() {
   }, [load]);
 
   return (
-    <div className="flex flex-col gap-6">
+    <div id="usage" className="flex flex-col gap-6">
       {loading ? <StateMessage title="Loading usage…" detail="Reading model calls, cost, and the quota for this account." /> : null}
       {error ? <p className="text-sm text-clay">{error}</p> : null}
       {usage ? (

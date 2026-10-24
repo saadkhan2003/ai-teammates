@@ -90,6 +90,31 @@ def test_system_prompt_prefers_ask_user_over_plain_text():
     text = (Path(__file__).resolve().parents[2] / "services" / "agent" / "worker.py").read_text()
     assert "call ask_user" in text
     assert "Do not ask that question as plain text" in text
+    assert "lead with the answer" in text
+    assert "app://settings?id=<anchor>" in text
+    assert "reply_to_message" in text
+    assert "any single emoji" in text
+
+
+def test_where_question_is_a_link_pill_not_a_click_path():
+    result = plan([{"role": "user", "content": "Where do I connect OpenRouter?"}])
+    message = result["choices"][0]["message"]
+    assert message["content"] == "Connect it in the vault. [Vault](app://settings?id=vault)"
+    assert "tool_calls" not in message
+    assert "→" not in message["content"]
+
+
+def test_reply_quotes_the_message_and_any_emoji_is_a_reaction():
+    user = {"role": "user", "content": "Reply to my last note with a wave", "message_id": "msg-9"}
+    name, args, _ = _call([user])
+    assert name == "reply_to_message"
+    assert args == {"message_id": "msg-9"}
+    final = plan([user, {"role": "tool", "content": "{\"ok\": true}"}])
+    assert final["choices"][0]["message"]["content"] == "On it."
+    lovely = {"role": "user", "content": "that was lovely", "message_id": "msg-4"}
+    emoji_name, emoji_args, _ = _call([lovely])
+    assert emoji_name == "react_to_message"
+    assert emoji_args == {"message_id": "msg-4", "emoji": "🌟"}
 
 
 def test_question_is_text_not_a_reaction():

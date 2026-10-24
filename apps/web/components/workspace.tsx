@@ -37,6 +37,7 @@ import { cn, errorMessage } from "@/lib/utils";
 import { BotAvatar } from "@/components/bot-avatar";
 import { BotAvatarPicker } from "@/components/bot-avatar-picker";
 import { defaultBotAvatar } from "@/lib/avatars";
+import type { AppLink } from "@/lib/app-links";
 
 const ComputerPane = dynamic(() => import("@/components/computer-pane").then((mod) => mod.ComputerPane), {
   ssr: false,
@@ -107,6 +108,19 @@ export function Workspace({ botId }: { botId: string }) {
   const auxSeq = useRef(0);
   const tabRef = useRef(detailTab);
   tabRef.current = detailTab;
+
+  useEffect(() => {
+    const onLink = (event: Event) => {
+      const detail = (event as CustomEvent<AppLink>).detail;
+      if (!detail || detail.kind !== "panel") return;
+      setPane(true);
+      setSettingsOpen(false);
+      setDesktopFull(false);
+      setDetailTab(detail.tab);
+    };
+    window.addEventListener("teammates-app-link", onLink);
+    return () => window.removeEventListener("teammates-app-link", onLink);
+  }, []);
 
   const loadWorkspace = useCallback(async () => {
     const ticket = ++seq.current;

@@ -37,6 +37,7 @@ export type ChatMessage = {
   role: string;
   content: string;
   createdAt?: string;
+  replyTo?: string | null;
   reactions?: Reaction[];
 };
 

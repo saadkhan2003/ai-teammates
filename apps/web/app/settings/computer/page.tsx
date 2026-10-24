@@ -57,7 +57,7 @@ export default function ComputerSettingsPage() {
     const id = `${prefix}-${key}`;
     return <div className="flex items-center justify-between gap-3"><Label htmlFor={id}>{label}</Label><Switch id={id} data-testid={id} checked={device[key]} disabled={busy} onCheckedChange={checked => void update(device, { [key]: checked })} /></div>;
   }
-  return <div data-testid="settings-computer" className="space-y-4">
+  return <div id="computer" data-testid="settings-computer" className="space-y-4">
     <div><h2 className="text-lg font-medium">Computer</h2><p className="text-sm text-muted-foreground">Choose what your teammates can do on each paired computer.</p></div>
     {error && <div role="alert" className="space-y-2 text-sm text-destructive"><p>{error}</p><Button variant="outline" onClick={() => void load()}>Retry</Button></div>}
     {!devices && !error && <Skeleton className="h-48 w-full" />}

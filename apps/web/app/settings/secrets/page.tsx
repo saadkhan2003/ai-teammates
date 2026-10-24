@@ -264,7 +264,7 @@ export default function SecretsPage() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-8">
+    <div id="vault" className="mx-auto flex w-full max-w-3xl flex-col gap-8">
       <header>
         <h2 className="text-sm font-medium">Vault</h2>
         <p className="mt-2 text-sm text-muted-foreground">

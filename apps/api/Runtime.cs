@@ -19,7 +19,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         var taskId = body.GetProperty("taskId").GetGuid();
         var botId = body.GetProperty("botId").GetGuid();
         var owner = await OwnerOf(botId);
-        var messages = body.GetProperty("messages");
+        var messages = AppGuide.Inject(body.GetProperty("messages"), AppGuide.Context(await BotAwareness.ForTurn(platform, botId, taskId, ct)));
         var secret = await platform.Resolve(owner, "secret://openrouter/default", "model_gateway", botId, null, taskId, "model_gateway");
         if (secret == null)
             return Results.Json(new { status = "waiting_resource", reason = "connect_openrouter" });
@@ -231,6 +231,8 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
                 return await OutboundLog.Run(platform, owner, botId, taskId, tool, ActionClasses.ExternalPost, args, () => Task.FromResult<object>(new { delivered = false, held = true }), ct);
             case "react_to_message":
                 return await Reactions.BotTool(platform, botId, Arg(args, "message_id").Length > 0 ? Arg(args, "message_id") : Arg(args, "messageId"), Arg(args, "emoji"));
+            case "reply_to_message":
+                return await BotAwareness.AttachReply(platform, botId, taskId, Arg(args, "message_id").Length > 0 ? Arg(args, "message_id") : Arg(args, "messageId"), ct);
             default:
                 if (PluginIds.IsPluginTool(tool))
                     return await PluginCatalog.InvokeEnabled(platform, owner, botId, taskId, tool, args, ct);
