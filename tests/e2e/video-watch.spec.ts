@@ -15,12 +15,12 @@ function sendIdleDesktopFrame(socket: import("@playwright/test").WebSocketRoute)
   socket.send("RFB 003.008\n");
   socket.onMessage((message) => {
     if (typeof message === "string") {
-      socket.send(bytes(1, 1)); // One security type: no authentication.
+      socket.send(bytes(1, 1) as never); // One security type: no authentication.
       return;
     }
     if (stage === 0) {
       stage = 1;
-      socket.send(bytes(0, 0, 0, 0)); // SecurityResult: success.
+      socket.send(bytes(0, 0, 0, 0) as never); // SecurityResult: success.
       return;
     }
     if (stage === 1) {
@@ -33,7 +33,7 @@ function sendIdleDesktopFrame(socket: import("@playwright/test").WebSocketRoute)
       serverInit.set([32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0], 4);
       view.setUint32(20, name.length);
       serverInit.set(name, 24);
-      socket.send(serverInit);
+      socket.send(serverInit as never);
       return;
     }
 
@@ -45,19 +45,19 @@ function sendIdleDesktopFrame(socket: import("@playwright/test").WebSocketRoute)
     const view = new DataView(update.buffer);
     update[0] = 0; // FramebufferUpdate
     view.setUint16(2, 1);
-    view.setUint16(6, width);
-    view.setUint16(8, height);
-    view.setUint32(10, 0); // Raw encoding
+    view.setUint16(8, width);
+    view.setUint16(10, height);
+    view.setUint32(12, 0); // Raw encoding
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const offset = 16 + (y * width + x) * 4;
         const band = y > 145 && y < 154;
-        update[offset] = band ? 76 : 104;
+        update[offset] = band ? 99 : 143;
         update[offset + 1] = band ? 87 : 116;
-        update[offset + 2] = band ? 99 : 143;
+        update[offset + 2] = band ? 76 : 104;
       }
     }
-    socket.send(update);
+    socket.send(update as never);
   });
 }
 
@@ -66,7 +66,10 @@ async function openVideoChat(page: Page, theme: "light" | "dark") {
   await page.route("**/api/bots", route => route.fulfill({ json: { bots: [bot] } }));
   await page.route("**/api/system/llm-status", route => route.fulfill({ json: { hasKey: true } }));
   await page.route(`**/api/computers/${BOT}/**`, route => route.fulfill({ json: { state: "running", online: true, healthy: true, holder: null } }));
-  await page.route(`**/api/computers/${BOT}/vnc-ticket**`, route => route.fulfill({ json: { token: "e2e-idle-desktop", mode: "view", epoch: 1 } }));
+  await page.route(`**/api/computers/${BOT}/vnc-ticket**`, route => route.fulfill({ json: {
+    token: "e2e-idle-desktop", mode: "view", epoch: 1,
+    state: "running", online: true, screen: { width: 320, height: 200, placeholder: true },
+  } }));
   page.routeWebSocket("**/vnc/websockify**", socket => sendIdleDesktopFrame(socket));
 
   const messages: Array<Record<string, unknown>> = [];
@@ -99,6 +102,7 @@ async function openVideoChat(page: Page, theme: "light" | "dark") {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`/bots/${BOT}`);
   await expect(page.getByTestId("video-progress")).toContainText("Watching part 1/1");
+  await expect(page.getByTestId("computer-state")).toHaveCount(0);
   await expect(page.getByText("Couldn't connect")).toHaveCount(0);
   await expect(page.getByText("The computer isn't answering")).toHaveCount(0);
   await expect(page.getByText("The desktop session did not include a token.")).toHaveCount(0);
