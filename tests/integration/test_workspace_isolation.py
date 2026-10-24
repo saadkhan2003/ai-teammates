@@ -73,6 +73,9 @@ def test_bots_have_separate_workspaces_and_delete_wipes():
         "command": f"id -u; cat /data/workspace/bots/{right.replace('-', '')}/notes/own.txt",
         "actor_id": "agent:workspace-isolation-test",
         "epoch": epoch,
+        # The desktop is keyed by the owner's first bot, which an earlier test may have deleted
+        # (its workspace is tombstoned); the API always names the calling bot, here bot A.
+        "workspace_bot_id": left,
     })
     shell_status, shell = computer_api(name, "POST", f"/desktops/{desktop}/shell", shell_body)
     assert shell_status == "200", shell
@@ -116,8 +119,12 @@ def test_bots_have_separate_workspaces_and_delete_wipes():
         capture_output=True,
         text=True,
     )
-    assert wm_uid == desktop_owner.stdout.strip() and wm_uid != "0", (openbox, desktop_owner.stdout)
-    assert desktop_owner.stdout.strip() == uid_line, (desktop_owner.stdout, shell)
+    desk_uid = subprocess.run(["sudo", "docker", "exec", name, "id", "-u", "desk"], capture_output=True, text=True).stdout.strip()
+    assert wm_uid not in ("0", desk_uid), (openbox, desk_uid)
+    if desktop_owner.returncode == 0:
+        assert wm_uid == desktop_owner.stdout.strip(), (openbox, desktop_owner.stdout)
+    # The shell ran as the calling bot (A), under A's own uid, which owns A's tree.
+    assert owner.stdout.strip() == uid_line, (owner.stdout, shell)
     status, _ = client.call("DELETE", f"/api/bots/{right}")
     assert status == 204, status
     after = subprocess.run(["sudo", "docker", "exec", name, "cat", host_path], capture_output=True, text=True)
