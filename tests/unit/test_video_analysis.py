@@ -200,7 +200,7 @@ def test_transcription_request_has_pinned_model_and_provider(monkeypatch, tmp_pa
     assert result[0]["provider"] == "deepinfra"
 
 
-def test_transcription_reduces_oversized_audio_parts_and_preserves_offsets(monkeypatch, tmp_path):
+def test_transcription_resplits_until_parts_are_strictly_under_25mb(monkeypatch, tmp_path):
     from video_analysis import transcribe_chunks
     from types import SimpleNamespace
     audio = tmp_path / "audio.wav"
@@ -212,20 +212,20 @@ def test_transcription_reduces_oversized_audio_parts_and_preserves_offsets(monke
         return b"", ""
     monkeypatch.setattr("video_analysis._run", fake_run)
     real_stat = Path.stat
-    oversized = {"seen": False}
+    sizes = iter((26_000_000, 25_000_000, 24_999_999, 100))
     def fake_stat(path, *args, **kwargs):
         actual = real_stat(path, *args, **kwargs)
-        if path.suffix == ".mp3" and not oversized["seen"]:
-            oversized["seen"] = True
-            return SimpleNamespace(st_size=26_000_000)
+        if path.suffix == ".mp3":
+            return SimpleNamespace(st_size=next(sizes))
         return actual
     monkeypatch.setattr(Path, "stat", fake_stat)
     async def client(_kind, _body):
         return {"text": "part"}
     result = asyncio.run(transcribe_chunks(audio, 30, client, max_chunk_seconds=30))
-    assert durations[1] < durations[0]
+    assert durations[:3] == [30, 15, 7.5]
+    assert len(durations) == 4
     assert result[0]["offset"] == 0
-    assert result[1]["offset"] == pytest.approx(durations[1])
+    assert result[1]["offset"] == pytest.approx(durations[2])
 
 
 def test_video_cache_schema_keeps_owner_and_bot_in_key():

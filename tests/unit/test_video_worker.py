@@ -68,6 +68,8 @@ def test_video_cache_hit_keeps_scope_and_never_calls_source_or_model():
                 return {"decision": "allow"}
             if path.endswith("execute"):
                 return {"ok": True, "output": {"videoSession": "session"}}
+            if path.endswith("/config"):
+                return {"videoConfig": {"visionModel": "test/vision", "transcriptionModel": "test/stt", "transcriptionProvider": "DeepInfra"}}
             assert path == "/internal/video/cache/get"
             assert body["videoSession"] == "session" and body["processingSettings"]
             assert body["videoId"] == "00000000-0000-0000-0000-000000000001"
@@ -77,7 +79,7 @@ def test_video_cache_hit_keeps_scope_and_never_calls_source_or_model():
         result = await worker._invoke(task, {"name": "watch_video", "arguments": {"video_id": "00000000-0000-0000-0000-000000000001"}}, True)
         assert result["cacheHit"] is True and "frames" not in result and "transcript" not in result
         assert task["_video_analysis"] == result
-        assert seen == ["/internal/tools/preexec", "/internal/tools/execute", "/internal/video/cache/get"]
+        assert seen == ["/internal/tools/preexec", "/internal/tools/execute", "/internal/video/config", "/internal/video/cache/get"]
     asyncio.run(run())
 
 

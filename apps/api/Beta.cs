@@ -10,6 +10,42 @@ public static class Beta
 {
     public static void Map(WebApplication app, Platform platform)
     {
+        app.MapGet("/api/admin/config/video", async (HttpContext ctx) =>
+        {
+            var user = await User(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            if (VideoTools.AdminConfigStatusCode(await Role(platform, user.Value)) != 200) return Results.Json(new { error = "forbidden" }, statusCode: 403);
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            var config = await ReadVideoConfig(conn, platform);
+            return Results.Json(new { visionModel = config.VisionModel, transcriptionModel = config.TranscriptionModel,
+                transcriptionProvider = config.TranscriptionProvider, allowFallbacks = false });
+        });
+
+        app.MapPut("/api/admin/config/video", async (HttpContext ctx, JsonElement body) =>
+        {
+            var user = await User(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            if (VideoTools.AdminConfigStatusCode(await Role(platform, user.Value)) != 200) return Results.Json(new { error = "forbidden" }, statusCode: 403);
+            if (body.ValueKind != JsonValueKind.Object) return Results.BadRequest(new { error = "invalid_video_config" });
+            var config = new VideoTools.AdminConfig(
+                body.TryGetProperty("visionModel", out var vision) ? vision.GetString()?.Trim() ?? "" : "",
+                body.TryGetProperty("transcriptionModel", out var transcription) ? transcription.GetString()?.Trim() ?? "" : "",
+                body.TryGetProperty("transcriptionProvider", out var provider) ? provider.GetString()?.Trim() ?? "" : "");
+            if (!VideoTools.ValidAdminConfig(config)) return Results.BadRequest(new { error = "invalid_video_config" });
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            await conn.ExecuteAsync("""
+                INSERT INTO video_admin_config(id,vision_model,transcription_model,transcription_provider,updated_by,updated_at)
+                VALUES(1,@visionModel,@transcriptionModel,@transcriptionProvider,@user,now())
+                ON CONFLICT(id) DO UPDATE SET vision_model=excluded.vision_model,transcription_model=excluded.transcription_model,
+                    transcription_provider=excluded.transcription_provider,updated_by=excluded.updated_by,updated_at=now()
+                """, new { visionModel = config.VisionModel, transcriptionModel = config.TranscriptionModel,
+                    transcriptionProvider = config.TranscriptionProvider, user });
+            await platform.Audit(user.Value.ToString(), "video.config.updated", null, null,
+                new { config.VisionModel, config.TranscriptionModel, config.TranscriptionProvider, allowFallbacks = false });
+            return Results.Json(new { ok = true, visionModel = config.VisionModel, transcriptionModel = config.TranscriptionModel,
+                transcriptionProvider = config.TranscriptionProvider, allowFallbacks = false });
+        });
+
         app.MapPost("/api/invitations", async (HttpContext ctx, JsonElement body) =>
         {
             var user = await User(ctx, platform);
@@ -457,6 +493,16 @@ public static class Beta
     {
         await using var conn = await platform.Data.OpenConnectionAsync();
         return await conn.ExecuteScalarAsync<string>("SELECT role FROM users WHERE id=@id", new { id });
+    }
+
+    internal static async Task<VideoTools.AdminConfig> ReadVideoConfig(Npgsql.NpgsqlConnection conn, Platform platform)
+    {
+        var fallback = VideoTools.Defaults(platform.Config["VIDEO_SUMMARY_MODEL"], platform.Config["VIDEO_STT_MODEL"],
+            platform.Config["VIDEO_STT_PROVIDER"], platform.ModelName);
+        var stored = await conn.QuerySingleOrDefaultAsync<(string? VisionModel, string? TranscriptionModel, string? TranscriptionProvider)>(
+            "SELECT vision_model,transcription_model,transcription_provider FROM video_admin_config WHERE id=1");
+        return VideoTools.Defaults(stored.VisionModel ?? fallback.VisionModel, stored.TranscriptionModel ?? fallback.TranscriptionModel,
+            stored.TranscriptionProvider ?? fallback.TranscriptionProvider, platform.ModelName);
     }
 
     private static async Task<Guid?> Computer(Platform platform, Guid user)

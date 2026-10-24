@@ -10,6 +10,35 @@ public static class VideoTools
     public const string UsageRole = "video";
     public const string UsageProvider = "video";
     public const string UsageLabel = "Video watching";
+    private const decimal VideoFrameCreditUsd = 0.000001m;
+    private const decimal TranscriptionMinuteCreditUsd = 0.0003m;
+    private const decimal VisionThousandTokenCreditUsd = 0.00015m;
+
+    public static decimal ComputeCreditCost(int frameCount, double transcriptionSeconds, int visionTokens)
+    {
+        var seconds = Math.Max(0, transcriptionSeconds);
+        return decimal.Round(Math.Max(0, frameCount) * VideoFrameCreditUsd
+            + (decimal)seconds / 60m * TranscriptionMinuteCreditUsd
+            + Math.Max(0, visionTokens) / 1000m * VisionThousandTokenCreditUsd, 8, MidpointRounding.AwayFromZero);
+    }
+
+    public sealed record AdminConfig(string VisionModel, string TranscriptionModel, string TranscriptionProvider);
+
+    public static AdminConfig Defaults(string? visionModel, string? transcriptionModel, string? transcriptionProvider, string? plannerModel) =>
+        new(NonBlank(visionModel, plannerModel ?? "mock/planner"),
+            NonBlank(transcriptionModel, "openai/whisper-large-v3-turbo"),
+            NonBlank(transcriptionProvider, "DeepInfra"));
+
+    public static bool ValidAdminConfig(AdminConfig config) =>
+        SafeConfigToken(config.VisionModel, 200) && SafeConfigToken(config.TranscriptionModel, 200)
+        && SafeConfigToken(config.TranscriptionProvider, 80);
+
+    public static bool CanManageAdminConfig(string? role) => Access.IsStaff(role);
+    public static int AdminConfigStatusCode(string? role) => CanManageAdminConfig(role) ? 200 : 403;
+
+    private static string NonBlank(string? value, string fallback) => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+    private static bool SafeConfigToken(string value, int max) => value.Length > 0 && value.Length <= max
+        && value.All(c => char.IsAsciiLetterOrDigit(c) || c is '/' or '-' or '_' or '.' or ':');
 
     public static bool IsTool(string tool) => tool is "watch_video" or "ask_video";
 

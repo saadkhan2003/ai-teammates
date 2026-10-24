@@ -244,7 +244,8 @@ async def transcribe_chunks(path: Path, duration: float, client, *, model=None, 
     return outputs
 
 
-async def analyze_video(path: Path, model_call, *, cached=None, max_size=None, max_duration=None, progress=None):
+async def analyze_video(path: Path, model_call, *, cached=None, max_size=None, max_duration=None,
+                        stt_model=None, stt_provider=None, progress=None):
     """Run bounded preprocessing and summarize through caller's authenticated model bridge."""
     max_size = max_size or int(os.getenv("VIDEO_MAX_SIZE_BYTES", "1000000000"))
     max_duration = max_duration or int(os.getenv("VIDEO_MAX_DURATION_SECONDS", "3600"))
@@ -260,7 +261,7 @@ async def analyze_video(path: Path, model_call, *, cached=None, max_size=None, m
         audio_reason, audio_stats = await inspect_audio(path, has_audio)
         chunks = []
         if has_audio and audio_reason is None:
-            chunks = await transcribe_chunks(path, duration, model_call, progress=progress)
+            chunks = await transcribe_chunks(path, duration, model_call, model=stt_model, provider=stt_provider, progress=progress)
         transcript = "\n".join(f"[{c['offset'] + float(seg.get('start', 0)):.1f}] {seg.get('text', '')}" for c in chunks for seg in (c.get("segments") or [{"text": c.get("text", "")}]))
         if progress and chunks:
             await progress({"stage": "Listening"})

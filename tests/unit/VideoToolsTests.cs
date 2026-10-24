@@ -99,6 +99,35 @@ public sealed class VideoToolsTests
     }
 
     [Theory]
+    [InlineData("owner", true)]
+    [InlineData("admin", true)]
+    [InlineData("member", false)]
+    [InlineData("viewer", false)]
+    public void VideoAdminConfigIsStaffOnly(string role, bool canManage)
+    {
+        Assert.Equal(canManage, VideoTools.CanManageAdminConfig(role));
+        Assert.Equal(canManage ? 200 : 403, VideoTools.AdminConfigStatusCode(role));
+    }
+
+    [Fact]
+    public void VideoAdminConfigHasSafeDefaultsAndRejectsInvalidValues()
+    {
+        var defaults = VideoTools.Defaults(null, null, null, "mock/planner");
+        Assert.Equal("mock/planner", defaults.VisionModel);
+        Assert.Equal("openai/whisper-large-v3-turbo", defaults.TranscriptionModel);
+        Assert.Equal("DeepInfra", defaults.TranscriptionProvider);
+        Assert.True(VideoTools.ValidAdminConfig(defaults));
+        Assert.False(VideoTools.ValidAdminConfig(defaults with { VisionModel = "model\nInjected" }));
+    }
+
+    [Fact]
+    public void VideoCreditCostIncludesFramesTranscriptionAndVisionTokens()
+    {
+        Assert.Equal(0.01561m, VideoTools.ComputeCreditCost(10, 120, 100_000));
+        Assert.Equal(0m, VideoTools.ComputeCreditCost(-1, -10, -1));
+    }
+
+    [Theory]
     [InlineData(null, null, "mock/planner")]
     [InlineData("mock", null, "mock/planner")]
     [InlineData("MOCK", "", "mock/planner")]

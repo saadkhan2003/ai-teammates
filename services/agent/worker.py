@@ -785,6 +785,8 @@ class Worker:
                  "videoId": item_id} if is_library_item else {"botId": bot_id, "taskId": task_id, "epoch": _epoch(task), "sourcePath": source}
         from video_analysis import processing_settings
         scope.update(videoSession=session, processingSettings=processing_settings())
+        config_response = await self.request_json("POST", "/internal/video/config", scope)
+        video_config = config_response.get("videoConfig", {}) if isinstance(config_response, dict) else {}
         if not is_library_item and (source.startswith(("http://", "https://")) or ".." in source.split("/")):
             return {"ok": False, "reason": "unsafe_video_source"}
         source_bytes = None
@@ -809,6 +811,7 @@ class Worker:
                     payload["audioSeconds"] = content.get("audio_seconds", 0)
                 else:
                     payload["content"] = content
+                    payload["purpose"] = "answer"
                     frames_in_request = sum(1 for item in content if isinstance(item, dict) and item.get("type") == "image_url")
                     text_chars = sum(len(str(item.get("text") or "")) for item in content if isinstance(item, dict))
                     payload["usageEstimate"] = {"frameCount": frames_in_request, "visionTokens": int(text_chars / 4 + frames_in_request * 2000)}
@@ -822,6 +825,7 @@ class Worker:
             if args.get("question"):
                 async def cached_model_call(kind, content):
                     payload = {**scope, "kind": kind, "content": content}
+                    payload["purpose"] = "answer"
                     frames_in_request = sum(1 for item in content if isinstance(item, dict) and item.get("type") == "image_url")
                     text_chars = sum(len(str(item.get("text") or "")) for item in content if isinstance(item, dict))
                     payload["usageEstimate"] = {"frameCount": frames_in_request, "visionTokens": int(text_chars / 4 + frames_in_request * 2000)}
@@ -844,8 +848,12 @@ class Worker:
                 scope["contentSha"] = hashlib.sha256(source_bytes).hexdigest()
             async def model_call(kind, content):
                 payload = {**scope, "kind": kind}
-                if kind == "stt": payload["audio"] = content["input_audio"]["data"]
-                else: payload["content"] = content
+                if kind == "stt":
+                    payload["audio"] = content["input_audio"]["data"]
+                    payload["audioSeconds"] = content.get("audio_seconds", 0)
+                else:
+                    payload["content"] = content
+                    payload["purpose"] = "vision"
                 await self.request("POST", "/internal/video/event", {**scope, "type": "video_model_call", "detail": {"kind": kind}})
                 return await self._video_model_request(task, payload)
             async def progress(detail=None):
@@ -855,7 +863,9 @@ class Worker:
                 if detail:
                     await self.request("POST", "/internal/video/event", {**scope, "type": "video_progress", "detail": detail})
             try:
-                result = await analyze_video(path, model_call, progress=progress)
+                result = await analyze_video(path, model_call,
+                    stt_model=video_config.get("transcriptionModel"),
+                    stt_provider=video_config.get("transcriptionProvider"), progress=progress)
             except ValueError as exc:
                 reason = str(exc)
                 friendly = {
@@ -865,7 +875,13 @@ class Worker:
                 }.get(reason, "This video could not be analyzed. Please try a shorter or different file.")
                 return {"ok": False, "reason": reason, "error": friendly}
             if args.get("question"):
-                result["answer"] = await answer_video_question(result, str(args["question"]), model_call)
+                async def answer_model_call(kind, content):
+                    payload = {**scope, "kind": kind, "content": content, "purpose": "answer"}
+                    frames_in_request = sum(1 for item in content if isinstance(item, dict) and item.get("type") == "image_url")
+                    text_chars = sum(len(str(item.get("text") or "")) for item in content if isinstance(item, dict))
+                    payload["usageEstimate"] = {"frameCount": frames_in_request, "visionTokens": int(text_chars / 4 + frames_in_request * 2000)}
+                    return await self._video_model_request(task, payload)
+                result["answer"] = await answer_video_question(result, str(args["question"]), answer_model_call)
         saved = await self.request_json("POST", "/internal/video/cache/put", {**scope, "analysis": result})
         await self.request("POST", "/internal/video/event", {**scope, "type": "video_progress", "detail": {"stage": "Done"}})
         await self.request("POST", "/internal/video/event", {**scope, "type": "video_analysis_complete", "detail": {"duration": result.get("duration"), "frameCount": result.get("frameCount"), "sttSeconds": result.get("sttSeconds"), "cacheHit": False}})

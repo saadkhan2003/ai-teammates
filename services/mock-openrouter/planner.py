@@ -231,6 +231,9 @@ def _steps(text: str, messages: list) -> list[Step]:
     followup_match = re.fullmatch(r"VIDEO_V1_FOLLOWUP:([0-9a-f-]{36})", stripped, re.IGNORECASE)
     if followup_match:
         return [("tool", "ask_video", {"video_id": followup_match.group(1), "question": "What is visible in the test scene?"}), ("final", "Follow-up complete.")]
+    video_path_match = re.fullmatch(r"VIDEO_V1_PATH_TEST:(.+)", stripped, re.IGNORECASE)
+    if video_path_match:
+        return [("tool", "watch_video", {"path": video_path_match.group(1)}), ("final", "Video path test complete.")]
     if stripped.startswith("This is a scheduled run, not a user message.") and "\n\n" in stripped:
         inner = stripped.split("\n\n", 1)[1].strip()
         if "NOTHING_NEW test" in inner:
