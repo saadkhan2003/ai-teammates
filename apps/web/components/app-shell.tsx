@@ -6,7 +6,7 @@ import { Bell, ChevronRight, CircleHelp, Info, Menu, PanelLeft, PanelLeftClose, 
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { usePathname, useRouter } from "next/navigation";
-import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { BotAvatar } from "@/components/bot-avatar";
 import { RefreshNotice } from "@/components/refresh-notice";
@@ -15,14 +15,6 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -54,16 +46,23 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { api, asList } from "@/lib/api";
 import { patchRoster } from "@/lib/event-patches";
 import { parseAgentEvent, streamIsOpen, subscribeEvents } from "@/lib/events";
-import { applyTheme, type ThemeMode } from "@/lib/theme";
 import { cn, errorMessage } from "@/lib/utils";
 import { matchShortcut } from "@/lib/shortcuts";
 import { defaultBotAvatar } from "@/lib/avatars";
 import { applyAccent } from "@/lib/accent";
 import { get as getPrefetch, put as putPrefetch } from "@/lib/prefetch-cache.mjs";
 
+const AppCommandPalette = dynamic(() => import("@/components/app-command-palette").then(module => module.AppCommandPalette), { ssr: false });
 const PluginsPane = dynamic(() => import("@/components/plugins-pane").then((module) => module.PluginsPane));
-const BotAvatarPicker = dynamic(() => import("@/components/bot-avatar-picker").then((module) => module.BotAvatarPicker));
-const TemplateImport = dynamic(() => import("@/components/template-import").then((module) => module.TemplateImport));
+const CreateTeammateDialog = dynamic(() => import("@/components/app-dialogs").then(module => module.CreateTeammateDialog), { ssr: false });
+const ShortcutsDialog = dynamic(() => import("@/components/app-dialogs").then(module => module.ShortcutsDialog), { ssr: false });
+const FeedbackDialog = dynamic(() => import("@/components/app-dialogs").then(module => module.FeedbackDialog), { ssr: false });
+
+function useOpened(open: boolean) {
+  const [opened, setOpened] = useState(open);
+  useEffect(() => { if (open) setOpened(true); }, [open]);
+  return open || opened;
+}
 
 type RosterBot = {
   id: string;
@@ -117,6 +116,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [mobile, setMobile] = useState(false);
   const [palette, setPalette] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const createMounted = useOpened(createOpen);
   const [notes, setNotes] = useState<Note[]>([]);
   const [streamState, setStreamState] = useState("reconnecting");
   const [streamId, setStreamId] = useState("");
@@ -127,7 +127,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [pluginTab, setPluginTab] = useState<"marketplace" | "yours">("yours");
   const [aboutOpen, setAboutOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const shortcutsMounted = useOpened(shortcutsOpen);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const feedbackMounted = useOpened(feedbackOpen);
   const [quickSwitch, setQuickSwitch] = useState(false);
 
   const load = useCallback(async () => {
@@ -594,55 +596,14 @@ export function AppShell({ children }: { children: ReactNode }) {
             {pluginTab === "marketplace" ? <PluginsPane mode="catalog" /> : <PluginsPane mode="installed" />}
           </DialogContent>
         </Dialog>
-        <Dialog open={palette} onOpenChange={setPalette}>
-          <DialogContent data-testid="command-palette" className="overflow-hidden p-0 sm:max-w-lg">
-            <DialogTitle className="sr-only">Command palette</DialogTitle>
-            <Command>
-              <CommandInput placeholder="Jump to a teammate or run a command" />
-              <CommandList>
-                <CommandEmpty>No matches.</CommandEmpty>
-                <CommandGroup heading="Teammates">
-                  {bots.map((bot) => (
-                    <CommandItem key={bot.id} value={`${bot.name} ${bot.role}`} onSelect={() => go(`/bots/${bot.id}`)}>
-                      <BotAvatar botId={bot.id} shape={bot.avatarShape} color={bot.avatarColor} size={24} />{bot.name}
-                      <span className="ml-2 truncate text-xs text-muted-foreground">{bot.role}</span>
-                    </CommandItem>
-                  ))}
-                </CommandGroup>
-                <CommandGroup heading="Actions">
-                  <CommandItem onSelect={() => go("/settings")}>Open settings</CommandItem>
-                  <CommandItem
-                    onSelect={() => {
-                      setPalette(false);
-                      setCreateOpen(true);
-                    }}
-                  >
-                    New teammate
-                  </CommandItem>
-                  {(["dark", "light", "system"] as ThemeMode[]).map((mode) => (
-                    <CommandItem
-                      key={mode}
-                      onSelect={() => {
-                        applyTheme(mode);
-                        setPalette(false);
-                        toast.success(`Theme set to ${mode}.`);
-                      }}
-                    >
-                      Theme {mode}
-                    </CommandItem>
-                  ))}
-                </CommandGroup>
-              </CommandList>
-            </Command>
-          </DialogContent>
-        </Dialog>
-        <CreateTeammateDialog
+        {palette ? <AppCommandPalette bots={bots} go={go} onOpenChange={setPalette} onCreate={() => setCreateOpen(true)} /> : null}
+        {createMounted ? <CreateTeammateDialog
           open={createOpen}
           onOpenChange={setCreateOpen}
           onCreated={() => {
             void load();
           }}
-        />
+        /> : null}
         <Dialog open={pendingDelete != null} onOpenChange={(next) => !next && setPendingDelete(null)}>
           <DialogContent>
             <DialogHeader>
@@ -665,176 +626,11 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Button variant="outline" data-testid="copy-version-info" onClick={() => { void navigator.clipboard?.writeText("AI Teammates 0.4.0"); toast.success("Version info copied."); }}>Copy version info</Button>
           </DialogContent>
         </Dialog>
-        <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
-        <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
+        {shortcutsMounted ? <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} /> : null}
+        {feedbackMounted ? <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} /> : null}
         <Dialog open={quickSwitch} onOpenChange={setQuickSwitch}><DialogContent data-testid="quick-switcher"><DialogHeader><DialogTitle>Switch teammate</DialogTitle></DialogHeader><div className="grid gap-1">{bots.map(bot => <Button key={bot.id} variant="ghost" className="justify-start" onClick={() => { router.push(`/bots/${bot.id}`); setQuickSwitch(false); }}><BotAvatar botId={bot.id} shape={bot.avatarShape} color={bot.avatarColor} size={26} />{bot.name}</Button>)}</div></DialogContent></Dialog>
       </div>
     </TooltipProvider>
   );
 }
 
-function CreateTeammateDialog({
-  open,
-  onOpenChange,
-  onCreated,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onCreated: () => void;
-}) {
-  const [name, setName] = useState("");
-  const [role, setRole] = useState("");
-  const [bio, setBio] = useState("");
-  const [instructions, setInstructions] = useState("");
-  const [avatarShape, setAvatarShape] = useState("blob3");
-  const [avatarColor, setAvatarColor] = useState("#ff3045");
-  const [creating, setCreating] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!open || !window.location.hash.startsWith("#template=")) return;
-    setValueFromFragment();
-  }, [open]);
-
-  function applyTemplate(template: Record<string, unknown>) {
-    setName(typeof template.name === "string" ? template.name : "");
-    setRole(typeof template.role === "string" ? template.role : "");
-    setInstructions(typeof template.instructions === "string" ? template.instructions : "");
-    setAvatarShape(typeof template.avatarShape === "string" ? template.avatarShape : "blob3");
-    setAvatarColor(typeof template.avatarColor === "string" ? template.avatarColor : "#ff3045");
-    setFormError(null);
-  }
-
-  async function setValueFromFragment() {
-    try {
-      const encoded = window.location.hash.slice("#template=".length);
-      const json = decodeURIComponent(escape(atob(encoded.replace(/-/g, "+").replace(/_/g, "/"))));
-      const clean = await api<Record<string, unknown>>("/api/templates/preview", { method: "POST", body: json });
-      applyTemplate(clean);
-    } catch (caught) { setFormError(errorMessage(caught, "This template link could not be imported.")); }
-  }
-
-  async function createBot(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!name.trim()) {
-      setFormError("Give your teammate a name");
-      document.getElementById("bot-name")?.focus();
-      return;
-    }
-    setCreating(true);
-    setFormError(null);
-    try {
-      await api("/api/bots", {
-        method: "POST",
-        body: JSON.stringify({ name: name.trim(), role: role.trim(), instructions: instructions.trim(), avatarShape, avatarColor, ...(bio.trim() ? { bio: bio.trim() } : {}) }),
-      });
-      setName("");
-      setRole("");
-      setBio("");
-      setInstructions("");
-      setAvatarShape("blob3");
-      setAvatarColor("#ff3045");
-      onOpenChange(false);
-      toast.success(`Created ${name}.`);
-      window.dispatchEvent(new Event("teammates-bots-changed"));
-      onCreated();
-    } catch (caught) {
-      setFormError(errorMessage(caught, "Could not create that teammate."));
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle data-testid="create-bot-title">Create New Bot</DialogTitle>
-          <DialogDescription className="sr-only">Choose an avatar and name your bot. Role and instructions are optional.</DialogDescription>
-        </DialogHeader>
-        <form data-testid="create-bot-form" className="flex max-h-[80vh] flex-col gap-3 overflow-y-auto" onSubmit={createBot} noValidate>
-          <TemplateImport onTemplate={applyTemplate} />
-          <BotAvatarPicker shape={avatarShape} color={avatarColor} onChange={(shape, color) => { setAvatarShape(shape); setAvatarColor(color); }} />
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="bot-name">Name your Bot</Label>
-            <Input id="bot-name" data-testid="bot-name" placeholder="Name your Bot" value={name} onChange={(event) => { setName(event.target.value); setFormError(null); }} aria-invalid={!!formError && !name.trim()} aria-describedby="bot-name-help bot-form-error" />
-            <p id="bot-name-help" className="text-xs text-muted-foreground">Required. What should we call your teammate?</p>
-          </div>
-          <Collapsible>
-          <CollapsibleTrigger type="button" data-testid="bot-advanced-toggle" className="text-sm text-muted-foreground underline">Advanced (optional)</CollapsibleTrigger>
-          <CollapsibleContent className="mt-3 grid gap-3">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="bot-bio">Bio (optional)</Label>
-            <Input id="bot-bio" data-testid="bot-bio-input" maxLength={60} value={bio} onChange={(event) => setBio(event.target.value)} placeholder="Short title, up to 60 characters" />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="bot-role" className="flex items-center gap-2">
-              <span className="grid h-6 w-6 place-items-center rounded-md bg-primary text-[11px] text-primary-foreground">B</span>
-              Title
-            </Label>
-            <Input id="bot-role" data-testid="bot-role" value={role} onChange={(event) => setRole(event.target.value)} aria-describedby="bot-role-help" />
-            <p id="bot-role-help" className="text-xs text-muted-foreground">Optional. Defaults to Teammate.</p>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="bot-instructions" className="flex items-center gap-2">
-              <span className="grid h-6 w-6 place-items-center rounded-md bg-primary text-[11px] text-primary-foreground">C</span>
-              Instructions
-            </Label>
-            <Textarea
-              id="bot-instructions"
-              data-testid="bot-instructions"
-              value={instructions}
-              onChange={(event) => setInstructions(event.target.value)}
-              aria-describedby="bot-instructions-help"
-            />
-          </div>
-          <p id="bot-instructions-help" className="text-xs text-muted-foreground">Optional. Describe their work, preferences, or goals.</p>
-          </CollapsibleContent>
-          </Collapsible>
-          {formError ? (
-            <p id="bot-form-error" role="alert" className="text-sm text-destructive">
-              {formError}
-            </p>
-          ) : null}
-          <DialogFooter><Button type="button" variant="outline" data-testid="bot-cancel" onClick={() => onOpenChange(false)}>Cancel</Button><Button data-testid="bot-create" type="submit" disabled={creating || !name.trim()}>
-            {creating ? "Creating…" : "Create"}
-          </Button></DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-const shortcutGroups = [
-  ["Essentials", [["Search", "Ctrl K  or  Ctrl Shift F"], ["New Bot", "Ctrl N"], ["Send", "Enter"], ["Go to Bot", "Ctrl 1–9"], ["Compact sidebar", "Ctrl B"], ["Settings", "Ctrl ,"], ["Keyboard shortcuts", "Ctrl /"]]],
-  ["Chat", [["Focus chat", "Ctrl I"], ["Find in chat", "Ctrl F"], ["Dictate", "Ctrl D"], ["Add selection to chat", "Ctrl L"]]],
-  ["Message", [["Reply (message focused)", "R"], ["React", "E"], ["Copy", "C"], ["More actions", "Enter or Shift F10"], ["Previous / next message", "↑ / ↓"], ["Close menu", "Esc"]]],
-  ["Navigation", [["Previous / next Bot", "Alt ↑ / Alt ↓"], ["Back / forward", "Ctrl [ / Ctrl ]"], ["Switch Bots", "Hold Ctrl  Tab"]]],
-  ["Panels", [["Details", "Ctrl Alt B"], ["Skills", "Ctrl Shift W"], ["Connect apps", "Ctrl Shift M"]]],
-  ["Window", [["Zoom", "Ctrl + / Ctrl − / Ctrl 0"], ["Full screen", "F11"]]],
-] as const;
-
-function ShortcutsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl" data-testid="shortcuts-dialog">
-        <DialogHeader><DialogTitle>Keyboard shortcuts</DialogTitle></DialogHeader>
-        <div className="grid gap-x-10 gap-y-5 sm:grid-cols-2">
-          {shortcutGroups.map(([title, entries]) => <section key={title}><h3 className="mb-2 text-sm font-medium">{title}</h3><div className="divide-y divide-border">{entries.map(([label, keys]) => <div key={label} className="flex min-h-10 items-center justify-between gap-3 text-sm"><span>{label}</span><span className="text-xs text-muted-foreground">{keys.split(" ").map((key, index) => <kbd key={`${key}-${index}`} className="ml-1 rounded border border-border bg-muted px-1.5 py-0.5 font-mono">{key}</kbd>)}</span></div>)}</div></section>)}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function FeedbackDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState(false);
-  async function submit(event: FormEvent) {
-    event.preventDefault(); setBusy(true);
-    try { await api("/api/feedback", { method: "POST", body: JSON.stringify({ message, category: "general" }) }); toast.success("Feedback sent."); setMessage(""); onOpenChange(false); }
-    catch (error) { toast.error(errorMessage(error, "Could not send feedback.")); }
-    finally { setBusy(false); }
-  }
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent data-testid="feedback-dialog"><DialogHeader><DialogTitle>Send feedback</DialogTitle><DialogDescription>Share a note with the AI Teammates team.</DialogDescription></DialogHeader><form onSubmit={(event) => void submit(event)} className="space-y-3"><Textarea data-testid="feedback-message" value={message} onChange={event => setMessage(event.target.value)} maxLength={5000} required placeholder="What should we know?" /><Button data-testid="feedback-submit" type="submit" disabled={busy || !message.trim()}>{busy ? "Sending…" : "Send feedback"}</Button></form></DialogContent></Dialog>;
-}

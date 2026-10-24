@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
+import { SettingsSelect } from "@/components/settings-select";
+import { SettingsSwitch as Switch } from "@/components/settings-switch";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/utils";
 
@@ -132,18 +132,7 @@ export default function PolicySettingsPage() {
                 <Label htmlFor={`policy-${name}`} className="text-sm font-normal">
                   {name}
                 </Label>
-                <Select value={classes[name] ?? "ASK"} onValueChange={(value) => setClasses((current) => ({ ...current, [name]: value }))}>
-                  <SelectTrigger id={`policy-${name}`} data-testid={`policy-${name}`} className="h-9 w-28 rounded-md">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {MODES.map((mode) => (
-                      <SelectItem key={mode} value={mode}>
-                        {mode}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SettingsSelect value={classes[name] ?? "ASK"} onValueChange={value => setClasses(current => ({ ...current, [name]: value }))} id={`policy-${name}`} data-testid={`policy-${name}`} className="h-9 w-28 rounded-md" options={MODES.map(value => ({ value, label: value }))} />
               </div>
             ))}
           </CardContent>
@@ -166,14 +155,7 @@ export default function PolicySettingsPage() {
             <CardDescription>Controls outbound hosts for this account. Entries accept domains, *.domain, IP/CIDR, and host:port.</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3 p-4 pt-0">
-            <Select value={networkMode} onValueChange={(value) => setNetworkMode(value as typeof networkMode)}>
-              <SelectTrigger aria-label="Network policy mode"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="allow_all">Allow all</SelectItem>
-                <SelectItem value="defaults_with_team">Defaults plus team entries</SelectItem>
-                <SelectItem value="team_only">Team entries only</SelectItem>
-              </SelectContent>
-            </Select>
+            <SettingsSelect value={networkMode} onValueChange={value => setNetworkMode(value as typeof networkMode)} aria-label="Network policy mode" options={[{ value: "allow_all", label: "Allow all" }, { value: "defaults_with_team", label: "Defaults plus team entries" }, { value: "team_only", label: "Team entries only" }]} />
             <div className="grid gap-3 md:grid-cols-2">
               <div className="grid gap-1.5">
                 <Label htmlFor="network-entries">Entries (one per line)</Label>

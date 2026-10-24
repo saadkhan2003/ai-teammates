@@ -6,8 +6,8 @@ import { FormEvent, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
+import { SettingsSelect } from "@/components/settings-select";
+import { SettingsSwitch as Switch } from "@/components/settings-switch";
 import { api } from "@/lib/api";
 import { EDITORS, type EditorId, readEnabledEditors, writeEnabledEditors } from "@/lib/editors";
 import { applyTheme, readTheme, type ThemeMode } from "@/lib/theme";
@@ -169,33 +169,11 @@ export default function GeneralSettingsPage() {
       <div className="grid gap-4 md:grid-cols-2">
         <div className="flex flex-col gap-1.5">
           <Label>Language</Label>
-          <Select value={locale} onValueChange={chooseLocale}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {LOCALES.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SettingsSelect value={locale} onValueChange={chooseLocale} options={LOCALES} />
         </div>
         <div className="flex flex-col gap-1.5">
           <Label>Timezone</Label>
-          <Select value={zone} onValueChange={chooseZone}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {ZONES.map((item) => (
-                <SelectItem key={item} value={item}>
-                  {item}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SettingsSelect value={zone} onValueChange={chooseZone} options={ZONES.map(value => ({ value, label: value }))} />
         </div>
       </div>
       <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2">

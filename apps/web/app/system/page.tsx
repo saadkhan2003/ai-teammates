@@ -6,7 +6,9 @@ import { SettingsFrame } from "@/components/settings-nav";
 import { Input } from "@/components/ui/input";
 import { StateMessage } from "@/components/state-message";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import dynamic from "next/dynamic";
+
+const ScrollArea = dynamic(() => import("@/components/ui/scroll-area").then(module => module.ScrollArea), { ssr: false });
 import { asList, api, extractPrompt, readModelCalls } from "@/lib/api";
 import { errorMessage, formatWhen } from "@/lib/utils";
 
