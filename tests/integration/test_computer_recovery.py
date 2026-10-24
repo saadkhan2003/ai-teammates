@@ -197,5 +197,8 @@ def test_removed_stopped_computer_stays_stopped_until_asked(bot_factory):
         _bring_up(client, name)
         assert _psql(f"SELECT status FROM user_computers WHERE computer_id='{computer_id}'") in {"running", "recovering"}
     finally:
-        client.call("POST", "/api/computer/stop", {})
+        # The rebuild may still hold the lifecycle gate; stop once it lets go.
+        deadline = time.time() + 90
+        while time.time() < deadline and client.call("POST", "/api/computer/stop", {})[0] not in (200, 204):
+            time.sleep(1)
         subprocess.run(["sudo", "docker", "rm", "-f", name], capture_output=True)

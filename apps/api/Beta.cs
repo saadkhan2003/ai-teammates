@@ -263,11 +263,21 @@ public static class Beta
             // must never interrupt another bot or a task that can wake it again.
             if (await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM bots WHERE owner_id=@user)", new { user }))
                 return Results.Conflict(new { error = "computer_in_use" });
-            var computer = await platform.Compute.StopComputerAsync(new ComputerId(id.Value.ToString()),
-                new StopOptions(false, TimeSpan.FromSeconds(10)), IdempotencyKey.Require("stop-" + Guid.NewGuid().ToString("n")), ct);
+            // Mark it stopped first so a missing container is never rebuilt by the stop itself.
             await conn.ExecuteAsync("UPDATE user_computers SET status='stopped' WHERE user_id=@user AND computer_id=@id", new { user, id });
+            string state;
+            try
+            {
+                var computer = await platform.Compute.StopComputerAsync(new ComputerId(id.Value.ToString()),
+                    new StopOptions(false, TimeSpan.FromSeconds(10)), IdempotencyKey.Require("stop-" + Guid.NewGuid().ToString("n")), ct);
+                state = computer.State.ToString().ToLowerInvariant();
+            }
+            catch (ComputeException ex) when (ex.Code == ComputeErrorCode.NotFound)
+            {
+                state = "stopped"; // the container is already gone
+            }
             await platform.Audit(user.Value.ToString(), "computer.stopped", null, null, new { computerId = id });
-            return Results.Json(new { ok = true, status = computer.State.ToString().ToLowerInvariant() });
+            return Results.Json(new { ok = true, status = state });
         });
 
         app.MapPost("/api/computer/restart", async (HttpContext ctx, CancellationToken ct) =>

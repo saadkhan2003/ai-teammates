@@ -93,6 +93,10 @@ public sealed class ComputerRecoveryTests : IAsyncLifetime
         Assert.DoesNotContain("SET status='recovering' WHERE computer_id=@id\"", begin);
         var beta = File.ReadAllText(Path.Combine(root, "apps", "api", "Beta.cs"));
         Assert.Equal(2, beta.Split("Platform.WantComputer(").Length - 1);
+        var stop = beta[beta.IndexOf("\"/api/computer/stop\"", StringComparison.Ordinal)..];
+        stop = stop[..stop.IndexOf("\"/api/computer/restart\"", StringComparison.Ordinal)];
+        Assert.True(stop.IndexOf("SET status='stopped'", StringComparison.Ordinal) < stop.IndexOf("StopComputerAsync", StringComparison.Ordinal));
+        Assert.Contains("ComputeErrorCode.NotFound", stop);
         Assert.Contains("Platform.WantComputer(conn, user.Value)", File.ReadAllText(Path.Combine(root, "apps", "api", "Routes.cs")));
     }
 }
