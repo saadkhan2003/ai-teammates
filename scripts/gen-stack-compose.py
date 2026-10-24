@@ -29,6 +29,7 @@ def main() -> None:
     ap.add_argument("--subnet", required=True, help="first three octets, e.g. 172.30.38")
     ap.add_argument("--http", type=int, required=True)
     ap.add_argument("--https", type=int)
+    ap.add_argument("--admin", type=int, help="publish the admin listener on this loopback port")
     ap.add_argument("--api", type=int, required=True)
     ap.add_argument("--api2", type=int, help="publish a second API instance on this port")
     ap.add_argument("--chain", help="iptables chain, default <NAME>-ISO upper-case")
@@ -51,6 +52,8 @@ def main() -> None:
     text = re.sub(r"^name: teammates$", f"name: {name}", text, flags=re.M)
     doc = yaml.safe_load(text)
     doc["services"]["caddy"]["ports"] = [f"127.0.0.1:{a.http}:80"] + ([f"127.0.0.1:{a.https}:443"] if a.https else [])
+    if a.admin:
+        doc["services"]["caddy"]["ports"].append(f"127.0.0.1:{a.admin}:8081")
     doc["services"]["api"]["ports"] = [f"127.0.0.1:{a.api}:8080"]
     doc["services"]["api"]["environment"]["COMPUTE_STACK"] = name
     doc["services"]["api"]["environment"]["MAX_COMPUTERS"] = str(a.max_computers)
@@ -58,7 +61,7 @@ def main() -> None:
     iso = doc["services"]["isolation"]["environment"]
     iso["ISOLATION_SUBNET"] = a.subnet
     iso["ISOLATION_CHAIN"] = chain
-    for svc in ("api", "agent", "web", "caddy"):
+    for svc in ("api", "agent", "web", "admin", "caddy"):
         doc["services"][svc].pop("container_name", None)
     # Dev stacks do not need to survive a reboot.
     for svc in doc["services"].values():

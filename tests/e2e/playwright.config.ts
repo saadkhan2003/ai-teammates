@@ -23,6 +23,7 @@ export default defineConfig({
   },
   workers: 1,
   projects: [
+    { name: "admin", testMatch: /admin-(?:app|ai-models)\.spec\.ts/, use: { ...devices["Desktop Chrome"], baseURL: process.env.ADMIN_URL } },
     { name: "desktop", testMatch: /(?:acceptance|security|links|vnc-lifecycle|computer-view|question-card|memory-notes|approval-rules|plugins|new-teammate-form|create-bot|about|account-menu|settings-modal|shortcuts|settings-computer|chat-polish|events|refresh-notice|library-share|library-section|library-search|chat-features|teach-task|bot-messaging|reply-ux|routines-section|coding-section|computer-card|chat-pill|long-run-resume)\.spec\.ts/, use: { ...devices["Desktop Chrome"] } },
     {
       name: "iphone-13",

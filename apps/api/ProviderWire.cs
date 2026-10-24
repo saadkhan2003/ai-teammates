@@ -4,13 +4,13 @@ using System.Text.Json;
 
 namespace Teammates.Api;
 
-public readonly record struct TokenUsage(int PromptTokens, int CompletionTokens, decimal CostUsd);
+public readonly record struct TokenUsage(int PromptTokens, int CompletionTokens, decimal CostUsd, int CacheReadTokens = 0, int CacheCreationTokens = 0);
 
 /// <summary>
 /// OpenAI chat-completions wire shape. The worker keeps an internal transcript
 /// (toolCalls, arguments as objects, toolCallId). Providers reject that shape.
 /// </summary>
-public static class ProviderWire
+public static partial class ProviderWire
 {
     public const int MaxTokens = 2048;
 
@@ -72,7 +72,7 @@ public static class ProviderWire
     {
         if (!root.TryGetProperty("usage", out var usage) || usage.ValueKind != JsonValueKind.Object)
             return new TokenUsage(0, 0, 0);
-        return new TokenUsage(Whole(usage, "prompt_tokens"), Whole(usage, "completion_tokens"), Money(usage));
+        return new TokenUsage(Whole(usage, "prompt_tokens"), Whole(usage, "completion_tokens"), Money(usage), Whole(usage, "cache_read_input_tokens"), Whole(usage, "cache_creation_input_tokens"));
     }
 
     /// <summary>The ask_user id from a stored assistant toolCalls array. Never invents call_1.</summary>

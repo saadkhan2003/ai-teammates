@@ -71,8 +71,7 @@ function normalizeWorkspace(data: WorkspaceData): WorkspaceData {
     loginRequests: data.loginRequests ?? [],
     pages: data.pages ?? [],
     holder: data.holder === "human" ? "human" : "agent",
-    llmProvider: data.llmProvider ?? "",
-    openrouterConnected: data.openrouterConnected,
+    aiConnected: data.aiConnected,
   };
 }
 
@@ -202,12 +201,9 @@ export function Workspace({ botId }: { botId: string }) {
     taskIds.current = new Set();
     setLlmConnected(null);
     api<Record<string, unknown>>("/api/system/llm-status").then(status => {
-      const connected = status.openrouterConnected ?? status.connected ?? status.configured ?? status.hasKey;
+      const connected = status.aiConnected ?? status.connected ?? status.configured ?? status.hasKey;
       if (typeof connected === "boolean") setLlmConnected(connected);
-    }).catch(() => api<unknown>("/api/secrets").then(data => {
-      const items = Array.isArray(data) ? data : (data as { secrets?: unknown[] })?.secrets;
-      if (Array.isArray(items)) setLlmConnected(items.some(item => { const entry = item as Record<string, unknown>; return entry.provider === "openrouter" || entry.namespace === "openrouter"; }));
-    }).catch(() => undefined));
+    }).catch(() => undefined);
     setWorkspace(null);
     setWorkspaceError(null);
     const desktop = window.matchMedia("(min-width: 768px)").matches;
@@ -319,7 +315,6 @@ export function Workspace({ botId }: { botId: string }) {
     );
   }
 
-  const provider = workspace.llmProvider || "";
   const bot = workspace.bot;
   const requests = (workspace.secretRequests ?? []) as SecretRequest[];
   const computerExpanded = desktopFull;
@@ -377,11 +372,10 @@ export function Workspace({ botId }: { botId: string }) {
           working={(workspace.tasks ?? []).some((task) => ["running", "planning", "queued"].includes((task.status ?? "").toLowerCase()))}
           extras={
             <>
-              {provider.toLowerCase() === "mock" ? <p className="text-sm text-muted-foreground">Provider is mock. This teammate is not calling OpenRouter.</p> : null}
-              {(llmConnected ?? workspace.openrouterConnected) === false ? (
+              {(llmConnected ?? workspace.aiConnected) === false ? (
                 <p data-testid="llm-key-banner" className="rounded-md border border-border bg-card px-3 py-2 text-sm">
                   <Link href="/settings/secrets" className="font-medium text-brand">
-                    Connect OpenRouter in Settings → Vault
+                    Contact your administrator to connect AI
                   </Link>
                   <span className="text-muted-foreground"> — model tasks wait until a key is saved.</span>
                 </p>
@@ -483,7 +477,6 @@ export function Workspace({ botId }: { botId: string }) {
               name={bot?.name || ""}
               role={bot?.role || ""}
               instructions={bot?.instructions || ""}
-              model={(bot as { model?: string } | undefined)?.model || ""}
               avatar={(bot as { avatar?: string } | undefined)?.avatar || ""}
               avatarShape={bot?.avatarShape || defaultBotAvatar(bot?.id || botId).shape}
               avatarColor={bot?.avatarColor || defaultBotAvatar(bot?.id || botId).color}
@@ -551,8 +544,6 @@ export function Workspace({ botId }: { botId: string }) {
                     <div className="flex flex-col gap-2 text-sm">
                       <p>{bot?.role || "No title yet."}</p>
                       <p className="text-muted-foreground">{bot?.instructions || "No description yet."}</p>
-                      <p className="text-muted-foreground">Provider: {provider || "unknown"}</p>
-                      {provider.toLowerCase() === "mock" ? <p>Provider is mock. This teammate is not calling OpenRouter.</p> : null}
                     </div>
                   </TabsContent>
                   <TabsContent value="computer">
@@ -584,7 +575,7 @@ export function Workspace({ botId }: { botId: string }) {
                     <MemoryPane botId={botId} memories={memories.items} error={memories.error} loaded={memories.loaded} onChanged={() => void loadAux(["memories"])} focusMemoryId={memoryFocusId} onFocused={() => setMemoryFocusId(undefined)} />
                   </TabsContent>
                   <TabsContent value="tasks">
-                    <TasksPane botId={botId} tasks={workspace.tasks ?? []} openrouterConnected={workspace.openrouterConnected !== false} onChanged={() => void loadWorkspace()} />
+                    <TasksPane botId={botId} tasks={workspace.tasks ?? []} aiConnected={workspace.aiConnected !== false} onChanged={() => void loadWorkspace()} />
                   </TabsContent>
                   <TabsContent value="plugins">
                     <PluginsPane />
@@ -605,7 +596,6 @@ function BotSettings({
   name,
   role,
   instructions,
-  model,
   avatar,
   avatarShape,
   avatarColor,
@@ -618,7 +608,6 @@ function BotSettings({
   name: string;
   role: string;
   instructions: string;
-  model: string;
   avatar: string;
   avatarShape: string;
   avatarColor: string;
@@ -627,7 +616,7 @@ function BotSettings({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [draft, setDraft] = useState({ name, role, instructions, model, avatar, avatarShape, avatarColor, notifications, peerMessaging });
+  const [draft, setDraft] = useState({ name, role, instructions, avatar, avatarShape, avatarColor, notifications, peerMessaging });
   const [budgetSteps, setBudgetSteps] = useState(200);
   const [budgetMinutes, setBudgetMinutes] = useState(60);
   const [pauseOnBudget, setPauseOnBudget] = useState(true);
@@ -695,8 +684,6 @@ function BotSettings({
       <Input id="settings-title" value={draft.role} onChange={(event) => setDraft({ ...draft, role: event.target.value })} />
       <Label htmlFor="settings-description">Description</Label>
       <Textarea id="settings-description" value={draft.instructions} onChange={(event) => setDraft({ ...draft, instructions: event.target.value })} />
-      <Label htmlFor="settings-model">Model</Label>
-      <Input id="settings-model" value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="anthropic/claude-haiku-5.5" />
       <div className="flex items-center justify-between gap-3 text-sm">
         <Label htmlFor="settings-notifications">Notifications</Label>
         <Switch

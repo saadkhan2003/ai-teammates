@@ -313,8 +313,6 @@ public static class Beta
                 await conn.ExecuteAsync("UPDATE bots SET role=@role, updated_at=now() WHERE id=@id", new { id, role = roleEl.GetString() ?? "" });
             if (body.TryGetProperty("instructions", out var instructions))
                 await conn.ExecuteAsync("UPDATE bots SET instructions=@instructions, updated_at=now() WHERE id=@id", new { id, instructions = instructions.GetString() ?? "" });
-            if (body.TryGetProperty("model", out var model))
-                await conn.ExecuteAsync("UPDATE bots SET model=@model, updated_at=now() WHERE id=@id", new { id, model = model.GetString() ?? "" });
             if (body.TryGetProperty("section", out var section))
                 await conn.ExecuteAsync("UPDATE bots SET section=@section, updated_at=now() WHERE id=@id", new { id, section = string.IsNullOrWhiteSpace(section.GetString()) ? "Teammates" : section.GetString() });
             if (body.TryGetProperty("avatar", out var avatar))
@@ -335,7 +333,7 @@ public static class Beta
                 await conn.ExecuteAsync("UPDATE bots SET is_primary=true, updated_at=now() WHERE id=@id", new { id }, tx);
                 await tx.CommitAsync();
             }
-            var row = await conn.QuerySingleAsync("SELECT id, name, role, instructions, status, model, avatar, avatar_shape, avatar_color, section, notifications_enabled, is_primary, bio, peer_messaging FROM bots WHERE id=@id", new { id });
+            var row = await conn.QuerySingleAsync("SELECT id, name, role, instructions, status, avatar, avatar_shape, avatar_color, section, notifications_enabled, is_primary, bio, peer_messaging FROM bots WHERE id=@id", new { id });
             return Results.Json(Platform.ToDict(row));
         });
 
@@ -449,13 +447,13 @@ public static class Beta
         });
     }
 
-    private static async Task<Guid?> User(HttpContext ctx, Platform platform)
+    internal static async Task<Guid?> User(HttpContext ctx, Platform platform)
     {
         ctx.Request.Cookies.TryGetValue("teammates_session", out var token);
         return await platform.UserForSession(token);
     }
 
-    private static async Task<string?> Role(Platform platform, Guid id)
+    internal static async Task<string?> Role(Platform platform, Guid id)
     {
         await using var conn = await platform.Data.OpenConnectionAsync();
         return await conn.ExecuteScalarAsync<string>("SELECT role FROM users WHERE id=@id", new { id });

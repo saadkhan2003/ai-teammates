@@ -84,6 +84,8 @@ builder.Services.AddSingleton(new DeviceGate(data));
 builder.Services.AddSingleton(loginBroker);
 builder.Services.AddSingleton(loginFlow);
 builder.Services.AddSingleton(runtime);
+builder.Services.AddSingleton(platform.AiRegistry);
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AiModelRegistry>());
 builder.Services.AddSingleton(data);
 builder.Services.AddHostedService<Maintenance>();
 builder.Services.AddHostedService(sp => new TaskLeaseMaintenance(
@@ -148,6 +150,7 @@ catch (Exception ex)
     app.Logger.LogError("computer isolation alert: computers will not start ({Message})", ex.Message);
 }
 Routes.Map(app, platform, runtime);
+AiAdmin.Map(app, platform);
 TeachRoutes.Map(app, platform);
 VncTicketRoutes.Map(app, platform);
 SecurityRoutes.Map(app, platform, loginFlow);
