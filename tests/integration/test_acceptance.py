@@ -752,8 +752,13 @@ def test_acceptance_suite():
             "-d",
             "agent",
             "-tA",
+            # Stream row by row: one string_agg over every model request grew past the
+            # postgres container's memory limit on a long-lived test database and got
+            # the backend OOM-killed, which took the database into recovery.
+            "-v",
+            "FETCH_COUNT=200",
             "-c",
-            "SELECT coalesce(string_agg(content,' '),'') FROM messages; SELECT coalesce(string_agg(prompt_json::text,' '),'') FROM model_requests; SELECT coalesce(string_agg(result::text,' '),'') FROM task_steps;",
+            "SELECT content FROM messages; SELECT prompt_json::text FROM model_requests; SELECT result::text FROM task_steps;",
         ],
         text=True,
     )
