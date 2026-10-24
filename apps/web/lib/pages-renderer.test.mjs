@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateExpression as calc, sanitizeMarkdown, parsePage, rendererBundle, nextGridSort } from './pages-renderer.mjs';
+import { evaluateExpression as calc, sanitizeMarkdown, parsePage, rendererBundle, rendererCss, nextGridSort, isNumericColumn, formatPageNumber, barChartLayout } from './pages-renderer.mjs';
 
 test('grid headers expose columnheader roles and cycle aria-sort none to ascending to descending', () => {
   const source = rendererBundle();
@@ -13,6 +13,27 @@ test('grid headers expose columnheader roles and cycle aria-sort none to ascendi
   state = nextGridSort(state.sort, state.ascending, state.hasSorted, 0);
   ariaSort.push(state.ascending ? 'ascending' : 'descending');
   assert.deepEqual(ariaSort, ['none', 'ascending', 'descending']);
+});
+
+test('numeric table columns align and format values with locale separators', () => {
+  const rows = [['2,400', 'North'], ['12500', 'South'], ['0', 'West']];
+  assert.equal(isNumericColumn(rows.map(row => [row[0].replaceAll(',', ''), row[1]]), 0), true);
+  assert.equal(isNumericColumn(rows, 1), false);
+  assert.equal(isNumericColumn([['2'], ['']], 0), true);
+  assert.equal(formatPageNumber(2400), '2,400');
+  const source = rendererBundle();
+  assert.match(rendererCss, /th\.numeric,td\.numeric\{text-align:right;font-variant-numeric:tabular-nums/);
+});
+
+test('bar layout retains every point, including zero values, with positive heights and a shared baseline', () => {
+  const points = barChartLayout([10, 0, 4]);
+  assert.equal(points.length, 3);
+  assert.ok(points.every(point => point.height > 0 && point.baseline === 206));
+  assert.ok(points[0].height > points[2].height);
+  const source = rendererBundle();
+  assert.match(source, /chart-label/);
+  assert.match(source, /chart-value/);
+  assert.match(source, /setAttribute\("stroke", "var\(--line\)"\)/);
 });
 
 test('calculator respects precedence, parentheses, unary signs and own numeric inputs', () => {

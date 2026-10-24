@@ -36,6 +36,26 @@ export function nextGridSort(sort, ascending, hasSorted, column) {
   return { sort: column, ascending: hasSorted && sort === column ? !ascending : true, hasSorted: true };
 }
 
+export function isNumericColumn(rows, column) {
+  const values = rows.map(row => String(row[column] ?? "").trim()).filter(Boolean);
+  return values.length > 0 && values.every(value => Number.isFinite(Number(value.replace(/,(?=\d{3}(?:\D|$))/g, ""))));
+}
+
+export function formatPageNumber(value) {
+  const number = typeof value === "string" ? Number(value.replace(/,(?=\d{3}(?:\D|$))/g, "")) : Number(value);
+  return number.toLocaleString(undefined, { maximumFractionDigits: 20 });
+}
+
+export function barChartLayout(values, slotWidth = 76) {
+  const max = Math.max(1, ...values);
+  const baseline = 206;
+  return values.map((value, index) => {
+    const height = value === 0 ? 2 : value / max * 170;
+    const x = index * slotWidth + slotWidth * 0.2;
+    return { x, width: slotWidth * 0.6, y: baseline - height, height, center: index * slotWidth + slotWidth / 2, baseline };
+  });
+}
+
 export function parsePage(source) {
   // Only JSON inside an exact `page` fence is a component. Everything else is text.
   const pieces = String(source).slice(0, 262144).split(/```page\s*\n([\s\S]*?)\n```/g);
@@ -100,15 +120,16 @@ export function runRenderer() {
         const columns = Array.isArray(item.columns) ? item.columns.slice(0, 30).map(String) : [];
         const rows = Array.isArray(item.rows) ? item.rows.slice(0, 1000).filter(Array.isArray).map(row => columns.map((_, i) => String(row[i] ?? "").slice(0, 2000))) : [];
         const table = el("table"), head = el("thead"), tr = el("tr"), body = el("tbody"); let sort = -1, ascending = true, hasSorted = false, query = "";
-        columns.forEach((column, i) => { const th = el("th"); th.scope = "col"; th.setAttribute("role", "columnheader");
+        const numeric = columns.map((_, i) => isNumericColumn(rows, i));
+        columns.forEach((column, i) => { const th = el("th"); th.scope = "col"; th.setAttribute("role", "columnheader"); if (numeric[i]) th.classList.add("numeric");
           if (item.type === "grid") { const b = el("button", column + " ↕"); b.type = "button"; th.setAttribute("aria-sort", "none"); b.addEventListener("click", () => { ({ sort, ascending, hasSorted } = nextGridSort(sort, ascending, hasSorted, i)); columns.forEach((_, index) => tr.children[index].setAttribute("aria-sort", index === sort ? (ascending ? "ascending" : "descending") : "none")); draw(); }); th.append(b); }
           else th.textContent = column;
           tr.append(th);
         });
         function draw() {
           const filtered = rows.filter(row => row.join(" ").toLowerCase().includes(query.toLowerCase()));
-          if (sort >= 0) filtered.sort((a, b) => a[sort].localeCompare(b[sort], undefined, { numeric: true }) * (ascending ? 1 : -1));
-          body.replaceChildren(); filtered.forEach(row => { const tr = el("tr"); row.forEach(cell => tr.append(el("td", cell))); body.append(tr); });
+          if (sort >= 0) filtered.sort((a, b) => (numeric[sort] ? Number(a[sort].replace(/,(?=\d{3}(?:\D|$))/g, "")) - Number(b[sort].replace(/,(?=\d{3}(?:\D|$))/g, "")) : a[sort].localeCompare(b[sort], undefined, { numeric: true })) * (ascending ? 1 : -1));
+          body.replaceChildren(); filtered.forEach(row => { const tr = el("tr"); row.forEach((cell, index) => { const td = el("td", numeric[index] && cell.trim() ? formatPageNumber(Number(cell)) : cell); if (numeric[index]) td.classList.add("numeric"); tr.append(td); }); body.append(tr); });
           if (!filtered.length) { const tr = el("tr"), td = el("td", "No matching rows"); td.colSpan = Math.max(1, columns.length); tr.append(td); body.append(tr); }
         }
         if (item.type === "grid") { const filter = el("input"); filter.placeholder = "Filter rows"; filter.setAttribute("aria-label", "Filter rows"); filter.addEventListener("input", () => { query = filter.value; draw(); }); section.append(filter); }
@@ -148,11 +169,20 @@ export function runRenderer() {
       }
       case "chart": {
         const rows = (Array.isArray(item.data) ? item.data : []).slice(0, 100).filter(row => row && Number.isFinite(row.value)).map(row => ({ label: String(row.label || ""), value: Math.max(0, Math.min(1e12, row.value)) }));
-        const total = rows.reduce((sum, row) => sum + row.value, 0), max = Math.max(1, ...rows.map(row => row.value));
-        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); svg.setAttribute("viewBox", "0 0 600 240"); svg.setAttribute("role", "img"); svg.setAttribute("aria-label", String(item.title || "Chart"));
+        const total = rows.reduce((sum, row) => sum + row.value, 0), max = Math.max(1, ...rows.map(row => row.value)), slotWidth = 76, chartWidth = Math.max(600, rows.length * slotWidth);
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); svg.setAttribute("viewBox", `0 0 ${chartWidth} 270`); svg.setAttribute("role", "img"); svg.setAttribute("aria-label", String(item.title || "Chart"));
         const colors = ["#4d8dff", "#6ec9a8", "#b49aff", "#f3b76c"];
         let angle = -Math.PI / 2;
-        rows.forEach((row, index) => {
+        if (item.chart === "bar") {
+          const points = barChartLayout(rows.map(row => row.value), slotWidth), baseline = document.createElementNS(svg.namespaceURI, "line");
+          baseline.setAttribute("x1", "0"); baseline.setAttribute("x2", String(chartWidth)); baseline.setAttribute("y1", "206"); baseline.setAttribute("y2", "206"); baseline.setAttribute("stroke", "var(--line)"); baseline.setAttribute("stroke-width", "1"); svg.append(baseline);
+          rows.forEach((row, index) => {
+            const point = points[index], rect = document.createElementNS(svg.namespaceURI, "rect");
+            rect.setAttribute("x", String(point.x)); rect.setAttribute("y", String(point.y)); rect.setAttribute("width", String(point.width)); rect.setAttribute("height", String(point.height)); rect.setAttribute("rx", "2"); rect.setAttribute("fill", colors[index % colors.length]); svg.append(rect);
+            const value = document.createElementNS(svg.namespaceURI, "text"); value.setAttribute("x", String(point.center)); value.setAttribute("y", String(Math.max(14, point.y - 6))); value.setAttribute("text-anchor", "middle"); value.setAttribute("class", "chart-value"); value.textContent = formatPageNumber(row.value); svg.append(value);
+            const label = document.createElementNS(svg.namespaceURI, "text"); label.setAttribute("x", String(point.center)); label.setAttribute("y", "232"); label.setAttribute("text-anchor", "middle"); label.setAttribute("class", "chart-label"); label.textContent = row.label.slice(0, 32); svg.append(label);
+          });
+        } else rows.forEach((row, index) => {
           let shape;
           if (item.chart === "pie" && total > 0) {
             const next = angle + row.value / total * Math.PI * 2;
@@ -167,7 +197,7 @@ export function runRenderer() {
           } else { shape = document.createElementNS(svg.namespaceURI, "rect"); shape.setAttribute("x", String(index * 600 / Math.max(1, rows.length))); shape.setAttribute("y", String(220 - row.value / max * 200)); shape.setAttribute("width", String(540 / Math.max(1, rows.length))); shape.setAttribute("height", String(row.value / max * 200)); }
           shape.setAttribute("fill", colors[index % colors.length]); svg.append(shape);
         });
-        section.append(svg); rows.forEach(row => section.append(el("span", row.label + ": " + row.value + "  ", "legend"))); break;
+        const chartWrap = el("div", null, "chart-wrap"); chartWrap.append(svg); section.append(chartWrap); if (item.chart !== "bar") rows.forEach(row => section.append(el("span", row.label + ": " + formatPageNumber(row.value) + "  ", "legend"))); break;
       }
       default: section.append(el("p", "This component could not be displayed.", "muted"));
     }
@@ -183,8 +213,8 @@ export function runRenderer() {
   parent.postMessage({ type: "page:ready" }, "*");
 }
 
-export const rendererCss = `:root{color-scheme:dark;--bg:#141414;--fg:#e7e9ea;--muted:#92969a;--line:#303236;--soft:#202225}.light{color-scheme:light;--bg:#fff;--fg:#202124;--muted:#687078;--line:#e2e4e7;--soft:#f5f6f7}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:380 14px/1.65 Inter,system-ui,sans-serif}main{max-width:1000px;margin:0 auto;padding:28px 32px 64px}.block{margin:0 0 20px}h1{font-size:28px;letter-spacing:-.7px}h2{font-size:22px}h3{font-size:16px}h1,h2,h3,h4{font-weight:600;line-height:1.3;margin:18px 0 12px}p{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0}input,select,button{font:450 13px Inter,system-ui,sans-serif;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:8px 10px}button{cursor:pointer}button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #4d8dff;outline-offset:2px}input:not([type=checkbox]):not([type=range]),select{max-width:100%;width:240px}.field{display:flex;flex-direction:column;gap:6px}.check{display:flex;align-items:center;gap:8px;margin:9px 0}.result{display:block;font-size:30px;font-weight:600;margin-top:4px}.muted,.legend{color:var(--muted);font-size:12px}.table-wrap{overflow:auto;margin-top:12px}table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);white-space:pre-wrap;overflow-wrap:anywhere;max-width:400px}th{font-weight:600}th button{padding:0;border:0;background:transparent;font-weight:600}.callout{background:var(--soft);border-left:3px solid #4d8dff;padding:12px 16px;border-radius:4px}.tabs{display:flex;gap:8px;border-bottom:1px solid var(--line);padding-bottom:8px}.tabs [aria-selected=true]{background:var(--soft)}progress{width:100%;accent-color:#4d8dff}svg{width:100%;max-height:300px}code{font-size:12px;background:var(--soft);padding:2px 4px;border-radius:3px}@media(max-width:600px){main{padding:20px 16px}}`;
+export const rendererCss = `:root{color-scheme:dark;--bg:#141414;--fg:#e7e9ea;--muted:#92969a;--line:#303236;--soft:#202225}.light{color-scheme:light;--bg:#fff;--fg:#202124;--muted:#687078;--line:#e2e4e7;--soft:#f5f6f7}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:380 14px/1.65 Inter,system-ui,sans-serif}main{max-width:1000px;margin:0 auto;padding:28px 32px 64px}.block{margin:0 0 20px}h1{font-size:28px;letter-spacing:-.7px}h2{font-size:22px}h3{font-size:16px}h1,h2,h3,h4{font-weight:600;line-height:1.3;margin:18px 0 12px}p{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0}input,select,button{font:450 13px Inter,system-ui,sans-serif;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:8px 10px}button{cursor:pointer}button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #4d8dff;outline-offset:2px}input:not([type=checkbox]):not([type=range]),select{max-width:100%;width:240px}.field{display:flex;flex-direction:column;gap:6px}.check{display:flex;align-items:center;gap:8px;margin:9px 0}.result{display:block;font-size:30px;font-weight:600;margin-top:4px}.muted,.legend{color:var(--muted);font-size:12px}.table-wrap{overflow:auto;margin-top:12px}table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);white-space:pre-wrap;overflow-wrap:anywhere;max-width:400px}th{font-weight:600}th.numeric,td.numeric{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}th button{padding:0;border:0;background:transparent;font-weight:600}.callout{background:var(--soft);border-left:3px solid #4d8dff;padding:12px 16px;border-radius:4px}.tabs{display:flex;gap:8px;border-bottom:1px solid var(--line);padding-bottom:8px}.tabs [aria-selected=true]{background:var(--soft)}progress{width:100%;accent-color:#4d8dff}.chart-wrap{max-width:100%;overflow-x:auto}svg{display:block;width:100%;max-height:300px;overflow:visible}.chart-wrap svg{width:auto;min-width:600px;height:270px;max-height:none}.chart-label,.chart-value{font:450 11px Inter,system-ui,sans-serif;fill:var(--muted)}.chart-value{fill:var(--fg);font-weight:600}code{font-size:12px;background:var(--soft);padding:2px 4px;border-radius:3px}@media(max-width:600px){main{padding:20px 16px}}`;
 
 export function rendererBundle() {
-  return [sanitizeMarkdown, evaluateExpression, nextGridSort, parsePage, runRenderer].map(fn => fn.toString()).join("\n") + "\nrunRenderer();";
+  return [sanitizeMarkdown, evaluateExpression, nextGridSort, isNumericColumn, formatPageNumber, barChartLayout, parsePage, runRenderer].map(fn => fn.toString()).join("\n") + "\nrunRenderer();";
 }
