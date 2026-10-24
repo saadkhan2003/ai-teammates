@@ -6,7 +6,7 @@ import urllib.request
 import uuid
 
 from test_acceptance import Client, login, worker_call, _psql
-from test_bot_messaging import _bot, _cleanup, _workspace
+from test_bot_messaging import _cleanup, _workspace
 from stack import BASE
 
 
@@ -18,11 +18,11 @@ def _public(url):
         return exc
 
 
-def test_search_filters_and_share_expiry_revoke_and_owner_scope():
+def test_search_filters_and_share_expiry_revoke_and_owner_scope(bot_factory):
     owner = login()
     suffix = uuid.uuid4().hex[:8]
-    first_bot = _bot(owner, "LibraryShare" + suffix)
-    second_bot = _bot(owner, "LibraryOther" + suffix)
+    first_bot = bot_factory(owner, "LibraryShare" + suffix)
+    second_bot = bot_factory(owner, "LibraryOther" + suffix)
     other = Client()
     other_bot = None
     try:
@@ -30,7 +30,7 @@ def test_search_filters_and_share_expiry_revoke_and_owner_scope():
         if not other.cookie:
             worker_call("POST", "/internal/test/users", {"username": "library-share-other", "password": "library-share-other-password"})
             assert other.call("POST", "/api/auth/login", {"username": "library-share-other", "password": "library-share-other-password"}, auth=False)[0] == 200
-        other_bot = _bot(other, "LibraryPrivate" + suffix)
+        other_bot = bot_factory(other, "LibraryPrivate" + suffix)
 
         name = "needle-" + suffix + ".txt"
         path = "/workspace/uploads/" + name

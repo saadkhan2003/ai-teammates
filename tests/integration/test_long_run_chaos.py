@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from test_acceptance import API, OPENROUTER, _psql, login, submit
-from test_bot_messaging import _bot, _workspace
+from test_bot_messaging import _bot, _workspace, _approval, _cleanup as _cleanup_bots
 from test_long_run_resume import _allow_write_paths
 
 
@@ -38,14 +38,18 @@ def _docker(*args: str) -> None:
     subprocess.run(["sudo", "docker", *args], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
 
 
-def _demo(text: str, budget: int | None = None):
+def _demo(text: str, budget: int | None = None, *, bot_factory=None):
     client = login()
     assert client.call("POST", "/api/secrets", {
         "namespace": "openrouter", "name": "default", "type": "API_KEY", "value": OPENROUTER,
     })[0] == 200
-    bot = _bot(client, "Chaos " + uuid.uuid4().hex[:6])
-    steps = int(re.search(r"LONG RUN DEMO\s+(\d+)", text).group(1))
-    _allow_write_paths(bot, [f"/workspace/long-run-step-{index:05d}.txt" for index in range(1, steps + 1)])
+    bot = (bot_factory or _bot)(client, "Chaos " + uuid.uuid4().hex[:6])
+    long_run = re.search(r"LONG RUN DEMO\s+(\d+)", text)
+    if long_run:
+        steps = int(long_run.group(1))
+        _allow_write_paths(bot, [f"/workspace/long-run-step-{index:05d}.txt" for index in range(1, steps + 1)])
+    elif text == "POISON STEP DEMO":
+        _allow_write_paths(bot, ["/workspace/poison-before.txt"])
     conversation = _workspace(client, bot)["conversationId"]
     if budget is not None:
         assert client.call("PATCH", f"/api/bots/{bot}/work-settings", {"maxSteps": budget, "pauseOnBudget": True})[0] == 200
@@ -55,7 +59,7 @@ def _demo(text: str, budget: int | None = None):
 
 def _cleanup(client, bot, task):
     _psql(f"DELETE FROM tasks WHERE id='{task}' AND bot_id='{bot}'")
-    client.call("DELETE", f"/api/bots/{bot}")
+    _cleanup_bots(client, bot)
 
 
 def _kill_restart():
@@ -89,8 +93,8 @@ def _wait_monotonic_terminal(task: str, expected: str, timeout: int = 150):
     raise AssertionError(f"task {task} did not reach {expected}; last stepsUsed={previous}")
 
 
-def test_real_docker_kill_resumes_once():
-    client, bot, task = _demo("LONG RUN DEMO 30 SLOW")
+def test_real_docker_kill_resumes_once(bot_factory):
+    client, bot, task = _demo("LONG RUN DEMO 30 SLOW", bot_factory=bot_factory)
     try:
         _wait_steps(task, 10)
         _kill_restart()
@@ -118,8 +122,8 @@ def test_real_docker_kill_resumes_once():
         _cleanup(client, bot, task)
 
 
-def test_paused_stale_worker_cannot_write_after_resume():
-    client, bot, task = _demo("LONG RUN DEMO 30 SLOW")
+def test_paused_stale_worker_cannot_write_after_resume(bot_factory):
+    client, bot, task = _demo("LONG RUN DEMO 30 SLOW", bot_factory=bot_factory)
     name = os.environ.get("AGENT_CONTAINER", "resume-agent-1")
     try:
         _wait_steps(task, 2)
@@ -147,8 +151,8 @@ def test_paused_stale_worker_cannot_write_after_resume():
         _cleanup(client, bot, task)
 
 
-def test_cumulative_budget_survives_multiple_worker_kills():
-    client, bot, task = _demo("LONG RUN DEMO 30 SLOW", budget=6)
+def test_cumulative_budget_survives_multiple_worker_kills(bot_factory):
+    client, bot, task = _demo("LONG RUN DEMO 30 SLOW", budget=6, bot_factory=bot_factory)
     try:
         _wait_steps(task, 2)
         first = int(_psql(f"SELECT coalesce((checkpoint->>'stepsUsed')::int,0) FROM tasks WHERE id='{task}'"))
@@ -162,10 +166,10 @@ def test_cumulative_budget_survives_multiple_worker_kills():
         _cleanup(client, bot, task)
 
 
-def test_poison_step_stops_after_no_progress_attempts():
+def test_poison_step_stops_after_no_progress_attempts(bot_factory):
     if os.environ.get("WORKER_POISON_MARKER", "") != "poison-step-marker":
         pytest.skip("requires agent environment WORKER_POISON_MARKER=poison-step-marker")
-    client, bot, task = _demo("POISON STEP DEMO")
+    client, bot, task = _demo("POISON STEP DEMO", bot_factory=bot_factory)
     try:
         _wait_for(f"SELECT status||':'||waiting_reason FROM tasks WHERE id='{task}'", "waiting_human:no_progress", 240)
         assert _psql(f"SELECT count(*) FROM task_run_events WHERE task_id='{task}' AND type='no_progress'") == "1"
@@ -176,8 +180,8 @@ def test_poison_step_stops_after_no_progress_attempts():
         _cleanup(client, bot, task)
 
 
-def test_auto_resume_ceiling_is_enforced():
-    client, bot, task = _demo("LONG RUN DEMO 30 SLOW")
+def test_auto_resume_ceiling_is_enforced(bot_factory):
+    client, bot, task = _demo("LONG RUN DEMO 30 SLOW", bot_factory=bot_factory)
     name = os.environ.get("AGENT_CONTAINER", "resume-agent-1")
     try:
         _wait_steps(task, 2)
@@ -205,9 +209,14 @@ def test_auto_resume_ceiling_is_enforced():
         _cleanup(client, bot, task)
 
 
-def test_shell_append_unknown_outcome_is_verified_after_resume():
-    client, bot, task = _demo("SHELL APPEND DEMO")
+def test_shell_append_unknown_outcome_is_verified_after_resume(bot_factory):
+    client, bot, task = _demo("SHELL APPEND DEMO", bot_factory=bot_factory)
     try:
+        # Redirection is intentionally reviewed by policy. Authorize this
+        # fixture's one append explicitly before exercising crash recovery.
+        approval = _approval(client, bot, "shell")
+        assert _psql(f"SELECT task_id FROM approvals WHERE id='{approval['id']}'") == task
+        assert client.call("POST", f"/api/approvals/{approval['id']}/decide", {"decision": "allow_once"})[0] == 200
         _wait_for(f"SELECT count(*) FROM task_steps WHERE task_id='{task}' AND tool='shell'", "1", 90)
         _kill_restart()
         _wait_for(f"SELECT status FROM tasks WHERE id='{task}'", "completed", 120)

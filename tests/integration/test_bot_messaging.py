@@ -53,7 +53,19 @@ def _pair():
 
 def _cleanup(client, *bots):
     for bot in bots:
-        client.call("DELETE", f"/api/bots/{bot}")
+        status, _ = client.call("DELETE", f"/api/bots/{bot}")
+        assert status in (204, 404), f"bot teardown failed: HTTP {status}"
+    _release_unused_computer(client)
+
+
+def _release_unused_computer(client):
+    # Bots share one computer per owner. Deleting a bot only wipes its files;
+    # stop the computer after the last fixture bot so it releases host capacity.
+    status, remaining = client.call("GET", "/api/bots")
+    assert status == 200
+    if not remaining:
+        status, _ = client.call("POST", "/api/computer/stop", {})
+        assert status in (200, 204), f"computer teardown failed: HTTP {status}"
 
 
 def test_message_asks_first_then_peer_replies_and_chats_show_the_thread():

@@ -4,6 +4,10 @@ The lr-1 backend work adds an API-owned checkpoint ledger capped at 8 KB, heartb
 
 Resume settings follow `docs/DECISIONS_DEFAULTS.md`: five automatic resumes per rolling hour, 12 coding rounds per attempt / 60 cumulative, and pause-on-budget enabled. Resume actions and owner budget changes are audited. The web notice/card UI and computer-facing presentation remain in the assigned UI chunk.
 
+Work tasks use their resolved step budget plus one final response as the cumulative model-round budget (at most 400 rounds per attempt). Chat and coding retain their separate configured round limits. Raising or continuing a work task's step budget also raises its model-round budget; the chaos suite needs no `ChatRounds` override.
+
+Computers are shared per owner. Deleting a bot wipes its workspace but retains the computer; `POST /api/computer/stop` releases an authenticated owner's unused computer after all their bots have been deleted. It refuses computers with remaining bots and records `computer.stopped` in the audit trail. The provider's existing capacity check counts running/provisioning computers, so stopped computers release capacity. Disposable-owner integration fixtures delete their bots and stop the unused computer even when setup fails. Tests that use the suite owner's existing computer reuse it.
+
 `POST /internal/tools/execute` now records the worker idempotency key for non-idempotent local tools (`shell`, file writes/edits/deletes, commits, environment setup, and tests). A completed call replays its scrubbed result with `deduped: true`; a concurrent or unresolved claim returns HTTP 409 with `status: in_progress`. These entries are task scoped and removed with the task.
 
 ## Chaos test hook (TEST ONLY)
