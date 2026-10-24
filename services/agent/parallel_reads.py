@@ -7,6 +7,7 @@ from typing import Awaitable, Callable
 READ_ONLY_TOOLS = frozenset({
     "read_file", "git_status", "git_diff", "search_memory", "search_tools",
     "list_bots", "list_routines", "get_routine", "child_status", "thread_status",
+    "job_status", "job_logs",
 })
 
 def parallel_safe(calls: list[dict]) -> bool:
