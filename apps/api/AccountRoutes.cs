@@ -160,7 +160,7 @@ public static class AccountRoutes
             if (string.IsNullOrWhiteSpace(objectKey)) return Results.NotFound();
             var obj = await platform.S3.GetObjectAsync(platform.Bucket, objectKey); return Results.Stream(obj.ResponseStream, obj.Headers.ContentType);
         });
-        app.MapDelete("/api/account", async (HttpContext ctx, JsonElement body) =>
+        app.MapDelete("/api/account", async (HttpContext ctx, [Microsoft.AspNetCore.Mvc.FromBody] JsonElement body) =>
         {
             var user = await User(ctx, platform); if (user is null) return Results.Unauthorized(); if (!SameOrigin(ctx)) return Results.StatusCode(403);
             if (!AccountSecurityPolicy.HasDeleteConfirmation(Text(body, "confirmation"))) return Results.BadRequest(new { error = "confirmation_mismatch" });
