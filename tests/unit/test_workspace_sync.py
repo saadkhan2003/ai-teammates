@@ -72,3 +72,12 @@ def test_pack_refuses_want_files_outside_the_root(tmp_path):
     for bad in ("/tmp/x.json", "../.sync-want-1.json", "want.json"):
         out = subprocess.run([sys.executable, str(SCRIPT), "pack", bad], env={"BOT_ROOT": str(tmp_path), "PATH": "/usr/bin:/bin"}, capture_output=True, text=True)
         assert out.returncode != 0
+
+
+def test_manifest_splits_mtime_so_no_number_looks_like_a_card(tmp_path):
+    # Exec output passes a card-number redactor; a 19-digit mtime_ns that passes Luhn came back as [REDACTED].
+    (tmp_path / "a.md").write_text("x")
+    os.utime(tmp_path / "a.md", ns=(1761330000123456789, 1761330000123456789))
+    row = run(tmp_path, "manifest")["files"][0]
+    assert row[0] == "a.md" and row[2] * 1_000_000_000 + row[3] == 1761330000123456789
+    assert all(len(str(v)) < 13 for v in row[1:])

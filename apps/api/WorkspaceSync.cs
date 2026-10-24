@@ -312,7 +312,8 @@ public sealed class WorkspaceSync(Platform platform, IObjectStore store, ILogger
         foreach (var row in json.GetProperty("files").EnumerateArray())
         {
             var path = row[0].GetString() ?? "";
-            if (SyncPlan.SafePath(path)) files.Add(new DiskFile(path, row[1].GetInt64(), row[2].GetInt64()));
+            var mtimeNs = row.GetArrayLength() >= 4 ? row[2].GetInt64() * 1_000_000_000L + row[3].GetInt64() : row[2].GetInt64();
+            if (SyncPlan.SafePath(path)) files.Add(new DiskFile(path, row[1].GetInt64(), mtimeNs));
         }
         return (json.GetProperty("token").GetString() ?? "", files);
     }

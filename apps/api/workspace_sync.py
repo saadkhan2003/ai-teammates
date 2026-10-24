@@ -36,7 +36,9 @@ def manifest():
             if not stat.S_ISREG(st.st_mode):
                 continue
             rel = os.path.relpath(full, ROOT)
-            files.append([rel, st.st_size, st.st_mtime_ns])
+            # mtime goes out as [seconds, nanoseconds]: a 19-digit mtime_ns can look like a
+            # card number to the exec output redactor and come back as [REDACTED].
+            files.append([rel, st.st_size, st.st_mtime_ns // 1_000_000_000, st.st_mtime_ns % 1_000_000_000])
             if len(files) >= MAX_FILES:
                 break
         if len(files) >= MAX_FILES:
