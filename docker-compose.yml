@@ -126,6 +126,8 @@ services:
       WORKER_TOKEN: ${WORKER_TOKEN:-dev-worker-token-change-me}
       WORKER_ID: ${WORKER_ID:-worker-1}
       WORKER_PARALLEL_TASKS: ${WORKER_PARALLEL_TASKS:-4}
+      MODEL_CONTEXT_TOKENS: ${MODEL_CONTEXT_TOKENS:-32000}
+      COMPACT_MAX_MESSAGES: ${COMPACT_MAX_MESSAGES:-120}
       MALLOC_ARENA_MAX: "2"
     networks:
       back: {}

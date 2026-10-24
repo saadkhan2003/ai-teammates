@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
+import { PG_CONTAINER } from "./containers";
 
 const owner = process.env.OWNER_USERNAME ?? "saad";
 const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
@@ -8,7 +9,7 @@ const tabs = ["Overview", "Computer", "Files/Media", "Skills", "Memory", "Tasks"
 const pages = ["/", "/settings", "/settings/secrets", "/settings/computer", "/settings/usage", "/system", "/invite"] as const;
 
 function psql(sql: string) {
-  const args = ["exec", "-i", "teammates-postgres-1", "psql", "-U", "agent", "-d", "agent", "-v", "ON_ERROR_STOP=1", "-c", sql];
+  const args = ["exec", "-i", PG_CONTAINER, "psql", "-U", "agent", "-d", "agent", "-v", "ON_ERROR_STOP=1", "-c", sql];
   let result = spawnSync("docker", args, { encoding: "utf8" });
   if (result.error || result.status !== 0) result = spawnSync("sudo", ["docker", ...args], { encoding: "utf8" });
   if (result.status !== 0) throw new Error(result.stderr || result.stdout || "psql failed");
@@ -141,8 +142,12 @@ test("phone layout, events, and live desktop", async ({ page }, testInfo) => {
   await expect(page.getByTestId("message-item").filter({ hasText: marker })).toBeVisible();
   await expect(page.getByTestId("event-stream")).not.toHaveAttribute("data-last-id", "");
   const lastId = await page.getByTestId("event-stream").getAttribute("data-last-id");
+  // An agent reply can land between reading data-last-id and the reconnect,
+  // so the resume header may carry that id or any later one.
+  const before = resumed.length;
+  const atOrAfter = (id: string) => id !== "" && (id === lastId || (/^\d+$/.test(id) && /^\d+$/.test(lastId ?? "") && BigInt(id) >= BigInt(lastId ?? "0")));
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
-  await expect.poll(() => resumed.includes(lastId ?? "")).toBe(true);
+  await expect.poll(() => resumed.slice(before).some(atOrAfter)).toBe(true);
   await expect(page.getByTestId("event-stream")).toHaveAttribute("data-state", "open");
   await noHorizontalScroll(page);
   await shot("chat");

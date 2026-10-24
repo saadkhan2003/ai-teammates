@@ -213,23 +213,26 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
             {
                 await runtime.RecoverOutbound(stoppingToken);
                 await using var conn = await platform.Data.OpenConnectionAsync(stoppingToken);
-                var stallSeconds = int.TryParse(Environment.GetEnvironmentVariable("STALL_SECONDS"), out var configuredStall) ? Math.Clamp(configuredStall, 30, 86400) : 300;
-                var stalled = await conn.QueryAsync<(Guid Id, Guid BotId, string Title, Guid? ConversationId, int Nudges, double IdleSeconds)>("SELECT id,bot_id,title,conversation_id,stall_nudges,extract(epoch from now()-last_progress_at) FROM tasks WHERE status='running' AND lease_until>now() AND blocked_reason IS NULL");
+                var stalled = await conn.QueryAsync<(Guid Id, Guid BotId, string Title, Guid? ConversationId, bool ForceCompact, double IdleSeconds, bool ToolInFlight)>("""
+                    SELECT t.id,t.bot_id,t.title,t.conversation_id,t.force_compact,
+                           extract(epoch from now()-coalesce((t.checkpoint->>'lastProgressAt')::timestamptz,t.last_progress_at)),
+                           (CASE WHEN t.checkpoint ? 'inFlightToolStartedAt' THEN
+                               now() < (t.checkpoint->>'inFlightToolStartedAt')::timestamptz
+                                   + (greatest(1,least(600,coalesce((t.checkpoint->>'inFlightToolTimeoutSeconds')::int,120))) * interval '1 second')
+                               ELSE false END)
+                    FROM tasks t WHERE t.status='running' AND t.lease_until>now()
+                    """);
                 foreach (var task in stalled)
                 {
-                    var decision = StallPolicy.Decide(TimeSpan.FromSeconds(task.IdleSeconds), task.Nudges, TimeSpan.FromSeconds(stallSeconds));
-                    if (decision == StallDecision.Nudge) await conn.ExecuteAsync("UPDATE tasks SET nudge_pending=true,stall_nudges=stall_nudges+1 WHERE id=@id AND stall_nudges=0", new { id = task.Id });
-                    else if (decision == StallDecision.Block)
+                    var decision = StallEscalation.Decide(task.IdleSeconds, platform.StallSoftSeconds, platform.StallHardSeconds, task.ForceCompact);
+                    if (decision == StallEscalationDecision.ForceCompact)
+                        await conn.ExecuteAsync("UPDATE tasks SET force_compact=true WHERE id=@id AND status='running' AND force_compact=false", new { id = task.Id });
+                    else if (decision == StallEscalationDecision.Abandon && !task.ToolInFlight)
                     {
-                        await conn.ExecuteAsync("UPDATE tasks SET blocked_reason='stalled' WHERE id=@id", new { id = task.Id });
-                        if (task.ConversationId != null) await conn.ExecuteAsync("INSERT INTO messages(conversation_id,role,content,task_id) VALUES(@conversation,'assistant',@text,@id)", new { conversation = task.ConversationId, id = task.Id, text = $"I'm stuck on {task.Title}. What should I do?" });
-                        var owner = await conn.ExecuteScalarAsync<Guid>("SELECT owner_id FROM bots WHERE id=@id", new { id = task.BotId });
-                        await platform.Notify(owner, "task.blocked", "Task is stuck", task.Title);
-                        await platform.Publish(new { type = "task", taskId = task.Id, status = "running", blocked = true });
+                        await conn.ExecuteAsync("UPDATE tasks SET lease_until=now(),checkpoint=jsonb_set(coalesce(checkpoint,'{}'::jsonb),'{stallEndReason}','\"stalled\"'::jsonb,true) WHERE id=@id AND status='running' AND lease_until>now()", new { id = task.Id });
                     }
                 }
-                var expired = await conn.ExecuteAsync("UPDATE tasks SET status='queued', lease_owner=NULL, lease_until=NULL, waiting_reason='lease_expired', updated_at=now() WHERE status='running' AND lease_until < now()");
-                if (expired > 0) platform.Tasks.Pulse();
+                await Reliability.SweepExpiredLeases(platform, platform.MaxAutoResumesPerHour);
                 await ResumeRecoveredComputers(stoppingToken);
                 if (++_tick % 10 == 0) await SampleComputers(stoppingToken);
                 if (_tick % 15 == 0)

@@ -3,6 +3,15 @@ namespace Teammates.Api;
 public static class RunBudget
 {
     public sealed record Budget(int MaxSteps, int MaxSeconds, string Label);
+    public static bool ResolvePauseOnBudget(bool? taskValue, bool? botValue, bool fallback = true) => taskValue ?? botValue ?? fallback;
+    public static bool TryParsePauseOnBudget(System.Text.Json.JsonElement body, out bool? value)
+    {
+        value = null;
+        if (body.ValueKind != System.Text.Json.JsonValueKind.Object || !body.TryGetProperty("pauseOnBudget", out var pause)) return true;
+        if (pause.ValueKind is not (System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False)) return false;
+        value = pause.GetBoolean();
+        return true;
+    }
     public static Budget Resolve(int? taskSteps, int? taskSeconds, int? botSteps, int? botSeconds)
     {
         var steps = Clamp(taskSteps ?? botSteps ?? 200, 4, 1000);
@@ -18,6 +27,15 @@ public static class StallPolicy
     public static StallDecision Decide(TimeSpan sinceProgress, int nudges, TimeSpan window) =>
         nudges >= 1 && sinceProgress >= window + window ? StallDecision.Block :
         nudges == 0 && sinceProgress >= window ? StallDecision.Nudge : StallDecision.None;
+}
+
+public enum StallEscalationDecision { None, ForceCompact, Abandon }
+public static class StallEscalation
+{
+    public static StallEscalationDecision Decide(double secondsSinceProgress, int softS, int hardS, bool forceCompactAlready) =>
+        secondsSinceProgress >= hardS ? StallEscalationDecision.Abandon :
+        secondsSinceProgress >= softS && !forceCompactAlready ? StallEscalationDecision.ForceCompact :
+        StallEscalationDecision.None;
 }
 
 public static class TestGate

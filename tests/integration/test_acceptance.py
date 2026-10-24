@@ -12,9 +12,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from stack import AGENT_CONTAINER, API, API_CONTAINER, BASE, MOCK_CONTAINER, PG
 
-BASE = os.environ.get("BASE_URL", "http://127.0.0.1:18080").rstrip("/")
-API = os.environ.get("API_URL", "http://127.0.0.1:18081").rstrip("/")
 OWNER = os.environ.get("OWNER_USERNAME", "saad")
 PASSWORD = os.environ.get("OWNER_PASSWORD", "teammates-dev")
 WORKER = os.environ.get("WORKER_TOKEN", "dev-worker-token-change-me")
@@ -64,10 +63,25 @@ def computer_slug(client: Client, bot_id: str) -> str:
     return "tm" + str(computer_id).replace("-", "").lower()
 
 
+_OWNER_COOKIE: str | None = None
+
+
 def login() -> Client:
+    """Owner session, reused across tests while it stays valid.
+
+    The API allows 30 login attempts per IP per 10 minutes. A full suite run
+    signs in far more often than that, so tests share one session instead.
+    """
+    global _OWNER_COOKIE
+    if _OWNER_COOKIE:
+        client = Client()
+        client.cookie = _OWNER_COOKIE
+        if client.call("GET", "/api/auth/me")[0] == 200:
+            return client
     client = Client()
     status, body = client.call("POST", "/api/auth/login", {"username": OWNER, "password": PASSWORD}, auth=False)
     assert status == 200, body
+    _OWNER_COOKIE = client.cookie
     return client
 
 
@@ -162,7 +176,7 @@ def assert_clean(text: str) -> None:
 
 def _psql(sql: str) -> str:
     return subprocess.check_output(
-        ["sudo", "docker", "exec", "teammates-postgres-1", "psql", "-U", "agent", "-d", "agent", "-tA", "-c", sql],
+        ["sudo", "docker", "exec", PG, "psql", "-U", "agent", "-d", "agent", "-tA", "-c", sql],
         text=True,
     ).strip()
 
@@ -516,6 +530,8 @@ def test_acceptance_suite():
     assert cleared["status"] == "completed", cleared
     assert "captcha" not in result_text(cleared).lower()
 
+    # A domain grant from an earlier run would skip the approval card. Start clean (test stack DB only).
+    _psql("DELETE FROM credential_domain_grants WHERE domain='portal.example.edu'")
     typed_id = submit(client, conversation, "Type the stored password into the login form at http://portal.example.edu:8099/login.html using secret://university/password")
     approve(client, bot_id, "type_secret", "allow_domain")
     typed = wait_task(client, bot_id, typed_id, timeout=150)
@@ -588,7 +604,7 @@ def test_acceptance_suite():
     assert "teammates_probe" in raw
 
     before = wait_task(client, bot_id, submit(client, conversation, "What should I call you?", as_task=False))
-    subprocess.check_call(["sudo", "docker", "restart", "teammates-api-1"])
+    subprocess.check_call(["sudo", "docker", "restart", API_CONTAINER])
     deadline = time.time() + 60
     while time.time() < deadline:
         try:
@@ -627,19 +643,19 @@ def test_acceptance_suite():
     status, after_delete = client.call("GET", f"/api/secrets/{github['id']}/usage")
     assert status == 200 and any(item.get("event") == "secret.deleted" for item in after_delete)
 
-    dump = subprocess.check_output(["sudo", "docker", "exec", "teammates-postgres-1", "pg_dump", "-U", "agent", "-d", "agent", "-Fc"], stderr=subprocess.DEVNULL)
+    dump = subprocess.check_output(["sudo", "docker", "exec", PG, "pg_dump", "-U", "agent", "-d", "agent", "-Fc"], stderr=subprocess.DEVNULL)
     master = open(os.environ.get("SECRETS_MASTER_KEY_PATH", os.path.join(os.path.dirname(__file__), "..", "..", "secrets", "secrets_master_key")), "rb").read()
     assert master not in dump
-    subprocess.check_call(["sudo", "docker", "exec", "-i", "teammates-postgres-1", "psql", "-U", "agent", "-d", "postgres", "-c", "DROP DATABASE IF EXISTS agent_restore"])
-    subprocess.check_call(["sudo", "docker", "exec", "-i", "teammates-postgres-1", "psql", "-U", "agent", "-d", "postgres", "-c", "CREATE DATABASE agent_restore"])
-    restore = subprocess.Popen(["sudo", "docker", "exec", "-i", "teammates-postgres-1", "pg_restore", "-U", "agent", "-d", "agent_restore", "--no-owner"], stdin=subprocess.PIPE)
+    subprocess.check_call(["sudo", "docker", "exec", "-i", PG, "psql", "-U", "agent", "-d", "postgres", "-c", "DROP DATABASE IF EXISTS agent_restore"])
+    subprocess.check_call(["sudo", "docker", "exec", "-i", PG, "psql", "-U", "agent", "-d", "postgres", "-c", "CREATE DATABASE agent_restore"])
+    restore = subprocess.Popen(["sudo", "docker", "exec", "-i", PG, "pg_restore", "-U", "agent", "-d", "agent_restore", "--no-owner"], stdin=subprocess.PIPE)
     restore.communicate(dump)
     hex_row = subprocess.check_output(
         [
             "sudo",
             "docker",
             "exec",
-            "teammates-postgres-1",
+            PG,
             "psql",
             "-U",
             "agent",
@@ -666,17 +682,17 @@ def test_acceptance_suite():
     assert opened == PORTAL_PASSWORD.encode()
     opened = b""
 
-    logs = subprocess.check_output(["sudo", "docker", "logs", "teammates-api-1"], stderr=subprocess.STDOUT, text=True, errors="replace")
-    logs += subprocess.check_output(["sudo", "docker", "logs", "teammates-agent-1"], stderr=subprocess.STDOUT, text=True, errors="replace")
+    logs = subprocess.check_output(["sudo", "docker", "logs", API_CONTAINER], stderr=subprocess.STDOUT, text=True, errors="replace")
+    logs += subprocess.check_output(["sudo", "docker", "logs", AGENT_CONTAINER], stderr=subprocess.STDOUT, text=True, errors="replace")
     logs += subprocess.check_output(["sudo", "docker", "logs", slug], stderr=subprocess.STDOUT, text=True, errors="replace")
-    logs += subprocess.check_output(["sudo", "docker", "logs", "teammates-mock-openrouter-1"], stderr=subprocess.STDOUT, text=True, errors="replace")
+    logs += subprocess.check_output(["sudo", "docker", "logs", MOCK_CONTAINER], stderr=subprocess.STDOUT, text=True, errors="replace")
     assert_clean(logs)
     columns = subprocess.check_output(
         [
             "sudo",
             "docker",
             "exec",
-            "teammates-postgres-1",
+            PG,
             "psql",
             "-U",
             "agent",

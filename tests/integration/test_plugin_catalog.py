@@ -6,8 +6,8 @@ import os
 import urllib.error
 import urllib.request
 
-BASE = os.environ.get("BASE_URL", "http://127.0.0.1:18080").rstrip("/")
-API = os.environ.get("API_URL", "http://127.0.0.1:18081").rstrip("/")
+from stack import BASE
+from stack import API
 OWNER = os.environ.get("OWNER_USERNAME", "saad")
 PASSWORD = os.environ.get("OWNER_PASSWORD", "teammates-dev")
 WORKER = os.environ.get("WORKER_TOKEN", "dev-worker-token-change-me")
@@ -45,9 +45,11 @@ class Client:
 
 
 def login() -> Client:
+    # Share the owner session with the other suites (login is rate limited).
+    from test_acceptance import login as owner_login
+
     client = Client()
-    status, body = client.call("POST", "/api/auth/login", {"username": OWNER, "password": PASSWORD}, auth=False)
-    assert status == 200, body
+    client.cookie = owner_login().cookie
     return client
 
 

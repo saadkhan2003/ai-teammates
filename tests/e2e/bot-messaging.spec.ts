@@ -116,7 +116,7 @@ test("the teammate settings switch turns peer messaging off", async ({ page }) =
   const toggle = page.getByTestId("settings-peer-messaging");
   await expect(toggle).toBeChecked();
   await toggle.click();
-  await page.getByTestId("bot-settings").getByRole("button", { name: /save/i }).click();
+  await page.getByTestId("bot-settings").getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(async () => {
     const response = await page.request.get("/api/bots");
     const bots = (await response.json()) as { id: string; peerMessaging?: boolean }[];

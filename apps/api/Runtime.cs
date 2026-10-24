@@ -19,6 +19,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         var taskId = body.GetProperty("taskId").GetGuid();
         var botId = body.GetProperty("botId").GetGuid();
         var owner = await OwnerOf(botId);
+        var role = body.TryGetProperty("role", out var roleElement) && roleElement.GetString() == "compactor" ? "compactor" : "planner";
         var messages = body.GetProperty("messages");
         var secret = await platform.Resolve(owner, "secret://openrouter/default", "model_gateway", botId, null, taskId, "model_gateway");
         if (secret == null)
@@ -26,7 +27,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         var key = Encoding.UTF8.GetString(secret);
         CryptographicOperations.ZeroMemory(secret);
         var redacted = RedactMessages(messages, key);
-        var payload = ProviderWire.Completion(platform.ModelName, redacted, await ToolsFor(botId, ct));
+        var payload = ProviderWire.Completion(platform.ModelName, redacted, role == "compactor" ? Array.Empty<object>() : await ToolsFor(botId, ct));
         using var request = new HttpRequestMessage(HttpMethod.Post, platform.OpenRouterBase + "/chat/completions");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
         request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
@@ -36,17 +37,19 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         key = "";
         if (!response.IsSuccessStatusCode)
         {
-            await StoreModel(owner, botId, taskId, redacted, false, (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds, default);
-            return Results.Json(new { status = "error", error = "provider rejected the request" });
+            await StoreModel(owner, botId, taskId, redacted, false, (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds, default, role);
+            var contextError = raw.Contains("context_length", StringComparison.OrdinalIgnoreCase) || raw.Contains("maximum context", StringComparison.OrdinalIgnoreCase) || raw.Contains("too many tokens", StringComparison.OrdinalIgnoreCase);
+            return Results.Json(new { status = "error", error = "provider rejected the request", errorCode = contextError ? "context_length" : "provider_error" });
         }
         using var doc = JsonDocument.Parse(raw);
         var message = doc.RootElement.GetProperty("choices")[0].GetProperty("message");
         var normalized = ProviderWire.Normalize(message);
         var normalizedText = OutputRedactor.Redact(normalized.GetRawText(), []);
-        await StoreModel(owner, botId, taskId, redacted, true, (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds, ProviderWire.ReadUsage(doc.RootElement));
+        var usage = ProviderWire.ReadUsage(doc.RootElement);
+        await StoreModel(owner, botId, taskId, redacted, true, (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds, usage, role);
         await using var conn = await platform.Data.OpenConnectionAsync(ct);
         await conn.ExecuteAsync("UPDATE tasks SET model_calls = model_calls + 1, updated_at=now() WHERE id=@id", new { id = taskId });
-        return Results.Text("{\"status\":\"ok\",\"message\":" + normalizedText + "}", "application/json");
+        return Results.Text("{\"status\":\"ok\",\"message\":" + normalizedText + ",\"promptTokens\":" + usage.PromptTokens.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}", "application/json");
     }
 
     public async Task<IResult> Authorize(JsonElement body, CancellationToken ct)
@@ -89,13 +92,13 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         var invalid = ToolSchema.Validate(tool, args);
         if (invalid != null)
         {
-            await Step(taskId, tool, args, "invalid", false, new { reason = invalid });
+            await Step(taskId, tool, args, "invalid", false, new { reason = invalid }, EpochOf(body));
             return Results.Json(new { ok = false, status = "invalid", reason = invalid });
         }
         var owner = await OwnerOf(botId);
         if (tool == "update_routine" && await BotMessaging.UpdateBlocked(platform, owner, botId, taskId, args, ct) is { } blocked)
         {
-            await Step(taskId, tool, args, "deny", false, new { reason = blocked, riskClass = ActionClasses.BotManage });
+            await Step(taskId, tool, args, "deny", false, new { reason = blocked, riskClass = ActionClasses.BotManage }, EpochOf(body));
             return Results.Json(new { ok = false, status = "denied", reason = blocked, riskClass = ActionClasses.BotManage });
         }
         var gated = await Gate(botId, taskId, tool, args, false, ct);
@@ -105,7 +108,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
             if (Arg(args, "command").Contains("secret://", StringComparison.Ordinal) || Arg(args, "secret_ref").Length > 0)
                 await platform.SecretEvent(null, "secret.denied", "policy", botId, taskId, tool, Arg(args, "url"), "deny", gated.Reason);
             await platform.Audit("policy", "tool.denied", botId, taskId, new { tool, reason = gated.Reason, riskClass = gated.RiskClass });
-            await Step(taskId, tool, args, decision, false, new { reason = gated.Reason, riskClass = gated.RiskClass });
+            await Step(taskId, tool, args, decision, false, new { reason = gated.Reason, riskClass = gated.RiskClass }, EpochOf(body));
             return Results.Json(new { ok = false, status = "denied", reason = gated.Reason, riskClass = gated.RiskClass });
         }
         if (decision == PolicyEngine.Ask && !await ConsumeApproval(taskId, tool))
@@ -115,6 +118,50 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
             return Results.Json(new { ok = false, status = "waiting_approval", riskClass = gated.RiskClass, summary = gated.Summary });
         }
         if (decision == PolicyEngine.Ask) decision = PolicyEngine.Allow;
+        var idempotencyKey = body.TryGetProperty("idempotencyKey", out var keyElement) && keyElement.ValueKind == JsonValueKind.String
+            ? keyElement.GetString()
+            : null;
+        var dedupe = ToolDedupe.Applies(tool, idempotencyKey);
+        if (dedupe)
+        {
+            await using var conn = await platform.Data.OpenConnectionAsync(ct);
+            var claimed = await conn.ExecuteScalarAsync<int>("""
+                INSERT INTO tool_execution_dedupe (task_id, idempotency_key, tool, status)
+                VALUES (@taskId, @key, @tool, 'in_progress')
+                ON CONFLICT (task_id, idempotency_key) DO NOTHING
+                RETURNING 1
+                """, new { taskId, key = idempotencyKey, tool });
+            if (claimed == 0)
+            {
+                var prior = await conn.QuerySingleAsync<(string Status, string? Result, double AgeSeconds)>(
+                    "SELECT status, result::text, EXTRACT(EPOCH FROM (now()-created_at))::float8 AS AgeSeconds FROM tool_execution_dedupe WHERE task_id=@taskId AND idempotency_key=@key",
+                    new { taskId, key = idempotencyKey });
+                var priorDecision = ToolDedupe.Decide(prior.Status, prior.AgeSeconds);
+                if (priorDecision == "execute" && prior.Status == "in_progress")
+                {
+                    await conn.ExecuteAsync("DELETE FROM tool_execution_dedupe WHERE task_id=@taskId AND idempotency_key=@key AND status='in_progress' AND created_at < now() - interval '5 minutes'", new { taskId, key = idempotencyKey });
+                    claimed = await conn.ExecuteScalarAsync<int>("""
+                        INSERT INTO tool_execution_dedupe (task_id, idempotency_key, tool, status)
+                        VALUES (@taskId, @key, @tool, 'in_progress')
+                        ON CONFLICT (task_id, idempotency_key) DO NOTHING
+                        RETURNING 1
+                        """, new { taskId, key = idempotencyKey, tool });
+                    if (claimed == 0)
+                        return Results.Json(new { ok = false, status = "in_progress" }, statusCode: 409);
+                    priorDecision = "execute";
+                }
+                switch (claimed == 1 ? "execute" : priorDecision)
+                {
+                    case "replay":
+                        var stored = InjectionFilter.ScrubJson(prior.Result ?? "null");
+                        return Results.Text("{\"ok\":true,\"output\":" + stored + ",\"deduped\":true}", "application/json");
+                    case "in_progress":
+                        return Results.Json(new { ok = false, status = "in_progress" }, statusCode: 409);
+                }
+            }
+        }
+        var completed = false;
+        object? snapshot = null;
         try
         {
             var output = await Dispatch(owner, botId, taskId, tool, args, ct);
@@ -123,7 +170,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
                 using var result = JsonDocument.Parse(JsonSerializer.Serialize(output));
                 if (result.RootElement.TryGetProperty("ok", out var success) && success.ValueKind == JsonValueKind.False)
                 {
-                    await Step(taskId, tool, args, decision, false, output);
+                    await Step(taskId, tool, args, decision, false, output, EpochOf(body));
                     return Results.Json(output);
                 }
             }
@@ -132,15 +179,27 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
                 var json = JsonSerializer.Serialize(output);
                 using var parsed = JsonDocument.Parse(json);
                 var ok = parsed.RootElement.TryGetProperty("ok", out var flag) && flag.ValueKind == JsonValueKind.True;
-                await Step(taskId, tool, args, decision, ok, output);
+                await Step(taskId, tool, args, decision, ok, output, EpochOf(body));
                 return Results.Json(output);
             }
-            await Step(taskId, tool, args, decision, true, output);
-            return Results.Json(new { ok = true, output });
+            await Step(taskId, tool, args, decision, true, output, EpochOf(body));
+            if ((tool is "write_file" or "edit_file" or "git_commit" or "shell") && SuccessfulMutation(tool, output))
+                snapshot = await TrySnapshot(botId, taskId, EpochOf(body), tool, args, ct);
+            if (dedupe)
+            {
+                var safeResult = InjectionFilter.ScrubJson(JsonSerializer.Serialize(output));
+                await using var conn = await platform.Data.OpenConnectionAsync(ct);
+                var updated = await conn.ExecuteAsync("""
+                    UPDATE tool_execution_dedupe SET status='completed', result=CAST(@result AS jsonb), completed_at=now()
+                    WHERE task_id=@taskId AND idempotency_key=@key AND status='in_progress'
+                    """, new { taskId, key = idempotencyKey, result = safeResult });
+                completed = updated == 1;
+            }
+            return Results.Json(new { ok = true, output, snapshot });
         }
         catch (ToolHalt halt)
         {
-            await Step(taskId, tool, args, decision, false, new { halt.Status, halt.Reason });
+            await Step(taskId, tool, args, decision, false, new { halt.Status, halt.Reason }, EpochOf(body));
             return Results.Json(new { ok = false, status = halt.Status, reason = halt.Reason });
         }
         catch (ComputeException ex) when (ex.IsRecovering)
@@ -149,8 +208,88 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         }
         catch (ComputeException ex) when (ex.Code == ComputeErrorCode.PermissionDenied)
         {
-            await Step(taskId, tool, args, decision, false, new { reason = ex.Message });
+            await Step(taskId, tool, args, decision, false, new { reason = ex.Message }, EpochOf(body));
             return Results.Json(new { ok = false, status = "denied", reason = ex.Message });
+        }
+        finally
+        {
+            if (dedupe && !completed)
+            {
+                await using var conn = await platform.Data.OpenConnectionAsync(CancellationToken.None);
+                await conn.ExecuteAsync("DELETE FROM tool_execution_dedupe WHERE task_id=@taskId AND idempotency_key=@key AND status='in_progress'", new { taskId, key = idempotencyKey });
+            }
+        }
+    }
+
+    private static bool SuccessfulMutation(string tool, object output)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(JsonSerializer.Serialize(output));
+            var root = doc.RootElement;
+            if (root.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.False) return false;
+            return !root.TryGetProperty("exitCode", out var code) || code.GetInt32() == 0;
+        }
+        catch { return false; }
+    }
+
+    private async Task<object?> TrySnapshot(Guid botId, Guid taskId, int epoch, string tool, JsonElement args, CancellationToken ct)
+    {
+        try
+        {
+            await using var conn = await platform.Data.OpenConnectionAsync(ct);
+            var checkpoint = await conn.ExecuteScalarAsync<string>("SELECT checkpoint::text FROM tasks WHERE id=@task", new { task = taskId });
+            var ledger = TaskCheckpoint.Read(checkpoint);
+            var interval = int.TryParse(Environment.GetEnvironmentVariable("SNAPSHOT_MIN_INTERVAL_SECONDS"), out var configured) ? Math.Clamp(configured, 30, 86400) : 300;
+            if (DateTimeOffset.TryParse((string?)ledger["snapshotAt"], out var previous) && DateTimeOffset.UtcNow - previous < TimeSpan.FromSeconds(interval)) return null;
+            var candidates = new List<string>();
+            if (args.TryGetProperty("repo", out var repoEl))
+            {
+                var repo = CodingTools.Repo(repoEl.GetString() ?? ".");
+                if (repo == null) return null;
+                candidates.Add(repo);
+            }
+            else if ((tool is "write_file" or "edit_file") && args.TryGetProperty("path", out var fileEl))
+            {
+                var file = fileEl.GetString() ?? "";
+                if (file.StartsWith("/workspace/", StringComparison.Ordinal)) file = file[11..];
+                if (file.StartsWith('/') || file.Split('/').Contains("..")) return null;
+                var parts = file.Split('/', StringSplitOptions.RemoveEmptyEntries).ToList();
+                if (parts.Count > 0) parts.RemoveAt(parts.Count - 1);
+                while (parts.Count > 0) { candidates.Add(string.Join('/', parts)); parts.RemoveAt(parts.Count - 1); }
+                candidates.Add(".");
+            }
+            else candidates.Add(".");
+            var placement = await platform.PlacementForBot(botId, ct);
+            string? path = null;
+            foreach (var candidate in candidates)
+            {
+                var candidatePath = BotFs.Root(botId) + (candidate == "." ? "" : "/" + candidate);
+                var (checkCode, _, _) = await Run(placement.Computer, botId, ["git", "-C", candidatePath, "rev-parse", "--git-dir"], null, ct);
+                if (checkCode == 0) { path = candidatePath; break; }
+            }
+            if (path == null) return null;
+            if (tool == "shell")
+            {
+                var (statusCode, status, _) = await Run(placement.Computer, botId, ["git", "-C", path, "status", "--porcelain"], null, ct);
+                if (statusCode != 0 || string.IsNullOrWhiteSpace(status)) return null;
+            }
+            var (stashCode, sha, _) = await Run(placement.Computer, botId, ["git", "-C", path, "stash", "create"], null, ct);
+            sha = sha.Trim();
+            if (stashCode != 0 || sha.Length != 40) return null;
+            var reference = "refs/teammates/checkpoints/" + taskId.ToString("N")[..8];
+            var (refCode, _, _) = await Run(placement.Computer, botId, ["git", "-C", path, "update-ref", reference, sha], null, ct);
+            if (refCode != 0) return null;
+            var at = DateTimeOffset.UtcNow;
+            ledger["snapshotRef"] = reference;
+            ledger["snapshotAt"] = at.ToString("O");
+            await conn.ExecuteAsync("UPDATE tasks SET checkpoint=@checkpoint::jsonb WHERE id=@task AND status='running' AND lease_epoch=@epoch", new { task = taskId, epoch, checkpoint = TaskCheckpoint.Bounded(ledger) });
+            return new { snapshotRef = reference, snapshotAt = at.ToString("O") };
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.TraceWarning("git snapshot skipped ({0})", ex.GetType().Name);
+            return null;
         }
     }
 
@@ -163,7 +302,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         var tool = body.GetProperty("tool").GetString() ?? "browser";
         var output = body.GetProperty("output");
         var redacted = InjectionFilter.ScrubJson(output.GetRawText());
-        await Step(taskId, tool, body.TryGetProperty("args", out var args) ? args : default, PolicyEngine.Allow, true, JsonDocument.Parse(redacted).RootElement);
+        await Step(taskId, tool, body.TryGetProperty("args", out var args) ? args : default, PolicyEngine.Allow, true, JsonDocument.Parse(redacted).RootElement, epoch);
         if (output.TryGetProperty("targetId", out var target) && target.GetString() is { Length: > 0 } targetId)
         {
             await using var conn = await platform.Data.OpenConnectionAsync(ct);
@@ -770,15 +909,28 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
     private async Task<bool> SetTask(Guid taskId, string status, string? reason, bool clearLease, int epoch, CancellationToken ct)
     {
         await using var conn = await platform.Data.OpenConnectionAsync(ct);
+        var ending = clearLease ? await conn.QuerySingleOrDefaultAsync<(string? Checkpoint, int Attempt, int Steps, string? Worker)>("""
+            SELECT checkpoint::text,attempt,(SELECT count(*)::int FROM task_steps WHERE task_id=@id),lease_owner
+            FROM tasks WHERE id=@id AND status='running' AND lease_epoch=@epoch
+            """, new { id = taskId, epoch }) : default;
         var n = await conn.ExecuteAsync(
             clearLease
                 ? "UPDATE tasks SET status=@status, waiting_reason=@reason, lease_owner=NULL, lease_until=NULL, updated_at=now() WHERE id=@id AND status='running' AND lease_epoch=@epoch"
                 : "UPDATE tasks SET status=@status, waiting_reason=@reason, updated_at=now() WHERE id=@id AND status='running' AND lease_epoch=@epoch",
             new { id = taskId, status, reason, epoch });
+        if (n > 0 && clearLease && ending.Checkpoint != null)
+        {
+            var ledger = TaskCheckpoint.Read(ending.Checkpoint);
+            var now = DateTimeOffset.UtcNow;
+            var started = DateTimeOffset.TryParse((string?)ledger["attemptStartedAt"], out var at) ? at : now;
+            var progress = DateTimeOffset.TryParse((string?)ledger["lastProgressAt"], out var progressAt) && progressAt > started;
+            await AttemptLog.Record(conn, null, taskId, ending.Attempt, started, now,
+                Math.Max(0, ending.Steps - ((int?)ledger["attemptStepsAtStart"] ?? 0)), reason ?? status, progress, ending.Worker);
+        }
         return n > 0;
     }
 
-    private async Task Step(Guid taskId, string tool, JsonElement args, string policy, bool ok, object result)
+    private async Task Step(Guid taskId, string tool, JsonElement args, string policy, bool ok, object result, int epoch)
     {
         var json = result is JsonElement element ? element.GetRawText() : JsonSerializer.Serialize(result);
         json = InjectionFilter.ScrubJson(json);
@@ -788,7 +940,38 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         await conn.ExecuteAsync(
             "INSERT INTO task_steps (task_id, seq, tool, args, result, policy, ok, finished_at) VALUES (@task, @seq, @tool, @args::jsonb, @result::jsonb, @policy, @ok, now())",
             new { task = taskId, seq, tool, args = safeArgs, result = json, policy, ok });
-        await conn.ExecuteAsync("UPDATE tasks SET last_progress_at=now(), blocked_reason=NULL, tests_passed_at=CASE WHEN @tool IN ('write_file','edit_file','delete_file') AND @ok THEN NULL ELSE tests_passed_at END WHERE id=@task", new { task = taskId, tool, ok });
+        await conn.ExecuteAsync("""
+            UPDATE tasks SET last_progress_at=now(), blocked_reason=NULL,
+                checkpoint=jsonb_set(coalesce(checkpoint,'{}'::jsonb),'{stepsUsed}',to_jsonb(@seq),true),
+                tests_passed_at=CASE WHEN @tool IN ('write_file','edit_file','delete_file') AND @ok THEN NULL ELSE tests_passed_at END
+            WHERE id=@task AND status='running' AND lease_epoch=@epoch
+            """, new { task = taskId, seq, tool, ok, epoch });
+        if (ok && tool is "write_file" or "edit_file" or "delete_file" or "shell" or "git_commit" or "plan_set" or "plan_update")
+            await conn.ExecuteAsync("UPDATE tasks SET checkpoint=jsonb_set(coalesce(checkpoint,'{}'::jsonb),'{lastProgressAt}',to_jsonb(now()::text),true) WHERE id=@task AND status='running' AND lease_epoch=@epoch", new { task = taskId, epoch });
+        if (tool is "plan_set" or "plan_update")
+        {
+            var plan = await conn.QuerySingleAsync<(int Done, int Total, string? Current)>("""
+                SELECT count(*) FILTER (WHERE status='done')::int AS done,count(*)::int AS total,
+                    (SELECT title FROM task_plan_items WHERE task_id=@task AND status<>'done' ORDER BY position LIMIT 1) AS current
+                FROM task_plan_items WHERE task_id=@task
+                """, new { task = taskId });
+            var safeCurrent = plan.Current == null ? null : OutputRedactor.Redact(plan.Current);
+            var current = safeCurrent == null ? null : safeCurrent[..Math.Min(120, safeCurrent.Length)];
+            var planJson = JsonSerializer.Serialize(new { done = plan.Done, total = plan.Total, current });
+            await conn.ExecuteAsync("UPDATE tasks SET checkpoint=jsonb_set(coalesce(checkpoint,'{}'::jsonb),'{planPosition}',@plan::jsonb,true) WHERE id=@task AND status='running' AND lease_epoch=@epoch", new { task = taskId, epoch, plan = planJson });
+        }
+        if (tool == "git_commit" && ok)
+        {
+            try
+            {
+                using var resultDoc = JsonDocument.Parse(JsonSerializer.Serialize(result));
+                var stdout = resultDoc.RootElement.TryGetProperty("stdout", out var output) ? output.GetString() : null;
+                var sha = System.Text.RegularExpressions.Regex.Match(stdout ?? "", @"\b[0-9a-f]{40}\b").Value;
+                if (sha.Length == 40)
+                    await conn.ExecuteAsync("UPDATE tasks SET checkpoint=jsonb_set(coalesce(checkpoint,'{}'::jsonb),'{lastCommit}',jsonb_build_object('sha',@sha,'at',now()::text),true) WHERE id=@task AND status='running' AND lease_epoch=@epoch", new { task = taskId, epoch, sha });
+            }
+            catch (JsonException) { }
+        }
     }
 
     public async Task RecoverOutbound(CancellationToken ct)
@@ -987,15 +1170,15 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         return new { replayed = true, output };
     }
 
-    private async Task StoreModel(Guid owner, Guid botId, Guid taskId, JsonElement prompt, bool ok, int latency, TokenUsage usage)
+    private async Task StoreModel(Guid owner, Guid botId, Guid taskId, JsonElement prompt, bool ok, int latency, TokenUsage usage, string role = "planner")
     {
         await using var conn = await platform.Data.OpenConnectionAsync();
         await conn.ExecuteAsync(
             "INSERT INTO model_requests (owner_id, bot_id, task_id, provider, model, prompt_json) VALUES (@owner, @bot, @task, @provider, @model, @prompt::jsonb)",
             new { owner, bot = botId, task = taskId, provider = platform.LlmProvider, model = platform.ModelName, prompt = prompt.GetRawText() });
         await conn.ExecuteAsync(
-            "INSERT INTO model_calls (bot_id, task_id, owner_id, role, provider, model, latency_ms, prompt_tokens, completion_tokens, ok, cost_usd) VALUES (@bot, @task, @owner, 'planner', @provider, @model, @latency, @promptTokens, @completionTokens, @ok, @cost)",
-            new { bot = botId, task = taskId, owner, provider = platform.LlmProvider, model = platform.ModelName, latency, promptTokens = usage.PromptTokens, completionTokens = usage.CompletionTokens, ok, cost = usage.CostUsd });
+            "INSERT INTO model_calls (bot_id, task_id, owner_id, role, provider, model, latency_ms, prompt_tokens, completion_tokens, ok, cost_usd) VALUES (@bot, @task, @owner, @role, @provider, @model, @latency, @promptTokens, @completionTokens, @ok, @cost)",
+            new { bot = botId, task = taskId, owner, role, provider = platform.LlmProvider, model = platform.ModelName, latency, promptTokens = usage.PromptTokens, completionTokens = usage.CompletionTokens, ok, cost = usage.CostUsd });
     }
 
     private async Task<Guid> OwnerOf(Guid botId)

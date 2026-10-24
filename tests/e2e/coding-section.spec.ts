@@ -1,9 +1,10 @@
 import { spawnSync } from "node:child_process";
 import { expect, test } from "@playwright/test";
 import { login } from "./helpers";
+import { PG_CONTAINER } from "./containers";
 
 function psql(sql: string) {
-  const args = ["exec", "-i", "teammates-postgres-1", "psql", "-U", "agent", "-d", "agent", "-v", "ON_ERROR_STOP=1", "-q", "-t", "-A", "-c", sql];
+  const args = ["exec", "-i", PG_CONTAINER, "psql", "-U", "agent", "-d", "agent", "-v", "ON_ERROR_STOP=1", "-q", "-t", "-A", "-c", sql];
   const result = spawnSync("sudo", ["docker", ...args], { encoding: "utf8" });
   if (result.status !== 0) throw new Error(result.stderr || result.stdout || "psql failed");
   return result.stdout.trim();

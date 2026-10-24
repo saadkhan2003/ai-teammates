@@ -5,6 +5,7 @@ import subprocess
 import time
 
 from test_acceptance import BASE, login, result_text, submit, wait_task
+from stack import API_CONTAINER
 
 MARKER = "/workspace/notes/restore-marker.txt"
 MARKER_BODY = b"kept-across-restore\n"
@@ -140,7 +141,7 @@ def _run(client, bot_id: str, computer_id: str, name: str) -> None:
     assert name in running.split()
 
     _docker("rm", "-f", name)
-    _docker("restart", "teammates-api-1")
+    _docker("restart", API_CONTAINER)
     _wait_health()
     status, recreated = client.call("POST", "/api/computer/recreate")
     assert status == 200, recreated

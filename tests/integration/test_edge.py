@@ -4,8 +4,8 @@ import os
 import urllib.error
 import urllib.request
 
-BASE = os.environ.get("BASE_URL", "http://127.0.0.1:18080").rstrip("/")
-API = os.environ.get("API_URL", "http://127.0.0.1:18081").rstrip("/")
+from stack import BASE
+from stack import API
 WORKER = os.environ.get("WORKER_TOKEN", "dev-worker-token-change-me")
 METRICS = os.environ.get("METRICS_TOKEN", "dev-metrics-token-change-me")
 OWNER = os.environ.get("OWNER_USERNAME", "saad")

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { autoAllowBrowserOpens } from "./helpers";
+import { PG_CONTAINER, AGENT_CONTAINER, API_CONTAINER, MOCK_CONTAINER } from "./containers";
 
 const owner = process.env.OWNER_USERNAME ?? "saad";
 const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
@@ -80,7 +81,7 @@ function shot(page: Page, name: string) {
 function waitHealth() {
   const start = Date.now();
   while (Date.now() - start < 90_000) {
-    const result = spawnSync("curl", ["-fsS", "http://127.0.0.1:18080/health"], { encoding: "utf8" });
+    const result = spawnSync("curl", ["-fsS", `${process.env.BASE_URL ?? "http://127.0.0.1:18080"}/health`], { encoding: "utf8" });
     if (result.status === 0 && (result.stdout || "").includes('"ok":true')) return;
     spawnSync("sleep", ["2"]);
   }
@@ -214,7 +215,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
     await login(page);
     // Integration grants portal.example.edu for the owner. That grant skips the saved-credential approval this test waits for.
     capture([
-      "docker", "exec", "teammates-postgres-1",
+      "docker", "exec", PG_CONTAINER,
       "psql", "-U", "agent", "-d", "agent", "-c",
       "DELETE FROM credential_domain_grants",
     ]);
@@ -556,13 +557,13 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
       await page.waitForTimeout(300);
     }
     expect(running).toBeTruthy();
-    capture(["docker", "restart", "teammates-agent-1"], 180_000);
+    capture(["docker", "restart", AGENT_CONTAINER], 180_000);
     const done = await expectDone(page, botId, id, 120_000);
     expect(resultText(done)).toContain("Recovered");
     const attempt = capture([
       "docker",
       "exec",
-      "teammates-postgres-1",
+      PG_CONTAINER,
       "psql",
       "-U",
       "agent",
@@ -617,7 +618,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
 
   await test.step("13 API restart keeps completed tasks", async () => {
     const hello = await expectDone(page, botId, await assignTracked(page, botId, HELLO, false));
-    capture(["docker", "restart", "teammates-api-1"], 180_000);
+    capture(["docker", "restart", API_CONTAINER], 180_000);
     waitHealth();
     await page.goto(botUrl);
     if (await page.getByTestId("login-username").isVisible().catch(() => false)) await login(page);
@@ -687,14 +688,14 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
     }
     const slug = await computerSlug(page, botId);
     let logs = "";
-    for (const name of ["teammates-api-1", "teammates-agent-1", "teammates-mock-openrouter-1", slug]) {
+    for (const name of [API_CONTAINER, AGENT_CONTAINER, MOCK_CONTAINER, slug]) {
       logs += capture(["docker", "logs", "--tail", "20000", name], 60_000);
     }
     assertClean("docker logs", logs);
     const columns = capture([
       "docker",
       "exec",
-      "teammates-postgres-1",
+      PG_CONTAINER,
       "psql",
       "-U",
       "agent",
@@ -705,7 +706,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
       "SELECT coalesce(string_agg(content,' '),'') FROM messages; SELECT coalesce(string_agg(prompt_json::text,' '),'') FROM model_requests; SELECT coalesce(string_agg(result::text,' '),'') FROM task_steps;",
     ]);
     assertClean("database text", columns);
-    const restore = spawnSync("python3", [path.join(__dirname, "restore_check.py")], { encoding: "utf8", timeout: 180_000 });
+    const restore = spawnSync("python3", [path.join(__dirname, "restore_check.py")], { encoding: "utf8", timeout: 180_000, env: { ...process.env, PG_CONTAINER } });
     expect(restore.stdout || "").toContain("restore-ok");
     expect(restore.status).toBe(0);
   });

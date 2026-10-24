@@ -23,7 +23,25 @@ Step = tuple[str, str, dict] | tuple[str, str] | tuple[str, Callable[[list], str
 
 def plan(messages: list) -> dict:
     """Return one tool call, or a final assistant message, for this transcript."""
+    response = _plan(messages)
+    # Unique per transcript position, like real providers, so idempotency keys never collide.
+    for choice in response.get("choices", []):
+        for call in (choice.get("message") or {}).get("tool_calls") or []:
+            call["id"] = f"call_{len(messages or []) + 1}"
+    return response
+
+
+def _plan(messages: list) -> dict:
     transcript = [item for item in messages or [] if isinstance(item, dict)]
+    if transcript and _content_text(transcript[-1].get("content")).startswith("[compaction-summary-request]"):
+        return _final(json.dumps(_compaction_summary(transcript), ensure_ascii=False, sort_keys=True))
+    long_run = re.search(r"LONG RUN DEMO\s+(\d+)", _first_user(transcript), re.IGNORECASE)
+    if long_run:
+        return _long_run_plan(transcript, min(500, int(long_run.group(1))))
+    if "POISON STEP DEMO" in _first_user(transcript).upper():
+        return _poison_step_plan(transcript)
+    if "SHELL APPEND DEMO" in _first_user(transcript).upper():
+        return _shell_append_plan(transcript)
     done = sum(1 for item in transcript if item.get("role") == "tool")
     steps = _steps(_first_user(transcript), transcript)
     if done >= len(steps):
@@ -33,6 +51,171 @@ def plan(messages: list) -> dict:
         text = step[1](transcript) if callable(step[1]) else step[1]
         return _final(text)
     return _tool(step[1], step[2])
+
+
+def _compaction_summary(messages: list) -> dict:
+    text = "\n".join(_content_text(item.get("content")) for item in messages)
+    paths = sorted(set(re.findall(r"/workspace/[A-Za-z0-9_./-]+", text)))[:100]
+    return {
+        "goal": (re.search(r"LONG RUN DEMO\s+\d+[^\n\"]*", text).group(0) if re.search(r"LONG RUN DEMO\s+\d+", text) else "Continue the task.")[:500], "decisions": [], "files_touched": paths,
+        "commits": [], "commands_and_outcomes": [], "errors_and_fixes": [],
+        "completed_long_run_steps": _long_run_progress(messages),
+        "open_issues": [], "next_step": "Continue with the next numbered long-run step.",
+    }
+
+
+def _long_run_plan(messages: list, count: int) -> dict:
+    text = _first_user(messages)
+    done = _long_run_progress(messages)
+    if done >= count:
+        return _final(f"Long run finished: completed {count} steps.")
+    index = done + 1
+    path = f"/workspace/long-run-step-{index:05d}.txt"
+    delay_marker = f"long-run-delay-{index}"
+    if "SLOW" in text.upper() and not _has_shell_command(messages, delay_marker):
+        return _tool("shell", {"command": f"sleep 0.25 # long-run-delay-{index}"})
+    if not _has_result_for(messages, path, "write_file", ok_only=True):
+        # A write whose outcome is unknown (worker killed mid-call) is verified
+        # with a read before it is repeated, like a careful model would. A
+        # successful verification read counts as progress and moves on.
+        if _has_result_for(messages, path, "write_file") and not _has_failed_read(messages, path):
+            return _tool("read_file", {"path": path})
+        content = f"step {index}\n" + ("x" * 20000 if "BIG OUTPUT" in text else "complete\n")
+        return _tool("write_file", {"path": path, "content": content})
+    if not _has_result_for(messages, path, "read_file"):
+        return _tool("read_file", {"path": path})
+    return _tool("read_file", {"path": path})
+
+
+def _shell_append_plan(messages: list) -> dict:
+    """Append once, then perform further work so resume can observe ambiguity."""
+    text = _first_user(messages)
+    path = "/workspace/shell-append-demo.log"
+    if not any(item.get("role") == "tool" and "shell" in _tool_name(item, messages) for item in messages):
+        return _tool("shell", {"command": f"echo x >> {path}"})
+    if not _has_result_for(messages, path, "read_file"):
+        return _tool("read_file", {"path": path})
+    return _final("Shell append demo finished.")
+
+
+def _poison_step_plan(messages: list) -> dict:
+    path = "/workspace/poison-before.txt"
+    if not _has_result_for(messages, path, "write_file"):
+        return _tool("write_file", {"path": path, "content": "before poison step\n"})
+    if not _has_successful_shell_result(messages):
+        return _tool("shell", {"command": "echo poison-step-marker"})
+    return _final("Poison step demo finished.")
+
+
+def _has_successful_shell_result(messages: list) -> bool:
+    for item in messages:
+        if item.get("role") != "tool" or "shell" not in _tool_name(item, messages):
+            continue
+        try:
+            result = json.loads(_content_text(item.get("content")))
+        except (ValueError, TypeError):
+            continue
+        if isinstance(result, dict) and result.get("status") != "unknown_outcome" and result.get("ok") is not False:
+            return True
+    return False
+
+
+def _long_run_progress(messages: list) -> int:
+    completed = set()
+    for item in messages:
+        if item.get("role") == "user" and "[compaction summary" in _content_text(item.get("content")):
+            try:
+                summary_text = _content_text(item.get("content")).split("\n", 1)[1]
+                if "[untrusted compaction summary content]\n" in summary_text:
+                    summary_text = summary_text.split("[untrusted compaction summary content]\n", 1)[1].split("\n[/untrusted]", 1)[0]
+                summary_text = summary_text.removeprefix("Quoted source data:\n")
+                summary = json.loads(summary_text)
+                completed.add(int(summary.get("completed_long_run_steps", 0)))
+            except (ValueError, TypeError, AttributeError):
+                pass
+        if item.get("role") != "tool":
+            continue
+        if "read_file" in _tool_name(item, messages) and _result_ok(item):
+            completed.update(int(value) for value in re.findall(r"long-run-step-(\d{5})", _result_path(item, messages)))
+    return max(completed, default=0)
+
+
+def _has_result_for(messages: list, path: str, tool_name: str, ok_only: bool = False) -> bool:
+    marker = path.rsplit("/", 1)[-1]
+    return any(
+        item.get("role") == "tool" and tool_name in _tool_name(item, messages) and marker in _result_path(item, messages)
+        and (not ok_only or _result_ok(item))
+        for item in messages
+    )
+
+
+def _has_failed_read(messages: list, path: str) -> bool:
+    marker = path.rsplit("/", 1)[-1]
+    return any(
+        item.get("role") == "tool" and "read_file" in _tool_name(item, messages) and marker in _result_path(item, messages)
+        and not _result_ok(item)
+        for item in messages
+    )
+
+
+def _result_ok(item: dict) -> bool:
+    """False for unknown-outcome placeholders and explicit tool failures."""
+    try:
+        result = json.loads(_content_text(item.get("content")))
+    except (ValueError, TypeError):
+        return True
+    for value in (result, result.get("output") if isinstance(result, dict) else None):
+        if isinstance(value, dict) and (value.get("status") == "unknown_outcome" or value.get("ok") is False):
+            return False
+    return True
+
+
+def _has_shell_command(messages: list, marker: str) -> bool:
+    for item in messages:
+        calls = item.get("tool_calls", item.get("toolCalls", []))
+        for call in calls if isinstance(calls, list) else []:
+            if marker in str(_call_args(call).get("command") or ""):
+                return True
+    return False
+
+
+def _call_args(call: dict) -> dict:
+    function = call.get("function") if isinstance(call.get("function"), dict) else {}
+    raw = function.get("arguments", call.get("arguments"))
+    if isinstance(raw, dict):
+        return raw
+    try:
+        value = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _tool_name(result: dict, messages: list) -> str:
+    """Tool results usually carry only tool_call_id; resolve the name from the matching call."""
+    if result.get("name"):
+        return str(result.get("name"))
+    call_id = str(result.get("tool_call_id") or result.get("toolCallId") or "")
+    for message in messages:
+        calls = message.get("tool_calls", message.get("toolCalls", []))
+        for call in calls if isinstance(calls, list) else []:
+            if call_id and str(call.get("id") or "") == call_id:
+                function = call.get("function") if isinstance(call.get("function"), dict) else {}
+                return str(function.get("name") or call.get("name") or "")
+    return ""
+
+
+def _result_path(result: dict, messages: list) -> str:
+    call_id = str(result.get("tool_call_id") or result.get("toolCallId") or "")
+    if not call_id:
+        return _content_text(result.get("content"))
+    for message in messages:
+        calls = message.get("tool_calls", message.get("toolCalls", []))
+        for call in calls if isinstance(calls, list) else []:
+            if str(call.get("id") or "") != call_id:
+                continue
+            return str(_call_args(call).get("path") or "") + " " + _content_text(result.get("content"))
+    return _content_text(result.get("content"))
 
 
 def _steps(text: str, messages: list) -> list[Step]:
