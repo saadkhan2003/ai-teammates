@@ -1,0 +1,7 @@
+"use client";
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import type { Widget } from "@/lib/widgets/schema";
+export function ChartView({ widget }: { widget: Extract<Widget, { type: "chart" }> }) {
+  const common = <><CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" /><XAxis dataKey={widget.xKey ?? "label"} stroke="hsl(var(--muted-foreground))" /><YAxis stroke="hsl(var(--muted-foreground))" /><Tooltip /></>;
+  return <div className="h-56 w-full" role="img" aria-label={widget.title ?? `${widget.chart} chart`}><ResponsiveContainer width="100%" height="100%">{widget.chart === "bar" ? <BarChart data={widget.data}>{common}<Bar dataKey={widget.yKey ?? "value"} fill="hsl(var(--primary))" radius={[3,3,0,0]} /></BarChart> : widget.chart === "line" ? <LineChart data={widget.data}>{common}<Line dataKey={widget.yKey ?? "value"} stroke="hsl(var(--primary))" strokeWidth={2} dot={false} /></LineChart> : widget.chart === "area" ? <AreaChart data={widget.data}>{common}<Area dataKey={widget.yKey ?? "value"} stroke="hsl(var(--primary))" fill="hsl(var(--primary) / .18)" /></AreaChart> : <PieChart><Tooltip /><Pie data={widget.data} dataKey={widget.yKey ?? "value"} nameKey={widget.xKey ?? "label"} outerRadius={78}>{widget.data.map((_, i) => <Cell key={i} fill={`hsl(${210 + i * 37} 65% 52%)`} />)}</Pie></PieChart>}</ResponsiveContainer></div>;
+}

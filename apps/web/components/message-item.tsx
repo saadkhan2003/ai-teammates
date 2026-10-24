@@ -17,6 +17,8 @@ import { VideoAnalysisCard } from "@/components/video-analysis-card";
 import { QUICK_REACTIONS, searchEmoji } from "@/lib/emoji";
 import type { ChatMessage, MessagePartView } from "@/lib/types";
 import { cn, errorMessage, formatWhen } from "@/lib/utils";
+import { WidgetRenderer } from "@/components/widgets/widget-renderer";
+import type { Widget } from "@/lib/widgets/schema";
 
 export type MessageItemProps = {
   message: ChatMessage;
@@ -273,7 +275,7 @@ function EmojiPicker({ onPick, current }: { onPick: (emoji: string) => void; cur
 }
 
 /** The body of a message: ordered parts (quotes, replies, text) in the sent bubble, with the 20-line clamp. */
-export function MessageBody({ message, mine, byId, onJump, fallback }: { message: ChatMessage; mine: boolean; byId: Map<string, ChatMessage>; onJump: (id: string) => void; fallback: ReactNode }) {
+export function MessageBody({ message, mine, byId, onJump, fallback, onWidgetAction }: { message: ChatMessage; mine: boolean; byId: Map<string, ChatMessage>; onJump: (id: string) => void; fallback: ReactNode; onWidgetAction?: (widget: Widget, action: string, payload: Record<string, unknown>) => Promise<void> }) {
   const parts = message.parts ?? null;
   const videoAnalysis = !parts?.length ? message.videoAnalysis ?? readVideoAnalysis(message.content) : null;
   const box = useRef<HTMLDivElement>(null);
@@ -304,7 +306,7 @@ export function MessageBody({ message, mine, byId, onJump, fallback }: { message
     : undefined;
   const bubble = mine ? "bg-user-bubble text-user-bubble-foreground border border-bot-border/40" : "bg-assistant-bubble text-assistant-bubble-foreground";
   const inner = parts && parts.length
-    ? <div className="space-y-2">{parts.map((part, i) => <PartView key={i} part={part} byId={byId} expanded={expanded} onJump={onJump} />)}</div>
+    ? <div className="space-y-2">{parts.map((part, i) => <PartView key={i} part={part} byId={byId} expanded={expanded} onJump={onJump} onWidgetAction={onWidgetAction} />)}</div>
     : null;
   return <div className={cn("relative rounded-bubble px-3.5 py-2 text-sm", bubble)} data-testid={mine ? "user-bubble" : "assistant-bubble"}>
     {message.skill ? <span data-testid="skill-chip" className="mb-1.5 inline-flex items-center gap-1 rounded-full border border-current/25 bg-black/10 px-2 py-0.5 text-xs font-medium"><Sparkles className="h-3 w-3" aria-hidden />{message.skill.label}</span> : null}
@@ -319,8 +321,9 @@ export function MessageBody({ message, mine, byId, onJump, fallback }: { message
   </div>;
 }
 
-function PartView({ part, byId, expanded, onJump }: { part: MessagePartView; byId: Map<string, ChatMessage>; expanded: boolean; onJump: (id: string) => void }) {
+function PartView({ part, byId, expanded, onJump, onWidgetAction }: { part: MessagePartView; byId: Map<string, ChatMessage>; expanded: boolean; onJump: (id: string) => void; onWidgetAction?: (widget: Widget, action: string, payload: Record<string, unknown>) => Promise<void> }) {
   if (part.type === "text") return <Markdown text={part.text} />;
+  if (part.type === "widget") return <WidgetRenderer value={part.widget} onAction={onWidgetAction} />;
   if (part.type === "quote") {
     return <blockquote data-testid="quote-block" className={cn("border-l-2 border-current/40 bg-black/10 px-2 py-1 text-[13px] opacity-75 [overflow-wrap:anywhere] whitespace-pre-wrap", !expanded && "line-clamp-4")}>
       <span className="sr-only">Quoted text: </span>{part.text}</blockquote>;

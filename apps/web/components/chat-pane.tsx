@@ -25,6 +25,7 @@ import { messageBlocks, type FormField, type QuestionOption } from "@/lib/messag
 import { memoryReason, undoableMemoryAction } from "@/lib/memory-notes";
 import type { ChatMessage } from "@/lib/types";
 import { errorMessage, formatWhen } from "@/lib/utils";
+import type { Widget } from "@/lib/widgets/schema";
 
 type TaskPlan = { taskId: string; title: string; status: string; items: { title: string; status: string }[]; budget: { label: string }; tests: { required: boolean; passedAt?: string; override: boolean }; blocked: boolean; estimate?: { lowSeconds: number; highSeconds: number; n: number; label: string } | null };
 
@@ -158,6 +159,11 @@ export function ChatPane({
   useEffect(() => { for (const m of messages) seen.current?.ids.add(m.id); });
 
   function announce(text: string) { setLive(""); window.setTimeout(() => setLive(text), 30); }
+  async function sendWidgetAction(widget: Widget, action: string, payload: Record<string, unknown>) {
+    if (!botId) return;
+    await api(`/api/bots/${botId}/widget-actions`, { method: "POST", body: JSON.stringify({ widget_id: widget.id, action, payload }) });
+    onSent();
+  }
   function focusComposer() { window.setTimeout(() => { const node = lastTextId ? partRefs.current.get(lastTextId) : null; (node ?? Array.from(partRefs.current.values()).pop())?.focus(); }, 0); }
 
   const addQuoteText = useCallback((raw: string, source?: string) => {
@@ -439,6 +445,7 @@ export function ChatPane({
                   mine={mine}
                   byId={byId}
                   onJump={jumpTo}
+                  onWidgetAction={sendWidgetAction}
                   fallback={blocks.map((block, index) => <MessageBlockView key={`${message.id}-${index}`} block={block} />)}
                 />
               </MessageItem>
