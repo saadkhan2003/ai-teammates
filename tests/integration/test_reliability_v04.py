@@ -3,6 +3,7 @@ import time
 import uuid
 
 from test_acceptance import Client, OPENROUTER, login, submit, wait_task, worker_call
+from test_bot_messaging import _cleanup
 
 
 def until(client, bot, task, state, timeout=120):
@@ -17,15 +18,13 @@ def until(client, bot, task, state, timeout=120):
     raise AssertionError(f'task did not reach {state}: {row}')
 
 
-def test_key_save_and_rotation_resume_waiters_and_publish_safe_status():
+def test_key_save_and_rotation_resume_waiters_and_publish_safe_status(bot_factory):
     username = 'reliability-' + uuid.uuid4().hex[:12]
     password = 'unit-stack-password-123'
     worker_call('POST', '/internal/test/users', {'username': username, 'password': password})
     client = Client()
     assert client.call('POST', '/api/auth/login', {'username':username,'password':password})[0] == 200
-    status, bot = client.call('POST', '/api/bots', {'name':'Reliability', 'role':'test'})
-    assert status == 200, bot
-    bot_id = bot['id']
+    bot_id = bot_factory(client, 'Reliability')
     try:
         status, workspace = client.call('GET', f'/api/bots/{bot_id}/workspace')
         assert status == 200
@@ -47,16 +46,14 @@ def test_key_save_and_rotation_resume_waiters_and_publish_safe_status():
         assert status == 200 and any(e['type']=='resource_resumed' for e in events)
         assert any(e['type']=='grounding' for e in events)
     finally:
-        client.call('DELETE', f'/api/bots/{bot_id}')
+        _cleanup(client, bot_id)
 
 
-def test_browser_origin_requires_allow_once_on_each_run():
+def test_browser_origin_requires_allow_once_on_each_run(bot_factory):
     client = login()
     # Only the local mock provider is used by this integration suite.
     assert client.call('POST','/api/secrets',{'namespace':'openrouter','name':'default','type':'API_KEY','value':OPENROUTER})[0] == 200
-    status, bot = client.call('POST','/api/bots',{'name':'Origin consent','role':'test'})
-    assert status == 200
-    bot_id = bot['id']
+    bot_id = bot_factory(client, 'Origin consent')
     try:
         _, workspace = client.call('GET',f'/api/bots/{bot_id}/workspace')
         for _ in range(2):
@@ -67,15 +64,13 @@ def test_browser_origin_requires_allow_once_on_each_run():
             assert client.call('POST',f"/api/approvals/{approval['id']}/decide",{'decision':'allow_once'})[0] == 200
             assert wait_task(client,bot_id,task)['status'] == 'completed'
     finally:
-        client.call('DELETE',f'/api/bots/{bot_id}')
+        _cleanup(client, bot_id)
 
 
-def test_failure_has_safe_code_text_and_log():
+def test_failure_has_safe_code_text_and_log(bot_factory):
     client = login()
     assert client.call('POST','/api/secrets',{'namespace':'openrouter','name':'default','type':'API_KEY','value':OPENROUTER})[0] == 200
-    status, bot = client.call('POST','/api/bots',{'name':'Error surface','role':'test'})
-    assert status == 200
-    bot_id = bot['id']
+    bot_id = bot_factory(client, 'Error surface')
     try:
         _, workspace = client.call('GET',f'/api/bots/{bot_id}/workspace')
         task = submit(client, workspace['conversationId'], 'Unrecognized mock planner request quux 1902')
@@ -86,4 +81,17 @@ def test_failure_has_safe_code_text_and_log():
         status, events = client.call('GET',f'/api/tasks/{task}/log')
         assert status == 200 and any(e['type']=='error' for e in events)
     finally:
-        client.call('DELETE',f'/api/bots/{bot_id}')
+        _cleanup(client, bot_id)
+
+
+def test_unused_computer_stop_requires_owner_session_and_refuses_live_bots(bot_factory):
+    client = login()
+    bot_factory(client, 'Computer stop guard')
+    status, before = client.call('GET', '/api/computer')
+    assert status == 200
+    assert Client().call('POST', '/api/computer/stop', {})[0] == 401
+    status, body = client.call('POST', '/api/computer/stop', {})
+    assert status == 409 and body['error'] == 'computer_in_use'
+    status, computer = client.call('GET', '/api/computer')
+    assert status == 200 and computer['status'] == before['status']
+    assert computer['computerId'] == before['computerId']

@@ -4,6 +4,28 @@ namespace Teammates.UnitTests;
 
 public class CodingWorkTests
 {
+    [Theory]
+    [InlineData("work", 200, 201, 201)]
+    [InlineData("work", 6, 7, 7)]
+    [InlineData("work", 1000, 400, 1001)]
+    [InlineData("chat", 200, 12, 12)]
+    [InlineData("coding", 200, 12, 60)]
+    public void ModelRoundsRespectWorkBudgetAndKeepChatAndCodingLimits(string kind, int steps, int perAttempt, int cumulative)
+    {
+        var budget = RunBudget.Resolve(steps, null, null, null);
+        var rounds = RunBudget.ResolveModelRounds(kind, budget, 12, 12, 60);
+        Assert.Equal(perAttempt, rounds.PerAttempt);
+        Assert.Equal(cumulative, rounds.Cumulative);
+    }
+
+    [Fact]
+    public void ContinuingWorkAlsoRaisesItsCumulativeModelBudget()
+    {
+        var before = RunBudget.ResolveModelRounds("work", RunBudget.Resolve(6, null, null, null), 12, 12, 60);
+        var after = RunBudget.ResolveModelRounds("work", RunBudget.Resolve(206, null, null, null), 12, 12, 60);
+        Assert.Equal(before.Cumulative + 200, after.Cumulative);
+    }
+
     [Fact]
     public void ChildTaskPathsAreDeterministicAndLimited()
     {

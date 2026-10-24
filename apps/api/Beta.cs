@@ -248,6 +248,24 @@ public static class Beta
             }
         });
 
+        app.MapPost("/api/computer/stop", async (HttpContext ctx, CancellationToken ct) =>
+        {
+            var user = await User(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            await using var conn = await platform.Data.OpenConnectionAsync(ct);
+            var id = await conn.ExecuteScalarAsync<Guid?>("SELECT computer_id FROM user_computers WHERE user_id=@user", new { user });
+            if (id == null) return Results.NoContent();
+            // A computer is shared by all of this owner's bots. Releasing it
+            // must never interrupt another bot or a task that can wake it again.
+            if (await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM bots WHERE owner_id=@user)", new { user }))
+                return Results.Conflict(new { error = "computer_in_use" });
+            var computer = await platform.Compute.StopComputerAsync(new ComputerId(id.Value.ToString()),
+                new StopOptions(false, TimeSpan.FromSeconds(10)), IdempotencyKey.Require("stop-" + Guid.NewGuid().ToString("n")), ct);
+            await conn.ExecuteAsync("UPDATE user_computers SET status='stopped' WHERE user_id=@user AND computer_id=@id", new { user, id });
+            await platform.Audit(user.Value.ToString(), "computer.stopped", null, null, new { computerId = id });
+            return Results.Json(new { ok = true, status = computer.State.ToString().ToLowerInvariant() });
+        });
+
         app.MapPost("/api/computer/restart", async (HttpContext ctx, CancellationToken ct) =>
         {
             var user = await User(ctx, platform);

@@ -3,6 +3,15 @@ namespace Teammates.Api;
 public static class RunBudget
 {
     public sealed record Budget(int MaxSteps, int MaxSeconds, string Label);
+    public sealed record ModelRounds(int PerAttempt, int Cumulative);
+    public static ModelRounds ResolveModelRounds(string kind, Budget budget, int chat, int coding, int codingCumulative) => kind switch
+    {
+        // Work uses the owner's step budget. Allow one final model response after
+        // the last tool step; a chat limit must not silently truncate long work.
+        "work" => new(Math.Min(400, budget.MaxSteps + 1), budget.MaxSteps + 1),
+        "coding" => new(coding, codingCumulative),
+        _ => new(chat, chat)
+    };
     public static bool ResolvePauseOnBudget(bool? taskValue, bool? botValue, bool fallback = true) => taskValue ?? botValue ?? fallback;
     public static bool TryParsePauseOnBudget(System.Text.Json.JsonElement body, out bool? value)
     {
