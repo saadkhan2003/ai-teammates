@@ -42,7 +42,7 @@ def test_planner_repairs_rejected_brief_and_failed_child_teaches_only_its_bot():
         while time.time() < deadline:
             ws = _workspace(client, bot)
             for approval in ws.get("approvals", []):
-                if approval.get("status") in (None, "pending") and approval.get("action") in ("shell", "spawn_child_task"):
+                if approval.get("status") in (None, "pending") and approval.get("action") in ("shell", "write_file", "run_tests", "spawn_child_task"):
                     assert client.call("POST", f"/api/approvals/{approval['id']}/decide", {"decision": "allow_once"})[0] == 200
             ids = _psql(f"SELECT task_id FROM task_briefs WHERE parent_task_id='{parent}'")
             if ids:

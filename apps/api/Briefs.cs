@@ -99,7 +99,23 @@ public static class BriefValidator
         return issues;
     }
     public static bool Blocking(JsonObject b) => Array(b["open_questions"]).OfType<JsonObject>().Any(q => q["blocking"] is JsonValue v && v.TryGetValue<bool>(out var blocking) && blocking);
-    public static string Context(JsonNode? c) => c is JsonObject o ? string.Join("\n", o.Select(p => Text(p.Value)).Where(s => s.Length > 0)) : Text(c);
+    public static string Context(JsonNode? c)
+    {
+        if (c is not JsonObject o) return Text(c);
+        // Render a structured context as one readable attribution line, then every other supplied field verbatim.
+        string Field(string name) => o.TryGetPropertyValue(name, out var v) ? Text(v) : "";
+        var quote = Field("quote");
+        var author = Field("author");
+        var mood = Field("mood");
+        var lines = new List<string>();
+        if (quote.Length > 0)
+            lines.Add($"{(author.Length > 0 ? author : "The user")} said \u201c{quote}\u201d{(mood.Length > 0 ? $" ({mood})" : "")}.");
+        else if (author.Length > 0 || mood.Length > 0)
+            lines.Add(string.Join(", ", new[] { author, mood }.Where(x => x.Length > 0)) + ".");
+        var used = new HashSet<string> { "quote", "author", "mood" };
+        lines.AddRange(o.Where(p => !used.Contains(p.Key)).Select(p => Text(p.Value)).Where(x => x.Length > 0));
+        return string.Join("\n", lines);
+    }
 }
 
 public static class BriefRenderer

@@ -784,8 +784,12 @@ def _final(text: str) -> dict:
 def _brief_plan(messages: list) -> dict:
     """Explicit integration trigger: malformed brief -> actionable error -> repaired brief."""
     results = [m for m in messages if m.get("role") == "tool"]
+    # The fixture repo is created through bot-confined tools (write_file + run_tests),
+    # not the shared desktop shell, so it always lands in this bot's own workspace.
     if not results:
-        return _tool("shell", {"command": "mkdir -p /workspace/brief-test-repo && git -C /workspace/brief-test-repo init && git -C /workspace/brief-test-repo -c user.name=Fixture -c user.email=fixture@example.test commit --allow-empty -m fixture"})
+        return _tool("write_file", {"path": "/workspace/brief-test-repo/package.json", "content": '{"name": "brief-test-repo", "private": true, "scripts": {"test": "git init -q . && git -c user.name=Fixture -c user.email=fixture@example.test commit -q --allow-empty -m fixture"}}'})
+    if len(results) == 1:
+        return _tool("run_tests", {"runner": "npm", "repo": "brief-test-repo"})
     prior = [m for m in results if _tool_name(m, messages) == "spawn_child_task"]
     if not prior:
         return _tool("spawn_child_task", {"title": "Brief integration child", "repo": "brief-test-repo", "brief": {"goal": "Implement the requested feature."}})

@@ -19,6 +19,14 @@ public sealed class BriefsTests
         Assert.Equal(new[] { "report_back", "context", "acceptance" }, issues.Select(x => x.Field));
         Assert.All(issues, i => Assert.True(i.Message.Length > 35));
     }
+    [Fact]
+    public void StructuredContextRendersAsAttributionThenBackground()
+    {
+        var c = JsonNode.Parse("""{"quote":"The text looks bold and heavy.","author":"Saad","mood":"frustrated","background":"Use notes 36 and 41."}""");
+        Assert.Equal("Saad said \u201cThe text looks bold and heavy.\u201d (frustrated).\nUse notes 36 and 41.", BriefValidator.Context(c));
+        Assert.Equal("Plain prose.", BriefValidator.Context(JsonValue.Create("Plain prose.")));
+        Assert.Equal("Saad, calm.", BriefValidator.Context(JsonNode.Parse("""{"author":"Saad","mood":"calm"}""")));
+    }
     [Theory]
     [InlineData("")]
     [InlineData("works")]

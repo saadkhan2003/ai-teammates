@@ -73,7 +73,7 @@ def test_mock_trigger_repairs_brief_after_server_feedback():
     spec = importlib.util.spec_from_file_location("brief_fixture_planner", ROOT / "services/mock-openrouter/planner.py")
     planner = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(planner)
-    messages = [{"role": "user", "content": "BRIEF_TEST"}, {"role": "tool", "name": "shell", "content": '{"ok":true}'}]
+    messages = [{"role": "user", "content": "BRIEF_TEST"}, {"role": "tool", "name": "write_file", "content": '{"ok":true}'}, {"role": "tool", "name": "run_tests", "content": '{"exitCode":0}'}]
     first = planner.plan(messages)["choices"][0]["message"]["tool_calls"][0]["function"]
     assert first["name"] == "spawn_child_task" and "context" not in json.loads(first["arguments"])["brief"]
     messages.append({"role": "tool", "name": "spawn_child_task", "content": '{"status":"brief_rejected","issues":[{"field":"context","message":"Quote the user"}]}'} )

@@ -20,7 +20,8 @@ public static class CodingTools
     {
         var repo = Repo(Arg(args, "repo"));
         if (repo == null) throw new ToolHalt("invalid", "repo must be a relative workspace path without '..'");
-        var root = repo == "." ? "/workspace" : "/workspace/" + repo;
+        // Confined argv is not path-rewritten, so tools must use the bot's real root (same as spawn_child_task).
+        var root = BotFs.Root(botId) + (repo == "." ? "" : "/" + repo);
         switch (tool)
         {
             case "plan_set":
