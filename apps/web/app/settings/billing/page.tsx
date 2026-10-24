@@ -16,7 +16,7 @@ type Billing = {
   invoices: { id: string; date?: string; amount?: number; status?: string }[];
 };
 
-const money = (amount: number) => `$${amount.toFixed(4)}`;
+const money = (amount: number) => amount === 0 ? "$0.00" : Math.abs(amount) < 0.01 ? "<$0.01" : `$${amount.toFixed(2)}`;
 
 export default function BillingPage() {
   const [billing, setBilling] = useState<Billing | null>(null);

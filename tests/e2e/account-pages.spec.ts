@@ -13,7 +13,11 @@ async function capture(page: Page, route: string, name: string, ready: () => Pro
       document.documentElement.dataset.theme = value;
       document.documentElement.classList.toggle("light", value === "light");
     }, theme);
-    await page.screenshot({ path: `${shots}/${name}-${theme}.png`, fullPage: false });
+    await page.evaluate(async () => {
+      await Promise.all(document.getAnimations().map(animation => animation.finished.catch(() => undefined)));
+      await document.fonts.ready;
+    });
+    await page.screenshot({ path: `${shots}/${name}-${theme}.png`, fullPage: false, animations: "disabled" });
   }
 }
 
