@@ -143,6 +143,7 @@ public sealed class Platform
         // 043–046 reserved for sibling programs; explicit manifest supports gaps.
         "047_task_briefs.sql",
         "048_brief_lessons.sql",
+        "049_approval_signals.sql",
     ];
 
     private async Task MigrateAndSeedLocked(string ownerUser, string ownerPassword)

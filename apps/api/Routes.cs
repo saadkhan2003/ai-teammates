@@ -21,6 +21,7 @@ public static class Routes
     {
         LibraryRoutes.Map(app, platform);
         BriefRoutes.Map(app, platform);
+        LearnedRoutes.Map(app, platform);
         SkillLibraryRoutes.Map(app, platform, runtime);
         app.MapGet("/health", async () =>
         {
@@ -250,11 +251,15 @@ public static class Routes
             string content, instruction, title;
             string metadata = "{}";
             Guid? replyTo = null;
+            Guid? signalTarget = null; string signalType = "reply"; string signalText = "";
             if (body.TryGetProperty("parts", out var partsEl) && partsEl.ValueKind != JsonValueKind.Null)
             {
                 var parsed = MessageParts.Parse(partsEl);
                 if (!parsed.Ok) return Results.Json(new { error = parsed.Error }, statusCode: 400);
                 var parts = parsed.Parts;
+                signalText = string.Join(" ", parts.Where(p => p.Type == "text").Select(p => p.Text));
+                signalTarget = parts.FirstOrDefault(p => p.Type == "reply")?.MessageId ?? parts.FirstOrDefault(p => p.Type == "quote")?.SourceMessageId;
+                signalType = parts.Any(p => p.Type == "reply") ? "reply" : "quote";
                 var ids = parts.Where(p => p.Type == "reply").Select(p => p.MessageId!.Value)
                     .Concat(parts.Where(p => p.SourceMessageId != null).Select(p => p.SourceMessageId!.Value)).Distinct().ToArray();
                 var known = ids.Length == 0 ? new List<dynamic>() : (await conn.QueryAsync("SELECT m.id, m.role, m.content, m.deleted_at FROM messages m WHERE m.conversation_id=@id AND m.id = ANY(@ids)", new { id, ids })).ToList();
@@ -293,6 +298,7 @@ public static class Routes
                 if (Dlp.HasStrict(content))
                     return Results.Json(new { error = "Blocked by the data policy. Card numbers, IDs, and secrets are not sent." }, statusCode: 422);
                 instruction = content;
+                signalText = content;
                 title = MessageParts.Clip(content, 80);
                 if (body.TryGetProperty("skill", out var skillEl) && skillEl.ValueKind == JsonValueKind.String)
                 {
@@ -306,6 +312,7 @@ public static class Routes
             if (botId != null && LibraryIngest.HasDeniedAttachment(content))
                 return Results.Json(new { error = Dlp.Blocked }, statusCode: 422);
             var messageId = await conn.ExecuteScalarAsync<Guid>("INSERT INTO messages (conversation_id, role, content, metadata, reply_to_message_id) VALUES (@id, 'user', @content, @metadata::jsonb, @replyTo) RETURNING id", new { id, content, metadata, replyTo });
+            await ApprovalSignals.UserMessage(conn, botId!.Value, user.Value, id, messageId, signalText, signalTarget, signalType);
             if (botId is Guid indexedBotId)
                 await LibraryIngest.IndexMessageAttachments(platform, runtime, indexedBotId, messageId, content, ctx.RequestAborted);
             var pausedTask = await conn.QuerySingleOrDefaultAsync<(Guid Id, string Reason)>("""
@@ -702,6 +709,9 @@ public static class Routes
             {
                 return Results.BadRequest(new { error = "decision required" });
             }
+            var signalTask = await conn.QuerySingleAsync<(Guid? Conversation, Guid? Message)>("SELECT conversation_id,source_message_id FROM tasks WHERE id=@id", new { id = taskId });
+            await ApprovalSignals.Record(conn, null, approval.BotId, user.Value, signalTask.Conversation, null,
+                decision == "deny" ? "negative" : "positive", "approval", approval.Action, approval.Action, "approval:"+id, taskId);
             try { await BotMessaging.OnApprovalDecided(platform, taskId.Value, decision != "deny"); }
             catch (Exception) { /* thread note is best effort */ }
             return Results.Json(new { ok = true });
@@ -848,7 +858,7 @@ public static class Routes
             var rows = (await conn.QueryAsync("""
                 SELECT id, bot_id, content, source, kind, visibility, status, author, sensitive, pinned,
                        source_message_id, source_task_id, supersedes_id, created_at, updated_at, last_confirmed_at, deleted_at
-                FROM memories WHERE owner_id=@owner AND (bot_id=@id OR visibility='owner')
+                FROM memories WHERE owner_id=@owner AND (bot_id=@id OR (visibility='owner' AND learned_kind IS NULL))
                   AND status IN ('active','pending') AND deleted_at IS NULL
                   AND (@kind='' OR kind=@kind) AND (@status='' OR status=@status)
                   AND (@visibility='' OR visibility=@visibility) AND (@q='' OR content ILIKE @contains)
@@ -861,7 +871,7 @@ public static class Routes
                 SELECT count(*) FILTER(WHERE kind='profile') profile, count(*) FILTER(WHERE kind='journal') journal,
                        count(*) FILTER(WHERE kind='rule') rule, count(*) FILTER(WHERE kind='fact') fact,
                        count(*) FILTER(WHERE status='pending') pending, count(*) total
-                FROM memories WHERE owner_id=@owner AND (bot_id=@id OR visibility='owner') AND status IN ('active','pending')
+                FROM memories WHERE owner_id=@owner AND (bot_id=@id OR (visibility='owner' AND learned_kind IS NULL)) AND status IN ('active','pending')
                 """, new { owner = user, id });
             return Results.Json(new { items = rows.Select(Platform.ToDict), nextCursor = next, counts = Platform.ToDict(counts) });
         });
@@ -1012,7 +1022,7 @@ public static class Routes
             if (user == null) return Results.Unauthorized();
             if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             await using var conn = await platform.Data.OpenConnectionAsync();
-            var rows = await conn.QueryAsync("SELECT id,content,kind,visibility,status,author,sensitive,pinned,created_at,updated_at FROM memories WHERE owner_id=@owner AND (bot_id=@id OR visibility='owner') AND status IN ('active','pending') ORDER BY created_at", new { owner = user, id });
+            var rows = await conn.QueryAsync("SELECT id,content,kind,visibility,status,author,sensitive,pinned,created_at,updated_at FROM memories WHERE owner_id=@owner AND (bot_id=@id OR (visibility='owner' AND learned_kind IS NULL)) AND status IN ('active','pending') ORDER BY created_at", new { owner = user, id });
             await platform.Audit("memory", "memory.exported", id, null, new { count = rows.Count() });
             return Results.Json(new { items = rows.Select(Platform.ToDict) });
         });
@@ -1634,7 +1644,18 @@ public static class Routes
                         ORDER BY f.created_at FOR UPDATE)
                     RETURNING message_id, emoji, action
                     """,
-                    new { task = id, bot = task.BotId }, tx)).Select(note => new { messageId = note.MessageId, emoji = note.Emoji, action = note.Action }).ToList();
+                    new { task = id, bot = task.BotId }, tx)).Select(note => (object)new { messageId = note.MessageId, emoji = note.Emoji, action = note.Action }).ToList();
+                var signalEvents = await conn.QueryAsync<ApprovalSignal>("""
+                    UPDATE approval_signals SET task_id=@task WHERE id IN (
+                        SELECT s.id FROM approval_signals s WHERE s.bot_id=@bot AND s.consumed_at IS NULL
+                        AND (@kind NOT IN ('peer','peer_reply','peer_notice'))
+                        AND (s.task_id IS NULL OR s.task_id=@task OR NOT EXISTS(SELECT 1 FROM tasks t WHERE t.id=s.task_id AND t.status NOT IN ('completed','failed','cancelled')))
+                        ORDER BY s.created_at,s.id LIMIT 32 FOR UPDATE SKIP LOCKED)
+                    RETURNING *,detail::text AS detail
+                    """,new { task=id,bot=task.BotId,kind=task.Kind },tx);
+                feedback.AddRange(signalEvents.Select(s => (object)new { id=s.Id,signal=s.Signal,kind=s.Kind,detail=s.Data }));
+                var learnedContext = notesFlag != "off" && memoryMode != "off"
+                    ? await ApprovalSignals.Context(conn,task.BotId,task.Instruction,tx) : "";
                 JsonElement? skillJson = null;
                 if (task.SkillId != null)
                 {
@@ -1657,7 +1678,7 @@ public static class Routes
                         (string?)ledger["snapshotRef"], (string?)ledger["snapshotAt"]);
                     resume = new { brief, interrupted = previousReason is "lease_expired" or "computer_recovered" or "network_interrupted" or "stalled" };
                 }
-                rows.Add(new { id = task.Id, botId = task.BotId, computerId = placement.Computer.Value, cdpUrl = $"http://{dns}:9222", instruction = task.Instruction, kind = task.Kind, attempt = task.Attempt, epoch = task.Epoch, checkpoint = checkpointJson, force_compact = task.ForceCompact, conversationId = task.ConversationId, messageId = task.SourceMessageId, hasBrief = await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM task_briefs WHERE task_id=@id)", new { id = task.Id }), role = injectRole ? botPrompt.Role : "", botInstructions = injectRole ? botPrompt.Instructions : "", memoryMode = notesFlag, botMemoryMode = memoryMode, standingRules = rules, scopedRules, ruleTokens, feedback, skill = skillJson, resume, budget = new { maxSteps = resolvedBudget.MaxSteps, maxSeconds = resolvedBudget.MaxSeconds, maxAttemptSteps = Math.Min(400, resolvedBudget.MaxSteps), maxAttemptSeconds = Math.Min(1800, resolvedBudget.MaxSeconds), maxRounds = modelRoundBudget.PerAttempt, maxRoundsCumulative = modelRoundBudget.Cumulative, pauseOnBudget, label = resolvedBudget.Label } });
+                rows.Add(new { id = task.Id, botId = task.BotId, computerId = placement.Computer.Value, cdpUrl = $"http://{dns}:9222", instruction = task.Instruction, kind = task.Kind, attempt = task.Attempt, epoch = task.Epoch, checkpoint = checkpointJson, force_compact = task.ForceCompact, conversationId = task.ConversationId, messageId = task.SourceMessageId, hasBrief = await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM task_briefs WHERE task_id=@id)", new { id = task.Id }), role = injectRole ? botPrompt.Role : "", botInstructions = injectRole ? botPrompt.Instructions : "", memoryMode = notesFlag, botMemoryMode = memoryMode, standingRules = rules, scopedRules, ruleTokens, feedback, learnedContext, skill = skillJson, resume, budget = new { maxSteps = resolvedBudget.MaxSteps, maxSeconds = resolvedBudget.MaxSeconds, maxAttemptSteps = Math.Min(400, resolvedBudget.MaxSteps), maxAttemptSeconds = Math.Min(1800, resolvedBudget.MaxSeconds), maxRounds = modelRoundBudget.PerAttempt, maxRoundsCumulative = modelRoundBudget.Cumulative, pauseOnBudget, label = resolvedBudget.Label } });
                 wake.Add(placement.Computer.Value);
             }
             await tx.CommitAsync();

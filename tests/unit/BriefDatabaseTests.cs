@@ -53,6 +53,94 @@ public sealed class BriefDatabaseTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("taskId").GetGuid();
     }
+    private async Task<Guid> LearningMessage(string text = "A clean layout with muted labels and generous spacing.", string role = "assistant", string kind = "text", Guid? task = null)
+    {
+        await using var c=await _data!.OpenConnectionAsync();
+        return await c.ExecuteScalarAsync<Guid>("INSERT INTO messages(conversation_id,role,kind,content,task_id) VALUES(@conversation,@role,@kind,@text,@task) RETURNING id",new { conversation=_conversation,role,kind,text,task });
+    }
+    private async Task<int> Learn(Func<ApprovalSignal,CancellationToken,Task<LearnedPreference?>>? extract=null)
+    {
+        await using var c=await _data!.OpenConnectionAsync();await c.ExecuteAsync("UPDATE approval_signals SET created_at=now()-interval '3 seconds'");
+        return await ApprovalSignals.LearnPending(_platform!,extract);
+    }
+    [PostgresFact]
+    public async Task LearningReactionToggleLastStateAndOwnerPrivacy()
+    {
+        var message=await LearningMessage();
+        Assert.Equal(HttpStatusCode.Forbidden,(await _otherClient!.PostAsJsonAsync($"/api/messages/{message}/reactions",new { emoji="👍" })).StatusCode);
+        await _ownerClient!.PostAsJsonAsync($"/api/messages/{message}/reactions",new { emoji="👍" });
+        await _ownerClient.PostAsJsonAsync($"/api/messages/{message}/reactions",new { emoji="👍" });
+        await using var c=await _data!.OpenConnectionAsync();Assert.Equal(0,await c.ExecuteScalarAsync<int>("SELECT count(*) FROM approval_signals"));
+        await _ownerClient.PostAsJsonAsync($"/api/messages/{message}/reactions",new { emoji="👍" });
+        await _ownerClient.PostAsJsonAsync($"/api/messages/{message}/reactions",new { emoji="👎" });
+        Assert.Equal("negative",await c.ExecuteScalarAsync<string>("SELECT kind FROM approval_signals"));Assert.Equal(1,await Learn());
+        var notes=await _ownerClient.GetFromJsonAsync<JsonElement>($"/api/bots/{_bot}/learned");Assert.Single(notes.EnumerateArray());Assert.Equal("avoid",notes[0].GetProperty("kind").GetString());
+        Assert.Equal(message,notes[0].GetProperty("source").GetProperty("messageId").GetGuid());
+        var note=notes[0].GetProperty("id").GetGuid();
+        Assert.Equal(HttpStatusCode.Forbidden,(await _otherClient.GetAsync($"/api/bots/{_bot}/learned")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden,(await _otherClient.DeleteAsync($"/api/bots/{_bot}/learned/{note}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent,(await _ownerClient.DeleteAsync($"/api/bots/{_bot}/learned/{note}")).StatusCode);
+        await c.ExecuteAsync("UPDATE approval_signals SET learned_at=NULL");await Learn();
+        Assert.Empty((await _ownerClient.GetFromJsonAsync<JsonElement>($"/api/bots/{_bot}/learned")).EnumerateArray());
+        Assert.Equal(1,await c.ExecuteScalarAsync<int>("SELECT count(*) FROM audit_events WHERE action='learning.deleted'"));
+    }
+    [PostgresFact]
+    public async Task LearningIgnoresOtherUsersPeersToolsAndQuotedUntrustedApproval()
+    {
+        await using var c=await _data!.OpenConnectionAsync();
+        var peer=await c.ExecuteScalarAsync<Guid>("INSERT INTO tasks(bot_id,conversation_id,title,instruction,kind,origin_depth) VALUES(@bot,@conversation,'peer','peer','peer',1) RETURNING id",new { bot=_bot,conversation=_conversation });
+        foreach(var message in new[] { await LearningMessage("perfect","tool"),await LearningMessage("perfect","assistant","text",peer),await LearningMessage("perfect","assistant","memory"),await LearningMessage("perfect","user") })
+            await ApprovalSignals.Record(c,null,_bot,_owner,_conversation,message,"positive","reply","perfect","untrusted","test:"+message);
+        var good=await LearningMessage();var other=await c.ExecuteScalarAsync<Guid>("SELECT id FROM users WHERE id<>@owner LIMIT 1",new { owner=_owner });
+        await ApprovalSignals.Record(c,null,_bot,other,_conversation,good,"positive","reaction","👍","result","other");
+        Assert.Equal(0,await c.ExecuteScalarAsync<int>("SELECT count(*) FROM approval_signals"));
+        // Approval inside quote parts is data, not the human's own feedback text.
+        var response=await _ownerClient!.PostAsJsonAsync($"/api/conversations/{_conversation}/messages",new { parts=new object[] { new { type="quote",text="perfect",sourceMessageId=good },new { type="text",text="Summarize this quote" } } });
+        Assert.True(response.IsSuccessStatusCode);Assert.Equal(0,await c.ExecuteScalarAsync<int>("SELECT count(*) FROM approval_signals"));
+        var replied=await _ownerClient.PostAsJsonAsync($"/api/conversations/{_conversation}/messages",new { parts=new object[] { new { type="reply",messageId=good },new { type="text",text="perfect" } } });
+        Assert.True(replied.IsSuccessStatusCode);Assert.Equal(1,await c.ExecuteScalarAsync<int>("SELECT count(*) FROM approval_signals WHERE signal='reply'"));
+    }
+    [PostgresFact]
+    public async Task LearningSupersedesCorrectionsDedupesCapsAndProtectsContext()
+    {
+        await using var c=await _data!.OpenConnectionAsync();var message=await LearningMessage();
+        await ApprovalSignals.Record(c,null,_bot,_owner,_conversation,message,"positive","reply","perfect","A spacious clean design","positive");await Learn();
+        await ApprovalSignals.Record(c,null,_bot,_owner,_conversation,message,"correction","reply","no, shorter please","A spacious clean design","negative");await Learn();
+        Assert.Equal(1,await c.ExecuteScalarAsync<int>("SELECT count(*) FROM memories WHERE learned_kind IS NOT NULL AND status='active'"));
+        Assert.Equal(1,await c.ExecuteScalarAsync<int>("SELECT count(*) FROM memories WHERE status='superseded'"));
+        await ApprovalSignals.Record(c,null,_bot,_owner,_conversation,message,"correction","reply","no, shorter please","A spacious clean design","negative-again");await Learn();
+        Assert.Equal(1,await c.ExecuteScalarAsync<int>("SELECT count(*) FROM memories WHERE learned_kind IS NOT NULL AND status='active'"));
+        var own=await ApprovalSignals.Context(c,_bot,"shorter");Assert.Contains("Avoid:",own);Assert.True(own.Length<=1200);
+        var otherBot=await c.ExecuteScalarAsync<Guid>("INSERT INTO bots(owner_id,name,token_hash) VALUES(@owner,'Private other','unused') RETURNING id",new { owner=_owner });
+        Assert.Equal("",await ApprovalSignals.Context(c,otherBot,"shorter"));
+        // Even an accidental sharing flag must not expose learned notes to a sibling bot.
+        await c.ExecuteAsync("UPDATE memories SET visibility='owner' WHERE learned_kind IS NOT NULL");
+        Assert.DoesNotContain("shorter",JsonSerializer.Serialize(await new MemoryStore(_platform!).Search(otherBot,_owner,"shorter")));
+        await c.ExecuteAsync("UPDATE memories SET visibility='bot' WHERE learned_kind IS NOT NULL");
+        for(var n=0;n<55;n++)
+        {
+            var signal=new ApprovalSignal { Id=Guid.NewGuid(),BotId=_bot,UserId=_owner,ConversationId=_conversation,MessageId=message,Kind="positive",Signal="reaction",Detail=JsonSerializer.Serialize(new { text="👍",excerpt="result" }) };
+            await using var tx=await c.BeginTransactionAsync();
+            await new MemoryStore(_platform!).SaveLearned(c,tx,signal,new("preference","Prefer layout variant "+n+" for project "+n,"layout:"+n));await tx.CommitAsync();
+        }
+        Assert.Equal(50,await c.ExecuteScalarAsync<int>("SELECT count(*) FROM memories WHERE learned_kind IS NOT NULL AND status IN ('active','pending')"));
+        var bad=new ApprovalSignal { Id=Guid.NewGuid(),BotId=_bot,UserId=_owner,Kind="positive",Signal="reaction",Detail="{\"text\":\"perfect\",\"excerpt\":\"layout\"}" };
+        await using(var tx=await c.BeginTransactionAsync()) { Assert.Null(await new MemoryStore(_platform!).SaveLearned(c,tx,bad,new("preference","password: unit-private-password","secret")));await tx.CommitAsync(); }
+        Assert.DoesNotContain("unit-private-password",await ApprovalSignals.Context(c,_bot,"password"));
+    }
+    [PostgresFact]
+    public async Task LearningExtractorFailureFallsBackAndCompletionIsEpochFenced()
+    {
+        var message=await LearningMessage();await _ownerClient!.PostAsJsonAsync($"/api/messages/{message}/reactions",new { emoji="👍" });
+        Assert.Equal(1,await Learn((_,_)=>throw new InvalidOperationException("mock outage")));
+        await using var c=await _data!.OpenConnectionAsync();var id=await c.ExecuteScalarAsync<Guid>("SELECT id FROM approval_signals");
+        await c.ExecuteAsync("UPDATE approval_signals SET task_id=@task",new { task=_parent });
+        await c.ExecuteAsync("INSERT INTO task_transcript(task_id,seq,role,content) VALUES(@task,0,'system',@text)",new { task=_parent,text="[approval-signal:"+id+"]" });
+        await c.QueryAsync(FeedbackDelivery.CompleteSql,new { id=_parent,epoch=9,result="{}" });
+        Assert.Equal(1,await c.ExecuteScalarAsync<int>("SELECT count(*) FROM approval_signals WHERE consumed_at IS NULL"));
+        await c.QueryAsync(FeedbackDelivery.CompleteSql,new { id=_parent,epoch=0,result="{}" });
+        Assert.Equal(0,await c.ExecuteScalarAsync<int>("SELECT count(*) FROM approval_signals WHERE consumed_at IS NULL"));
+    }
     [PostgresFact]
     public async Task GetSteerPrivacyAuditAndLessonsHaveRealPersistence()
     {

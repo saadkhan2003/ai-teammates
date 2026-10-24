@@ -35,6 +35,13 @@ def _plan(messages: list) -> dict:
     transcript = [item for item in messages or [] if isinstance(item, dict)]
     if transcript and _content_text(transcript[-1].get("content")).startswith("[compaction-summary-request]"):
         return _final(json.dumps(_compaction_summary(transcript), ensure_ascii=False, sort_keys=True))
+    if any("[approval-preference-extraction]" in _content_text(m.get("content")) for m in transcript if m.get("role") == "system"):
+        try:
+            data = json.loads(_first_user(transcript))
+            fallback = data["fallback"]
+            return _final(json.dumps({"kind": fallback["Kind"], "text": fallback["Text"]}, ensure_ascii=False))
+        except (ValueError, KeyError, TypeError):
+            return _final("{}")
     if _first_user(transcript).startswith("[brief-quality-review]"):
         return _final(json.dumps({"warnings": ["Include evidence paths in the report."]}))
     if "BRIEF_TEST" in _first_user(transcript):
@@ -779,7 +786,7 @@ def _brief_plan(messages: list) -> dict:
     results = [m for m in messages if m.get("role") == "tool"]
     if not results:
         return _tool("shell", {"command": "mkdir -p /workspace/brief-test-repo && git -C /workspace/brief-test-repo init && git -C /workspace/brief-test-repo -c user.name=Fixture -c user.email=fixture@example.test commit --allow-empty -m fixture"})
-    prior = [m for m in results if m.get("name") == "spawn_child_task"]
+    prior = [m for m in results if _tool_name(m, messages) == "spawn_child_task"]
     if not prior:
         return _tool("spawn_child_task", {"title": "Brief integration child", "repo": "brief-test-repo", "brief": {"goal": "Implement the requested feature."}})
     last = str(prior[-1].get("content") or "")

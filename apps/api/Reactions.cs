@@ -93,7 +93,7 @@ public static class Reactions
             reaction = Shape(existing);
             events.Add(await Emit(conn, tx, message.ConversationId, "message.reaction.removed", existing));
             if (actorType == "user" && message.Role == "assistant")
-                await Feedback(conn, tx, message.BotId, message.Id, existing.Emoji, "removed");
+                await Feedback(conn, tx, message.BotId, actorId, message.ConversationId, message.Id, existing.Emoji, "removed");
         }
         else if (existing == null)
         {
@@ -108,7 +108,7 @@ public static class Reactions
             reaction = Shape(created);
             events.Add(await Emit(conn, tx, message.ConversationId, "message.reaction.added", created));
             if (actorType == "user" && message.Role == "assistant")
-                await Feedback(conn, tx, message.BotId, message.Id, created.Emoji, "reacted");
+                await Feedback(conn, tx, message.BotId, actorId, message.ConversationId, message.Id, created.Emoji, "reacted");
         }
         else
         {
@@ -123,18 +123,16 @@ public static class Reactions
             reaction = Shape(created);
             events.Add(await Emit(conn, tx, message.ConversationId, "message.reaction.added", created));
             if (actorType == "user" && message.Role == "assistant")
-                await Feedback(conn, tx, message.BotId, message.Id, created.Emoji, "reacted");
+                await Feedback(conn, tx, message.BotId, actorId, message.ConversationId, message.Id, created.Emoji, "reacted");
         }
         await tx.CommitAsync();
         foreach (var evt in events) await platform.Publish(evt);
         return new Outcome(200, null, action, reaction);
     }
 
-    private static async Task Feedback(NpgsqlConnection conn, NpgsqlTransaction tx, Guid botId, Guid messageId, string emoji, string action)
+    private static async Task Feedback(NpgsqlConnection conn, NpgsqlTransaction tx, Guid botId, Guid userId, Guid conversationId, Guid messageId, string emoji, string action)
     {
-        await conn.ExecuteAsync(
-            "INSERT INTO bot_feedback (bot_id, message_id, emoji, action) VALUES (@bot, @message, @emoji, @action)",
-            new { bot = botId, message = messageId, emoji, action }, tx);
+        await ApprovalSignals.Reaction(conn, tx, botId, userId, conversationId, messageId, emoji, action == "removed");
     }
 
     private static async Task<object> Emit(NpgsqlConnection conn, NpgsqlTransaction tx, Guid conversationId, string type, ReactionRow row)

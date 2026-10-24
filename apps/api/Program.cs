@@ -86,6 +86,7 @@ builder.Services.AddSingleton(loginFlow);
 builder.Services.AddSingleton(runtime);
 builder.Services.AddSingleton(data);
 builder.Services.AddHostedService<Maintenance>();
+builder.Services.AddHostedService<ApprovalLearningWorker>();
 builder.Services.AddHostedService(sp => new TaskLeaseMaintenance(
     ct => TaskLeaseMaintenance.Sweep(platform, ct), sp.GetRequiredService<ILogger<TaskLeaseMaintenance>>()));
 builder.Services.AddHostedService<PluginCatalogJob>();
