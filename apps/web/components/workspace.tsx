@@ -8,6 +8,7 @@ import { Approvals } from "@/components/approvals";
 import { PluginsPane } from "@/components/plugins-pane";
 import { ArtifactsPane } from "@/components/artifacts-pane";
 import { ChatPane } from "@/components/chat-pane";
+import { CodingPanel, JobDetailDialog } from "@/components/coding-jobs";
 import { LoginCard } from "@/components/login-card";
 import { FilesPane } from "@/components/files-pane";
 import { MemoryPane } from "@/components/memory-pane";
@@ -20,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -30,6 +32,7 @@ import {
   normalizeRoutines,
   normalizeSkills,
 } from "@/lib/api";
+import { applyCodingJob, normalizeCodingJob, readableAccent, type CodingJob } from "@/lib/chat-ui";
 import { mergeAgentEvent, parseAgentEvent, subscribeEvents, type AgentEvent } from "@/lib/events";
 import { StatusBadge } from "@/lib/status";
 import type { Artifact, FileEntry, LoginRequest, MemoryItem, Routine, SecretRequest, Skill, Workspace as WorkspaceData } from "@/lib/types";
@@ -63,6 +66,7 @@ function normalizeWorkspace(data: WorkspaceData): WorkspaceData {
     holder: data.holder === "human" ? "human" : "agent",
     llmProvider: data.llmProvider ?? "",
     openrouterConnected: data.openrouterConnected,
+    codingJobs: (data.codingJobs ?? []).map((job, index) => normalizeCodingJob(job, index)).filter((job): job is CodingJob => job !== null),
   };
 }
 
@@ -99,6 +103,7 @@ export function Workspace({ botId }: { botId: string }) {
   const [routines, setRoutines] = useState<ListState<Routine>>(emptyList);
   const [artifacts, setArtifacts] = useState<ListState<Artifact>>(emptyList);
   const [detailTab, setDetailTab] = useState("overview");
+  const [openJob, setOpenJob] = useState<CodingJob | null>(null);
   const [finishedLogins, setFinishedLogins] = useState<LoginRequest[]>([]);
   const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
   const [llmConnected, setLlmConnected] = useState<boolean | null>(null);
@@ -177,6 +182,16 @@ export function Workspace({ botId }: { botId: string }) {
     const stopEvents = subscribeEvents((data) => {
       const event = parseAgentEvent(data);
       const type = event?.type ?? "";
+      if (type === "coding.job" && event?.botId === botId) {
+        const job = normalizeCodingJob(event.job);
+        if (job) {
+          setWorkspace((current) => {
+            if (!current) return current;
+            const existing = (current.codingJobs ?? []).map((item, index) => normalizeCodingJob(item, index)).filter((item): item is CodingJob => item !== null);
+            return { ...current, codingJobs: applyCodingJob(existing, job) };
+          });
+        }
+      }
       if (event && ["grounding", "tool", "tool_call", "tool_result", "delta", "message.delta", "text_delta", "memory"].includes(type)) {
         // Events without bot/task attribution cannot safely be shown in this workspace.
         if (event.botId === botId || (typeof event.taskId === "string" && taskIds.current.has(event.taskId))) {
@@ -209,7 +224,12 @@ export function Workspace({ botId }: { botId: string }) {
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") { setDesktopFull(false); setSettingsOpen(false); setPane(false); }
+      if (event.key === "Escape") {
+        if (document.querySelector("[role='dialog']")) return;
+        setDesktopFull(false);
+        setSettingsOpen(false);
+        setPane(false);
+      }
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "i") {
         event.preventDefault();
         setPane((value) => !value);
@@ -258,22 +278,18 @@ export function Workspace({ botId }: { botId: string }) {
 
   return (
     <div className="flex h-full min-h-0">
-      <section className="flex min-w-0 flex-1 flex-col">
-        <header className="relative flex h-12 items-center justify-center border-b border-border px-3">
+      <section className="relative flex min-w-0 flex-1 flex-col">
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-16 bg-gradient-to-b from-background to-transparent" />
+        <header className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center px-3">
           <button
             type="button"
             data-testid="bot-name-button"
-            className="inline-flex max-w-[70%] items-center gap-2 rounded-md border border-border bg-card px-3 py-1 text-sm font-medium shadow-sm"
+            className="pointer-events-auto inline-flex max-w-[70%] items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-sm font-medium text-card-foreground shadow-sm transition-shadow hover:shadow-md"
             onClick={() => setPane((value) => !value)}
           >
             <BotAvatar botId={bot?.id} shape={bot?.avatarShape} color={bot?.avatarColor} size={20} />
             <span className="truncate">{bot?.name || "Teammate"}</span>
           </button>
-          {bot?.status ? (
-            <span className="absolute right-3">
-              <StatusBadge status={bot.status} />
-            </span>
-          ) : null}
         </header>
         {workspaceError ? (
           <p role="alert" className="px-4 pt-3 text-sm text-destructive">
@@ -289,6 +305,12 @@ export function Workspace({ botId }: { botId: string }) {
             await loadWorkspace();
           }}
           botName={bot?.name || "Teammate"}
+          botId={botId}
+          accent={readableAccent(bot?.avatarColor || defaultBotAvatar(botId).color)}
+          avatarShape={bot?.avatarShape || defaultBotAvatar(botId).shape}
+          avatarColor={bot?.avatarColor || defaultBotAvatar(botId).color}
+          codingJobs={(workspace.codingJobs ?? []).map((job, index) => normalizeCodingJob(job, index)).filter((job): job is CodingJob => job !== null)}
+          onOpenJob={setOpenJob}
           onSent={() => void loadWorkspace()}
           working={(workspace.tasks ?? []).some((task) => ["running", "planning", "queued"].includes((task.status ?? "").toLowerCase()))}
           extras={
@@ -351,6 +373,7 @@ export function Workspace({ botId }: { botId: string }) {
             </>
           }
         />
+        <JobDetailDialog job={openJob} accent={readableAccent(bot?.avatarColor || defaultBotAvatar(botId).color)} onClose={() => setOpenJob(null)} />
       </section>
       {pane ? (
         <aside
@@ -417,24 +440,28 @@ export function Workspace({ botId }: { botId: string }) {
                   onChanged={() => void loadWorkspace()}
                 />
               </div>
-              <section className="border-b border-border px-3 py-3">
-                <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Routines</h2>
-                {!routines.loaded ? <p className="mt-2 text-sm text-muted-foreground">Loading routines…</p> : null}
-                {routines.error ? <p className="mt-2 text-sm text-destructive">{routines.error}</p> : null}
-                {routines.loaded && !routines.error && routines.items.length === 0 ? (
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    Routines are recurring tasks this teammate runs on a schedule. Ask in chat to set one up.
-                  </p>
-                ) : null}
-                <ul className="mt-2 space-y-1">
-                  {routines.items.map((routine) => (
-                    <li key={routine.id} className="flex items-baseline justify-between gap-2 text-sm">
-                      <span className="truncate">{routine.name}</span>
-                      <span className="shrink-0 text-xs text-muted-foreground">{routine.cron}</span>
-                    </li>
-                  ))}
-                </ul>
-              </section>
+              <CodingPanel
+                jobs={(workspace.codingJobs ?? []).map((job, index) => normalizeCodingJob(job, index)).filter((job): job is CodingJob => job !== null)}
+                routines={routines.items}
+                accent={readableAccent(bot?.avatarColor || defaultBotAvatar(botId).color)}
+                botId={botId}
+                avatarShape={bot?.avatarShape}
+                avatarColor={bot?.avatarColor}
+                onOpenJob={setOpenJob}
+                onToggleRoutine={(routine, enabled) => {
+                  setRoutines((current) => ({ ...current, items: current.items.map((item) => (item.id === routine.id ? { ...item, enabled } : item)) }));
+                  void api(`/api/routines/${routine.id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }).catch((caught) => {
+                    setRoutines((current) => ({ ...current, items: current.items.map((item) => (item.id === routine.id ? { ...item, enabled: !enabled } : item)) }));
+                    setWorkspaceError(errorMessage(caught, "Could not update that routine."));
+                  });
+                }}
+              />
+              <Collapsible data-testid="connect-apps" className="border-b border-border">
+                <CollapsibleTrigger className="flex min-h-11 w-full items-center px-3 text-left text-sm font-medium">Connect apps</CollapsibleTrigger>
+                <CollapsibleContent className="px-3 pb-3">
+                  <PluginsPane mode="catalog" />
+                </CollapsibleContent>
+              </Collapsible>
               <section data-testid="channels" className="border-b border-border px-3 py-3">
                 <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Channels</h2>
                 <p className="mt-2 text-sm text-muted-foreground">No channels. Group chats will list them here.</p>

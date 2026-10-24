@@ -108,7 +108,7 @@ test("question card answer survives reload and memory notices render", async ({ 
   await expect(page.getByTestId("composer")).toBeVisible();
 
   await page.getByTestId("composer").fill(ASK);
-  await page.getByTestId("assign-task").click();
+  await page.getByTestId("send-chat").click();
   const card = page.getByTestId("question-card");
   await expect(card).toBeVisible({ timeout: 60_000 });
   await expect(card).toHaveAttribute("data-answered", "false");
@@ -147,7 +147,7 @@ test("question card answer survives reload and memory notices render", async ({ 
   await expect(page.getByText(`You chose ${CHOICE}`)).toBeVisible({ timeout: 20_000 });
 
   await page.getByTestId("composer").fill(REMEMBER);
-  await page.getByTestId("assign-task").click();
+  await page.getByTestId("send-chat").click();
   const saved = page.locator('[data-testid="memory-notice"][data-action="saved"]');
   await expect(saved).toBeVisible({ timeout: 60_000 });
   await expect(saved).toContainText("Saved to notes");
@@ -159,7 +159,7 @@ test("question card answer survives reload and memory notices render", async ({ 
   expect(remembered.status, resultText(remembered)).toBe("completed");
 
   await page.getByTestId("composer").fill(FORGET);
-  await page.getByTestId("assign-task").click();
+  await page.getByTestId("send-chat").click();
   const forgot = page.locator('[data-testid="memory-notice"][data-action="forgot"]');
   await expect(forgot).toBeVisible({ timeout: 60_000 });
   await expect(forgot).toContainText("Forgot a note");

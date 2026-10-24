@@ -160,6 +160,7 @@ export function ComputerPane({
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [keyboard, setKeyboard] = useState(false);
   const [nativeFs, setNativeFs] = useState(false);
+  const [power, setPower] = useState<string>("unknown");
   zoomRef.current = zoom;
   panRef.current = pan;
   const waiting = tasks.filter((task) => task.status === "waiting_human");
@@ -197,7 +198,7 @@ export function ComputerPane({
     const resolved: DesktopMode = mobileRef.current && nextMode === "control" && !armedControl.current ? "view" : nextMode;
     rfb.scaleViewport = true;
     rfb.showDotCursor = true;
-    rfb.background = "#e7dccb";
+    rfb.background = getComputedStyle(document.documentElement).getPropertyValue("--background").trim();
     rfb.viewOnly = resolved !== "control";
     modeRef.current = resolved;
     setMode(resolved);
@@ -455,6 +456,37 @@ export function ComputerPane({
     });
   }
 
+  useEffect(() => {
+    let live = true;
+    async function loadPower() {
+      try {
+        const body = await api<{ status?: string }>(`/api/bots/${botId}/computer/power`);
+        if (live) setPower((body.status ?? "unknown").toLowerCase());
+      } catch {
+        if (live) setPower("unknown");
+      }
+    }
+    void loadPower();
+    const timer = window.setInterval(() => void loadPower(), 15_000);
+    return () => {
+      live = false;
+      window.clearInterval(timer);
+    };
+  }, [botId]);
+
+  async function wake() {
+    setBusy("wake");
+    try {
+      await api(`/api/bots/${botId}/computer/wake`, { method: "POST" });
+      setPower("running");
+      onChanged();
+    } catch (caught) {
+      toast.error(errorMessage(caught, "Could not wake the computer."));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function handBack() {
     clearReconnect();
     setBusy("hand");
@@ -618,7 +650,40 @@ export function ComputerPane({
           </div>
         ) : null}
         {compact ? (
-          <p className="text-xs text-muted-foreground">{statusLabel(vncState)}</p>
+          <div className="flex flex-col gap-2">
+            <p className="text-xs text-muted-foreground">{statusLabel(vncState)}</p>
+            {power === "hibernated" || power === "stopped" ? (
+              <div data-testid="computer-asleep" className="rounded-xl border border-border bg-card px-3 py-3 text-sm">
+                <p className="font-medium">The computer is asleep.</p>
+                <Button type="button" data-testid="computer-wake" className="mt-2 min-h-11" disabled={busy !== null} onClick={() => void wake()}>
+                  Wake
+                </Button>
+              </div>
+            ) : null}
+            <div data-testid="computer-control-pill" className="inline-flex min-h-11 w-fit items-center gap-2 rounded-full border border-border bg-card px-3 text-sm">
+              {mode === "view" ? (
+                <>
+                  <span>Watching</span>
+                  <span aria-hidden>·</span>
+                  <button type="button" data-testid="take-control" className="font-medium" disabled={busy !== null} onClick={() => void takeControl()}>
+                    Take control
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span>You&apos;re in control</span>
+                  <span aria-hidden>·</span>
+                  <button type="button" data-testid="computer-stop" disabled={busy !== null} onClick={() => void handBack()}>
+                    Stop
+                  </button>
+                  <span aria-hidden>/</span>
+                  <button type="button" data-testid="hand-back" className="font-semibold" disabled={busy !== null} onClick={() => void handBack()}>
+                    I&apos;m done
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
         ) : fullscreen ? null : (
         <div className="flex shrink-0 flex-col gap-2">
           <p className="text-sm text-muted-foreground">
@@ -632,13 +697,38 @@ export function ComputerPane({
               Watch only
             </p>
           ) : null}
+          {power === "hibernated" || power === "stopped" ? (
+            <div data-testid="computer-asleep" className="rounded-xl border border-border bg-card px-3 py-3 text-sm">
+              <p className="font-medium">The computer is asleep.</p>
+              <Button type="button" data-testid="computer-wake" className="mt-2 min-h-11" disabled={busy !== null} onClick={() => void wake()}>
+                Wake
+              </Button>
+            </div>
+          ) : null}
+          <div data-testid="computer-control-pill" className="inline-flex min-h-11 w-fit items-center gap-2 rounded-full border border-border bg-card px-3 text-sm">
+            {mode === "view" ? (
+              <>
+                <span>Watching</span>
+                <span aria-hidden>·</span>
+                <button type="button" data-testid="take-control" className="font-medium" disabled={busy !== null} onClick={() => void takeControl()}>
+                  Take control
+                </button>
+              </>
+            ) : (
+              <>
+                <span>You&apos;re in control</span>
+                <span aria-hidden>·</span>
+                <button type="button" data-testid="computer-stop" disabled={busy !== null} onClick={() => void handBack()}>
+                  Stop
+                </button>
+                <span aria-hidden>/</span>
+                <button type="button" data-testid="hand-back" className="font-semibold" disabled={busy !== null} onClick={() => void handBack()}>
+                  I&apos;m done
+                </button>
+              </>
+            )}
+          </div>
           <div className="flex flex-wrap gap-2">
-            <Button data-testid="take-control" className="min-h-11 flex-1" disabled={busy !== null} onClick={() => void takeControl()}>
-              Take control
-            </Button>
-            <Button data-testid="hand-back" variant="secondary" className="min-h-11 flex-1 border-2 border-foreground font-semibold" disabled={busy !== null} onClick={() => void handBack()}>
-              Hand back
-            </Button>
             <Button
               data-testid="desktop-fullscreen"
               variant="secondary"

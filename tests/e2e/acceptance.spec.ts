@@ -173,10 +173,10 @@ async function openSecrets(page: Page) {
   await expect(page).toHaveURL(/\/settings\/secrets/);
 }
 
-async function send(page: Page, text: string, asTask: boolean) {
+async function send(page: Page, text: string, _asTask = false) {
   const composer = page.getByTestId("composer");
   await composer.fill(text);
-  await page.getByTestId(asTask ? "assign-task" : "send-chat").click();
+  await page.getByTestId("send-chat").click();
   await expect(composer).toHaveValue("");
 }
 
@@ -533,6 +533,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
       expect(text.length).toBeGreaterThan(0);
     }
     const message = assistants.filter({ has: page.locator('[data-testid="reaction-picker"]') }).last();
+    await message.hover();
     const picker = message.locator('[data-testid="reaction-picker"]');
     await picker.getByRole("button", { name: "👍" }).click();
     await expect(message.locator('[data-testid="reaction-pill"][data-emoji="👍"][data-actor="user"]')).toBeVisible();

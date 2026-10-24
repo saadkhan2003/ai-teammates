@@ -9,13 +9,13 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
-import { applyTheme, readTheme, type ThemeMode } from "@/lib/theme";
+import { applyAccent, parseTheme, readTheme, saveTheme, type ThemeMode } from "@/lib/theme";
 
 const ACCENTS = [
-  { id: "blue", dark: "#8eb6ff", light: "#3b6fd8" },
-  { id: "sage", dark: "#8fd0a8", light: "#1f7a45" },
-  { id: "sand", dark: "#e6c27a", light: "#8a5a12" },
-  { id: "clay", dark: "#f0a8a0", light: "#9f2d2d" },
+  { id: "blue", swatch: "#8eb6ff" },
+  { id: "sage", swatch: "#8fd0a8" },
+  { id: "sand", swatch: "#e6c27a" },
+  { id: "clay", swatch: "#f0a8a0" },
 ];
 
 const LOCALES = [
@@ -29,14 +29,14 @@ const LOCALES = [
 const ZONES = ["UTC", "America/New_York", "America/Los_Angeles", "Europe/London", "Europe/Paris", "Asia/Karachi", "Asia/Tokyo"];
 
 const THEMES: { id: ThemeMode; label: string }[] = [
-  { id: "system", label: "Follow system" },
   { id: "light", label: "Light" },
   { id: "dark", label: "Dark" },
+  { id: "system", label: "System" },
 ];
 
 export default function GeneralSettingsPage() {
   const router = useRouter();
-  const [mode, setMode] = useState<ThemeMode>("dark");
+  const [mode, setMode] = useState<ThemeMode>("system");
   const [username, setUsername] = useState("");
   const [role, setRole] = useState("");
   const [locale, setLocale] = useState("en");
@@ -50,27 +50,23 @@ export default function GeneralSettingsPage() {
     setZone(window.localStorage.getItem("teammates-timezone") || "UTC");
     setAlerts(window.localStorage.getItem("teammates-desktop-notifications") === "on");
     setAccent(window.localStorage.getItem("teammates-accent-id") || "blue");
-    void api<{ username?: string; role?: string }>("/api/auth/me")
+    void api<{ username?: string; role?: string; theme?: string }>("/api/auth/me")
       .then((me) => {
         setUsername(me.username ?? "");
         setRole(me.role ?? "");
+        const saved = parseTheme(me.theme);
+        if (saved) setMode(saved);
       })
       .catch(() => undefined);
   }, []);
 
   function choose(next: ThemeMode) {
     setMode(next);
-    applyTheme(next);
-    paintAccent(accent, next);
+    void saveTheme(next).catch(() => undefined);
   }
 
-  function paintAccent(id: string, theme: ThemeMode = mode) {
-    const swatch = ACCENTS.find((item) => item.id === id) ?? ACCENTS[0];
-    const light = theme === "light" || (theme === "system" && !window.matchMedia("(prefers-color-scheme: dark)").matches);
-    const color = light ? swatch.light : swatch.dark;
-    document.documentElement.style.setProperty("--brand", color);
-    window.localStorage.setItem("teammates-accent", color);
-    window.localStorage.setItem("teammates-accent-id", id);
+  function paintAccent(id: string) {
+    applyAccent(id, mode);
     setAccent(id);
   }
 
@@ -122,7 +118,7 @@ export default function GeneralSettingsPage() {
       </Card>
       <Card>
         <CardHeader className="p-4">
-          <CardTitle className="text-sm">Theme</CardTitle>
+          <CardTitle className="text-sm">Appearance</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2 p-4 pt-0">
           {THEMES.map((item) => (
@@ -144,15 +140,15 @@ export default function GeneralSettingsPage() {
           <CardTitle className="text-sm">Accent colour</CardTitle>
         </CardHeader>
         <CardContent className="flex gap-2 p-4 pt-0">
-          {ACCENTS.map((swatch) => (
+          {ACCENTS.map((item) => (
             <button
-              key={swatch.id}
+              key={item.id}
               type="button"
-              aria-label={swatch.id}
-              aria-pressed={accent === swatch.id}
-              className="h-7 w-7 rounded-md border border-border"
-              style={{ background: swatch.dark }}
-              onClick={() => paintAccent(swatch.id)}
+              aria-label={item.id}
+              aria-pressed={accent === item.id}
+              className="size-7 rounded-md border border-border"
+              style={{ background: item.swatch }}
+              onClick={() => paintAccent(item.id)}
             />
           ))}
         </CardContent>

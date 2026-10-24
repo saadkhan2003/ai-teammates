@@ -45,6 +45,27 @@ def test_unknown_work_text_has_no_plan():
     assert result["choices"][0]["finish_reason"] == "stop"
 
 
+def test_start_coding_jobs_reports_live_status():
+    user = {"role": "user", "content": "Start coding jobs for the composer"}
+    name, args, _ = _call([user])
+    assert name == "report_coding_job"
+    assert args["title"] == "UI batch"
+    assert args["status"] == "running"
+    assert args["step"] == "Editing the composer"
+    tools = [{"role": "tool", "content": "{}"}]
+    _, tests, _ = _call([user, *tools])
+    assert tests["status"] == "tests"
+    assert tests["step"] == "Running test suites"
+    _, merged, _ = _call([user, *tools, *tools])
+    assert merged["status"] == "merged"
+    assert merged["pr_number"] == "4"
+    _, finished, _ = _call([user, *tools, *tools, *tools])
+    assert finished["title"] == "API reactions"
+    assert finished["status"] == "finished"
+    final = plan([user, *tools, *tools, *tools, *tools])
+    assert final["choices"][0]["message"]["content"] == "Coding jobs are up to date."
+
+
 def test_thanks_is_reaction_only():
     user = {"role": "user", "content": "thanks!", "message_id": "msg-1"}
     name, args, result = _call([user])

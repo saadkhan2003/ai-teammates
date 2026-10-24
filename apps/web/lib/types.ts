@@ -38,6 +38,22 @@ export type ChatMessage = {
   content: string;
   createdAt?: string;
   reactions?: Reaction[];
+  replyToId?: string;
+};
+
+export type CodingJob = {
+  id: string;
+  title: string;
+  status: string;
+  step?: string;
+  prNumber?: number | null;
+  prUrl?: string;
+  branch?: string;
+  filesChanged?: number;
+  additions?: number;
+  deletions?: number;
+  updatedAt?: string;
+  taskId?: string;
 };
 
 export type Approval = {
@@ -91,6 +107,7 @@ export type Workspace = {
   holder: "agent" | "human";
   llmProvider: string;
   openrouterConnected: boolean;
+  codingJobs?: CodingJob[];
 };
 
 export type FileEntry = {
@@ -121,6 +138,7 @@ export type Routine = {
   nextRunAt?: string;
   watchKind?: string;
   watchRef?: string;
+  enabled?: boolean;
 };
 
 export type Artifact = {

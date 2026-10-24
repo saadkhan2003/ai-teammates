@@ -12,6 +12,7 @@ const config: Config = {
         line: "var(--border)",
         clay: "var(--destructive)",
         sage: "var(--sage)",
+        success: "var(--success)",
         "sage-soft": "var(--sage-soft)",
         copper: "var(--brand)",
         "copper-deep": "var(--brand)",
@@ -49,6 +50,8 @@ const config: Config = {
         border: "var(--border)",
         input: "var(--input)",
         ring: "var(--ring)",
+        "on-accent": "var(--on-accent)",
+        overlay: "var(--overlay)",
         "user-bubble": {
           DEFAULT: "var(--user-bubble)",
           foreground: "var(--user-bubble-foreground)",

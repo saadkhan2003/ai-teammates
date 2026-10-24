@@ -13,7 +13,7 @@ def retry_safe(method: str, path: str, body: dict | None) -> bool:
     # Model completion is billable and should not be replayed after an ambiguous timeout.
     if path == '/internal/model/complete':
         return False
-    return method in {'GET', 'PUT'} or path.endswith(('/heartbeat', '/status', '/transcript')) or path == '/internal/tasks/lease'
+    return method in {'GET', 'PUT'} or path.endswith(('/heartbeat', '/status', '/transcript')) or path in {'/internal/tasks/lease', '/internal/coding-jobs'}
 
 
 def side_effect_safe(body: dict | None, response: httpx.Response | None) -> bool:
