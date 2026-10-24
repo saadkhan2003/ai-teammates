@@ -11,7 +11,7 @@ const FlowView = dynamic(() => import("./flow-view").then(m => m.FlowView), { ss
 const CodeView = dynamic(() => import("./code-view").then(m => m.CodeView), { ssr: false, loading: () => <div className="h-60 animate-pulse rounded-md bg-muted" /> });
 export function WidgetRenderer({ value, onAction }: { value: unknown; onAction?: (widget: Widget, action: string, payload: Record<string, unknown>) => Promise<void> }) {
   let widget: Widget;
-  try { widget = validateWidget(value); } catch { return <div className="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground" data-testid="widget-fallback">This interactive content is unavailable.</div>; }
+  try { widget = validateWidget(hideProviderNames(value)); } catch { return <div className="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground" data-testid="widget-fallback">This interactive content is unavailable.</div>; }
   const act = (action: string, payload: Record<string, unknown> = {}) => void onAction?.(widget, action, payload);
   const heading = widget.title ? <h3 className="mb-2 text-sm font-semibold">{widget.title}</h3> : null;
   let body;
@@ -36,4 +36,11 @@ function WidgetForm({ widget, act }: { widget: Extract<Widget, {type:"form"}>; a
   const [values,setValues]=useState<Record<string,string>>({});
   function submit(e:FormEvent){e.preventDefault();act(widget.submit.action,{...widget.submit.payload,values});}
   return <form onSubmit={submit} className="space-y-3">{widget.fields.map(f=><label key={f.name} className="block space-y-1 text-xs"><span>{f.label}{f.required ? " *" : ""}</span>{f.type==="textarea"?<Textarea required={f.required} placeholder={f.placeholder} value={values[f.name]??""} onChange={e=>setValues({...values,[f.name]:e.target.value})}/>:f.type==="select"?<select required={f.required} className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm" value={values[f.name]??""} onChange={e=>setValues({...values,[f.name]:e.target.value})}><option value="">Choose…</option>{(f.options??[]).map(o=><option key={o}>{o}</option>)}</select>:<Input required={f.required} type={f.type} placeholder={f.placeholder} value={values[f.name]??""} onChange={e=>setValues({...values,[f.name]:e.target.value})}/>}</label>)}<Button type="submit" size="sm">{widget.submit.label}</Button></form>;
+}
+
+function hideProviderNames(value: unknown): unknown {
+  if (typeof value === "string") return value.replace(/\b(?:openrouter|anthropic|openai|gemini|whisper|deepinfra)\b/gi, "service").replace(/\b(?:claude|gpt|gemini|whisper|deepinfra)[-\w./]*/gi, "service");
+  if (Array.isArray(value)) return value.map(hideProviderNames);
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, hideProviderNames(item)]));
+  return value;
 }

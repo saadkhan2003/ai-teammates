@@ -21,3 +21,11 @@ test('rejects oversized/deep widgets and malicious image urls', () => {
   assert.equal(m.isSafeImageUrl('data:image/png;base64,YQ=='), true);
 });
 test('rejects malformed widget fields', () => { assert.throws(() => m.validateWidget({ ...sample, actions: [{ id: 'a', label: 'x', action: 'x', unexpected: true }] })); });
+test('renderer escapes text through React and never invokes HTML injection APIs', () => {
+  const renderer = fs.readFileSync(new URL('../../components/widgets/widget-renderer.tsx', import.meta.url), 'utf8');
+  assert.equal(renderer.includes('dangerouslySetInnerHTML'), false);
+  assert.equal(renderer.includes('innerHTML'), false);
+  const malicious = { version: 1, id: 'unsafe', type: 'card', body: '<img src=x onerror=alert(1)>' };
+  assert.equal(m.validateWidget(malicious).body, '<img src=x onerror=alert(1)>');
+  assert.match(renderer, /hideProviderNames/);
+});

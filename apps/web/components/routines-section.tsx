@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -11,6 +12,7 @@ import { cronToWords } from "@/lib/cron";
 import type { Routine, RoutineRun } from "@/lib/types";
 import { errorMessage } from "@/lib/utils";
 
+const FlowDiagram = dynamic(() => import("@/components/widgets/flow-view").then(m => m.FlowDiagram), { ssr: false, loading: () => <div className="h-60 animate-pulse rounded-md bg-muted" /> });
 const pausedText: Record<string, string> = {
   failed_repeatedly: "Paused after repeated failures", expired: "Expired", ran: "Completed",
 };
@@ -125,6 +127,7 @@ export function RoutinesSection({
                 {historyLoading ? <div data-testid="routine-history-skeleton" role="status" aria-busy="true" className="space-y-2">{[0, 1, 2].map((n) => <Skeleton key={n} className="h-12 w-full" />)}</div> : null}
                 {!historyLoading && historyError ? <div data-testid="routine-history-error" className="text-sm text-destructive"><p>{historyError}</p><Button variant="outline" size="sm" className="mt-2" onClick={() => void refreshHistory(selectedRow)}>Try again</Button></div> : null}
                 {!historyLoading && !historyError && history.length === 0 ? <p className="text-sm text-muted-foreground">No runs yet.</p> : null}
+                {!historyLoading && !historyError && history.length > 1 ? <FlowDiagram label="Routine run flow" nodes={history.slice(0, 20).map((run, index) => ({ id: run.id, position: { x: index * 150, y: 0 }, data: { label: `${runLabel(run.status)} · ${dateTime(run.triggeredAt, selectedRow.timezone)}` }, type: "input" }))} edges={history.slice(0, 19).map((run, index) => ({ id: `routine-edge-${index}`, source: run.id, target: history[index + 1].id }))} /> : null}
                 {!historyLoading && !historyError ? <ul className="space-y-2">{history.slice(0, 20).map((run) => <li key={run.id} data-testid="routine-run" className="rounded-md border border-border p-2.5 text-sm"><div className="flex justify-between gap-2"><span className="font-medium">{runLabel(run.status)}</span><time className="text-xs text-muted-foreground">{dateTime(run.triggeredAt, selectedRow.timezone)}</time></div>{run.skipReason ? <p className="mt-1 text-xs text-muted-foreground">{skipText[run.skipReason] ?? run.skipReason.replaceAll("_", " ")}</p> : null}{run.summary || run.error ? <p className="mt-1 break-words text-xs text-muted-foreground">{run.summary || run.error}</p> : null}</li>)}</ul> : null}
               </section>
               <div className="grid grid-cols-2 gap-2 border-t border-border pt-4">

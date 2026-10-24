@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { Star } from "lucide-react";
 import { BOT_AVATARS, defaultBotAvatar } from "@/lib/avatars";
 import { avatarFrame, lobePath, subscribeAvatar, type AvatarFrame } from "@/lib/avatar-motion";
 
@@ -55,7 +56,7 @@ export function BotAvatar({ shape, color, size = 40, botId, className = "", anim
   return <span className="relative inline-flex shrink-0" style={{ width: size, height: size }}>
     {svg}
     <span role="img" aria-label="Primary bot" title="Primary bot" data-testid="primary-badge" className="absolute -bottom-0.5 -right-0.5 grid place-items-center rounded-full bg-orange-500 text-white ring-2 ring-background" style={{ width: badge, height: badge }}>
-      <svg aria-hidden viewBox="0 0 24 24" width={badge * 0.62} height={badge * 0.62} fill="currentColor"><path d="M12 2.8l2.7 5.9 6.4.7-4.8 4.3 1.4 6.3L12 16.7 6.3 20l1.4-6.3L2.9 9.4l6.4-.7z" /></svg>
+      <Star aria-hidden className="fill-current" width={badge * 0.62} height={badge * 0.62} />
     </span>
   </span>;
 }

@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { StateMessage } from "@/components/state-message";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/utils";
+import dynamic from "next/dynamic";
+const AdminAnalyticsChart = dynamic(() => import("@/components/widgets/admin-analytics-chart"), { ssr: false, loading: () => <div className="h-56 animate-pulse rounded-md bg-muted" /> });
 
 type Usage = {
   modelCalls?: number;
@@ -95,6 +97,7 @@ export default function UsagePage() {
           </p>
         </section>
       ) : null}
+      {rows?.length ? <section className="rounded-lg border border-line bg-paper p-5"><h2 className="mb-3 text-sm font-medium">Activity overview</h2><AdminAnalyticsChart rows={rows} /></section> : null}
       {rows ? (
         <section data-testid="usage-report" className="rounded-lg border border-line bg-paper p-5">
           <div className="flex items-center justify-between gap-3">

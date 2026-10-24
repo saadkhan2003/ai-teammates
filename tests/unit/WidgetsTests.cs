@@ -16,9 +16,20 @@ public sealed class WidgetsTests
     }
 
     [Fact]
+    public void DeclaredActionsAreTheOnlyAcceptedAndCanRequireApproval()
+    {
+        using var widget = JsonDocument.Parse("""{"version":1,"id":"w","type":"buttons","actions":[{"id":"safe","label":"Continue","action":"continue"},{"id":"danger","label":"Delete","action":"delete","requires_approval":true}]}""");
+        Assert.False(WidgetRoutes.TryFindAction(widget.RootElement, "unknown", out _));
+        Assert.True(WidgetRoutes.TryFindAction(widget.RootElement, "delete", out var action));
+        Assert.True(WidgetRoutes.RequiresApproval(action));
+        Assert.True(WidgetRoutes.TryFindAction(widget.RootElement, "continue", out action));
+        Assert.False(WidgetRoutes.RequiresApproval(action));
+    }
+
+    [Fact]
     public void EnforcesWidgetPayloadSizeAndDepth()
     {
-        using var large = JsonDocument.Parse("""{"version":1,"id":"c","type":"code","language":"txt","code":""" + new string('x', 48_000) + """""}");
+        using var large = JsonDocument.Parse(JsonSerializer.Serialize(new { version = 1, id = "c", type = "code", language = "txt", code = new string('x', 48_000) }));
         Assert.Equal("widget_too_large", WidgetSchema.Validate(large.RootElement));
         using var deep = JsonDocument.Parse("""{"version":1,"id":"w","type":"card","x":{"a":{"b":{"c":{"d":{"e":{"f":{"g":{"h":{}}}}}}}}}}""");
         Assert.Equal("widget_too_deep", WidgetSchema.Validate(deep.RootElement));

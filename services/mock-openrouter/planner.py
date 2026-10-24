@@ -230,6 +230,28 @@ def _steps(text: str, messages: list) -> list[Step]:
         if inner.lower().startswith("say hi"):
             return [("final", "Hi from the routine.")]
         return _steps(inner, messages)
+    if stripped.startswith("WIDGET_DEMO:"):
+        kind = stripped.split(":", 1)[1].strip().lower()
+        examples = {
+            "card": {"version": 1, "id": "demo-card", "type": "card", "title": "Quick summary", "body": "Three items are ready.", "items": ["Draft", "Review"]},
+            "list": {"version": 1, "id": "demo-list", "type": "list", "items": ["First", "Second"]},
+            "table": {"version": 1, "id": "demo-table", "type": "table", "columns": ["Name", "Count"], "rows": [["Jobs", 3]]},
+            "form": {"version": 1, "id": "demo-form", "type": "form", "fields": [{"name": "note", "label": "Note", "type": "text", "required": True}], "submit": {"id": "save", "label": "Save", "action": "save_note"}},
+            "buttons": {"version": 1, "id": "demo-buttons", "type": "buttons", "actions": [{"id": "continue", "label": "Continue", "action": "continue"}]},
+            "approval": {"version": 1, "id": "demo-approval", "type": "buttons", "actions": [{"id": "delete", "label": "Approve delete", "action": "delete_item", "requires_approval": True}]},
+            "badges": {"version": 1, "id": "demo-badges", "type": "badges", "items": [{"label": "Ready", "tone": "success"}]},
+            "key-value": {"version": 1, "id": "demo-kv", "type": "key-value", "items": [{"key": "Owner", "value": "Sam"}]},
+            "progress": {"version": 1, "id": "demo-progress", "type": "progress", "value": 64, "label": "Upload"},
+            "image-grid": {"version": 1, "id": "demo-images", "type": "image-grid", "images": [{"url": "https://example.com/a.jpg", "alt": "A landscape"}]},
+            "chart": {"version": 1, "id": "demo-chart", "type": "chart", "chart": "bar", "data": [{"label": "Mon", "value": 3}, {"label": "Tue", "value": 5}]},
+            "flow": {"version": 1, "id": "demo-flow", "type": "flow", "nodes": [{"id": "start", "label": "Start", "x": 0, "y": 0}, {"id": "done", "label": "Done", "x": 180, "y": 0}], "edges": [{"source": "start", "target": "done"}]},
+            "code": {"version": 1, "id": "demo-code", "type": "code", "language": "typescript", "filename": "answer.ts", "code": "export const answer = 42"},
+        }
+        widget = examples.get(kind)
+        if widget:
+            return [("tool", "send_widget", {"widget": widget}), ("final", "Widget demo ready.")]
+    if stripped.startswith("Widget action:"):
+        return [("final", "Widget action received.")]
     if "PLAN DEMO" in text:
         return [
             ("tool", "plan_set", {"items": ["Inspect the project", "Make the change", "Run the tests"]}),

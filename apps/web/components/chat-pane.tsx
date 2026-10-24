@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Markdown } from "@/components/markdown";
 import { RefreshNotice } from "@/components/refresh-notice";
@@ -27,6 +28,7 @@ import type { ChatMessage } from "@/lib/types";
 import { errorMessage, formatWhen } from "@/lib/utils";
 import type { Widget } from "@/lib/widgets/schema";
 
+const FlowDiagram = dynamic(() => import("@/components/widgets/flow-view").then(m => m.FlowDiagram), { ssr: false, loading: () => <div className="h-60 animate-pulse rounded-md bg-muted" /> });
 type TaskPlan = { taskId: string; title: string; status: string; items: { title: string; status: string }[]; budget: { label: string }; tests: { required: boolean; passedAt?: string; override: boolean }; blocked: boolean; estimate?: { lowSeconds: number; highSeconds: number; n: number; label: string } | null };
 
 export function ChatPane({
@@ -471,6 +473,7 @@ export function ChatPane({
           ) : null}
           {plan && plan.items.length ? <section aria-label="Task plan" className="rounded-md border border-border bg-card p-3 text-sm">
             <h3 className="font-medium">Plan</h3>
+            <FlowDiagram label="Task plan flow" nodes={plan.items.map((item, index) => ({ id: `plan-${index}`, position: { x: index * 180, y: 0 }, data: { label: item.title }, type: "input" }))} edges={plan.items.slice(1).map((_, index) => ({ id: `plan-edge-${index}`, source: `plan-${index}`, target: `plan-${index + 1}` }))} />
             <ul className="mt-2 space-y-1">{plan.items.map((item, index) => <li key={index} className="flex gap-2"><span aria-hidden>{item.status === "done" ? "✓" : item.status === "blocked" ? "!" : item.status === "in_progress" ? "◉" : "○"}</span><span>{item.title}</span></li>)}</ul>
             <p className="mt-2 text-xs text-muted-foreground">Budget: {plan.budget.label}</p>
             {plan.estimate ? <p className="text-xs text-muted-foreground">Estimate: ~{Math.round(plan.estimate.lowSeconds / 60)}–{Math.round(plan.estimate.highSeconds / 60)} min (from {plan.estimate.n} similar runs)</p> : null}
