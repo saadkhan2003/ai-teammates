@@ -212,9 +212,9 @@ def test_kill_switch_spend_cap_user_payloads_and_sse_have_no_model_branding(regi
         status, blocked = worker_request("POST", "/internal/model/complete", body)
         assert status == 200 and blocked["status"] == "waiting_resource"
         clean(blocked)
-        for endpoint in ["/api/bots", f"/api/bots/{bot}/workspace", f"/api/bots/{bot}/tasks", "/api/usage", f"/api/conversations/{conversation}/messages"]:
+        for endpoint in ["/api/bots", f"/api/bots/{bot}/workspace", f"/api/bots/{bot}/tasks", "/api/usage", f"/api/bots/{bot}/messages"]:
             status, payload = owner.call("GET", endpoint)
-            assert status == 200
+            assert status == 200, f"GET {endpoint.split('/')[2]}…{endpoint.rsplit('/',1)[-1]}: HTTP {status}"
             clean(payload)
         time.sleep(0.5)
         assert events, "capture actual SSE payloads"

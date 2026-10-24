@@ -52,7 +52,8 @@ public static partial class AiAdmin
             var snapshot = await registry.Snapshot();
             var active = snapshot.Versions.FirstOrDefault(v => v.IsActive);
             await using var conn = await platform.Data.OpenConnectionAsync();
-            var changed = await conn.ExecuteScalarAsync<DateTimeOffset?>("SELECT max(created_at) FROM ai_config_audit WHERE action IN ('config.published','config.rollback','rollout.promoted')");
+            var changedRaw = await conn.ExecuteScalarAsync<DateTime?>("SELECT max(created_at) FROM ai_config_audit WHERE action IN ('config.published','config.rollback','rollout.promoted')");
+            DateTimeOffset? changed = changedRaw is { } at ? new DateTimeOffset(DateTime.SpecifyKind(at, DateTimeKind.Utc)) : null;
             return Json(new { bootstrap_config = active == null ? new { kind = platform.LlmProvider, model = platform.ModelName } : null, last_change = changed, providers = snapshot.Providers, active_config = active?.Config, version = active?.Version ?? 0, rollout = snapshot.Rollout ?? new(), bootstrap = active == null });
         });
         group.MapGet("/versions", async () => Json((await registry.Snapshot()).Versions));
