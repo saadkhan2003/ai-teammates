@@ -134,8 +134,8 @@ test("policy card, data-policy block, and login form", async ({ page }) => {
     slug,
     "python3",
     "-c",
-    // Desktop effects are fenced: read the current agent epoch, then extract as an agent actor at that epoch.
-    "import json,os,urllib.request; base='http://127.0.0.1:7700/desktops/'+os.environ['COMPUTER_ID']; h={'Authorization':'Bearer '+os.environ['COMPUTER_TOKEN'],'Content-Type':'application/json'}; call=lambda p,b: json.loads(urllib.request.urlopen(urllib.request.Request(base+p, data=json.dumps(b).encode(), headers=h)).read().decode()); st=call('/lease', {'actorId':'e2e','action':'state'}); print(json.dumps(call('/browser/extract', {'selector':'#status','actor_id':'agent:e2e','epoch':st['epoch']})))",
+    // Desktop effects are fenced: read the agent epoch, pick the signin tab explicitly (extract defaults to the newest tracked tab), then extract.
+    "import json,os,urllib.request; base='http://127.0.0.1:7700/desktops/'+os.environ['COMPUTER_ID']; h={'Authorization':'Bearer '+os.environ['COMPUTER_TOKEN'],'Content-Type':'application/json'}; call=lambda p,b: json.loads(urllib.request.urlopen(urllib.request.Request(base+p, data=json.dumps(b).encode(), headers=h)).read().decode()); st=call('/lease', {'actorId':'e2e','action':'state'}); pg=json.loads(urllib.request.urlopen(urllib.request.Request(base+'/pages', headers=h)).read().decode())['pages']; tid=[x['targetId'] for x in pg if 'signin.html' in x['url']][-1]; print(json.dumps(call('/browser/extract', {'targetId':tid,'selector':'#status','actor_id':'agent:e2e','epoch':st['epoch']})))",
   ]);
   expect(pageText).toContain("logged in");
   expect(pageText).not.toContain(LOGIN_CANARY);
