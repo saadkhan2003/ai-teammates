@@ -7,7 +7,7 @@ from test_plugin_catalog import login
 from stack import worker_request
 
 
-def test_stdio_server_lists_and_stays_inside_caps():
+def test_stdio_server_lists_and_stays_inside_caps(bot_factory):
     owner = login()
     status, catalog = owner.call(
         "POST",
@@ -27,9 +27,8 @@ def test_stdio_server_lists_and_stays_inside_caps():
     assert status == 200, catalog
     status, installed = owner.call("POST", "/api/plugins/install", {"catalogId": catalog["id"]})
     assert status == 200, installed
-    status, bots = owner.call("GET", "/api/bots")
-    assert status == 200 and bots, bots
-    bot_id = bots[0]["id"]
+    # Own the bot instead of borrowing one another test leaked.
+    bot_id = bot_factory(owner, "Stdio clerk")
     status, enabled = owner.call("PUT", f"/api/plugins/{installed['id']}/bots/{bot_id}", {"enabled": True})
     assert status == 200, enabled
     status, tools = worker_request("GET", f"/internal/bots/{bot_id}/plugin-tools")
