@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronDown, Copy, ExternalLink, GitPullRequest, FileDiff, Terminal } from "lucide-react";
+import { Check, ChevronDown, Copy, ExternalLink, GitPullRequest, FileDiff, LoaderCircle, Terminal } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -109,7 +109,7 @@ export function CodingSection({ botId }: { botId: string }) {
 
   return (
     <section data-testid="coding-section" className="border-b border-border px-3 py-3">
-      <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Coding</h2>
+      <h2 className="text-xs font-medium text-muted-foreground">Coding</h2>
       <div className="mt-2 overflow-hidden rounded-2xl border border-border bg-card">
         {!loaded ? (
           <div role="status" aria-busy="true" data-testid="coding-skeleton" className="divide-y divide-border">
@@ -179,12 +179,12 @@ function CodingRowView({ row, editors, onDiff }: { row: CodingRow; editors: Edit
               data-testid="coding-status"
               className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium", STATUS_STYLE[row.status])}
             >
-              {row.status === "running" ? <span aria-hidden className="mr-1 h-1.5 w-1.5 animate-pulse rounded-full bg-current motion-reduce:animate-none" /> : null}
+              {row.status === "running" ? <LoaderCircle aria-hidden className="mr-1 h-3.5 w-3.5 animate-spin motion-reduce:animate-none" /> : null}
               {STATUS_LABEL[row.status]}
             </span>
             {row.prNumber != null ? <span data-testid="coding-pr" className="inline-flex items-center gap-0.5"><GitPullRequest className="h-3 w-3" aria-hidden />#{row.prNumber}</span> : null}
             {CI_LABEL[row.ci] ? (
-              <span data-testid="coding-ci" className={cn(row.ci === "failing" && "text-destructive", row.ci === "passing" && "text-emerald-600 dark:text-emerald-400")}>{CI_LABEL[row.ci]}</span>
+              <span data-testid="coding-ci" className={cn(row.ci === "failing" && "text-destructive", row.ci === "passing" && "text-success")}>{CI_LABEL[row.ci]}</span>
             ) : null}
             <span data-testid="coding-files">{row.changedFiles} {row.changedFiles === 1 ? "file" : "files"}</span>
           </div>
@@ -253,7 +253,7 @@ function DiffDialog({ id, onClose }: { id: string | null; onClose: () => void })
           <div className="grid max-h-[60vh] gap-3 overflow-y-auto">
             <div data-testid="coding-tests" className="rounded-lg border border-border p-2 text-xs">
               <p className="flex items-center gap-1 font-medium">
-                {detail.testsOk === true ? <><Check className="h-3.5 w-3.5 text-emerald-500" aria-hidden />Tests passed</> : detail.testsOk === false ? "Tests failed" : "No test run yet"}
+                {detail.testsOk === true ? <><Check className="h-3.5 w-3.5 text-success" aria-hidden />Tests passed</> : detail.testsOk === false ? "Tests failed" : "No test run yet"}
               </p>
               {detail.testsSummary ? <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap text-muted-foreground">{detail.testsSummary}</pre> : null}
             </div>
@@ -264,7 +264,7 @@ function DiffDialog({ id, onClose }: { id: string | null; onClose: () => void })
             ) : null}
             <pre data-testid="coding-diff-text" className="overflow-auto rounded-lg bg-muted p-2 font-mono text-xs leading-relaxed">
               {detail.diff ? detail.diff.split("\n").map((line, i) => (
-                <span key={i} className={cn("block", line.startsWith("+") && !line.startsWith("+++") && "text-emerald-600 dark:text-emerald-400", line.startsWith("-") && !line.startsWith("---") && "text-destructive")}>{line || " "}</span>
+                <span key={i} className={cn("block", line.startsWith("+") && !line.startsWith("+++") && "text-success", line.startsWith("-") && !line.startsWith("---") && "text-destructive")}>{line || " "}</span>
               )) : "No changes recorded."}
             </pre>
           </div>

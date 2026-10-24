@@ -18,7 +18,6 @@ const messages: ChatMessage[] = [
     role: "assistant",
     content: "Making sure I have the latest revision based on recent changes.",
     createdAt: "2026-10-22T09:00:08Z",
-    reactions: [{ id: "react-1", emoji: "👍", actorType: "user" }],
   },
   {
     id: "question-1",

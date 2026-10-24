@@ -46,15 +46,15 @@ export function BotAvatar({ shape, color, size = 40, botId, className = "", anim
   const svg = <svg data-testid="bot-avatar" data-animated={animated ? "true" : undefined} className={className} width={size} height={size} viewBox="0 0 100 100" role="img" aria-label="Bot avatar">
     <g ref={body}>
       <path ref={path} d={selected.path} fill={fill} />
-      <rect ref={eyeL} {...l} fill="#171717" />
-      <rect ref={eyeR} {...r} fill="#171717" />
+      <rect ref={eyeL} {...l} fill="var(--computer-background)" />
+      <rect ref={eyeR} {...r} fill="var(--computer-background)" />
     </g>
   </svg>;
   if (!primary) return svg;
   const badge = Math.max(10, Math.round(size * 0.36));
   return <span className="relative inline-flex shrink-0" style={{ width: size, height: size }}>
     {svg}
-    <span role="img" aria-label="Primary bot" title="Primary bot" data-testid="primary-badge" className="absolute -bottom-0.5 -right-0.5 grid place-items-center rounded-full bg-orange-500 text-white ring-2 ring-background" style={{ width: badge, height: badge }}>
+    <span role="img" aria-label="Primary bot" title="Primary bot" data-testid="primary-badge" className="absolute -bottom-0.5 -right-0.5 grid place-items-center rounded-full bg-brand text-primary-foreground ring-2 ring-background" style={{ width: badge, height: badge }}>
       <svg aria-hidden viewBox="0 0 24 24" width={badge * 0.62} height={badge * 0.62} fill="currentColor"><path d="M12 2.8l2.7 5.9 6.4.7-4.8 4.3 1.4 6.3L12 16.7 6.3 20l1.4-6.3L2.9 9.4l6.4-.7z" /></svg>
     </span>
   </span>;

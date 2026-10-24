@@ -90,10 +90,10 @@ export function useTeachTask({ botId, conversationId, onBegin, onEnd, onSent }: 
 export function RecordingBanner({ botName, shape, color, startedAt, onCancel }: { botName: string; shape?: string; color?: string; startedAt: number; onCancel: () => void }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 500); return () => window.clearInterval(timer); }, []);
-  return <div role="status" data-testid="recording-banner" className="fixed left-1/2 top-3 z-[95] flex max-w-[calc(100vw-1.5rem)] -translate-x-1/2 items-center gap-2 rounded-full border border-red-500/40 bg-neutral-900/95 py-1.5 pl-2 pr-1.5 text-sm text-neutral-100 shadow-lg backdrop-blur">
+  return <div role="status" data-testid="recording-banner" className="fixed left-1/2 top-3 z-[95] flex max-w-[calc(100vw-1.5rem)] -translate-x-1/2 items-center gap-2 rounded-md border border-destructive/40 bg-computer-background/95 py-1.5 pl-2 pr-1.5 text-sm text-computer-foreground shadow-lg">
     <BotAvatar animated shape={shape} color={color} size={24} />
     <span className="truncate font-medium">{botName} is watching and learning</span>
-    <span data-testid="recording-timer" className="inline-flex items-center gap-1.5 rounded-full bg-red-600 px-2 py-0.5 text-xs font-semibold tabular-nums text-white"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white motion-reduce:animate-none" aria-hidden />{formatTimer(now - startedAt)}</span>
-    <button type="button" data-testid="recording-cancel" aria-label="Discard recording" onClick={onCancel} className="grid h-7 w-7 place-items-center rounded-full text-neutral-300 hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"><X className="h-4 w-4" /></button>
+    <span data-testid="recording-timer" className="inline-flex items-center gap-1.5 rounded-md bg-destructive px-2 py-0.5 text-xs font-medium tabular-nums text-destructive-foreground">Recording, {formatTimer(now - startedAt)}</span>
+    <button type="button" data-testid="recording-cancel" aria-label="Discard recording" onClick={onCancel} className="grid h-7 w-7 place-items-center rounded-md text-computer-muted hover:bg-computer-foreground/10 hover:text-computer-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive"><X className="h-4 w-4" /></button>
   </div>;
 }

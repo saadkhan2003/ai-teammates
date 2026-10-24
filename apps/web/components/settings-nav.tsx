@@ -26,7 +26,7 @@ export function SettingsNav() {
         const items = group.items.filter((item) => !item.admin || role == null || role === "owner" || role === "admin");
         if (!items.length) return null;
         return <section key={group.heading} className="shrink-0 md:w-full" aria-label={group.heading}>
-          <h2 className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{group.heading}</h2>
+          <h2 className="px-3 pb-1 text-xs font-medium text-muted-foreground">{group.heading}</h2>
           <div className="flex gap-1 md:flex-col">
             {items.map((tab) => {
               const active = tab.exact ? pathname === tab.href : pathname === tab.href || pathname.startsWith(`${tab.href}/`);
