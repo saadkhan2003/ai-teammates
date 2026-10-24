@@ -96,7 +96,7 @@ export function runRenderer() {
         const columns = Array.isArray(item.columns) ? item.columns.slice(0, 30).map(String) : [];
         const rows = Array.isArray(item.rows) ? item.rows.slice(0, 1000).filter(Array.isArray).map(row => columns.map((_, i) => String(row[i] ?? "").slice(0, 2000))) : [];
         const table = el("table"), head = el("thead"), tr = el("tr"), body = el("tbody"); let sort = -1, ascending = true, hasSorted = false, query = "";
-        columns.forEach((column, i) => { const th = el("th");
+        columns.forEach((column, i) => { const th = el("th"); th.scope = "col"; th.setAttribute("role", "columnheader");
           if (item.type === "grid") { const b = el("button", column + " ↕"); b.type = "button"; th.setAttribute("aria-sort", "none"); b.addEventListener("click", () => { ascending = hasSorted && sort === i ? !ascending : true; sort = i; hasSorted = true; columns.forEach((_, index) => tr.children[index].setAttribute("aria-sort", index === sort ? (ascending ? "ascending" : "descending") : "none")); draw(); }); th.append(b); }
           else th.textContent = column;
           tr.append(th);

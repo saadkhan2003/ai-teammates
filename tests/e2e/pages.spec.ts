@@ -80,7 +80,9 @@ for (const theme of ["light", "dark"]) {
         await expect(shared.frameLocator('[data-testid="page-frame"]').getByRole("heading", { name: "Quarterly overview", exact: true })).toBeVisible();
         await screenshot(shared, "06-shared-view", theme);
         await expect(shared.getByRole("button", { name: /Restore version|Share page|Create read-only link/ })).toHaveCount(0);
+        const revoked = page.waitForResponse(response => response.request().method() === "DELETE" && /\/api\/pages\/[^/]+\/shares\//.test(response.url()));
         await dialog.getByRole("button", { name: "Revoke", exact: true }).click();
+        expect((await revoked).ok()).toBeTruthy();
         await shared.reload(); await expect(shared.getByTestId("page-unavailable")).toContainText("isn’t available");
       } finally { await anonymous.close(); }
       await page.keyboard.press("Escape");
