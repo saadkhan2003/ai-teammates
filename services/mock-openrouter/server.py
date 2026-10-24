@@ -6,6 +6,7 @@ import json
 import os
 from collections import OrderedDict
 from threading import Lock
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from planner import plan
@@ -40,6 +41,53 @@ def cached_usage(messages: list, prompt_tokens: int) -> int:
         while len(_prefixes) > 1024:
             _prefixes.popitem(last=False)
     return prompt_tokens * 3 // 4 if repeated else 0
+CALLS: dict[str, int] = {}
+CALL_LOCK = threading.Lock()
+
+
+def count(path: str) -> None:
+    with CALL_LOCK:
+        CALLS[path] = CALLS.get(path, 0) + 1
+
+
+def anthropic_messages(payload: dict) -> list:
+    messages = []
+    system = payload.get("system", [])
+    if isinstance(system, str):
+        messages.append({"role": "system", "content": system})
+    else:
+        for block in system:
+            messages.append({"role": "system", "content": block.get("text", "")})
+    for message in payload.get("messages", []):
+        content = message.get("content", [])
+        if isinstance(content, str):
+            messages.append({"role": message.get("role", "user"), "content": content})
+            continue
+        text, calls = [], []
+        for block in content:
+            if block.get("type") == "text":
+                text.append(block.get("text", ""))
+            elif block.get("type") == "tool_use":
+                calls.append({"id": block["id"], "type": "function", "function": {"name": block["name"], "arguments": json.dumps(block.get("input", {}))}})
+            elif block.get("type") == "tool_result":
+                messages.append({"role": "tool", "tool_call_id": block["tool_use_id"], "content": block.get("content", "")})
+        if text or calls:
+            item = {"role": message.get("role", "user"), "content": "\n".join(text)}
+            if calls:
+                item["tool_calls"] = calls
+            messages.append(item)
+    return messages
+
+
+def anthropic_response(response: dict) -> dict:
+    message = response["choices"][0]["message"]
+    content = []
+    if message.get("content"):
+        content.append({"type": "text", "text": message["content"]})
+    for call in message.get("tool_calls", []):
+        content.append({"type": "tool_use", "id": call["id"], "name": call["function"]["name"], "input": json.loads(call["function"]["arguments"])})
+    usage = response.get("usage", {})
+    return {"id": "msg_mock", "type": "message", "role": "assistant", "content": content, "stop_reason": "tool_use" if message.get("tool_calls") else "end_turn", "usage": {"input_tokens": usage.get("prompt_tokens", 1), "output_tokens": usage.get("completion_tokens", 1), "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -50,23 +98,34 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
-        token = authorized(self.headers.get("Authorization", ""))
+        if path == "/__calls":
+            with CALL_LOCK:
+                snapshot = dict(CALLS)
+            self._send(200, snapshot)
+            return
+        token = authorized(self.headers.get("Authorization", "") or "Bearer " + self.headers.get("x-api-key", ""))
         if token is None:
             self._send(401, {"error": "unauthorized"})
             return
+        if path in ("/api/v1/models", "/p2/v1/models", "/anthropic/v1/models"):
+            count(path)
+            self._send(200, {"data": [{"id": "mock/planner"}]})
+            return
         if path == "/api/v1/key":
+            count(path)
             self._send(200, {"data": {"limit_remaining": limit_remaining(token)}})
             return
         self._send(404, {"error": "not_found"})
 
     def do_POST(self) -> None:
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
-        token = authorized(self.headers.get("Authorization", ""))
+        token = authorized(self.headers.get("Authorization", "") or "Bearer " + self.headers.get("x-api-key", ""))
         length = int(self.headers.get("Content-Length", "0") or "0")
         raw = self.rfile.read(length) if length else b""
         if token is None:
             self._send(401, {"error": "unauthorized"})
             return
+        count(path)
         if path == "/api/v1/audio/transcriptions":
             try:
                 payload = json.loads(raw.decode("utf-8") if raw else "{}")
@@ -76,7 +135,7 @@ class Handler(BaseHTTPRequestHandler):
             provider = (payload.get("provider") or {}).get("order", ["mock"])[0]
             self._send(200, {"text": "Mock transcription.", "segments": [{"start": 0, "end": 1, "text": "Mock transcription."}], "provider": provider})
             return
-        if path != "/api/v1/chat/completions":
+        if path not in ("/api/v1/chat/completions", "/p2/v1/chat/completions", "/anthropic/v1/messages"):
             self._send(404, {"error": "not_found"})
             return
         try:
@@ -84,14 +143,20 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._send(400, {"error": "invalid json"})
             return
-        messages = payload.get("messages") if isinstance(payload, dict) else None
+        messages = anthropic_messages(payload) if path == "/anthropic/v1/messages" else payload.get("messages") if isinstance(payload, dict) else None
         if not isinstance(messages, list):
             messages = []
         print(f"messages={len(messages)}", flush=True)
-        result = plan(messages)
-        usage = result.setdefault("usage", {})
-        usage["prompt_tokens_details"] = {"cached_tokens": cached_usage(messages, usage.get("prompt_tokens", 0))}
-        self._send(200, result)
+        response = plan(messages)
+        usage = response.setdefault("usage", {})
+        cached = cached_usage(messages, usage.get("prompt_tokens", 0))
+        usage["prompt_tokens_details"] = {"cached_tokens": cached}
+        if path == "/anthropic/v1/messages":
+            converted = anthropic_response(response)
+            converted["usage"]["cache_read_input_tokens"] = cached
+            self._send(200, converted)
+        else:
+            self._send(200, response)
 
     def _send(self, status: int, payload: dict) -> None:
         body = json.dumps(payload).encode("utf-8")

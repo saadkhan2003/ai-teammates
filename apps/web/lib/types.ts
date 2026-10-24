@@ -10,7 +10,6 @@ export type Bot = {
   bio?: string;
   avatarColor?: string;
   avatar?: string;
-  model?: string;
   notificationsEnabled?: boolean;
   peerMessaging?: boolean;
 };
@@ -115,8 +114,7 @@ export type Workspace = {
   loginRequests?: LoginRequest[];
   pages: BrowserPage[];
   holder: "agent" | "human";
-  llmProvider: string;
-  openrouterConnected: boolean;
+  aiConnected: boolean;
 };
 
 export type FileEntry = {

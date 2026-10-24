@@ -22,35 +22,26 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         var taskId = body.GetProperty("taskId").GetGuid();
         var botId = body.GetProperty("botId").GetGuid();
         var owner = await OwnerOf(botId);
-        var role = body.TryGetProperty("role", out var roleElement) && roleElement.GetString() == "compactor" ? "compactor" : "planner";
+        var role = body.TryGetProperty("role", out var roleElement) && roleElement.GetString() is "compactor" or "quick" or "vision" or "coding" ? roleElement.GetString()! : "planner";
         var messages = body.GetProperty("messages");
-        var secret = await platform.Resolve(owner, "secret://openrouter/default", "model_gateway", botId, null, taskId, "model_gateway");
-        if (secret == null)
-            return Results.Json(new { status = "waiting_resource", reason = "connect_openrouter" });
-        var key = Encoding.UTF8.GetString(secret);
-        CryptographicOperations.ZeroMemory(secret);
-        var redacted = RedactMessages(messages, key);
-        var payload = ProviderWire.Completion(platform.ModelName, redacted, role == "compactor" ? Array.Empty<object>() : await ToolsFor(botId, ct));
-        using var request = new HttpRequestMessage(HttpMethod.Post, platform.OpenRouterBase + "/chat/completions");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
-        request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-        var started = System.Diagnostics.Stopwatch.GetTimestamp();
-        using var response = await _http.SendAsync(request, ct);
-        var raw = await response.Content.ReadAsStringAsync(ct);
-        var providerTotalMs = (int)System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
-        key = "";
-        if (!response.IsSuccessStatusCode)
+        await using var sessionConn = await platform.Data.OpenConnectionAsync(ct);
+        var sessionId = await sessionConn.ExecuteScalarAsync<Guid>("SELECT conversation_id FROM tasks WHERE id=@taskId", new { taskId });
+        var routingRole = role;
+        if (role == "planner" && await sessionConn.ExecuteScalarAsync<string>("SELECT kind FROM tasks WHERE id=@taskId", new { taskId }) == "coding") routingRole = "coding";
+        var resolution = await platform.AiRegistry.Resolve(routingRole, owner, taskId, botId, ct);
+        var started = DateTimeOffset.UtcNow;
+        var call = await AiGateway.Complete(_http, resolution, RedactMessages(messages, ""), role == "compactor" ? Array.Empty<object>() : await ToolsFor(botId, ct), sessionId, ct);
+        if (call.MissingKey) return Results.Json(new { status = "waiting_resource", reason = "connect_openrouter" });
+        if (!call.Ok)
         {
-            await StoreModel(owner, botId, taskId, redacted, false, providerTotalMs, default, role);
-            var contextError = raw.Contains("context_length", StringComparison.OrdinalIgnoreCase) || raw.Contains("maximum context", StringComparison.OrdinalIgnoreCase) || raw.Contains("too many tokens", StringComparison.OrdinalIgnoreCase);
-            return Results.Json(new { status = "error", error = "provider rejected the request", errorCode = contextError ? "context_length" : "provider_error" });
+            await StoreModel(owner, botId, taskId, call.Prompt, false, (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds, default, role, resolution, call.Served);
+            return Results.Json(new { status = "error", error = "provider rejected the request", errorCode = call.ContextError ? "context_length" : "provider_error" });
         }
-        using var doc = JsonDocument.Parse(raw);
-        var message = doc.RootElement.GetProperty("choices")[0].GetProperty("message");
+        var message = call.Response.GetProperty("choices")[0].GetProperty("message");
         var normalized = ProviderWire.Normalize(message);
         var normalizedText = OutputRedactor.Redact(normalized.GetRawText(), []);
-        var usage = ProviderWire.ReadUsage(doc.RootElement);
-        await StoreModel(owner, botId, taskId, redacted, true, providerTotalMs, usage, role);
+        var usage = ProviderWire.ReadUsage(call.Response);
+        await StoreModel(owner, botId, taskId, call.Prompt, true, (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds, usage, role, resolution, call.Served);
         await using var conn = await platform.Data.OpenConnectionAsync(ct);
         await conn.ExecuteAsync("UPDATE tasks SET model_calls = model_calls + 1, updated_at=now() WHERE id=@id", new { id = taskId });
         return Results.Text("{\"status\":\"ok\",\"message\":" + normalizedText + ",\"promptTokens\":" + usage.PromptTokens.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}", "application/json");
@@ -126,8 +117,10 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         var processingSettings = body.TryGetProperty("processingSettings", out var settingsNode) && settingsNode.ValueKind == JsonValueKind.String
             ? settingsNode.GetString() ?? "" : "";
         if (processingSettings.Length > 2048) return Results.BadRequest();
+        var vision = await platform.AiRegistry.Resolve("vision", owner, taskId, botId, ct);
+        var visionCacheModel = vision.ConfigVersion == 0 ? Environment.GetEnvironmentVariable("VIDEO_SUMMARY_MODEL") ?? platform.ModelName : $"{vision.ConfigVersion}:{vision.Primary.ProviderId}:{vision.Primary.Model}";
         var settingsVersion = VideoTools.SettingsVersion(
-            Environment.GetEnvironmentVariable("VIDEO_SUMMARY_MODEL") ?? platform.ModelName,
+            visionCacheModel,
             Environment.GetEnvironmentVariable("VIDEO_STT_MODEL") ?? "openai/whisper-large-v3-turbo",
             Environment.GetEnvironmentVariable("VIDEO_STT_PROVIDER") ?? "deepinfra", processingSettings);
         if (operation == "source")
@@ -179,6 +172,24 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         }
         if (operation == "model")
         {
+            if (body.GetProperty("kind").GetString() != "stt")
+            {
+                var resolution = await platform.AiRegistry.Resolve("vision", owner, taskId, botId, ct);
+                if (resolution.ConfigVersion == 0 && Environment.GetEnvironmentVariable("VIDEO_SUMMARY_MODEL") is { Length: > 0 } legacyModel)
+                    resolution = resolution with { Primary = resolution.Primary with { Model = legacyModel } };
+                var messages = JsonSerializer.SerializeToElement(new[] { new { role = "user", content = body.GetProperty("content") } });
+                var conversation = await conn.ExecuteScalarAsync<Guid>("SELECT conversation_id FROM tasks WHERE id=@taskId", new { taskId });
+                var started = DateTimeOffset.UtcNow;
+                var call = await AiGateway.Complete(_http, resolution, messages, Array.Empty<object>(), conversation, ct);
+                if (call.MissingKey) return Results.Json(new { status = "waiting_resource", reason = "connect_openrouter" });
+                // Never persist image/audio data in model request logs.
+                var safePrompt = JsonSerializer.SerializeToElement(new { kind = "video_summary", multimodal = true });
+                await StoreModel(owner, botId, taskId, safePrompt, call.Ok, (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds, call.Ok ? ProviderWire.ReadUsage(call.Response) : default, "video", resolution, call.Served);
+                if (!call.Ok) return Results.Json(new { status = "error", reason = "provider_error" }, statusCode: 502);
+                await conn.ExecuteAsync("UPDATE tasks SET model_calls=model_calls+1,updated_at=now() WHERE id=@task", new { task = taskId });
+                var content = call.Response.GetProperty("choices")[0].GetProperty("message").GetProperty("content");
+                return Results.Json(new { content = content.ValueKind == JsonValueKind.String ? content.GetString() : content.GetRawText() });
+            }
             var secret = await platform.Resolve(owner, "secret://openrouter/default", "model_gateway", botId, null, taskId, "model_gateway");
             if (secret == null) return Results.Json(new { status = "waiting_resource", reason = "connect_openrouter" });
             var key = Encoding.UTF8.GetString(secret);
@@ -1126,37 +1137,17 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
 
     private async Task<string?> ClassifyWithModel(Guid owner, Guid botId, Guid taskId, string tool, JsonElement args, CancellationToken ct)
     {
-        var secret = await platform.Resolve(owner, "secret://openrouter/default", "model_gateway", botId, null, taskId, "policy");
-        if (secret == null) return null;
-        var key = Encoding.UTF8.GetString(secret);
-        CryptographicOperations.ZeroMemory(secret);
         var keys = args.ValueKind == JsonValueKind.Object ? string.Join(',', args.EnumerateObject().Select(prop => prop.Name)) : "";
         var prompt = Dlp.Redact($"Classify this tool call. Reply with one of: read, write, send_message, payment, sign, delete, credential_use, external_post. Tool {tool}. Argument names {keys}.");
         try
         {
-            var payload = JsonSerializer.Serialize(new
-            {
-                model = platform.ModelName,
-                messages = new[] { new { role = "user", content = prompt } }
-            });
-            using var request = new HttpRequestMessage(HttpMethod.Post, platform.OpenRouterBase + "/chat/completions");
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
-            request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
-            using var response = await _http.SendAsync(request, ct);
-            var raw = await response.Content.ReadAsStringAsync(ct);
-            if (!response.IsSuccessStatusCode) return null;
-            using var doc = JsonDocument.Parse(raw);
-            var content = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString();
-            return Dlp.Redact(content);
+            var resolution = await platform.AiRegistry.Resolve("quick", owner, taskId, botId, ct);
+            var messages = JsonSerializer.SerializeToElement(new[] { new { role = "user", content = prompt } });
+            var call = await AiGateway.Complete(_http, resolution, messages, Array.Empty<object>(), taskId, ct);
+            if (!call.Ok) return null;
+            return Dlp.Redact(call.Response.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString());
         }
-        catch
-        {
-            return null;
-        }
-        finally
-        {
-            key = "";
-        }
+        catch { return null; }
     }
 
     private async Task<object> SendMessage(Guid botId, Guid taskId, JsonElement args)
@@ -1493,15 +1484,15 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
     }
 
     // Non-streaming: TTFT equals provider wall time. Phase 2 passes the first-token clock separately here.
-    private async Task StoreModel(Guid owner, Guid botId, Guid taskId, JsonElement prompt, bool ok, int latency, TokenUsage usage, string role = "planner", int? ttftMs = null)
+    private async Task StoreModel(Guid owner, Guid botId, Guid taskId, JsonElement prompt, bool ok, int latency, TokenUsage usage, string role, AiResolution resolution, AiEndpoint served, int? ttftMs = null)
     {
         await using var conn = await platform.Data.OpenConnectionAsync();
         await conn.ExecuteAsync(
             "INSERT INTO model_requests (owner_id, bot_id, task_id, provider, model, prompt_json) VALUES (@owner, @bot, @task, @provider, @model, @prompt::jsonb)",
-            new { owner, bot = botId, task = taskId, provider = platform.LlmProvider, model = platform.ModelName, prompt = prompt.GetRawText() });
+            new { owner, bot = botId, task = taskId, provider = served.Kind, model = served.Model, prompt = prompt.GetRawText() });
         await conn.ExecuteAsync(
-            "INSERT INTO model_calls (bot_id, task_id, owner_id, role, provider, model, latency_ms, ttft_ms, total_ms, cached_tokens, cache_write_tokens, prompt_tokens, completion_tokens, ok, cost_usd) VALUES (@bot, @task, @owner, @role, @provider, @model, @latency, @ttft, @latency, @cachedTokens, @cacheWriteTokens, @promptTokens, @completionTokens, @ok, @cost)",
-            new { bot = botId, task = taskId, owner, role, provider = platform.LlmProvider, model = platform.ModelName, latency, ttft = ttftMs ?? latency, cachedTokens = usage.CachedTokens, cacheWriteTokens = usage.CacheWriteTokens, promptTokens = usage.PromptTokens, completionTokens = usage.CompletionTokens, ok, cost = usage.CostUsd });
+            "INSERT INTO model_calls (bot_id, task_id, owner_id, role, provider, model, latency_ms, ttft_ms, total_ms, cached_tokens, cache_write_tokens, prompt_tokens, completion_tokens, ok, cost_usd, provider_id, config_version, credits) VALUES (@bot, @task, @owner, @role, @provider, @model, @latency, @ttft, @latency, @cachedTokens, @cacheWriteTokens, @promptTokens, @completionTokens, @ok, @cost, @providerId, @configVersion, @credits)",
+            new { bot = botId, task = taskId, owner, role, provider = served.Kind, model = served.Model, providerId = served.ProviderId == Guid.Empty ? (Guid?)null : served.ProviderId, configVersion = resolution.ConfigVersion, credits = AiModelRegistry.Credits(resolution.Config, "default", served.Model, usage), latency, ttft = ttftMs ?? latency, cachedTokens = usage.CachedTokens, cacheWriteTokens = usage.CacheWriteTokens, promptTokens = usage.PromptTokens, completionTokens = usage.CompletionTokens, ok, cost = usage.CostUsd });
     }
 
     private async Task StoreVideoModel(Guid owner, Guid botId, Guid taskId, JsonElement prompt, string model, TokenUsage usage, int totalMs)

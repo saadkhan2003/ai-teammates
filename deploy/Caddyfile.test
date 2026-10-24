@@ -60,3 +60,20 @@
 	tls internal
 	import routes
 }
+
+# Separate admin listener; host publication is loopback-only in Compose.
+:8081 {
+	@blocked not remote_ip {$ADMIN_ALLOWLIST:0.0.0.0/0 ::/0}
+	respond @blocked "Forbidden" 403
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+		X-Frame-Options SAMEORIGIN
+	}
+	handle /api/* {
+		reverse_proxy api:8080
+	}
+	handle {
+		reverse_proxy admin:3000
+	}
+}

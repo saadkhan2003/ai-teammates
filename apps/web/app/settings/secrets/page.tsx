@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   api,
-  isOpenRouterSecret,
+  isModelConnectionSecret,
   normalizeSecret,
   normalizeSecrets,
   normalizeUsage,
@@ -32,7 +32,7 @@ const SECRET_TYPES = [
   "GENERIC",
 ];
 
-const OPENROUTER_DRAFT = { namespace: "openrouter", name: "default", type: "API_KEY" };
+const AI_CONNECTION_DRAFT = { namespace: "ai_connection", name: "default", type: "API_KEY" };
 
 function TestReadout({ result }: { result: SecretTestResult | null }) {
   if (!result) return null;
@@ -66,7 +66,7 @@ export default function SecretsPage() {
   const [addBots, setAddBots] = useState("");
   const [usageNonce, setUsageNonce] = useState(0);
 
-  const openRouter = secrets.find(isOpenRouterSecret) ?? null;
+  const aiConnection = secrets.find(isModelConnectionSecret) ?? null;
 
   const load = useCallback(async () => {
     try {
@@ -75,7 +75,7 @@ export default function SecretsPage() {
       setError(null);
       setSelectedId((current) => {
         if (current) return current;
-        return next.find(isOpenRouterSecret)?.id ?? next[0]?.id ?? null;
+        return next.find(isModelConnectionSecret)?.id ?? next[0]?.id ?? null;
       });
     } catch (caught) {
       setError(errorMessage(caught, "Could not load secrets."));
@@ -120,7 +120,7 @@ export default function SecretsPage() {
     try {
       const data = await api<unknown>("/api/secrets/test", {
         method: "POST",
-        body: JSON.stringify({ ...OPENROUTER_DRAFT, value }),
+        body: JSON.stringify({ ...AI_CONNECTION_DRAFT, value }),
       });
       setTestResult(readSecretTest(data));
     } catch (caught) {
@@ -130,7 +130,7 @@ export default function SecretsPage() {
     }
   }
 
-  async function saveOpenRouter(event: FormEvent<HTMLFormElement>) {
+  async function saveAiConnection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy("save");
     setFormError(null);
@@ -139,13 +139,13 @@ export default function SecretsPage() {
       const created = normalizeSecret(
         await api<unknown>("/api/secrets", {
           method: "POST",
-          body: JSON.stringify({ ...OPENROUTER_DRAFT, value: draft }),
+          body: JSON.stringify({ ...AI_CONNECTION_DRAFT, value: draft }),
         }),
       );
       setValue("");
       setTestResult(null);
       if (created.id) setSelectedId(created.id);
-      toast.success("OpenRouter key saved.");
+      toast.success("AI connection key saved.");
       await load();
     } catch (caught) {
       setFormError(errorMessage(caught, "Could not save that key."));
@@ -269,7 +269,7 @@ export default function SecretsPage() {
       <header>
         <h2 className="text-sm font-medium">Vault</h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          Values are write-only. Bots see references such as secret://openrouter/default, never the raw secret.
+          Values are write-only. Bots see references such as secret://work/api_key, never the raw secret.
         </p>
       </header>
 
@@ -287,13 +287,13 @@ export default function SecretsPage() {
         />
       ) : null}
 
-      {!loading && !error && !openRouter ? (
+      {!loading && !error && !aiConnection ? (
         <Card>
           <CardHeader>
-            <CardTitle>OpenRouter API Key</CardTitle>
+            <CardTitle>AI connection key</CardTitle>
           </CardHeader>
           <CardContent>
-            <form className="flex flex-col gap-4" onSubmit={saveOpenRouter}>
+            <form className="flex flex-col gap-4" onSubmit={saveAiConnection}>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="secret-value">API key</Label>
                 <Input
@@ -326,14 +326,14 @@ export default function SecretsPage() {
         </Card>
       ) : null}
 
-      {!loading && !error && openRouter ? (
+      {!loading && !error && aiConnection ? (
         <Card>
           <CardHeader>
-            <CardTitle>OpenRouter</CardTitle>
+            <CardTitle>AI connection</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <p data-testid="connected-banner" className="text-sage">Connected ✓</p>
-            <p data-testid="masked-suffix">Key ending in: ...{openRouter.maskedSuffix}</p>
+            <p data-testid="masked-suffix">Key ending in: ...{aiConnection.maskedSuffix}</p>
             <TestReadout result={testResult} />
             {formError ? (
               <p role="alert" className="text-sm text-clay">
@@ -341,13 +341,13 @@ export default function SecretsPage() {
               </p>
             ) : null}
             <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="secondary" disabled={busy !== null} onClick={() => void testSaved(openRouter)}>
+              <Button type="button" variant="secondary" disabled={busy !== null} onClick={() => void testSaved(aiConnection)}>
                 Test
               </Button>
-              <Button data-testid="rotate-secret" type="button" variant="secondary" disabled={busy !== null} onClick={() => void rotate(openRouter)}>
+              <Button data-testid="rotate-secret" type="button" variant="secondary" disabled={busy !== null} onClick={() => void rotate(aiConnection)}>
                 Rotate
               </Button>
-              <Button data-testid="delete-secret" type="button" variant="destructive" disabled={busy !== null} onClick={() => void remove(openRouter)}>
+              <Button data-testid="delete-secret" type="button" variant="destructive" disabled={busy !== null} onClick={() => void remove(aiConnection)}>
                 Delete
               </Button>
             </div>
@@ -427,7 +427,7 @@ export default function SecretsPage() {
                 <Label htmlFor="add-bots">Bot grants</Label>
                 <Input id="add-bots" value={addBots} onChange={(event) => setAddBots(event.target.value)} placeholder="Bot ids, comma separated. Empty means every bot." />
               </div>
-              {formError && openRouter ? (
+              {formError && aiConnection ? (
                 <p role="alert" className="text-sm text-clay sm:col-span-2">
                   {formError}
                 </p>

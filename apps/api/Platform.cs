@@ -28,6 +28,7 @@ public sealed class Platform
     public string LlmProvider { get; }
     public const string DefaultRealModel = "anthropic/claude-haiku-5.5";
     public string ModelName { get; }
+    public AiModelRegistry AiRegistry { get; }
     public IConfiguration Configuration { get; }
     public IConfiguration Config => Configuration;
     public int MaxParallel { get; }
@@ -76,6 +77,7 @@ public sealed class Platform
         IdleSuspend = int.TryParse(config["IDLE_SUSPEND_MINUTES"], out var idleMinutes) && idleMinutes >= 0
             ? TimeSpan.FromMinutes(idleMinutes)
             : TimeSpan.FromMinutes(10);
+        AiRegistry = new AiModelRegistry(this);
         _ = _unused;
     }
 
@@ -141,6 +143,7 @@ public sealed class Platform
         "041_skill_library.sql",
         "042_video_analyses.sql",
         "043_speed_telemetry.sql",
+        "044_ai_models.sql",
     ];
 
     private async Task MigrateAndSeedLocked(string ownerUser, string ownerPassword)
@@ -360,7 +363,10 @@ public sealed class Platform
             FROM secrets WHERE id=@id AND owner_user_id=@owner
             """,
             new { id, owner });
-        return row == null ? null : ToDict(row);
+        if (row == null) return null;
+        var result = ToDict(row);
+        if (result.GetValueOrDefault("provider") as string == "openrouter") result["provider"] = "ai_connection";
+        return result;
     }
 
     public async Task<byte[]?> Resolve(Guid owner, string reference, string tool, Guid? botId, string? destination, Guid? taskId, string actor)

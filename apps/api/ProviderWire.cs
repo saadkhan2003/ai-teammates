@@ -4,13 +4,17 @@ using System.Text.Json;
 
 namespace Teammates.Api;
 
-public readonly record struct TokenUsage(int PromptTokens, int CompletionTokens, decimal CostUsd, int? CachedTokens = null, int? CacheWriteTokens = null);
+public readonly record struct TokenUsage(int PromptTokens, int CompletionTokens, decimal CostUsd, int? CachedTokens = null, int? CacheWriteTokens = null)
+{
+    public int CacheReadTokens => CachedTokens ?? 0;
+    public int CacheCreationTokens => CacheWriteTokens ?? 0;
+}
 
 /// <summary>
 /// OpenAI chat-completions wire shape. The worker keeps an internal transcript
 /// (toolCalls, arguments as objects, toolCallId). Providers reject that shape.
 /// </summary>
-public static class ProviderWire
+public static partial class ProviderWire
 {
     public const int MaxTokens = 2048;
 
