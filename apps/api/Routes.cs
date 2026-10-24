@@ -337,7 +337,8 @@ public static class Routes
         app.MapGet("/api/bots/{id:guid}/tasks", async (HttpContext ctx, Guid id) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             await using var conn = await platform.Data.OpenConnectionAsync();
             var rows = await conn.QueryAsync("SELECT id, title, instruction, status, kind, model_calls, waiting_reason, error, error_code, result::text AS result, created_at FROM tasks WHERE bot_id=@id ORDER BY created_at DESC", new { id });
             return Results.Json(rows.Select(Platform.ToDict));
@@ -420,7 +421,8 @@ public static class Routes
         app.MapPost("/api/bots/{id:guid}/computer/hand-back", async (HttpContext ctx, Guid id, CancellationToken ct) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             var request = await ctx.Request.ReadFromJsonAsync<JsonElement>(ct);
             var tabId = request.ValueKind == JsonValueKind.Object && request.TryGetProperty("tabId", out var tab) ? tab.GetString() : null;
             var expectedEpoch = request.ValueKind == JsonValueKind.Object && request.TryGetProperty("epoch", out var ep) && ep.TryGetInt64(out var parsed) ? parsed : -1;
@@ -443,7 +445,8 @@ public static class Routes
         app.MapPost("/api/computers/{id:guid}/continue", async (HttpContext ctx, Guid id, CancellationToken ct) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             await using var conn = await platform.Data.OpenConnectionAsync(ct);
             var placement = await platform.PlacementForBot(id, ct);
             if (!Guid.TryParse(placement.Computer.Value, out var computerId)) return Results.Conflict(new { error = "computer unavailable" });
@@ -462,7 +465,8 @@ public static class Routes
         app.MapPost("/api/bots/{id:guid}/computer/human-input", async (HttpContext ctx, Guid id, JsonElement body, CancellationToken ct) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             await using var conn = await platform.Data.OpenConnectionAsync(ct);
             var tabId = body.TryGetProperty("tabId", out var tab) ? tab.GetString() : null;
             var epoch = body.TryGetProperty("epoch", out var epochValue) && epochValue.TryGetInt64(out var parsedEpoch) ? parsedEpoch : -1;
@@ -481,7 +485,8 @@ public static class Routes
         app.MapGet("/api/bots/{id:guid}/files", async (HttpContext ctx, Guid id, string? path, CancellationToken ct) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             var folder = string.IsNullOrWhiteSpace(path) ? "/workspace" : path;
             var placement = await platform.PlacementForBot(id, ct);
             var (code, stdout, _) = await runtime.Run(placement.Computer, id, ["python3", "-c", BotFs.Script("list_dir(sys.argv[1])"), folder], null, ct);
@@ -492,7 +497,8 @@ public static class Routes
         app.MapPut("/api/bots/{id:guid}/files", async (HttpContext ctx, Guid id, CancellationToken ct) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             var path = ctx.Request.Headers["x-path"].ToString();
             if (string.IsNullOrWhiteSpace(path)) path = "/workspace/upload.bin";
             if (!BotFileTransfer.IsSafePathHeader(path)) return Results.BadRequest(new { error = "invalid_path" });
@@ -509,7 +515,8 @@ public static class Routes
         app.MapGet("/api/bots/{id:guid}/files/raw", async (HttpContext ctx, Guid id, string path, CancellationToken ct) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             if (!BotFileTransfer.IsSafePathHeader(path)) return Results.BadRequest(new { error = "invalid_path" });
             var placement = await platform.PlacementForBot(id, ct);
             var (code, stdout, _) = await runtime.Run(placement.Computer, id, ["python3", "-c", BotFs.Script("read_b64(sys.argv[1])"), path], null, ct);
@@ -527,7 +534,8 @@ public static class Routes
         app.MapGet("/api/bots/{id:guid}/memories", async (HttpContext ctx, Guid id) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             await using var conn = await platform.Data.OpenConnectionAsync();
             var rows = await conn.QueryAsync("SELECT id, content, source, created_at FROM memories WHERE bot_id=@id ORDER BY created_at DESC", new { id });
             return Results.Json(rows.Select(Platform.ToDict));
@@ -536,7 +544,8 @@ public static class Routes
         app.MapPost("/api/bots/{id:guid}/memories", async (HttpContext ctx, Guid id, JsonElement body) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             var content = body.GetProperty("content").GetString() ?? "";
             if (Dlp.HasStrict(content)) return Results.BadRequest(new { error = "credential shaped" });
             await using var conn = await platform.Data.OpenConnectionAsync();
@@ -547,7 +556,8 @@ public static class Routes
         app.MapPost("/api/bots/{id:guid}/skills/from-task", async (HttpContext ctx, Guid id, JsonElement body) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             var taskId = body.GetProperty("taskId").GetGuid();
             var name = body.GetProperty("name").GetString() ?? "Skill";
             await using var conn = await platform.Data.OpenConnectionAsync();
@@ -585,7 +595,8 @@ public static class Routes
         app.MapGet("/api/bots/{id:guid}/skills", async (HttpContext ctx, Guid id) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             await using var conn = await platform.Data.OpenConnectionAsync();
             var rows = await conn.QueryAsync("SELECT id, name, description, deterministic FROM skills WHERE bot_id=@id ORDER BY created_at", new { id });
             return Results.Json(rows.Select(Platform.ToDict));
@@ -607,7 +618,8 @@ public static class Routes
         app.MapGet("/api/bots/{id:guid}/routines", async (HttpContext ctx, Guid id) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             await using var conn = await platform.Data.OpenConnectionAsync();
             var rows = await conn.QueryAsync("SELECT id, name, cron, instruction, next_run_at, enabled, watch_kind, watch_ref FROM routines WHERE bot_id=@id ORDER BY created_at", new { id });
             return Results.Json(rows.Select(Platform.ToDict));
@@ -616,7 +628,8 @@ public static class Routes
         app.MapPost("/api/bots/{id:guid}/routines", async (HttpContext ctx, Guid id, JsonElement body) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             var name = body.GetProperty("name").GetString() ?? "Routine";
             var cron = body.GetProperty("cron").GetString() ?? "0 * * * *";
             var instruction = body.GetProperty("instruction").GetString() ?? "";
@@ -643,7 +656,8 @@ public static class Routes
         app.MapGet("/api/bots/{id:guid}/artifacts", async (HttpContext ctx, Guid id) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             await using var conn = await platform.Data.OpenConnectionAsync();
             var rows = await conn.QueryAsync("SELECT id, name, mime, size_bytes, created_at FROM artifacts WHERE bot_id=@id ORDER BY created_at DESC", new { id });
             return Results.Json(rows.Select(Platform.ToDict));
@@ -1264,7 +1278,8 @@ public static class Routes
     private static async Task<IResult> Desktop(HttpContext ctx, Platform platform, Guid id, bool control, CancellationToken ct)
     {
         var user = await RequireUser(ctx, platform);
-        if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+        if (user == null) return Results.Unauthorized();
+        if (!await Owns(platform, user.Value, id)) return Results.NotFound();
         if (control) return Results.Conflict(new { error = "control_requires_lease_ticket" });
         await using var conn = await platform.Data.OpenConnectionAsync(ct);
         long hinted;

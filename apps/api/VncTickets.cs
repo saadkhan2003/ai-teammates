@@ -59,7 +59,8 @@ public static class VncTicketRoutes
         app.MapPost("/api/computers/{id:guid}/lease/force-release", async (HttpContext ctx, Guid id, System.Text.Json.JsonElement body, CancellationToken ct) =>
         {
             var user = await Routes.RequireUser(ctx, platform);
-            if (user == null || !await Routes.Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Routes.Owns(platform, user.Value, id)) return Results.NotFound();
             var reason = body.ValueKind == System.Text.Json.JsonValueKind.Object && body.TryGetProperty("reason", out var reasonValue) && reasonValue.ValueKind == System.Text.Json.JsonValueKind.String ? reasonValue.GetString()?.Trim() : null;
             var expectedEpoch = body.ValueKind == System.Text.Json.JsonValueKind.Object && body.TryGetProperty("epoch", out var epochValue) && epochValue.TryGetInt64(out var parsed) ? parsed : -1;
             if (string.IsNullOrWhiteSpace(reason) || reason.Length < 8 || reason.Length > 500)
@@ -80,7 +81,8 @@ public static class VncTicketRoutes
         app.MapPost("/api/computers/{id:guid}/lease", async (HttpContext ctx, Guid id, CancellationToken ct) =>
         {
             var user = await Routes.RequireUser(ctx, platform);
-            if (user == null || !await Routes.Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Routes.Owns(platform, user.Value, id)) return Results.NotFound();
             var body = await ctx.Request.ReadFromJsonAsync<System.Text.Json.JsonElement>(ct);
             var tabId = body.ValueKind == System.Text.Json.JsonValueKind.Object && body.TryGetProperty("tabId", out var tab) ? tab.GetString() : null;
             var action = body.ValueKind == System.Text.Json.JsonValueKind.Object && body.TryGetProperty("action", out var act) ? act.GetString() : "heartbeat";
@@ -123,7 +125,8 @@ public static class VncTicketRoutes
         app.MapPost("/api/computers/{id:guid}/vnc-ticket", async (HttpContext ctx, Guid id, string? role, bool? transfer, CancellationToken ct) =>
         {
             var user = await Routes.RequireUser(ctx, platform);
-            if (user == null || !await Routes.Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Routes.Owns(platform, user.Value, id)) return Results.NotFound();
             role ??= "watch";
             if (role is not ("watch" or "control")) return Results.BadRequest(new { error = "role must be watch or control" });
             var tabId = ctx.Request.Headers["X-Desktop-Tab"].ToString();

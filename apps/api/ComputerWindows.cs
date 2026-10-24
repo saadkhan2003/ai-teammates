@@ -12,7 +12,8 @@ public static class ComputerWindows
         app.MapGet("/api/bots/{id:guid}/computer/windows", async (HttpContext ctx, Guid id, CancellationToken ct) =>
         {
             var user = await Routes.RequireUser(ctx, platform);
-            if (user == null || !await Routes.Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Routes.Owns(platform, user.Value, id)) return Results.NotFound();
             var placement = await platform.PlacementForBot(id, ct);
             var json = await platform.Compute.ControlAsync(placement.Computer,
                 $"/desktops/{Uri.EscapeDataString(placement.Desktop)}/displays", "{}", ct);
@@ -22,7 +23,8 @@ public static class ComputerWindows
         app.MapPost("/api/bots/{id:guid}/computer/windows", async (HttpContext ctx, Guid id, JsonElement body, CancellationToken ct) =>
         {
             var user = await Routes.RequireUser(ctx, platform);
-            if (user == null || !await Routes.Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Routes.Owns(platform, user.Value, id)) return Results.NotFound();
             if (!body.TryGetProperty("display", out var displayValue) || !displayValue.TryGetInt32(out var display))
                 return Results.BadRequest(new { error = "display required" });
             if (display < 2 || display > BoxContract.MaxWindows)
@@ -68,7 +70,8 @@ public static class ComputerWindows
         app.MapPost("/api/bots/{id:guid}/computer/windows/{display:int}/owner-token", async (HttpContext ctx, Guid id, int display, CancellationToken ct) =>
         {
             var user = await Routes.RequireUser(ctx, platform);
-            if (user == null || !await Routes.Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Routes.Owns(platform, user.Value, id)) return Results.NotFound();
             if (display < 1 || display > BoxContract.MaxWindows)
                 return Results.Conflict(new { error = "invalid window" });
             var placement = await platform.PlacementForBot(id, ct);
@@ -80,7 +83,8 @@ public static class ComputerWindows
         app.MapDelete("/api/bots/{id:guid}/computer/windows/{display:int}", async (HttpContext ctx, Guid id, int display, CancellationToken ct) =>
         {
             var user = await Routes.RequireUser(ctx, platform);
-            if (user == null || !await Routes.Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Routes.Owns(platform, user.Value, id)) return Results.NotFound();
             if (display < 2 || display > BoxContract.MaxWindows)
                 return Results.Conflict(new { error = "invalid window" });
             var placement = await platform.PlacementForBot(id, ct);
