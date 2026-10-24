@@ -4,15 +4,31 @@ import { login } from "./helpers";
 
 const shotDir = "/workspace/shots-skills-v2";
 async function screenshot(page: Page, screen: string, theme: "light" | "dark") {
-  await page.screenshot({ path: `${shotDir}/01-${screen}-${theme}.png`, fullPage: false });
+  const stableScreen = screen.replace(/-(light|dark)$/, "");
+  await page.evaluate((mode) => {
+    const light = mode === "light";
+    localStorage.setItem("teammates-theme", mode);
+    document.documentElement.classList.toggle("light", light);
+    document.documentElement.dataset.theme = mode;
+  }, theme);
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    const finiteAnimations = document.getAnimations().filter((animation) => animation.effect?.getTiming().iterations !== Infinity);
+    await Promise.race([
+      Promise.all(finiteAnimations.map((animation) => animation.finished.catch(() => undefined))),
+      new Promise((resolve) => setTimeout(resolve, 1500)),
+    ]);
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  await page.screenshot({ path: `${shotDir}/01-${stableScreen}-${theme}.png`, fullPage: false });
 }
 async function theme(page: Page, mode: "light" | "dark") {
   await page.evaluate((value) => {
     localStorage.setItem("teammates-theme", value);
     document.documentElement.classList.toggle("light", value === "light");
+    document.documentElement.dataset.theme = value;
   }, mode);
-  await page.reload();
-  await expect(page.getByTestId("skills-settings")).toBeVisible();
+  await page.evaluate(() => document.fonts.ready);
 }
 
 test("owner manages the shared Skills library in both themes", async ({ page }) => {
@@ -79,8 +95,7 @@ test("owner manages the shared Skills library in both themes", async ({ page }) 
     await page.goto(`/bots/${bot.id}`);
     await expect(page.getByTestId("approval-card")).toContainText("delete_skill");
     await screenshot(page, "skills-approval-card", "dark");
-    await page.evaluate(() => { localStorage.setItem("teammates-theme", "light"); document.documentElement.classList.add("light"); });
-    await page.reload();
+    await theme(page, "light");
     await expect(page.getByTestId("approval-card")).toContainText("delete_skill");
     await screenshot(page, "skills-approval-card", "light");
     await page.unrouteAll();
