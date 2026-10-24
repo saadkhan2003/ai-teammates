@@ -21,6 +21,9 @@ async function globalSetup() {
     if (!response?.ok()) {
       throw new Error(`Owner login failed: ${response?.status() ?? "no response"} ${await response?.text()}`);
     }
+    // Computer egress is default-deny; the portal fixture host is used by acceptance, security and others.
+    const policy = await context.put("/api/network-policy", { data: { mode: "team_only", entries: ["portal.example.edu"], groups: [] } });
+    if (!policy.ok()) throw new Error(`network policy setup failed: ${policy.status()}`);
     await fs.mkdir(path.dirname(authPath), { recursive: true });
     await context.storageState({ path: authPath });
   } finally {
