@@ -42,3 +42,26 @@ Standard: a heavy user capped at 4,500 credits a week costs about $19.5 a month 
 - **On-demand.** The monthly limit is None by default, or $10/25/50/100… up to the plan cap. Pay-as-you-go overage is recorded per window in `credit_windows`. **No payment is processed.** On-demand changes and upgrade requests are only audited (`charged=false`).
 - **Admin → Billing** edits rates and plans, assigns plans, and shows the per-user breakdown: AI, computer, storage, used/allowance, awake minutes (background), on-demand and state.
 - The user app never shows model or provider names. The usage page shows only AI / Computer / Storage credits.
+
+## Resources, storage and plan limits
+
+Plan limits are edited in **Admin → Billing** (per plan: weekly credits, on-demand cap, job default/max minutes, running jobs, storage quota GB, storage warn %, RAM MB, CPU min/max cores). Seeded Standard ($30/mo): 50 GB storage, warn at 80 %, writes blocked at 100 %, 8192 MB RAM, 1–2 cores. RAM is a limit with overcommit: each computer reserves `COMPUTER_MEMORY_RESERVATION_MB` (default 512) and can burst to its plan RAM.
+
+Users see storage and computer memory on **Settings → Usage & Billing**; admins see disk/RAM per user in the Billing usage table, plus host resources (shared base image, max computers, last cleanup, **Run cleanup now**).
+
+### Object storage (files and backups)
+Bot workspaces sync to S3-compatible storage on wake and before sleep (`FILE_SYNC=off` disables). Local/dev uses SeaweedFS (`object-store:8333`). Production uses Cloudflare R2:
+
+| Variable | Production (R2) | Default |
+|---|---|---|
+| `S3_ENDPOINT` | `https://<account-id>.r2.cloudflarestorage.com` | `http://object-store:8333` |
+| `S3_REGION` | `auto` | `us-east-1` |
+| `S3_ACCESS_KEY` / `S3_SECRET_KEY` | R2 API token pair (secret store only, never in git) | dev values |
+| `S3_BUCKET` | your bucket | `artifacts` |
+| `FILE_SYNC` | on | on |
+
+### Nightly cleanup
+Runs at `CLEANUP_HOUR_UTC` (default 21 = 02:00 PKT). Keeps the newest `CLEANUP_KEEP_BACKUPS` (default 3) backups per bot and removes downloads older than `CLEANUP_DOWNLOAD_DAYS` (default 30). Admin can trigger it on demand.
+
+### Host capacity
+`MAX_COMPUTERS` overrides auto sizing; otherwise it is host RAM / 1.5 GB, clamped to 4–64 (never 3 or fewer). `WARM_POOL_SIZE` (default 0) keeps pre-started computers. `COMPUTER_MEMORY_MB` (default 8192) and `COMPUTER_MEMORY_RESERVATION_MB` (default 512) set the container limit and reservation. All computers share one base image layer; per-bot data is the only per-user disk.
