@@ -149,7 +149,7 @@ public static class ActionClassifier
         "browser_open", "browser_extract", "browser_click", "browser_screenshot",
         "write_file", "read_file", "edit_file", "delete_file", "shell", "setup_env",
         "type_secret", "browser.type_secret", "save_memory", "search_memory", "save_artifact",
-        "request_secret", "request_login", "react_to_message", "send_message", "external_post", "sign",
+        "request_secret", "request_login", "react_to_message", "reply_to_message", "send_message", "external_post", "sign",
         "search_tools", "load_tool"
     };
 
@@ -187,6 +187,7 @@ public static class ActionClassifier
             case "save_memory":
             case "save_artifact":
             case "react_to_message":
+            case "reply_to_message":
                 return ActionClasses.Write;
         }
         if (tool.StartsWith("get_", StringComparison.Ordinal) || tool.StartsWith("list_", StringComparison.Ordinal) || tool.StartsWith("read_", StringComparison.Ordinal))

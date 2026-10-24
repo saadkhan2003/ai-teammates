@@ -59,6 +59,7 @@ import { cn, errorMessage } from "@/lib/utils";
 import { matchShortcut } from "@/lib/shortcuts";
 import { defaultBotAvatar } from "@/lib/avatars";
 import { useBotAppearance } from "@/lib/bot-appearance";
+import type { AppLink } from "@/lib/app-links";
 
 type RosterBot = {
   id: string;
@@ -237,6 +238,16 @@ export function AppShell({ children }: { children: ReactNode }) {
       window.removeEventListener("teammates-open-create", openCreate);
     };
   }, [load, pathname]);
+
+  useEffect(() => {
+    const onLink = (event: Event) => {
+      const detail = (event as CustomEvent<AppLink>).detail;
+      if (!detail || detail.kind !== "settings") return;
+      router.push(`${detail.href}?id=${encodeURIComponent(detail.id)}`);
+    };
+    window.addEventListener("teammates-app-link", onLink);
+    return () => window.removeEventListener("teammates-app-link", onLink);
+  }, [router]);
 
   useEffect(() => {
     const root = document.documentElement;

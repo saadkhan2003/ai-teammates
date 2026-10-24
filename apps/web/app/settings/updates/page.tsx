@@ -30,7 +30,7 @@ export default function UpdatesPage() {
   const available = version?.latest && version.latest.replace(/^v/, "") !== current.replace(/^v/, "");
 
   return (
-    <div className="flex flex-col gap-[var(--space-section)]">
+    <div id="updates" className="flex flex-col gap-[var(--space-section)]">
       <header className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-title">Updates</h2>

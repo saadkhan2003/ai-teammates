@@ -263,7 +263,7 @@ export default function SecretsPage() {
   }
 
   return (
-    <div data-testid="settings-vault" className="flex flex-col gap-[var(--space-section)]">
+    <div id="vault" data-testid="settings-vault" className="flex flex-col gap-[var(--space-section)]">
       <header>
         <h2 className="text-title">Vault</h2>
         <p className="mt-1 text-body-sm text-muted-foreground">

@@ -73,7 +73,7 @@ export default function UsagePage() {
   }, [load]);
 
   return (
-    <>
+    <div id="usage" className="flex flex-col gap-[var(--space-section)]">
       <header className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-title">Usage</h2>
@@ -185,6 +185,6 @@ export default function UsagePage() {
           </div>
         </section>
       ) : null}
-    </>
+    </div>
   );
 }

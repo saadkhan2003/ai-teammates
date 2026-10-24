@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { type ReactNode, useEffect, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
+import { Suspense, type ReactNode, useEffect, useState } from "react";
 import { BarChart3, Bell, KeyRound, Laptop, Puzzle, RefreshCw, ScrollText, Shield, SlidersHorizontal } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -90,9 +90,20 @@ export function SettingsNav() {
   );
 }
 
+function SettingsAnchorScroll() {
+  const pathname = usePathname();
+  const params = useSearchParams();
+  const id = params.get("id");
+  useEffect(() => {
+    if (id) document.getElementById(id)?.scrollIntoView({ block: "center" });
+  }, [pathname, id]);
+  return null;
+}
+
 export function SettingsFrame({ children, edge = false }: { children: ReactNode; edge?: boolean }) {
   return (
     <div className="flex h-full min-h-0 flex-col md:flex-row">
+      <Suspense fallback={null}><SettingsAnchorScroll /></Suspense>
       <div className="shrink-0 border-b border-border md:w-56 md:border-b-0 md:border-r md:py-4">
         <h1 className="px-4 pb-2 text-lead font-medium">Settings</h1>
         <SettingsNav />

@@ -1,0 +1,177 @@
+{
+  "settings": [
+    {
+      "id": "general",
+      "href": "/settings",
+      "label": "General",
+      "description": "Account, theme, accent, language, timezone, and desktop notifications."
+    },
+    {
+      "id": "account",
+      "href": "/settings",
+      "label": "Account",
+      "description": "Who is signed in, and sign out."
+    },
+    {
+      "id": "theme",
+      "href": "/settings",
+      "label": "Theme",
+      "description": "Follow the system, or choose light or dark."
+    },
+    {
+      "id": "accent",
+      "href": "/settings",
+      "label": "Accent colour",
+      "description": "Accent colour used across the app."
+    },
+    {
+      "id": "language",
+      "href": "/settings",
+      "label": "Language",
+      "description": "Display language for this browser."
+    },
+    {
+      "id": "timezone",
+      "href": "/settings",
+      "label": "Timezone",
+      "description": "Timezone used when this browser shows dates."
+    },
+    {
+      "id": "notifications",
+      "href": "/settings",
+      "label": "Notifications",
+      "description": "Desktop alerts for this browser."
+    },
+    {
+      "id": "approval-rules",
+      "href": "/settings",
+      "label": "Approval rules",
+      "description": "Server rules for shell, secrets, deletes, and new sites. They are not switches on this page."
+    },
+    {
+      "id": "policy",
+      "href": "/settings/policy",
+      "label": "Policy",
+      "description": "Allow, ask, or deny each action class, and edit the hard-deny list."
+    },
+    {
+      "id": "computer",
+      "href": "/settings/computer",
+      "label": "Computer",
+      "description": "Paired devices, and whether each computer may run commands, route traffic, read files, or use the browser."
+    },
+    {
+      "id": "vault",
+      "href": "/settings/secrets",
+      "label": "Vault",
+      "description": "Save API keys and passwords, including the platform key."
+    },
+    {
+      "id": "plugins",
+      "href": "/settings/plugins",
+      "label": "Plugins",
+      "description": "Install and connect MCP servers, OpenAPI APIs, and built-in apps, then enable them for a teammate."
+    },
+    {
+      "id": "usage",
+      "href": "/settings/usage",
+      "label": "Usage & Billing",
+      "description": "Credits, usage, cost, latency, and the quota for this account."
+    },
+    {
+      "id": "updates",
+      "href": "/settings/updates",
+      "label": "Updates",
+      "description": "The installed version, and whether a newer application image is available."
+    },
+    {
+      "id": "system",
+      "href": "/system",
+      "label": "System",
+      "description": "Admin health for the database, computer isolation, computers, stuck tasks, invites, and recent model prompts."
+    },
+    {
+      "id": "notification-inbox",
+      "href": "/settings/notifications",
+      "label": "Notification inbox",
+      "description": "Account notices for invites, runs, and billing; mark notices read."
+    }
+  ],
+  "panels": [
+    {
+      "id": "details",
+      "tab": "details",
+      "label": "Details",
+      "description": "Side panel for this teammate: title, description, coding jobs, routine summary, connected apps, channels, and members."
+    },
+    {
+      "id": "overview",
+      "tab": "details",
+      "label": "Overview",
+      "description": "Same place as Details.",
+      "alias": true
+    },
+    {
+      "id": "library",
+      "tab": "library",
+      "label": "Library",
+      "description": "Workspace files, media, and saved artifacts.",
+      "section": "files"
+    },
+    {
+      "id": "files",
+      "tab": "library",
+      "label": "Files/Media",
+      "description": "Same place as Library.",
+      "alias": true,
+      "section": "files"
+    },
+    {
+      "id": "computer",
+      "tab": "computer",
+      "label": "Computer",
+      "description": "The live desktop. Take control when you need the pointer."
+    },
+    {
+      "id": "routines",
+      "tab": "library",
+      "label": "Routines",
+      "description": "Recurring tasks. A routine runs on its schedule even when this page is closed.",
+      "section": "routines"
+    },
+    {
+      "id": "coding-jobs",
+      "tab": "details",
+      "label": "Coding jobs",
+      "description": "Live coding jobs, progress, pull requests, and job details in the Details panel."
+    },
+    {
+      "id": "tasks",
+      "tab": "library",
+      "label": "Tasks",
+      "description": "Assigned tasks, status, errors, and saving a run as a skill in the Library.",
+      "section": "tasks"
+    },
+    {
+      "id": "skills",
+      "tab": "library",
+      "label": "Skills",
+      "description": "Saved workflows that can be replayed without another model call.",
+      "section": "skills"
+    },
+    {
+      "id": "memory",
+      "tab": "library",
+      "label": "Memory",
+      "description": "Facts this teammate has saved.",
+      "section": "memory"
+    },
+    {
+      "id": "plugins",
+      "tab": "library",
+      "label": "Plugins",
+      "description": "Plugins enabled for this teammate. Connect a new app from Settings.",
+      "section": "plugins"
+    }
+  ]
+}

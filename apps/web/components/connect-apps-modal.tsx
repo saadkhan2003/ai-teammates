@@ -293,6 +293,13 @@ export function ConnectAppsDialog({ open, onOpenChange }: { open: boolean; onOpe
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent data-testid="plugins-modal" className="flex h-[75vh] max-h-[75vh] w-[min(520px,calc(100vw-2rem))] max-w-[520px] flex-col gap-0 overflow-hidden bg-background p-0 sm:max-w-[520px]">
+        <div className="flex shrink-0 gap-2 border-b border-border px-4 py-2" aria-label="Plugin views">
+          {(["browse", "manage"] as const).map((tab) => (
+            <button key={tab} type="button" data-testid="plugins-tab" data-active={view === tab} aria-pressed={view === tab} className="rounded-control px-3 py-1 text-body-sm hover:bg-accent" onClick={() => setView(tab)}>
+              {tab === "browse" ? "Marketplace" : "Yours"}
+            </button>
+          ))}
+        </div>
         <div data-testid="connect-apps-scroll" className="min-h-0 flex-1 overflow-y-auto">
           {view === "browse" ? (
             <>

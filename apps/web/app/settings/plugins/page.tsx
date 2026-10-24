@@ -6,7 +6,7 @@ import { PluginsPane } from "@/components/plugins-pane";
 
 export default function PluginsSettingsPage() {
   return (
-    <div className="flex flex-col gap-[var(--space-section)]">
+    <div id="plugins" className="flex flex-col gap-[var(--space-section)]">
       <header>
         <h2 className="text-title">Plugins</h2>
         <p className="mt-1 text-body-sm text-muted-foreground">

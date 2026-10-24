@@ -1,10 +1,34 @@
+"use client";
+
 import { Fragment, type ReactNode } from "react";
 import { LinkPill } from "@/components/link-pill";
 import { linkTitle, type CodingJob } from "@/lib/chat-ui";
+import { openAppLink, pillFor, placeLabel } from "../lib/app-links";
+
+function AppPillButton({ label, href }: { label: string; href: string }) {
+  const pill = pillFor(label, href);
+  if (!pill.pill) return <>{pill.text}</>;
+  return (
+    <button
+      type="button"
+      data-testid="app-link-pill"
+      data-kind={pill.kind}
+      data-target={pill.id}
+      className="mx-0.5 inline-flex items-center rounded-full border border-border bg-card px-2 py-0.5 text-meta font-medium text-brand"
+      onClick={() => openAppLink(pill.href)}
+    >
+      {pill.label}
+    </button>
+  );
+}
 
 // Render a deliberately small Markdown subset as React nodes. Raw HTML is text.
 function inline(text: string, jobs: CodingJob[]): ReactNode[] {
-  return text.split(/(\[[^\]]+\]\([^)\s]+\)|`[^`]+`|\*\*[^*]+\*\*)/g).map((part, i) => {
+  return text.split(/(\[[^\]]+\]\([^)\s]+\)|app:\/\/(?:settings|panel)\?[^\s)]+|`[^`]+`|\*\*[^*]+\*\*)/g).map((part, i) => {
+    const app = part.match(/^\[([^\]]+)\]\((app:\/\/[^\s)]+)\)$/i);
+    if (app) return <AppPillButton key={i} label={app[1]} href={app[2]} />;
+    const bare = part.match(/^(app:\/\/(?:settings|panel)\?[^\s)]+)$/i);
+    if (bare) return <AppPillButton key={i} label={placeLabel(bare[1])} href={bare[1]} />;
     const link = part.match(/^\[([^\]]+)\]\(([^)\s]+)\)$/);
     if (link) return <LinkPill key={i} href={link[2]} label={link[1]} title={linkTitle(link[2], link[1], jobs)} />;
     if (part.startsWith("`")) return <code key={i} className="rounded-control bg-muted px-1 font-mono text-meta">{part.slice(1, -1)}</code>;

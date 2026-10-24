@@ -102,6 +102,7 @@ export default function SystemPage() {
 
   return (
     <SettingsFrame>
+      <div id="system" className="contents">
       <header className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-title">System</h2>
@@ -235,6 +236,7 @@ export default function SystemPage() {
           </ol>
         </ScrollArea>
       </section>
+      </div>
     </SettingsFrame>
   );
 }

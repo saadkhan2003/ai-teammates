@@ -99,12 +99,12 @@ export default function GeneralSettingsPage() {
   }
 
   return (
-    <>
+    <div id="general" className="flex flex-col gap-[var(--space-section)]">
       <header>
         <h2 className="text-title">General</h2>
         <p className="mt-1 text-body-sm text-muted-foreground">Appearance, language, and this session.</p>
       </header>
-      <section className={`${cardClass} flex items-center justify-between gap-4 p-4`}>
+      <section id="account" className={`${cardClass} flex items-center justify-between gap-4 p-4`}>
         <div>
           <SectionTitle>Account</SectionTitle>
           <p className="mt-1 text-body-sm font-medium">{username || "Signed in"}</p>
@@ -114,7 +114,7 @@ export default function GeneralSettingsPage() {
           <Link href="/account">Open profile</Link>
         </Button>
       </section>
-      <section className={`${cardClass} p-4`}>
+      <section id="theme" className={`${cardClass} p-4`}>
         <SectionTitle>Appearance</SectionTitle>
         <div className="mt-4 flex flex-wrap gap-2">
           {THEMES.map((item) => (
@@ -131,7 +131,7 @@ export default function GeneralSettingsPage() {
           ))}
         </div>
       </section>
-      <section className={`${cardClass} p-4`}>
+      <section id="accent" className={`${cardClass} p-4`}>
         <SectionTitle>Accent</SectionTitle>
         <div className="mt-4 flex gap-2">
           {ACCENTS.map((item) => (
@@ -151,7 +151,7 @@ export default function GeneralSettingsPage() {
         <SectionTitle>Preferences</SectionTitle>
         <div className="mt-4 flex flex-col gap-4">
           <div className="grid gap-4 md:grid-cols-2">
-            <div className="flex flex-col gap-2">
+            <div id="language" className="flex flex-col gap-2">
               <Label>Language</Label>
               <Select value={locale} onValueChange={chooseLocale}>
                 <SelectTrigger className={`${controlClass} min-h-11`}>
@@ -166,7 +166,7 @@ export default function GeneralSettingsPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="flex flex-col gap-2">
+            <div id="timezone" className="flex flex-col gap-2">
               <Label>Timezone</Label>
               <Select value={zone} onValueChange={chooseZone}>
                 <SelectTrigger className={`${controlClass} min-h-11`}>
@@ -182,7 +182,7 @@ export default function GeneralSettingsPage() {
               </Select>
             </div>
           </div>
-          <div className="flex min-h-11 items-center justify-between gap-3 border-t border-border pt-4">
+          <div id="notifications" className="flex min-h-11 items-center justify-between gap-3 border-t border-border pt-4">
             <div>
               <p className="text-body-sm">Notifications</p>
               <p className="text-meta text-muted-foreground">Desktop alerts for this browser.</p>
@@ -191,7 +191,7 @@ export default function GeneralSettingsPage() {
           </div>
         </div>
       </section>
-      <section className={`${cardClass} p-4`}>
+      <section id="approval-rules" className={`${cardClass} p-4`}>
         <SectionTitle>Approval rules</SectionTitle>
         <div className="mt-4 space-y-1 text-body-sm text-muted-foreground">
           <p>The server enforces these. They are not switches on this page.</p>
@@ -222,7 +222,7 @@ export default function GeneralSettingsPage() {
           </Button>
         </form>
       </section>
-    </>
+    </div>
   );
 }
 

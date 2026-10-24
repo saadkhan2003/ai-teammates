@@ -46,6 +46,7 @@ import { BotAvatarPicker } from "@/components/bot-avatar-picker";
 import { FileCard } from "@/components/file-card";
 import { publishBotAppearance, resolveBotAppearance } from "@/lib/bot-appearance";
 import { isConnected, readInstalledApps, type InstalledApp } from "@/lib/connect-apps";
+import type { AppLink } from "@/lib/app-links";
 
 function isFileArtifact(artifact: Artifact) {
   return Boolean(artifact.mime) || /\.[a-z0-9]{2,8}$/i.test(artifact.name);
@@ -131,6 +132,20 @@ export function Workspace({ botId }: { botId: string }) {
   const libraryRef = useRef(librarySection);
   tabRef.current = detailTab;
   libraryRef.current = librarySection;
+
+  useEffect(() => {
+    const onLink = (event: Event) => {
+      const detail = (event as CustomEvent<AppLink>).detail;
+      if (!detail || detail.kind !== "panel") return;
+      setPane(true);
+      setSettingsOpen(false);
+      setDesktopFull(false);
+      setDetailTab(detail.tab);
+      if (detail.section) setLibrarySection(detail.section);
+    };
+    window.addEventListener("teammates-app-link", onLink);
+    return () => window.removeEventListener("teammates-app-link", onLink);
+  }, []);
 
   const loadWorkspace = useCallback(async () => {
     const ticket = ++seq.current;
@@ -706,6 +721,7 @@ function BotSettings({
 
   return (
     <form data-testid="bot-settings" className="flex flex-col gap-6 overflow-y-auto px-4 py-4" onSubmit={save}>
+      <input id="settings-model" type="hidden" value={draft.model} readOnly />
       <div className="flex items-center">
         <Button type="button" variant="ghost" size="sm" className="-ml-2" onClick={onClose}>
           Back

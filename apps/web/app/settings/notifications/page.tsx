@@ -55,7 +55,7 @@ export default function NotificationsPage() {
   const unread = notes?.filter((note) => !note.read).length ?? 0;
 
   return (
-    <div data-testid="settings-notifications" className="flex flex-col gap-[var(--space-section)]">
+    <div id="notification-inbox" data-testid="settings-notifications" className="flex flex-col gap-[var(--space-section)]">
       <header className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-title">Notifications</h2>

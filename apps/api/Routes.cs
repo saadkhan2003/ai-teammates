@@ -199,7 +199,7 @@ public static class Routes
             var bot = Platform.ToDict(await conn.QuerySingleAsync("SELECT id, name, role, instructions, status, model, avatar, avatar_shape, avatar_color, section, notifications_enabled FROM bots WHERE id=@id", new { id }));
             var conversationId = await conn.ExecuteScalarAsync<Guid>("SELECT id FROM conversations WHERE bot_id=@id ORDER BY created_at LIMIT 1", new { id });
             var tasks = (await conn.QueryAsync("SELECT id, title, instruction, status, kind, model_calls, waiting_reason, error, error_code, result::text AS result FROM tasks WHERE bot_id=@id ORDER BY created_at DESC LIMIT 50", new { id })).Select(Platform.ToDict);
-            var messages = (await conn.QueryAsync("SELECT id, role, content, created_at, reply_to_id FROM messages WHERE conversation_id=@conversation ORDER BY created_at LIMIT 200", new { conversation = conversationId })).Select(Platform.ToDict).ToList();
+            var messages = (await conn.QueryAsync("SELECT id, role, content, created_at, COALESCE(reply_to_id, reply_to) AS reply_to_id, COALESCE(reply_to, reply_to_id) AS reply_to FROM messages WHERE conversation_id=@conversation ORDER BY created_at LIMIT 200", new { conversation = conversationId })).Select(Platform.ToDict).ToList();
             var reactionRows = (await conn.QueryAsync("SELECT r.id, r.message_id, r.actor_type::text AS actor_type, r.actor_id, r.emoji, r.created_at FROM message_reactions r JOIN messages m ON m.id=r.message_id WHERE m.conversation_id=@conversation ORDER BY r.created_at", new { conversation = conversationId })).Select(Platform.ToDict).ToList();
             foreach (var message in messages)
             {
@@ -1014,14 +1014,15 @@ public static class Routes
         app.MapPost("/internal/tasks/{id:guid}/complete", async (HttpContext ctx, Guid id, JsonElement body) =>
         {
             if (!Worker(ctx, platform)) return Results.Unauthorized();
-            var text = OutputRedactor.Redact(body.GetProperty("text").GetString());
+            var text = AppLinks.Sanitize(OutputRedactor.Redact(body.GetProperty("text").GetString()));
             await using var conn = await platform.Data.OpenConnectionAsync();
             var epoch = body.TryGetProperty("epoch", out var epochEl) ? epochEl.GetInt32() : -1;
-            var completed = await conn.QuerySingleOrDefaultAsync<(Guid? ConversationId, int Applied)>("UPDATE tasks SET status='completed', result=@result::jsonb, finished_at=now(), lease_owner=NULL, lease_until=NULL, updated_at=now() WHERE id=@id AND status='running' AND lease_epoch=@epoch RETURNING conversation_id, 1 AS applied", new { id, result = JsonSerializer.Serialize(new { text }), epoch });
+            var completed = await conn.QuerySingleOrDefaultAsync<(Guid? ConversationId, int Applied, string? ReplyTo)>("UPDATE tasks SET status='completed', result=@result::jsonb, finished_at=now(), lease_owner=NULL, lease_until=NULL, updated_at=now() WHERE id=@id AND status='running' AND lease_epoch=@epoch RETURNING conversation_id, 1 AS applied, NULLIF(checkpoint->>'replyTo','') AS reply_to", new { id, result = JsonSerializer.Serialize(new { text }), epoch });
             if (completed.Applied == 0) return Results.StatusCode(409);
             var conversation = completed.ConversationId;
+            Guid? replyTo = Guid.TryParse(completed.ReplyTo, out var replyId) ? replyId : null;
             if (conversation != null && !string.IsNullOrWhiteSpace(text))
-                await conn.ExecuteAsync("INSERT INTO messages (conversation_id, role, content, task_id) VALUES (@conversation, 'assistant', @text, @id)", new { conversation, text, id });
+                await conn.ExecuteAsync("INSERT INTO messages (conversation_id, role, content, task_id, reply_to, reply_to_id) VALUES (@conversation, 'assistant', @text, @id, @replyTo, @replyTo)", new { conversation, text, id, replyTo });
             var owner = await conn.ExecuteScalarAsync<Guid?>("SELECT b.owner_id FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE t.id=@id", new { id });
             if (owner != null) await platform.Notify(owner.Value, "task.complete", "Task finished", text ?? "");
             await platform.Publish(new { type = "task", taskId = id, status = "completed" });

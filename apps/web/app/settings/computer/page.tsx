@@ -120,7 +120,7 @@ export default function ComputerSettingsPage() {
   const behind = current && version?.latest && current.version.replace(/^v/, "") !== version.latest.replace(/^v/, "");
 
   return (
-    <div data-testid="settings-computer" className="flex flex-col gap-[var(--space-section)]">
+    <div id="computer" data-testid="settings-computer" className="flex flex-col gap-[var(--space-section)]">
       <header className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-title">Computer</h2>

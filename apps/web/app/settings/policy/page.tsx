@@ -89,7 +89,7 @@ export default function PolicySettingsPage() {
   const staff = role === "owner" || role === "admin";
 
   return (
-    <>
+    <div id="policy" className="flex flex-col gap-[var(--space-section)]">
       <header>
         <h2 className="text-title">Policy</h2>
         <p className="mt-1 text-body-sm text-muted-foreground">Risky classes ask before the tool runs. A hard deny still wins.</p>
@@ -173,6 +173,6 @@ export default function PolicySettingsPage() {
           {error}
         </p>
       ) : null}
-    </>
+    </div>
   );
 }
