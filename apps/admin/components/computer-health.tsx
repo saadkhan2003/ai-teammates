@@ -19,6 +19,8 @@ function mb(bytes: number | null | undefined) {
   return `${Math.round(bytes / (1024 * 1024)).toLocaleString()} MB`;
 }
 
+const rank = (row: Row) => (row.desktop === "on" ? 0 : row.desktop === "asleep" ? 1 : 2);
+
 /** Per-computer memory: is the desktop on or asleep, and how much the computer is using. */
 export function ComputerHealth() {
   const [rows, setRows] = useState<Row[] | null>(null);
@@ -45,12 +47,12 @@ export function ComputerHealth() {
             <tr><th className="py-1 font-medium">Owner</th><th className="py-1 font-medium">Desktop</th><th className="py-1 text-right font-medium">Processes RSS</th><th className="py-1 text-right font-medium">Desktop RSS</th><th className="py-1 text-right font-medium">Container</th><th className="py-1 text-right font-medium">Chrome</th></tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
+            {[...rows].sort((a, b) => rank(a) - rank(b)).map((row) => (
               <tr key={row.computerId} data-testid="admin-computer-row" data-desktop={row.desktop} className="border-t border-border">
                 <td className="py-1.5">{row.owner || row.computerId.slice(0, 8)}</td>
                 <td className="py-1.5">
                   <span className={row.desktop === "on" ? "rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs text-emerald-600 dark:text-emerald-400" : "rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground"}>
-                    {row.desktop === "on" ? "On" : row.desktop === "asleep" ? "Off (asleep)" : "Unknown"}
+                    {row.desktop === "on" ? "On" : row.desktop === "asleep" ? "Off (asleep)" : row.desktop === "stopped" ? "Computer asleep" : "Unknown"}
                   </span>
                 </td>
                 <td className="py-1.5 text-right tabular-nums">{mb(row.rssBytes)}</td>

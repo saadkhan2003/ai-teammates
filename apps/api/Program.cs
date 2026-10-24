@@ -463,7 +463,7 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
                 sampled++;
                 var desktop = await platform.Compute.ReadDesktopAsync(computerId, ct);
                 platform.ComputerSamples[id] = desktop is null
-                    ? new ComputerMemorySample(id, container == 0 ? "asleep" : "unknown", container, 0, 0, null, 0, DateTimeOffset.UtcNow)
+                    ? new ComputerMemorySample(id, container == 0 ? "stopped" : "unknown", container, 0, 0, null, 0, DateTimeOffset.UtcNow)
                     : new ComputerMemorySample(id, desktop.Desktop, container, desktop.RssBytes, desktop.DesktopRssBytes, desktop.CgroupBytes, desktop.ChromeProcesses, DateTimeOffset.UtcNow);
             }
             catch (Exception ex)
@@ -473,6 +473,7 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
         }
         // A recreate or a pause misses one pass. Keep the last good sample so
         // the metrics page does not flash zero between passes.
+        foreach (var stale in platform.ComputerSamples.Keys.Except(ids).ToArray()) platform.ComputerSamples.TryRemove(stale, out _);
         if (sampled == 0) return;
         platform.ComputerMemory = memory;
         platform.ChromeProcesses = chrome;
