@@ -672,7 +672,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
             {
                 var command = Arg(args, "command");
                 var response = await platform.Compute.ControlAsync(computer, $"/desktops/{placement.Desktop}/shell",
-                    JsonSerializer.Serialize(new { command, timeout = 30, actor_id = actorId, epoch = desktopEpoch }), ct);
+                    JsonSerializer.Serialize(new { command, timeout = 30, actor_id = actorId, epoch = desktopEpoch, workspace_bot_id = botId.ToString("N") }), ct);
                 using var shellResult = JsonDocument.Parse(response);
                 return shellResult.RootElement.Clone();
             }
@@ -735,7 +735,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
             throw new ToolHalt("denied", "command contains a resolved secret");
         }
         var response = await platform.Compute.ControlAsync(computer, $"/desktops/{desktop}/setup-env",
-            JsonSerializer.Serialize(new { command, env = new Dictionary<string, string> { [envName] = value }, timeout = 30, actor_id = actorId, epoch = desktopEpoch }), ct);
+            JsonSerializer.Serialize(new { command, env = new Dictionary<string, string> { [envName] = value }, timeout = 30, actor_id = actorId, epoch = desktopEpoch, workspace_bot_id = botId.ToString("N") }), ct);
         value = "";
         using var setupResult = JsonDocument.Parse(response);
         return setupResult.RootElement.Clone();

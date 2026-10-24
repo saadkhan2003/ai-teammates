@@ -460,7 +460,10 @@ async def run_command(bot_id: str, command: str, extra_env: dict[str, str] | Non
     for value in scrub:
         if value and value in command:
             return {"exitCode": 126, "stdout": "", "stderr": "command contains a resolved secret", "rejected": True}
-    uid, root, home = workspace.prepare(bot_id)
+    try:
+        uid, root, home = workspace.prepare(bot_id)
+    except workspace.WorkspaceDeleted:
+        return {"exitCode": 126, "stdout": "", "stderr": "workspace_deleted", "rejected": True}
     command = workspace.rewrite_command(command, root)
     env = {
         "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
