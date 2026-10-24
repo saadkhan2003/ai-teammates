@@ -142,8 +142,12 @@ test("phone layout, events, and live desktop", async ({ page }, testInfo) => {
   await expect(page.getByTestId("message-item").filter({ hasText: marker })).toBeVisible();
   await expect(page.getByTestId("event-stream")).not.toHaveAttribute("data-last-id", "");
   const lastId = await page.getByTestId("event-stream").getAttribute("data-last-id");
+  // An agent reply can land between reading data-last-id and the reconnect,
+  // so the resume header may carry that id or any later one.
+  const before = resumed.length;
+  const atOrAfter = (id: string) => id !== "" && (id === lastId || (/^\d+$/.test(id) && /^\d+$/.test(lastId ?? "") && BigInt(id) >= BigInt(lastId ?? "0")));
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
-  await expect.poll(() => resumed.includes(lastId ?? "")).toBe(true);
+  await expect.poll(() => resumed.slice(before).some(atOrAfter)).toBe(true);
   await expect(page.getByTestId("event-stream")).toHaveAttribute("data-state", "open");
   await noHorizontalScroll(page);
   await shot("chat");
