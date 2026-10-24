@@ -26,7 +26,9 @@ export function ComputerJobs({ botId, controlled = false, dark = false }: { botI
 
   const load = useCallback(async () => {
     try {
-      setData(await api<JobsResponse>(`/api/bots/${botId}/jobs`));
+      const raw = await api<Partial<JobsResponse> | null>(`/api/bots/${botId}/jobs`);
+      // Never let an unexpected payload take down the chat view.
+      setData({ jobs: Array.isArray(raw?.jobs) ? raw.jobs : [], running: typeof raw?.running === "number" ? raw.running : 0, screenLastUsedAt: raw?.screenLastUsedAt ?? null });
       setLoadedAt(Date.now());
       setError(null);
     } catch (caught) {
