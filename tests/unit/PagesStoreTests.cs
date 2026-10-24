@@ -115,4 +115,40 @@ public class PagesStoreTests : IAsyncLifetime
         await app.StopAsync();
     }
 
+    [PostgresFact]
+    public async Task BotToolsRejectForeignChatAndPeerOriginBeforeReadingOrWritingPages()
+    {
+        await using var c = await data!.OpenConnectionAsync();
+        await c.ExecuteAsync("CREATE TABLE tasks(id uuid PRIMARY KEY,bot_id uuid,conversation_id uuid,origin_thread_id uuid)");
+        var page = (await Store.Save(owner, bot, chat, null, "Report", "report", "Private", "", "user"))!;
+        var task = Guid.NewGuid();
+        await c.ExecuteAsync("INSERT INTO tasks VALUES(@task,@bot,@otherChat,NULL)", new { task, bot, otherChat = Guid.NewGuid() });
+        var platform = new Teammates.Api.Platform(data!, new byte[32], null!, null!, new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
+        var args = System.Text.Json.JsonSerializer.SerializeToElement(new { page_id = page.Id, source = "Attack", summary = "Attack" });
+        var denied = await Assert.ThrowsAsync<ToolHalt>(() => PagesRoutes.Tool(platform, owner, bot, task, "edit_page", args));
+        Assert.Equal("page_not_in_chat", denied.Reason);
+        await c.ExecuteAsync("UPDATE tasks SET conversation_id=@chat,origin_thread_id=@peer WHERE id=@task", new { chat, peer = Guid.NewGuid(), task });
+        denied = await Assert.ThrowsAsync<ToolHalt>(() => PagesRoutes.Tool(platform, owner, bot, task, "edit_page", args));
+        Assert.Equal("page_requires_owner_chat", denied.Reason);
+        Assert.Equal(1, (await Store.Read(owner, page.Id))!.Version);
+    }
+    [PostgresFact]
+    public async Task InvalidOrAmbiguousEditsRollBackAndMultipleLinksRevokeIndependently()
+    {
+        var page = (await Store.Save(owner, bot, chat, null, "Report", "report", "A A", "", "user"))!;
+        foreach (var json in new[] { "[{\"find\":\"A\",\"replace\":\"B\"}]", "[{\"find\":\"absent\",\"replace\":\"B\"}]", "[{\"find\":\"A A\"}]" })
+        {
+            var edits = System.Text.Json.JsonDocument.Parse(json).RootElement;
+            await Assert.ThrowsAsync<ArgumentException>(() => Store.Save(owner, bot, chat, page.Id, "", "", null, "Edit", "user", edits: edits));
+            Assert.Equal(1, (await Store.Read(owner, page.Id))!.Version);
+        }
+        var a = (await Store.Share(owner, page.Id))!.Value;
+        var b = (await Store.Share(owner, page.Id))!.Value;
+        Assert.True(await Store.Revoke(owner, page.Id, a.Id));
+        Assert.Null(await Store.Shared(a.Token)); Assert.NotNull(await Store.Shared(b.Token));
+        Assert.Equal("link", (await Store.Read(owner, page.Id))!.ShareMode);
+        Assert.True(await Store.Revoke(owner, page.Id, b.Id));
+        Assert.Equal("private", (await Store.Read(owner, page.Id))!.ShareMode);
+    }
+
 }

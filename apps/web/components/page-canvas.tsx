@@ -11,7 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 export type PageCardData = { id: string; title: string; kind: string; version?: number };
-export type PageData = PageCardData & { source: string; currentVersion: number; version: number; summary: string; updatedAt: string };
+export type PageData = PageCardData & { shareMode: "private" | "link"; source: string; currentVersion: number; version: number; summary: string; updatedAt: string };
 type Version = { addedLines: number; removedLines: number; version: number; summary: string; author: string; createdAt: string };
 type Share = { id: string; createdAt: string; revokedAt?: string | null };
 const kinds = ["report", "dashboard", "tracker", "plan", "other"];
@@ -85,14 +85,15 @@ export function PageCanvasHost({ botId, onOpen }: { botId: string; onOpen: () =>
 
 function PageCanvas({ id, onClose }: { id: string; onClose: () => void }) {
   const [page, setPage] = useState<PageData | null>(null); const [error, setError] = useState(false);
+  const requestSequence = useRef(0);
   const [width, setWidth] = useState(620); const [full, setFull] = useState(false);
   const [historyError, setHistoryError] = useState(false); const [historyRetry, setHistoryRetry] = useState(0);
   const [linksLoading, setLinksLoading] = useState(false);
   const [history, setHistory] = useState(false); const [versions, setVersions] = useState<Version[] | null>(null);
   const [view, setView] = useState<number | null>(null); const [share, setShare] = useState(false); const [links, setLinks] = useState<Share[]>([]);
   const [shareUrl, setShareUrl] = useState(""); const [busy, setBusy] = useState(false); const [shareError, setShareError] = useState(false);
-  const load = useCallback(async () => { try { const result = await api<PageData>(`/api/pages/${id}${view ? `?version=${view}` : ""}`); setPage(result); setError(false); } catch { setError(true); } }, [id, view]);
-  useEffect(() => { void load(); const timer = window.setInterval(() => void load(), 5000); return () => window.clearInterval(timer); }, [load]);
+  const load = useCallback(async () => { const sequence = ++requestSequence.current; try { const result = await api<PageData>(`/api/pages/${id}${view ? `?version=${view}` : ""}`); if (sequence === requestSequence.current) { setPage(result); setError(false); } } catch { if (sequence === requestSequence.current) setError(true); } }, [id, view]);
+  useEffect(() => { void load(); const timer = window.setInterval(() => void load(), 5000); return () => { window.clearInterval(timer); requestSequence.current++; }; }, [load]);
   useEffect(() => { if (!history) return; setVersions(null); setHistoryError(false); void api<Version[]>(`/api/pages/${id}/versions`).then(setVersions).catch(() => setHistoryError(true)); }, [history, id, page?.currentVersion, historyRetry]);
   useEffect(() => { if (!share) return; setShareError(false); setLinksLoading(true); void api<Share[]>(`/api/pages/${id}/shares`).then(setLinks).catch(() => setShareError(true)).finally(() => setLinksLoading(false)); }, [id, share]);
   const resize = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -103,22 +104,22 @@ function PageCanvas({ id, onClose }: { id: string; onClose: () => void }) {
   };
   const restore = async () => {
     if (!view) return; setBusy(true);
-    try { const restored = await api<PageData>(`/api/pages/${id}/restore/${view}`, { method: "POST" }); setPage(restored); setView(null); toast.success(`Restored as version ${restored.version}.`); }
+    try { const restored = await api<PageData>(`/api/pages/${id}/restore/${view}`, { method: "POST" }); requestSequence.current++; setPage(restored); setView(null); toast.success(`Restored as version ${restored.version}.`); }
     catch { toast.error("Could not restore this version."); } finally { setBusy(false); }
   };
   const createLink = async () => {
     setBusy(true); setShareError(false);
-    try { const result = await api<{ id: string; url: string }>(`/api/pages/${id}/shares`, { method: "POST" }); setShareUrl(new URL(result.url, location.origin).href); setLinks(await api<Share[]>(`/api/pages/${id}/shares`)); }
+    try { const result = await api<{ id: string; url: string }>(`/api/pages/${id}/shares`, { method: "POST" }); setShareUrl(new URL(result.url, location.origin).href); setLinks(await api<Share[]>(`/api/pages/${id}/shares`)); void load(); }
     catch { setShareError(true); } finally { setBusy(false); }
   };
   const revoke = async (link: string) => {
-    setBusy(true); try { await api(`/api/pages/${id}/shares/${link}`, { method: "DELETE" }); setShareUrl(""); setLinks(await api<Share[]>(`/api/pages/${id}/shares`)); toast.success("Link revoked."); } catch { setShareError(true); } finally { setBusy(false); }
+    setBusy(true); try { await api(`/api/pages/${id}/shares/${link}`, { method: "DELETE" }); setShareUrl(""); setLinks(await api<Share[]>(`/api/pages/${id}/shares`)); void load(); toast.success("Link revoked."); } catch { setShareError(true); } finally { setBusy(false); }
   };
   const copy = async (text: string) => { try { await navigator.clipboard.writeText(text); toast.success("Copied."); } catch { toast.error("Could not copy. Try exporting the Markdown."); } };
   const download = () => { if (!page) return; const url = URL.createObjectURL(new Blob([page.source], { type: "text/markdown;charset=utf-8" })); const link = document.createElement("a"); link.href = url; link.download = page.title.replace(/[^a-z\d _-]/gi, "_").slice(0, 100) + ".md"; link.click(); URL.revokeObjectURL(url); };
   return <aside aria-label="Page canvas" data-testid="page-canvas" style={full ? undefined : { width }} className={cn("relative flex min-h-0 shrink-0 flex-col border-l border-border bg-background text-foreground max-md:!w-full max-md:fixed max-md:inset-0 max-md:z-40", full && "!fixed inset-0 z-40 !w-full")}>
     {!full && <div role="separator" aria-label="Resize page canvas" aria-orientation="vertical" aria-valuemin={360} aria-valuemax={1200} aria-valuenow={width} tabIndex={0} onPointerDown={resize} onKeyDown={e => { if (e.key === "ArrowLeft") { e.preventDefault(); setWidth(w => Math.min(window.innerWidth - 320, w + 40)); } if (e.key === "ArrowRight") { e.preventDefault(); setWidth(w => Math.max(360, w - 40)); } }} className="absolute -left-1 top-0 z-10 h-full w-2 cursor-col-resize touch-none hover:bg-brand/20 focus-visible:bg-brand/20 max-md:hidden" />}
-    <header className="flex min-h-14 items-center gap-2 border-b border-border px-4"><KindIcon kind={page?.kind ?? "other"} /><div className="min-w-0 flex-1"><h2 className="truncate text-sm font-semibold">{page?.title ?? "Page"}</h2><p className="text-[11px] text-muted-foreground">{page ? `Version ${page.version} · ${view ? "Viewing history" : "Private workspace"}` : "Loading…"}</p></div>
+    <header className="flex min-h-14 items-center gap-2 border-b border-border px-4"><KindIcon kind={page?.kind ?? "other"} /><div className="min-w-0 flex-1"><h2 className="truncate text-sm font-semibold">{page?.title ?? "Page"}</h2><p className="text-[11px] text-muted-foreground">{page ? `Version ${page.version} · ${view ? "Viewing history" : page.shareMode === "link" ? "Shared by link" : "Private"}` : "Loading…"}</p></div>
       <Button variant="ghost" size="icon" aria-label="Version history" onClick={() => setHistory(!history)} className="h-8 w-8"><History className="h-4 w-4" /></Button>
       <Button variant="ghost" size="icon" aria-label="Share page" onClick={() => setShare(true)} className="h-8 w-8"><Share2 className="h-4 w-4" /></Button>
       <Button variant="ghost" size="icon" aria-label={full ? "Exit full screen" : "Full screen page"} onClick={() => setFull(!full)} className="h-8 w-8">{full ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}</Button>

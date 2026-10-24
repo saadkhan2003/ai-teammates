@@ -47,6 +47,7 @@ for (const theme of ["light", "dark"]) {
       await screenshot(page, "02-side-panel", theme);
       await canvas.getByRole("button", { name: "Full screen page", exact: true }).click();
       await expect(canvas.getByRole("button", { name: "Exit full screen" })).toBeVisible();
+      await screenshot(page, "08-full-screen", theme);
       await canvas.getByRole("button", { name: "Exit full screen" }).click();
       await page.getByTestId("composer").fill("Update the page");
       await page.getByTestId("send-chat").click();
@@ -59,6 +60,7 @@ for (const theme of ["light", "dark"]) {
       await screenshot(page, "04-history", theme);
       await history.getByRole("button", { name: /Version 1/ }).click();
       await expect(frame.getByRole("heading", { name: "Quarterly overview", exact: true })).toBeVisible();
+      await screenshot(page, "09-old-version", theme);
       await canvas.getByRole("button", { name: "Restore version", exact: true }).click();
       await expect(canvas).toContainText("Version 3");
       await expect(history).toContainText("Restored version 1");

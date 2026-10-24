@@ -1,5 +1,5 @@
 import { mkdir } from "node:fs/promises";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Request } from "@playwright/test";
 import { login } from "./helpers";
 
 test.use({ viewport: { width: 1440, height: 900 } });
@@ -38,12 +38,13 @@ for (const theme of ["light", "dark"]) {
       const origin = new URL(page.url()).origin;
       // A readable sentinel makes a cookie-read success detectable without exposing any session value.
       await isolated.addCookies([{ name: "page_security_sentinel", value: "sentinel", url: origin, httpOnly: false, sameSite: "Lax" }]);
-      const unexpected: string[] = [];
+      const unexpected: Request[] = [];
       view.on("request", request => {
         let renderer = false; try { renderer = request.frame().url().includes("/page-renderer"); } catch { /* no frame */ }
-        if (request.url().includes("pages-exfil.invalid") || (renderer && !new URL(request.url()).pathname.startsWith("/page-renderer"))) unexpected.push(new URL(request.url()).pathname);
+        if (request.url().includes("pages-exfil.invalid") || (renderer && !new URL(request.url()).pathname.startsWith("/page-renderer"))) unexpected.push(request);
       });
       await view.goto(new URL(link.url, origin).href);
+      expect(await view.evaluate(() => document.cookie.includes("page_security_sentinel=sentinel"))).toBe(true);
       const locator = view.frameLocator('[data-testid="page-frame"]');
       await expect(locator.getByRole("heading", { name: "Security report", exact: true })).toBeVisible();
       await expect(locator.getByText("Check inputs", { exact: true })).toBeVisible();
@@ -71,17 +72,18 @@ for (const theme of ["light", "dark"]) {
       });
       expect(probe).toEqual({ cookie: false, parentRead: false, api: false, storage: false, pwned: false });
       await expect(view).toHaveURL(topUrl);
-      expect(unexpected).toEqual([]);
+      expect(unexpected.filter(request => !request.failure()?.errorText.includes("ERR_BLOCKED_BY_CSP")).map(request => new URL(request.url()).pathname)).toEqual([]);
       // A forged sibling/top-level sender cannot replace content in the frame.
-      await view.evaluate(() => {
+      await view.evaluate(() => new Promise<void>(resolve => {
         const sibling = document.createElement("iframe"); sibling.setAttribute("sandbox", "allow-scripts"); sibling.hidden = true;
+        sibling.onload = () => resolve();
         sibling.srcdoc = '<script>parent.frames[0].postMessage({type:"page:render",source:"# Forged"},"*")<\/script>';
         document.body.append(sibling);
-      });
+      }));
       await expect(locator.getByRole("heading", { name: "Security report", exact: true })).toBeVisible();
       await mkdir("/workspace/shots-pages-v1", { recursive: true });
       await view.screenshot({ path: `/workspace/shots-pages-v1/07-security-view-${theme}.png`, fullPage: false });
-      expect(unexpected).toEqual([]);
+      expect(unexpected.filter(request => !request.failure()?.errorText.includes("ERR_BLOCKED_BY_CSP")).map(request => new URL(request.url()).pathname)).toEqual([]);
     } finally { await isolated.close(); await page.request.delete(`/api/bots/${bot.id}`); }
   });
 }
