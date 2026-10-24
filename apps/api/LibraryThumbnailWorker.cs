@@ -26,7 +26,7 @@ public sealed class LibraryThumbnailWorker(Platform platform, ILogger<LibraryThu
         await using var conn = await platform.Data.OpenConnectionAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
         var row = await conn.QuerySingleOrDefaultAsync<Job>(new CommandDefinition("""
-            SELECT li.id,li.bot_id,li.kind,a.object_key,li.thumb_attempts
+            SELECT li.id,li.bot_id AS "BotId",li.kind,a.object_key AS "ObjectKey",li.thumb_attempts AS "Attempts"
             FROM library_items li JOIN artifacts a ON a.id=li.artifact_id
             WHERE li.thumb_state='pending' AND li.deleted_at IS NULL AND li.thumb_retry_at<=now()
               AND li.kind IN ('image','screenshots','video','pdf')

@@ -9,6 +9,10 @@ public sealed class LoginRateLimiter
     public const int MaxFailures = 8;
     public const int MaxAttempts = 30;
 
+    public const string TestHeader = "X-Teammates-Test-Login";
+    public static bool RelaxFor(bool testHooks, IHeaderDictionary headers) =>
+        testHooks && headers[TestHeader] == "true";
+
     public static (int Attempts, int Failures) LimitsFor(bool testHooks) =>
         testHooks ? (3000, 800) : (MaxAttempts, MaxFailures);
 

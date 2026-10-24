@@ -24,6 +24,7 @@ async function globalSetup() {
     let response;
     for (let attempt = 1; attempt <= 3; attempt++) {
       response = await context.post("/api/auth/login", {
+        headers: { "X-Teammates-Test-Login": "true" },
         data: {
           username: process.env.OWNER_USERNAME ?? "saad",
           password: process.env.OWNER_PASSWORD ?? "teammates-dev",

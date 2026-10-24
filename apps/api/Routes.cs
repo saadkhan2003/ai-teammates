@@ -67,7 +67,10 @@ public static class Routes
         app.MapPost("/api/auth/login", async (HttpContext ctx, JsonElement body) =>
         {
             var ip = ClientAddress.From(ctx);
-            if (await platform.LoginBlocked(ip)) return Results.StatusCode(429);
+            var testLogin = LoginRateLimiter.RelaxFor(platform.TestHooks, ctx.Request.Headers);
+            // Keep opted-in test traffic out of the ordinary limiter's bucket.
+            if (testLogin) ip = "test-login:" + ip;
+            if (await platform.LoginBlocked(ip, testLogin)) return Results.StatusCode(429);
             var loginAttemptId = await platform.NoteLoginAttempt(ip);
             var username = body.GetProperty("username").GetString() ?? "";
             var password = body.GetProperty("password").GetString() ?? "";

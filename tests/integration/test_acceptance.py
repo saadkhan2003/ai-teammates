@@ -31,6 +31,8 @@ class Client:
     def call(self, method: str, path: str, body=None, raw: bytes | None = None, headers=None, auth=True):
         data = raw if raw is not None else (None if body is None else json.dumps(body).encode())
         request = urllib.request.Request(BASE + path, data=data, method=method)
+        if path == "/api/auth/login":
+            request.add_header("X-Teammates-Test-Login", "true")
         if body is not None:
             request.add_header("Content-Type", "application/json")
         if auth and self.cookie:

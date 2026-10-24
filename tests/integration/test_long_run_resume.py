@@ -11,6 +11,21 @@ from test_bot_messaging import _bot, _workspace
 _CREATED_BOTS = set()
 
 
+def _allow_write_paths(bot, paths):
+    """Seed this fixture bot's exact-path grants without relaxing owner policy.
+
+    The deterministic action reviewer asks even when the write class is ALLOW.
+    These tests exercise dedupe/recovery after authorization has been granted.
+    """
+    bot = str(uuid.UUID(bot))
+    encoded = json.dumps(paths).replace("'", "''")
+    _psql(
+        "INSERT INTO approval_rules(owner_id,bot_id,action_class,tool,matcher) "
+        "SELECT b.owner_id,b.id,'write','write_file',jsonb_build_object('kind','prefix','prefix',p.path) "
+        f"FROM bots b CROSS JOIN jsonb_array_elements_text('{encoded}'::jsonb) p(path) WHERE b.id='{bot}'"
+    )
+
+
 def _setup():
     client = login()
     assert client.call("POST", "/api/secrets", {"namespace": "openrouter", "name": "default", "type": "API_KEY", "value": OPENROUTER})[0] == 200
@@ -129,9 +144,10 @@ def _compact(task, body):
 
 def test_shell_execute_deduped_by_idempotency_key():
     client, bot, _, task = _setup()
+    path = f"/workspace/dedupe-{task}.txt"
     try:
+        _allow_write_paths(bot, [path])
         _psql(f"UPDATE tasks SET status='running',waiting_reason=NULL,lease_owner='dedupe-test',lease_until=now()+interval '1 minute',lease_epoch=1 WHERE id='{task}'")
-        path = f"/workspace/dedupe-{task}.txt"
         key = task + ":dedupe-integration"
         request = {
             "taskId": task,
@@ -153,6 +169,7 @@ def test_shell_execute_deduped_by_idempotency_key():
         })
         assert read_status == 200 and read_result["output"]["content"].strip() == "first execution", read_result
     finally:
+        _psql(f"DELETE FROM approval_rules WHERE bot_id='{bot}' AND tool='write_file' AND matcher->>'prefix'='{path}'")
         _cleanup(client, bot, task)
 
 

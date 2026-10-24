@@ -275,6 +275,11 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
             return Results.BadRequest(new { decision = "deny", reason = "invalid_preexec_request" });
         var tool = toolNode.GetString()!;
         if (!await HoldsLease(taskId, EpochOf(body), ct, tool is "load_skill" or "write_skill" || VideoTools.IsTool(tool) ? botId : null)) return Results.StatusCode(409);
+        if (tool == "update_routine" && await BotMessaging.UpdateBlocked(platform, await OwnerOf(botId), botId, taskId, args, ct) is { } blocked)
+        {
+            await platform.Audit("policy", "tool.denied", botId, taskId, new { tool, reason = blocked, riskClass = ActionClasses.BotManage });
+            return Results.Json(new { decision = "deny", reason = blocked, riskClass = ActionClasses.BotManage });
+        }
         var gated = await Gate(botId, taskId, tool, args, false, ct);
         if (gated.Decision == PolicyEngine.Deny)
         {
