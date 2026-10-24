@@ -36,6 +36,19 @@ def plan(messages: list) -> dict:
 
 def _steps(text: str, messages: list) -> list[Step]:
     stripped = text.strip()
+    lower = stripped.lower()
+    if lower.startswith("where do i") or lower.startswith("how do i"):
+        return [("final", _guide_answer(lower))]
+    if stripped.startswith("Reply to my last note"):
+        return [
+            ("tool", "reply_to_message", {"message_id": _message_id(messages)}),
+            ("final", "On it."),
+        ]
+    if stripped == "that was lovely":
+        return [
+            ("tool", "react_to_message", {"message_id": _message_id(messages), "emoji": "🌟"}),
+            ("final", ""),
+        ]
     if stripped.startswith("Ask which Rakazo ideas should go in now"):
         return [
             (
@@ -283,6 +296,26 @@ def _content_text(content) -> str:
                 parts.append(str(part.get("text") or ""))
         return "\n".join(parts)
     return str(content)
+
+
+def _guide_answer(text: str) -> str:
+    if "flux" in text:
+        return "[Flux](app://settings?id=not-a-real-setting)"
+    if "openrouter" in text or "vault" in text or "api key" in text:
+        return "Connect it in the vault. [Vault](app://settings?id=vault)"
+    if "routine" in text:
+        return "Routines live in the side panel. [Routines](app://panel?tab=routines)"
+    if "coding" in text or "job" in text:
+        return "Coding jobs are in the side panel. [Coding jobs](app://panel?tab=coding-jobs)"
+    if "library" in text or "file" in text:
+        return "Files are in the library. [Library](app://panel?tab=library)"
+    if "computer" in text or "desktop" in text:
+        return "The desktop is the Computer tab. [Computer](app://panel?tab=computer)"
+    if "policy" in text:
+        return "Set that in policy. [Policy](app://settings?id=policy)"
+    if "plugin" in text or "connect" in text:
+        return "Connect apps under plugins. [Plugins](app://settings?id=plugins)"
+    return "That is in settings. [Settings](app://settings?id=general)"
 
 
 def _message_id(messages: list) -> str:

@@ -4,7 +4,7 @@ import { PluginsPane } from "@/components/plugins-pane";
 
 export default function PluginsSettingsPage() {
   return (
-    <div className="flex flex-col gap-3">
+    <div id="plugins" className="flex flex-col gap-3">
       <div>
         <h2 className="text-lg font-medium">Plugins</h2>
         <p className="mt-1 text-sm text-muted-foreground">

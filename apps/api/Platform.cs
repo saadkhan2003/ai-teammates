@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -134,6 +135,12 @@ public sealed class Platform
             await conn.ExecuteAsync(await File.ReadAllTextAsync("/migrations/" + file));
             await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES (@mid) ON CONFLICT DO NOTHING", new { mid });
         }
+        const string replyMigration = "add_message_reply_to";
+        if (await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id=@mid", new { mid = replyMigration }) == 0)
+        {
+            await conn.ExecuteAsync(EmbeddedText("add_message_reply_to.sql"));
+            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES (@mid) ON CONFLICT DO NOTHING", new { mid = replyMigration });
+        }
         var count = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM users");
         if (count == 0)
         {
@@ -163,6 +170,14 @@ public sealed class Platform
             catch (AmazonS3Exception ex) when (ex.ErrorCode is "BucketAlreadyOwnedByYou" or "BucketAlreadyExists") { break; }
             catch { await Task.Delay(1000); }
         }
+    }
+
+    private static string EmbeddedText(string name)
+    {
+        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(name)
+            ?? throw new InvalidOperationException(name + " is not embedded");
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
     }
 
     public async Task<Guid?> UserForSession(string? token)

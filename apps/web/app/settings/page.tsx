@@ -103,8 +103,8 @@ export default function GeneralSettingsPage() {
   }
 
   return (
-    <div className="grid gap-4">
-      <Card>
+    <div id="general" className="grid gap-4">
+      <Card id="account">
         <CardHeader className="p-4">
           <CardTitle className="text-sm">Account</CardTitle>
         </CardHeader>
@@ -120,7 +120,7 @@ export default function GeneralSettingsPage() {
           </form>
         </CardContent>
       </Card>
-      <Card>
+      <Card id="theme">
         <CardHeader className="p-4">
           <CardTitle className="text-sm">Theme</CardTitle>
         </CardHeader>
@@ -139,7 +139,7 @@ export default function GeneralSettingsPage() {
           ))}
         </CardContent>
       </Card>
-      <Card>
+      <Card id="accent">
         <CardHeader className="p-4">
           <CardTitle className="text-sm">Accent colour</CardTitle>
         </CardHeader>
@@ -158,7 +158,7 @@ export default function GeneralSettingsPage() {
         </CardContent>
       </Card>
       <div className="grid gap-4 md:grid-cols-2">
-        <div className="flex flex-col gap-1.5">
+        <div id="language" className="flex flex-col gap-1.5">
           <Label>Language</Label>
           <Select value={locale} onValueChange={chooseLocale}>
             <SelectTrigger>
@@ -173,7 +173,7 @@ export default function GeneralSettingsPage() {
             </SelectContent>
           </Select>
         </div>
-        <div className="flex flex-col gap-1.5">
+        <div id="timezone" className="flex flex-col gap-1.5">
           <Label>Timezone</Label>
           <Select value={zone} onValueChange={chooseZone}>
             <SelectTrigger>
@@ -189,14 +189,14 @@ export default function GeneralSettingsPage() {
           </Select>
         </div>
       </div>
-      <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
+      <div id="notifications" className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
         <div>
           <p className="text-sm">Notifications</p>
           <p className="text-xs text-muted-foreground">Desktop alerts for this browser.</p>
         </div>
         <Switch checked={alerts} onCheckedChange={(checked) => void chooseAlerts(checked)} aria-label="Notifications" />
       </div>
-      <Card>
+      <Card id="approval-rules">
         <CardHeader className="p-4">
           <CardTitle className="text-sm">Approval rules</CardTitle>
         </CardHeader>

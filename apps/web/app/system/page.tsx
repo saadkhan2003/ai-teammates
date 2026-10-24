@@ -100,6 +100,7 @@ export default function SystemPage() {
 
   return (
     <SettingsFrame>
+      <div id="system" className="contents">
       {health?.computerIsolation === false ? (
         <p role="alert" data-testid="isolation-alert" className="rounded-lg border border-line bg-paper p-4 text-sm text-clay">
           Computer isolation rules are missing. Computers will not start until the rules are installed again.
@@ -207,6 +208,7 @@ export default function SystemPage() {
           </ol>
         </ScrollArea>
       </section>
+      </div>
     </SettingsFrame>
   );
 }

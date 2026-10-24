@@ -54,6 +54,12 @@ export function SettingsNav() {
 }
 
 export function SettingsFrame({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("id");
+    if (!id) return;
+    document.getElementById(id)?.scrollIntoView({ block: "center" });
+  }, [pathname]);
   return (
     <div className="flex h-full min-h-0 flex-col md:flex-row">
       <div className="shrink-0 border-b border-border md:w-52 md:border-b-0 md:border-r">
