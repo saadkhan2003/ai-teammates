@@ -223,6 +223,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
     { href: "/users", label: "Users" },
     { href: "/ai-models", label: "AI models" },
     { href: "/speed", label: "Speed" },
+    { href: "/billing", label: "Billing" },
     { href: "/settings", label: "Settings" },
   ];
 
