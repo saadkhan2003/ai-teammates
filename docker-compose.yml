@@ -139,7 +139,7 @@ services:
       computer-image:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/health"]
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/health || curl -fsS http://127.0.0.1:8080/health"]
       interval: 5s
       timeout: 5s
       retries: 30

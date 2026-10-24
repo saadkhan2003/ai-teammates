@@ -143,7 +143,7 @@ public static class AccountRoutes
             return Results.Json(await Profile(conn, user.Value));
         });
 
-        app.MapDelete("/api/account", async (HttpContext ctx, JsonElement body) =>
+        app.MapDelete("/api/account", async (HttpContext ctx, [Microsoft.AspNetCore.Mvc.FromBody] JsonElement body) =>
         {
             var user = await User(ctx, platform);
             if (user == null) return Results.Unauthorized();

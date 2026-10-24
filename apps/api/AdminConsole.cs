@@ -144,7 +144,7 @@ public static class AdminConsole
             return Results.Json(new { temporaryPassword = temporary });
         }));
 
-        app.MapDelete("/api/admin/console/users/{id:guid}", (HttpContext ctx, Guid id, JsonElement body) => Run(ctx, platform, "delete", async (actor, _, conn) =>
+        app.MapDelete("/api/admin/console/users/{id:guid}", (HttpContext ctx, Guid id, [Microsoft.AspNetCore.Mvc.FromBody] JsonElement body) => Run(ctx, platform, "delete", async (actor, _, conn) =>
         {
             if (id == actor) return Results.Json(new { error = "you cannot delete yourself" }, statusCode: 403);
             var row = await conn.QuerySingleOrDefaultAsync<(string Username, string Role)>("SELECT username, role FROM users WHERE id=@id", new { id });
@@ -938,7 +938,7 @@ public static class AdminConsole
             return Results.Json(new { user = Platform.ToDict(user), billing = billing == null ? null : Platform.ToDict(billing), invoices = invoices.Select(Platform.ToDict), bots = bots.Select(Platform.ToDict) });
         }));
 
-        app.MapDelete("/api/admin/console/gdpr/{id:guid}", (HttpContext ctx, Guid id, JsonElement body) => Run(ctx, platform, "gdpr", async (actor, _, conn) =>
+        app.MapDelete("/api/admin/console/gdpr/{id:guid}", (HttpContext ctx, Guid id, [Microsoft.AspNetCore.Mvc.FromBody] JsonElement body) => Run(ctx, platform, "gdpr", async (actor, _, conn) =>
         {
             var username = await conn.ExecuteScalarAsync<string>("SELECT username FROM users WHERE id=@id", new { id });
             if (string.IsNullOrEmpty(username)) return Results.NotFound();

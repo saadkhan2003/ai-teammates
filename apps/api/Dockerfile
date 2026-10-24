@@ -9,6 +9,8 @@ COPY services/agent/workspace_shell.py services/agent/workspace_shell.py
 RUN dotnet publish apps/api/Teammates.Api.csproj -c Release -o /out
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0.13-alpine3.24
+# tzdata: routines resolve IANA time zones (v0.5); busybox wget serves the healthcheck
+RUN apk add --no-cache tzdata
 WORKDIR /app
 COPY --from=build /out .
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
@@ -75,8 +77,4 @@ COPY db/062_uptime.sql /migrations/062_uptime.sql
 COPY db/063_admin_console.sql /migrations/063_admin_console.sql
 COPY evals/golden/ /app/evals/golden/
 COPY services/agent/skills/builtin/ /skills/builtin/
-ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
-    DOTNET_gcServer=0 \
-    DOTNET_GCHeapHardLimit=0x10000000
-EXPOSE 8080
 ENTRYPOINT ["dotnet", "Teammates.Api.dll"]
