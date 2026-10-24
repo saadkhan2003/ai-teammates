@@ -49,6 +49,127 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         return Results.Text("{\"status\":\"ok\",\"message\":" + normalizedText + "}", "application/json");
     }
 
+    public async Task<IResult> VideoBridge(JsonElement body, string operation, CancellationToken ct)
+    {
+        var taskId = body.GetProperty("taskId").GetGuid();
+        var botId = body.GetProperty("botId").GetGuid();
+        var epoch = body.GetProperty("epoch").GetInt32();
+        if (!await HoldsLease(taskId, epoch, ct)) return Results.StatusCode(409);
+        await using (var check = await platform.Data.OpenConnectionAsync(ct))
+            if (!await check.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM tasks WHERE id=@task AND bot_id=@bot)", new { task = taskId, bot = botId })) return Results.NotFound();
+        var owner = await OwnerOf(botId);
+        await using var conn = await platform.Data.OpenConnectionAsync(ct);
+        Guid? itemId = body.TryGetProperty("videoId", out var videoId) && Guid.TryParse(videoId.GetString(), out var parsedId) ? parsedId : null;
+        var sourcePath = body.TryGetProperty("sourcePath", out var sourcePathJson) ? sourcePathJson.GetString() : null;
+        if (itemId == null && string.IsNullOrWhiteSpace(sourcePath)) return Results.BadRequest(new { error = "video_source_required" });
+        if (sourcePath != null && LibraryKinds.IsDeniedName(Path.GetFileName(sourcePath))) return Results.NotFound();
+        var sourceRef = itemId is Guid libraryId ? "library:" + libraryId : "workspace:" + sourcePath;
+        string? contentSha = null;
+        string? objectKey = null;
+        long sourceSize = 0;
+        if (itemId is Guid id)
+        {
+            var item = await conn.QuerySingleOrDefaultAsync<(string Sha, string? Key, long Size, string Dlp, string Kind)>("""
+                SELECT li.sha256, a.object_key AS key, a.size_bytes AS size, li.dlp_state AS dlp, li.kind
+                FROM library_items li JOIN bots b ON b.id=li.bot_id LEFT JOIN artifacts a ON a.id=li.artifact_id
+                WHERE li.id=@item AND li.bot_id=@bot AND b.owner_id=@owner AND li.deleted_at IS NULL
+                """, new { item = id, bot = botId, owner });
+            if (item.Sha == null || item.Dlp != "clean" || item.Kind != "video") return Results.NotFound();
+            contentSha = item.Sha; objectKey = item.Key; sourceSize = item.Size;
+        }
+        else if (body.TryGetProperty("contentSha", out var hashJson) && hashJson.ValueKind == JsonValueKind.String)
+            contentSha = hashJson.GetString();
+        const string settingsVersion = "video-v1";
+        if (operation == "source")
+        {
+            if (itemId is Guid && (string.IsNullOrEmpty(objectKey) || sourceSize > 1_000_000_000)) return Results.BadRequest(new { error = "invalid_video_source" });
+            if (itemId is Guid libraryItemId)
+            {
+                using var stored = await platform.S3.GetObjectAsync(platform.Bucket, objectKey!, ct);
+                using var buffer = new MemoryStream();
+                await stored.ResponseStream.CopyToAsync(buffer, ct);
+                return Results.File(buffer.ToArray(), "application/octet-stream");
+            }
+            var placement = await platform.PlacementForBot(botId, ct);
+            var script = BotFs.Script("path=locate(sys.argv[1]); size=path.stat().st_size; print(base64.b64encode(path.read_bytes()).decode() if size <= 1000000000 else '')");
+            var (code, stdout, _) = await RunConfined(placement.Computer, botId, ["python3", "-c", script, sourcePath!], null, null, TimeSpan.FromSeconds(180), 1_400_000_000, ct);
+            if (code != 0 || string.IsNullOrEmpty(stdout)) return Results.BadRequest(new { error = "invalid_video_source" });
+            try { return Results.File(Convert.FromBase64String(stdout.Trim()), "application/octet-stream"); }
+            catch (FormatException) { return Results.BadRequest(new { error = "invalid_video_source" }); }
+        }
+        if (operation == "cache/get")
+        {
+            if (string.IsNullOrEmpty(contentSha)) return Results.Json(new { analysis = (object?)null });
+            var analysis = await conn.ExecuteScalarAsync<string?>("SELECT analysis::text FROM video_analyses WHERE owner_id=@owner AND bot_id=@bot AND source_ref=@sourceRef AND content_sha256=@sha AND settings_version=@version", new { owner, bot = botId, sourceRef, sha = contentSha, version = settingsVersion });
+            JsonElement? parsed = analysis == null ? null : JsonDocument.Parse(analysis).RootElement.Clone();
+            return Results.Json(new { analysis = parsed });
+        }
+        if (operation == "cache/put")
+        {
+            if (!body.TryGetProperty("analysis", out var analysis)) return Results.BadRequest();
+            if (string.IsNullOrEmpty(contentSha)) return Results.BadRequest(new { error = "content_hash_required" });
+            var json = analysis.GetRawText();
+            await conn.ExecuteAsync("""
+                INSERT INTO video_analyses(owner_id,bot_id,source_item_id,source_ref,content_sha256,settings_version,analysis)
+                VALUES(@owner,@bot,@item,@sourceRef,@sha,@version,CAST(@json AS jsonb))
+                ON CONFLICT(owner_id,bot_id,source_ref,content_sha256,settings_version) DO UPDATE SET analysis=excluded.analysis,created_at=now()
+                """, new { owner, bot = botId, item = itemId, sourceRef, sha = contentSha, version = settingsVersion, json });
+            return Results.Json(new { ok = true });
+        }
+        if (operation == "event")
+        {
+            var type = body.GetProperty("type").GetString() ?? "video_progress";
+            var detail = body.TryGetProperty("detail", out var d) ? d : default;
+            await Reliability.Event(platform, taskId, type, detail.ValueKind == JsonValueKind.Undefined ? new { } : JsonSerializer.Deserialize<object>(detail.GetRawText()) ?? new { });
+            return Results.Json(new { ok = true });
+        }
+        if (operation == "model")
+        {
+            var secret = await platform.Resolve(owner, "secret://openrouter/default", "model_gateway", botId, null, taskId, "model_gateway");
+            if (secret == null) return Results.Json(new { status = "waiting_resource", reason = "connect_openrouter" });
+            var key = Encoding.UTF8.GetString(secret);
+            CryptographicOperations.ZeroMemory(secret);
+            try
+            {
+                var kind = body.GetProperty("kind").GetString();
+                string model; object payload;
+                if (kind == "stt")
+                {
+                    var audio = body.GetProperty("audio").GetString() ?? "";
+                    model = Environment.GetEnvironmentVariable("VIDEO_STT_MODEL") ?? "openai/whisper-large-v3-turbo";
+                    payload = new { model, input_audio = new { data = audio, format = "mp3" }, provider = new { order = new[] { Environment.GetEnvironmentVariable("VIDEO_STT_PROVIDER") ?? "deepinfra" }, allow_fallbacks = false } };
+                }
+                else
+                {
+                    model = Environment.GetEnvironmentVariable("VIDEO_SUMMARY_MODEL") ?? platform.ModelName;
+                    payload = new { model, messages = new[] { new { role = "user", content = body.GetProperty("content") } } };
+                }
+                using var request = new HttpRequestMessage(HttpMethod.Post, platform.OpenRouterBase + (kind == "stt" ? "/audio/transcriptions" : "/chat/completions"));
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+                request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeout.CancelAfter(kind == "stt" ? TimeSpan.FromSeconds(55) : TimeSpan.FromSeconds(85));
+                using var response = await _http.SendAsync(request, timeout.Token);
+                if (!response.IsSuccessStatusCode) return Results.Json(new { status = "error", reason = "provider_error" }, statusCode: 502);
+                using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(timeout.Token));
+                if (kind == "stt")
+                {
+                    using var safePrompt = JsonDocument.Parse(JsonSerializer.Serialize(new { kind = "video_stt", model, audioBytes = (body.GetProperty("audio").GetString() ?? "").Length * 3 / 4 }));
+                    await StoreVideoModel(owner, botId, taskId, safePrompt.RootElement, model, default);
+                    await conn.ExecuteAsync("UPDATE tasks SET model_calls=model_calls+1,updated_at=now() WHERE id=@task", new { task = taskId });
+                    return Results.Json(doc.RootElement.Clone());
+                }
+                var content = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content");
+                using var summaryPrompt = JsonDocument.Parse(JsonSerializer.Serialize(new { kind = "video_summary", model, multimodal = true }));
+                await StoreVideoModel(owner, botId, taskId, summaryPrompt.RootElement, model, ProviderWire.ReadUsage(doc.RootElement));
+                await conn.ExecuteAsync("UPDATE tasks SET model_calls=model_calls+1,updated_at=now() WHERE id=@task", new { task = taskId });
+                return Results.Json(new { content = content.ValueKind == JsonValueKind.String ? content.GetString() : content.GetRawText() });
+            }
+            finally { key = ""; }
+        }
+        return Results.NotFound();
+    }
+
     public async Task<IResult> Authorize(JsonElement body, CancellationToken ct)
     {
         var taskId = body.GetProperty("taskId").GetGuid();
@@ -996,6 +1117,14 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         await conn.ExecuteAsync(
             "INSERT INTO model_calls (bot_id, task_id, owner_id, role, provider, model, latency_ms, prompt_tokens, completion_tokens, ok, cost_usd) VALUES (@bot, @task, @owner, 'planner', @provider, @model, @latency, @promptTokens, @completionTokens, @ok, @cost)",
             new { bot = botId, task = taskId, owner, provider = platform.LlmProvider, model = platform.ModelName, latency, promptTokens = usage.PromptTokens, completionTokens = usage.CompletionTokens, ok, cost = usage.CostUsd });
+    }
+
+    private async Task StoreVideoModel(Guid owner, Guid botId, Guid taskId, JsonElement prompt, string model, TokenUsage usage)
+    {
+        await using var conn = await platform.Data.OpenConnectionAsync();
+        var json = prompt.GetRawText();
+        await conn.ExecuteAsync("INSERT INTO model_requests(owner_id,bot_id,task_id,provider,model,prompt_json) VALUES(@owner,@bot,@task,'openrouter',@model,CAST(@json AS jsonb))", new { owner, bot = botId, task = taskId, model, json });
+        await conn.ExecuteAsync("INSERT INTO model_calls(bot_id,task_id,owner_id,role,provider,model,latency_ms,prompt_tokens,completion_tokens,ok,cost_usd) VALUES(@bot,@task,@owner,'video','openrouter',@model,0,@promptTokens,@completionTokens,true,@cost)", new { bot = botId, task = taskId, owner, model, promptTokens = usage.PromptTokens, completionTokens = usage.CompletionTokens, cost = usage.CostUsd });
     }
 
     private async Task<Guid> OwnerOf(Guid botId)

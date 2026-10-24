@@ -5,6 +5,18 @@ namespace Teammates.UnitTests;
 public class V03Tests
 {
     [Fact]
+    public void Video_tools_are_available_and_require_scoped_ids_and_questions()
+    {
+        Assert.NotNull(Teammates.Api.ToolSchema.Validate("watch_video", JsonDocument.Parse("{}").RootElement));
+        Assert.Null(Teammates.Api.ToolSchema.Validate("watch_video", JsonDocument.Parse("{\"source\":\"/workspace/demo.mp4\"}").RootElement));
+        Assert.Null(Teammates.Api.ToolSchema.Validate("watch_video", JsonDocument.Parse("{\"video_id\":\"item-1\"}").RootElement));
+        Assert.NotNull(Teammates.Api.ToolSchema.Validate("ask_video", JsonDocument.Parse("{\"video_id\":\"item-1\"}").RootElement));
+        var names = Teammates.Api.ToolSchema.ForModel().Cast<Dictionary<string, object>>()
+            .Select(tool => (string)((Dictionary<string, object>)tool["function"])["name"]!).ToHashSet();
+        Assert.Contains("watch_video", names);
+        Assert.Contains("ask_video", names);
+    }
+    [Fact]
     public void BotWorkspacesDoNotOverlap()
     {
         var left = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");

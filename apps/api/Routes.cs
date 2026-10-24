@@ -1159,11 +1159,19 @@ public static class Routes
         {
             if (!Worker(ctx, platform)) return Results.Unauthorized();
             var text = OutputRedactor.Redact(body.GetProperty("text").GetString());
+            JsonElement videoAnalysis = default;
+            if (body.TryGetProperty("videoAnalysis", out var videoJson) && videoJson.ValueKind == JsonValueKind.Object)
+            {
+                using var filtered = JsonDocument.Parse(OutputRedactor.Redact(videoJson.GetRawText()));
+                videoAnalysis = filtered.RootElement.Clone();
+            }
+            var metadata = videoAnalysis.ValueKind == JsonValueKind.Object
+                ? JsonSerializer.Serialize(new { videoAnalysis }) : "{}";
             await using var conn = await platform.Data.OpenConnectionAsync();
             var epoch = body.TryGetProperty("epoch", out var epochEl) ? epochEl.GetInt32() : -1;
             var gate = await conn.QuerySingleOrDefaultAsync<(bool Required, DateTimeOffset? Passed, bool Override)>("SELECT coalesce(t.require_tests,b.require_tests,false),t.tests_passed_at,t.tests_override FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE t.id=@id", new { id });
             if (!TestGate.Check(gate.Required, gate.Passed, gate.Override)) return Results.Json(new { error = "tests_required" }, statusCode: 422);
-            var completed = await conn.QuerySingleOrDefaultAsync<(Guid? ConversationId, int Applied)>("UPDATE tasks SET status='completed', result=@result::jsonb, finished_at=now(), lease_owner=NULL, lease_until=NULL, updated_at=now() WHERE id=@id AND status='running' AND lease_epoch=@epoch RETURNING conversation_id, 1 AS applied", new { id, result = JsonSerializer.Serialize(new { text }), epoch });
+            var completed = await conn.QuerySingleOrDefaultAsync<(Guid? ConversationId, int Applied)>("UPDATE tasks SET status='completed', result=@result::jsonb, finished_at=now(), lease_owner=NULL, lease_until=NULL, updated_at=now() WHERE id=@id AND status='running' AND lease_epoch=@epoch RETURNING conversation_id, 1 AS applied", new { id, result = JsonSerializer.Serialize(new { text, videoAnalysis = videoAnalysis.ValueKind == JsonValueKind.Object ? JsonSerializer.Deserialize<object>(videoAnalysis.GetRawText()) : null }), epoch });
             if (completed.Applied == 0) return Results.StatusCode(409);
             var conversation = completed.ConversationId;
             var taskKind = await conn.ExecuteScalarAsync<string>("SELECT kind FROM tasks WHERE id=@id", new { id });
@@ -1172,7 +1180,7 @@ public static class Routes
             try { await RoutineRuns.Finish(platform, conn, id, true, text, null, quiet); }
             catch (Exception) { /* run history must not fail the task */ }
             if (conversation != null && !string.IsNullOrWhiteSpace(text) && taskKind != "peer" && !quiet)
-                await conn.ExecuteAsync("INSERT INTO messages (conversation_id, role, content, task_id) VALUES (@conversation, 'assistant', @text, @id)", new { conversation, text, id });
+                await conn.ExecuteAsync("INSERT INTO messages (conversation_id, role, content, metadata, task_id) VALUES (@conversation, 'assistant', @text, CAST(@metadata AS jsonb), @id)", new { conversation, text, metadata, id });
             if (taskKind == "peer")
             {
                 try { await BotMessaging.OnTaskComplete(platform, id, text); }
@@ -1276,6 +1284,8 @@ public static class Routes
         });
 
         app.MapPost("/internal/model/complete", (HttpContext ctx, JsonElement body, CancellationToken ct) => Worker(ctx, platform) ? runtime.Model(body, ct) : Task.FromResult<IResult>(Results.Unauthorized()));
+        app.MapPost("/internal/video/{operation}", (HttpContext ctx, string operation, JsonElement body, CancellationToken ct) => Worker(ctx, platform) ? runtime.VideoBridge(body, operation, ct) : Task.FromResult<IResult>(Results.Unauthorized()));
+        app.MapPost("/internal/video/cache/{operation}", (HttpContext ctx, string operation, JsonElement body, CancellationToken ct) => Worker(ctx, platform) ? runtime.VideoBridge(body, "cache/" + operation, ct) : Task.FromResult<IResult>(Results.Unauthorized()));
         app.MapPost("/internal/tools/authorize", (HttpContext ctx, JsonElement body, CancellationToken ct) => Worker(ctx, platform) ? runtime.Authorize(body, ct) : Task.FromResult<IResult>(Results.Unauthorized()));
         app.MapPost("/internal/tools/execute", (HttpContext ctx, JsonElement body, CancellationToken ct) => Worker(ctx, platform) ? runtime.Execute(body, ct) : Task.FromResult<IResult>(Results.Unauthorized()));
         app.MapPost("/internal/tools/observe", (HttpContext ctx, JsonElement body, CancellationToken ct) => Worker(ctx, platform) ? runtime.Observe(body, ct) : Task.FromResult<IResult>(Results.Unauthorized()));
@@ -1351,7 +1361,7 @@ public static class Routes
             var idText = message["id"]?.ToString();
             if (message.TryGetValue("metadata", out var metaRaw) && metaRaw is string metaText && metaText.Length > 2)
             {
-                try { var meta = JsonSerializer.Deserialize<JsonElement>(metaText); message["parts"] = meta.TryGetProperty("parts", out var pe) ? pe : null; message["skill"] = meta.TryGetProperty("skill", out var se) ? se : null; message["attachments"] = meta.TryGetProperty("attachments", out var ae) ? ae : null; } catch { message["parts"] = null; }
+                try { var meta = JsonSerializer.Deserialize<JsonElement>(metaText); message["parts"] = meta.TryGetProperty("parts", out var pe) ? pe : null; message["skill"] = meta.TryGetProperty("skill", out var se) ? se : null; message["attachments"] = meta.TryGetProperty("attachments", out var ae) ? ae : null; message["videoAnalysis"] = meta.TryGetProperty("videoAnalysis", out var video) ? video : null; } catch { message["parts"] = null; }
             }
             message.Remove("metadata");
             message["deleted"] = message.TryGetValue("deletedAt", out var del) && del != null;

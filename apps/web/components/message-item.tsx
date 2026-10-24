@@ -12,6 +12,8 @@ import { PopoverLite } from "@/components/ui/popover-lite";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { api } from "@/lib/api";
 import { CLAMP_MAX_PX, EXPANDED, LONG_PRESS_MS, cancelsLongPress, flatten, needsClamp } from "@/lib/chat-parts";
+import { readVideoAnalysis } from "@/lib/video-analysis";
+import { VideoAnalysisCard } from "@/components/video-analysis-card";
 import { QUICK_REACTIONS, searchEmoji } from "@/lib/emoji";
 import type { ChatMessage, MessagePartView } from "@/lib/types";
 import { cn, errorMessage, formatWhen } from "@/lib/utils";
@@ -273,6 +275,7 @@ function EmojiPicker({ onPick, current }: { onPick: (emoji: string) => void; cur
 /** The body of a message: ordered parts (quotes, replies, text) in the sent bubble, with the 20-line clamp. */
 export function MessageBody({ message, mine, byId, onJump, fallback }: { message: ChatMessage; mine: boolean; byId: Map<string, ChatMessage>; onJump: (id: string) => void; fallback: ReactNode }) {
   const parts = message.parts ?? null;
+  const videoAnalysis = !parts?.length ? message.videoAnalysis ?? readVideoAnalysis(message.content) : null;
   const box = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState(() => EXPANDED.get(message.id) ?? false);
   const [clamped, setClamped] = useState(false);
@@ -307,7 +310,7 @@ export function MessageBody({ message, mine, byId, onJump, fallback }: { message
     {message.skill ? <span data-testid="skill-chip" className="mb-1.5 inline-flex items-center gap-1 rounded-full border border-current/25 bg-black/10 px-2 py-0.5 text-xs font-medium"><Sparkles className="h-3 w-3" aria-hidden />{message.skill.label}</span> : null}
     <div ref={box} id={`body-${message.id}`} style={clampStyle}
       className={cn("motion-clamp", clampable && clamped && !expanded && "[mask-image:linear-gradient(to_bottom,black_85%,transparent)]")}>
-      {inner ?? <div data-testid="message-text" className="space-y-2">{fallback}</div>}
+      {inner ?? (videoAnalysis ? <VideoAnalysisCard analysis={videoAnalysis} /> : <div data-testid="message-text" className="space-y-2">{fallback}</div>)}
       {message.attachments?.length ? <div className="mt-2 space-y-1">{message.attachments.map(item => <div key={item.path} data-testid="recording-attachment" className="flex min-h-9 items-center gap-2 rounded-lg border border-current/20 bg-black/10 px-2.5 py-1.5 text-xs"><Video className="h-4 w-4 shrink-0" aria-hidden /><span className="truncate" title={item.path}>{item.name}</span></div>)}</div> : null}
     </div>
     {clampable && (clamped || expanded) ? <button type="button" data-testid="bubble-toggle" aria-expanded={expanded} aria-controls={`body-${message.id}`} onClick={toggle}
