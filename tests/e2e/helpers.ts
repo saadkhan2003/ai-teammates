@@ -14,7 +14,7 @@ export async function login(page: Page) {
 
 // v0.4 asks for Allow once whenever a run opens a new browser origin. Long
 // acceptance specs that are not about that card allow it in the background.
-export function autoAllowBrowserOpens(page: Page, botId: string) {
+export function autoAllowBrowserOpens(page: Page, botId: string, actions: string[] = ["browser_open"]) {
   let stopped = false;
   void (async () => {
     while (!stopped) {
@@ -23,7 +23,7 @@ export function autoAllowBrowserOpens(page: Page, botId: string) {
         if (response.ok()) {
           const workspace = await response.json();
           for (const item of workspace.approvals ?? []) {
-            if (item.action === "browser_open" && item.status === "pending") {
+            if (actions.includes(item.action) && item.status === "pending") {
               await page.request.post(`/api/approvals/${item.id}/decide`, { data: { decision: "allow_once" } });
             }
           }

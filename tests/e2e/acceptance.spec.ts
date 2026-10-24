@@ -250,7 +250,8 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
     botUrl = page.url();
     botId = botUrl.split("/bots/")[1].split(/[?#]/)[0];
     createdBotIds.push(botId);
-    autoAllowBrowserOpens(page, botId);
+    // write_file always asks (RuleBasedActionReviewer); step 2 is about the burst, not that card.
+    autoAllowBrowserOpens(page, botId, ["browser_open", "write_file"]);
     await page.goto("/");
     await expect(page.getByTestId("sidebar").getByRole("link", { name })).toBeVisible();
     await shot(page, "bots-list");
