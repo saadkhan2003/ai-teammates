@@ -121,7 +121,7 @@ export default function BillingPage() {
                     </div>
                     <p className="mt-1 min-h-10 text-body-sm text-muted-foreground">{plan.detail}</p>
                     <p className="mt-3 text-h2 tabular-nums">{money(plan.priceCents)}</p>
-                    <p className="text-meta text-muted-foreground">{plan.monthlyCredits.toLocaleString()} credits / month</p>
+                    <p className="text-meta text-muted-foreground">{(plan.weeklyCredits ?? plan.monthlyCredits).toLocaleString()} credits / {plan.weeklyCredits == null ? "month" : "week"}</p>
                     <ul className="mt-4 flex flex-1 flex-col gap-2">
                       {planFeaturesFor(plan).map((feature) => (
                         <li key={feature} className="flex items-start gap-2 text-body-sm">

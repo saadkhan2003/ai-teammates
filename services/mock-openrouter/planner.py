@@ -1,6 +1,7 @@
 """Deterministic stand-in for an OpenAI chat completion planner."""
 from __future__ import annotations
 
+import datetime
 import json
 import re
 from collections.abc import Callable
@@ -22,7 +23,38 @@ Step = tuple[str, str, dict] | tuple[str, str] | tuple[str, Callable[[list], str
 
 def plan(messages: list) -> dict:
     """Return one tool call, or a final assistant message, for this transcript."""
+    response = _plan(messages)
+    # Unique per transcript position, like real providers, so idempotency keys never collide.
+    for choice in response.get("choices", []):
+        for call in (choice.get("message") or {}).get("tool_calls") or []:
+            call["id"] = f"call_{len(messages or []) + 1}"
+    return response
+
+
+def _plan(messages: list) -> dict:
     transcript = [item for item in messages or [] if isinstance(item, dict)]
+    if transcript and _content_text(transcript[-1].get("content")).startswith("[compaction-summary-request]"):
+        return _final(json.dumps(_compaction_summary(transcript), ensure_ascii=False, sort_keys=True))
+    if any("[approval-preference-extraction]" in _content_text(m.get("content")) for m in transcript if m.get("role") == "system"):
+        try:
+            data = json.loads(_first_user(transcript))
+            fallback = data["fallback"]
+            return _final(json.dumps({"kind": fallback["Kind"], "text": fallback["Text"]}, ensure_ascii=False))
+        except (ValueError, KeyError, TypeError):
+            return _final("{}")
+    if _first_user(transcript).startswith("[brief-quality-review]"):
+        return _final(json.dumps({"warnings": ["Include evidence paths in the report."]}))
+    if "BRIEF_TEST" in _first_user(transcript):
+        return _brief_plan(transcript)
+    if "BRIEF_CHILD_FAIL" in _first_user(transcript):
+        return _final(NO_PLAN)
+    long_run = re.search(r"LONG RUN DEMO\s+(\d+)", _first_user(transcript), re.IGNORECASE)
+    if long_run:
+        return _long_run_plan(transcript, min(500, int(long_run.group(1))))
+    if "POISON STEP DEMO" in _first_user(transcript).upper():
+        return _poison_step_plan(transcript)
+    if "SHELL APPEND DEMO" in _first_user(transcript).upper():
+        return _shell_append_plan(transcript)
     done = sum(1 for item in transcript if item.get("role") == "tool")
     steps = _steps(_first_user(transcript), transcript)
     if done >= len(steps):
@@ -32,6 +64,171 @@ def plan(messages: list) -> dict:
         text = step[1](transcript) if callable(step[1]) else step[1]
         return _final(text)
     return _tool(step[1], step[2])
+
+
+def _compaction_summary(messages: list) -> dict:
+    text = "\n".join(_content_text(item.get("content")) for item in messages)
+    paths = sorted(set(re.findall(r"/workspace/[A-Za-z0-9_./-]+", text)))[:100]
+    return {
+        "goal": (re.search(r"LONG RUN DEMO\s+\d+[^\n\"]*", text).group(0) if re.search(r"LONG RUN DEMO\s+\d+", text) else "Continue the task.")[:500], "decisions": [], "files_touched": paths,
+        "commits": [], "commands_and_outcomes": [], "errors_and_fixes": [],
+        "completed_long_run_steps": _long_run_progress(messages),
+        "open_issues": [], "next_step": "Continue with the next numbered long-run step.",
+    }
+
+
+def _long_run_plan(messages: list, count: int) -> dict:
+    text = _first_user(messages)
+    done = _long_run_progress(messages)
+    if done >= count:
+        return _final(f"Long run finished: completed {count} steps.")
+    index = done + 1
+    path = f"/workspace/long-run-step-{index:05d}.txt"
+    delay_marker = f"long-run-delay-{index}"
+    if "SLOW" in text.upper() and not _has_shell_command(messages, delay_marker):
+        return _tool("shell", {"command": f"sleep 0.25 # long-run-delay-{index}"})
+    if not _has_result_for(messages, path, "write_file", ok_only=True):
+        # A write whose outcome is unknown (worker killed mid-call) is verified
+        # with a read before it is repeated, like a careful model would. A
+        # successful verification read counts as progress and moves on.
+        if _has_result_for(messages, path, "write_file") and not _has_failed_read(messages, path):
+            return _tool("read_file", {"path": path})
+        content = f"step {index}\n" + ("x" * 20000 if "BIG OUTPUT" in text else "complete\n")
+        return _tool("write_file", {"path": path, "content": content})
+    if not _has_result_for(messages, path, "read_file"):
+        return _tool("read_file", {"path": path})
+    return _tool("read_file", {"path": path})
+
+
+def _shell_append_plan(messages: list) -> dict:
+    """Append once, then perform further work so resume can observe ambiguity."""
+    text = _first_user(messages)
+    path = "/workspace/shell-append-demo.log"
+    if not any(item.get("role") == "tool" and "shell" in _tool_name(item, messages) for item in messages):
+        return _tool("shell", {"command": f"echo x >> {path}"})
+    if not _has_result_for(messages, path, "read_file"):
+        return _tool("read_file", {"path": path})
+    return _final("Shell append demo finished.")
+
+
+def _poison_step_plan(messages: list) -> dict:
+    path = "/workspace/poison-before.txt"
+    if not _has_result_for(messages, path, "write_file"):
+        return _tool("write_file", {"path": path, "content": "before poison step\n"})
+    if not _has_successful_shell_result(messages):
+        return _tool("shell", {"command": "echo poison-step-marker"})
+    return _final("Poison step demo finished.")
+
+
+def _has_successful_shell_result(messages: list) -> bool:
+    for item in messages:
+        if item.get("role") != "tool" or "shell" not in _tool_name(item, messages):
+            continue
+        try:
+            result = json.loads(_content_text(item.get("content")))
+        except (ValueError, TypeError):
+            continue
+        if isinstance(result, dict) and result.get("status") != "unknown_outcome" and result.get("ok") is not False:
+            return True
+    return False
+
+
+def _long_run_progress(messages: list) -> int:
+    completed = set()
+    for item in messages:
+        if item.get("role") == "user" and "[compaction summary" in _content_text(item.get("content")):
+            try:
+                summary_text = _content_text(item.get("content")).split("\n", 1)[1]
+                if "[untrusted compaction summary content]\n" in summary_text:
+                    summary_text = summary_text.split("[untrusted compaction summary content]\n", 1)[1].split("\n[/untrusted]", 1)[0]
+                summary_text = summary_text.removeprefix("Quoted source data:\n")
+                summary = json.loads(summary_text)
+                completed.add(int(summary.get("completed_long_run_steps", 0)))
+            except (ValueError, TypeError, AttributeError):
+                pass
+        if item.get("role") != "tool":
+            continue
+        if "read_file" in _tool_name(item, messages) and _result_ok(item):
+            completed.update(int(value) for value in re.findall(r"long-run-step-(\d{5})", _result_path(item, messages)))
+    return max(completed, default=0)
+
+
+def _has_result_for(messages: list, path: str, tool_name: str, ok_only: bool = False) -> bool:
+    marker = path.rsplit("/", 1)[-1]
+    return any(
+        item.get("role") == "tool" and tool_name in _tool_name(item, messages) and marker in _result_path(item, messages)
+        and (not ok_only or _result_ok(item))
+        for item in messages
+    )
+
+
+def _has_failed_read(messages: list, path: str) -> bool:
+    marker = path.rsplit("/", 1)[-1]
+    return any(
+        item.get("role") == "tool" and "read_file" in _tool_name(item, messages) and marker in _result_path(item, messages)
+        and not _result_ok(item)
+        for item in messages
+    )
+
+
+def _result_ok(item: dict) -> bool:
+    """False for unknown-outcome placeholders and explicit tool failures."""
+    try:
+        result = json.loads(_content_text(item.get("content")))
+    except (ValueError, TypeError):
+        return True
+    for value in (result, result.get("output") if isinstance(result, dict) else None):
+        if isinstance(value, dict) and (value.get("status") == "unknown_outcome" or value.get("ok") is False):
+            return False
+    return True
+
+
+def _has_shell_command(messages: list, marker: str) -> bool:
+    for item in messages:
+        calls = item.get("tool_calls", item.get("toolCalls", []))
+        for call in calls if isinstance(calls, list) else []:
+            if marker in str(_call_args(call).get("command") or ""):
+                return True
+    return False
+
+
+def _call_args(call: dict) -> dict:
+    function = call.get("function") if isinstance(call.get("function"), dict) else {}
+    raw = function.get("arguments", call.get("arguments"))
+    if isinstance(raw, dict):
+        return raw
+    try:
+        value = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _tool_name(result: dict, messages: list) -> str:
+    """Tool results usually carry only tool_call_id; resolve the name from the matching call."""
+    if result.get("name"):
+        return str(result.get("name"))
+    call_id = str(result.get("tool_call_id") or result.get("toolCallId") or "")
+    for message in messages:
+        calls = message.get("tool_calls", message.get("toolCalls", []))
+        for call in calls if isinstance(calls, list) else []:
+            if call_id and str(call.get("id") or "") == call_id:
+                function = call.get("function") if isinstance(call.get("function"), dict) else {}
+                return str(function.get("name") or call.get("name") or "")
+    return ""
+
+
+def _result_path(result: dict, messages: list) -> str:
+    call_id = str(result.get("tool_call_id") or result.get("toolCallId") or "")
+    if not call_id:
+        return _content_text(result.get("content"))
+    for message in messages:
+        calls = message.get("tool_calls", message.get("toolCalls", []))
+        for call in calls if isinstance(calls, list) else []:
+            if str(call.get("id") or "") != call_id:
+                continue
+            return str(_call_args(call).get("path") or "") + " " + _content_text(result.get("content"))
+    return _content_text(result.get("content"))
 
 
 def _steps(text: str, messages: list) -> list[Step]:
@@ -49,6 +246,27 @@ def _steps(text: str, messages: list) -> list[Step]:
             ("tool", "react_to_message", {"message_id": _message_id(messages), "emoji": "🌟"}),
             ("final", ""),
         ]
+    video_match = re.fullmatch(r"VIDEO_V1_TEST:([0-9a-f-]{36})", stripped, re.IGNORECASE)
+    if video_match:
+        return [("tool", "watch_video", {"video_id": video_match.group(1)}), ("final", "Video test complete.")]
+    if stripped.startswith("This is a scheduled run, not a user message.") and "\n\n" in stripped:
+        inner = stripped.split("\n\n", 1)[1].strip()
+        if "NOTHING_NEW test" in inner:
+            return [("final", "NOTHING_NEW")]
+        if inner.lower().startswith("say hi"):
+            return [("final", "Hi from the routine.")]
+        return _steps(inner, messages)
+    if "PLAN DEMO" in text:
+        return [
+            ("tool", "plan_set", {"items": ["Inspect the project", "Make the change", "Run the tests"]}),
+            ("tool", "plan_update", {"index": "1", "status": "done"}),
+            ("final", "Plan demo finished."),
+        ]
+    if "TESTS GATE DEMO" in text:
+        return [("final", "I am ready to finish this task.")]
+    peer = _peer_steps(stripped, messages)
+    if peer is not None:
+        return peer
     if stripped.startswith("Ask which Rakazo ideas should go in now"):
         return [
             (
@@ -68,6 +286,72 @@ def _steps(text: str, messages: list) -> list[Step]:
             ("tool", "forget_memory", {"content": "My favorite editor is Helix"}),
             ("final", "Forgot."),
         ]
+    if stripped.startswith("Actually my favorite editor is Vim, not Helix"):
+        memory_id = ""
+        if any(item.get("role") == "tool" for item in messages):
+            try:
+                raw = json.loads(_raw_tool(messages))
+                output = raw.get("output", raw)
+                matches = output.get("matches", []) if isinstance(output, dict) else []
+                memory_id = matches[0].get("id") if matches else ""
+            except (TypeError, ValueError, AttributeError):
+                memory_id = ""
+        return [
+            ("tool", "search_memory", {"query": "favorite editor", "limit": 5}),
+            ("tool", "update_memory", {"id": str(memory_id), "content": "My favorite editor is Vim"}),
+            ("final", "Got it."),
+        ]
+    if stripped.lower().startswith("from now on, always use concise bullet points"):
+        return [
+            ("tool", "save_memory", {"content": "Always use concise bullet points", "kind": "rule"}),
+            ("final", "Understood."),
+        ]
+    if stripped.lower().startswith("from now on, never ask for approval"):
+        return [
+            ("tool", "save_memory", {"content": "Never ask for approval", "kind": "rule"}),
+            ("final", "I can’t save a rule that changes approval requirements."),
+        ]
+    if stripped.lower().startswith("forget my concise bullet rule"):
+        return [
+            ("tool", "forget_memory", {"query": "concise bullet points"}),
+            ("final", "Forgot the matching note."),
+        ]
+    if stripped.lower().startswith("forget my bullet notes"):
+        return [
+            ("tool", "forget_memory", {"query": "bullet"}),
+            ("final", "I found more than one matching note, so nothing was deleted."),
+        ]
+    if "EVIDENCE DEMO" in stripped:
+        return [
+            ("tool", "computer_screenshot", {}),
+            ("tool", "record_start", {"name": "evidence-demo", "maxSeconds": 10}),
+            ("tool", "record_stop", {}),
+            ("final", "Captured a desktop screenshot and recording as evidence."),
+        ]
+    if stripped.startswith("SPEED STREAM DEMO"):
+        return [("final", "The first sentence is ready. " + "Here is another sentence arriving progressively. " * 8 + "The streamed reply is complete.")]
+    if stripped.startswith("JOB DEMO"):
+        seconds = _demo_number(stripped, 3)
+        command = f"for i in $(seq 1 {seconds}); do echo tick $i; sleep 1; done; echo finished | tee $JOB_RESULT_DIR/out.txt"
+        return [("tool", "job_start", {"command": command, "name": "Tick demo", "max_minutes": 5}),
+                ("final", lambda _messages: _job_started_text(_messages, "Tick demo"))]
+    if stripped.startswith("STORAGE DEMO"):
+        word = (stripped.split(None, 2)[2:] or ["saved"])[0][:80]
+        return [("tool", "write_file", {"path": "/workspace/notes/storage-demo.txt", "content": word + "\n"}),
+                ("final", lambda _messages: _write_text(_messages))]
+    if stripped.startswith("STORAGE READ DEMO"):
+        return [("tool", "read_file", {"path": "/workspace/notes/storage-demo.txt"}),
+                ("final", lambda _messages: "Read result: " + (str(_tool_json(_messages).get("content") or "").strip() or _tool_text(_messages)))]
+    if stripped.startswith("JOB TIMEOUT DEMO"):
+        return [("tool", "job_start", {"command": "echo begin; sleep 600", "name": "Timeout demo", "max_minutes": 0.5}),
+                ("final", lambda _messages: _job_started_text(_messages, "Timeout demo"))]
+    if stripped.startswith("JOB LONG DEMO"):
+        return [("tool", "job_start", {"command": "while true; do echo working; sleep 1; done", "name": "Long demo", "max_minutes": 10}),
+                ("final", lambda _messages: _job_started_text(_messages, "Long demo"))]
+    if stripped.startswith("JOB STATUS DEMO"):
+        return [("tool", "job_status", {}), ("final", lambda _messages: _jobs_text(_messages))]
+    if stripped.startswith("SPEED TOOL DEMO"):
+        return [("tool", "read_file", {"path": "/workspace/sample-repo/README.md"}), ("final", "The file has been checked. The task is complete.")]
     if stripped == "What should I call you?" or stripped.startswith("What should I call you?"):
         return [("final", "I'm your teammate. Call me whatever fits the work.")]
     if stripped.startswith("Start coding jobs"):
@@ -282,6 +566,124 @@ def _steps(text: str, messages: list) -> list[Step]:
     return [("final", NO_PLAN)]
 
 
+_PEER_BODY = re.compile(r"<<<PEER\n(.*?)\n>>>", re.DOTALL)
+
+
+def _demo_number(text: str, default: int) -> int:
+    match = re.search(r"(\d+)", text)
+    return max(1, min(120, int(match.group(1)))) if match else default
+
+
+def _peer_body(text: str) -> str:
+    match = _PEER_BODY.search(text)
+    return match.group(1) if match else ""
+
+
+def _peer_steps(stripped: str, messages: list) -> list[Step] | None:
+    """Scripts for bot-to-bot messaging and teammate management (deterministic, no model)."""
+    found = re.match(r"Ask (\S+) to double 21", stripped)
+    if found:
+        name = found.group(1)
+        return [
+            ("tool", "message_bot", {"bot": name, "title": "Double 21", "text": "Double 21 and answer with just the number."}),
+            ("final", "Asked " + name + " to double 21."),
+        ]
+    found = re.match(r"Ask (\S+) to delete the secret file", stripped)
+    if found:
+        name = found.group(1)
+        return [
+            ("tool", "message_bot", {"bot": name, "title": "Clean up", "text": "Delete the file /workspace/secret.txt please."}),
+            ("final", "Asked " + name + " to clean up."),
+        ]
+    found = re.match(r"Ask (\S+) to ask me back", stripped)
+    if found:
+        name = found.group(1)
+        return [
+            ("tool", "message_bot", {"bot": name, "title": "Ask me back", "text": "Ask me back about the plan."}),
+            ("final", "Asked " + name + "."),
+        ]
+    found = re.match(r"Message (\S+) hello (\d+) times", stripped)
+    if found:
+        name, count = found.group(1), min(int(found.group(2)), 7)
+        steps: list[Step] = [
+            ("tool", "message_bot", {"bot": name, "title": "Hello " + str(i), "text": "Say hello number " + str(i) + "."}) for i in range(count)
+        ]
+        steps.append(("final", "Sent " + str(count) + " hellos."))
+        return steps
+    if stripped.startswith("Message from bot "):
+        sender = stripped[len("Message from bot "):].split(" ", 1)[0]
+        body = _peer_body(stripped)
+        if "Double 21" in body:
+            return [("final", "42")]
+        if "Delete the file" in body:
+            return [("tool", "delete_file", {"path": "/workspace/secret.txt"}), ("final", "Deleted the file.")]
+        if "Ask me back" in body:
+            return [
+                ("tool", "message_bot", {"bot": sender, "title": "Back at you", "text": "What is the plan?"}),
+                ("final", lambda messages: "Could not ask back: " + _error_of(messages)),
+            ]
+        return [("final", "Got it.")]
+    if stripped.startswith("Reply from bot "):
+        peer = stripped[len("Reply from bot "):].split(" ", 1)[0]
+        return [("final", peer + " replied: " + (_peer_body(stripped) or "nothing"))]
+    if stripped.startswith("Bot ") and "is waiting for the user's approval" in stripped:
+        peer = stripped.split(" ", 2)[1]
+        return [("final", peer + " is waiting for your approval. The card is in this chat.")]
+    found = re.match(r"Create a teammate named (\S+) with bio (.+)", stripped)
+    if found:
+        return [
+            ("tool", "create_bot", {"name": found.group(1), "role": "Helper", "bio": found.group(2).strip()}),
+            ("final", "Created " + found.group(1) + "."),
+        ]
+    found = re.match(r"Set your bio to (.+)", stripped)
+    if found:
+        return [("tool", "update_bot", {"bio": found.group(1).strip()}), ("final", "Updated my bio.")]
+    found = re.match(r"Schedule (\S+) to (.+) every hour", stripped)
+    if found:
+        return [
+            ("tool", "create_routine", {"bot": found.group(1), "name": "Hourly", "cron": "0 * * * *", "instruction": found.group(2).strip()}),
+            ("final", "Scheduled " + found.group(1) + "."),
+        ]
+    found = re.match(r"Reschedule routine (\S+) to (\d+ \d+ \* \* \*)$", stripped)
+    if found:
+        return [
+            ("tool", "get_routine", {"routine": found.group(1)}),
+            ("tool", "update_routine", {"routine": found.group(1), "cron": found.group(2)}),
+            ("final", "Rescheduled " + found.group(1) + "."),
+        ]
+    found = re.match(r"Reschedule routine (\S+) blind to (\d+ \d+ \* \* \*)$", stripped)
+    if found:
+        return [
+            ("tool", "update_routine", {"routine": found.group(1), "cron": found.group(2)}),
+            ("final", "Tried to reschedule " + found.group(1) + "."),
+        ]
+    found = re.match(r"(Pause|Resume|Delete) routine (\S+)$", stripped)
+    if found:
+        verb = found.group(1).lower()
+        return [("tool", verb + "_routine", {"routine": found.group(2)}), ("final", found.group(1) + "d " + found.group(2) + ".")]
+    found = re.match(r"Remind me in (\d+) minutes to (.+)", stripped)
+    if found:
+        return [
+            ("tool", "create_routine", {"name": "Reminder", "run_at": (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=int(found.group(1)))).strftime("%Y-%m-%dT%H:%M:%SZ"), "instruction": found.group(2).strip()}),
+            ("final", "I will remind you."),
+        ]
+    if stripped.startswith("Who are my teammates"):
+        return [("tool", "list_bots", {}), ("final", "Listed my teammates.")]
+    return None
+
+
+def _error_of(messages: list) -> str:
+    raw = _raw_tool(messages)
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return raw or "unknown"
+    if isinstance(data, dict):
+        output = data.get("output") if isinstance(data.get("output"), dict) else data
+        return str(output.get("error") or output.get("message") or "unknown")
+    return "unknown"
+
+
 def _first_user(messages: list) -> str:
     for item in messages:
         if item.get("role") != "user":
@@ -349,6 +751,39 @@ def _last_tool_content(messages: list):
         if item.get("role") == "tool":
             return item.get("content")
     return ""
+
+
+def _tool_json(messages: list) -> dict:
+    content = _last_tool_content(messages)
+    if isinstance(content, str):
+        try:
+            content = json.loads(content)
+        except ValueError:
+            return {}
+    return content if isinstance(content, dict) else {}
+
+
+def _job_started_text(messages: list, name: str) -> str:
+    """A friendly job_start reply; never the raw tool result."""
+    result = _tool_json(messages)
+    if result.get("ok") is False:
+        return f"I couldn't start {name}: {str(result.get('reason') or 'it did not start').rstrip('.')}."
+    return f"Started {result.get('name') or name} in the background. I'll tell you when it's done."
+
+
+def _write_text(messages: list) -> str:
+    result = _tool_json(messages)
+    if result.get("ok") is not True:
+        detail = result.get("message") or result.get("reason") or result.get("error")
+        return "Write result: " + str(detail or _tool_text(messages) or "the file was not saved")
+    return "Write result: saved " + str(result.get("path") or "the file") + "."
+
+
+def _jobs_text(messages: list) -> str:
+    jobs = [j for j in _tool_json(messages).get("jobs") or [] if isinstance(j, dict)]
+    if not jobs:
+        return "No background jobs right now."
+    return "Background jobs: " + "; ".join(f"{j.get('name') or 'job'} is {str(j.get('status') or 'unknown').replace('_', ' ')}" for j in jobs[:5]) + "."
 
 
 def _tool_text(messages: list) -> str:
@@ -447,3 +882,28 @@ def _final(text: str) -> dict:
         ],
         "usage": {"prompt_tokens": 12, "completion_tokens": 8},
     }
+
+
+def _brief_plan(messages: list) -> dict:
+    """Explicit integration trigger: malformed brief -> actionable error -> repaired brief."""
+    results = [m for m in messages if m.get("role") == "tool"]
+    # The fixture repo is created through bot-confined tools (write_file + run_tests),
+    # not the shared desktop shell, so it always lands in this bot's own workspace.
+    if not results:
+        return _tool("write_file", {"path": "/workspace/brief-test-repo/package.json", "content": '{"name": "brief-test-repo", "private": true, "scripts": {"test": "git init -q . && git -c user.name=Fixture -c user.email=fixture@example.test commit -q --allow-empty -m fixture"}}'})
+    if len(results) == 1:
+        return _tool("run_tests", {"runner": "npm", "repo": "brief-test-repo"})
+    prior = [m for m in results if _tool_name(m, messages) == "spawn_child_task"]
+    if not prior:
+        return _tool("spawn_child_task", {"title": "Brief integration child", "repo": "brief-test-repo", "brief": {"goal": "Implement the requested feature."}})
+    last = str(prior[-1].get("content") or "")
+    if "brief_rejected" in last or "brief_needs_rewrite" in last:
+        return _tool("spawn_child_task", {"title": "Brief integration child", "repo": "brief-test-repo", "brief": {
+            "goal": "BRIEF_CHILD_FAIL: produce the requested fixture result with verifiable test evidence.", "kind": "feature", "priority": "high", "effort": "small",
+            "context": "The user asked for BRIEF_TEST; they need confidence that rejected briefs can be repaired before any child starts.",
+            "references": [{"kind": "file", "path_or_url": "/workspace/brief-test-repo", "why": "Use the isolated fixture repository."}],
+            "scope": {"in": ["brief-test-repo"], "out": ["Other bot workspaces"]}, "non_goals": ["Do not merge or push."],
+            "rules": ["Preserve ownership and DLP; return only fixture evidence."], "checklist": ["Check the fixture output and failure path."],
+            "acceptance": [{"criterion": "A fixture result is produced once in the child worktree.", "check": "Inspect the fixture report path and compare expected output."}],
+            "gate": "Do not push or merge until all acceptance checks pass.", "report_back": "Return evidence paths, test pass/fail/skip counts and commit SHA."}})
+    return _final("The structured brief is ready and linked to the child task.")

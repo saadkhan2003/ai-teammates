@@ -9,6 +9,16 @@ public sealed class LoginRateLimiter
     public const int MaxFailures = 8;
     public const int MaxAttempts = 30;
 
+    public const string TestHeader = "X-Teammates-Test-Login";
+    public static bool RelaxFor(bool testHooks, IHeaderDictionary headers) =>
+        testHooks && headers[TestHeader] == "true";
+
+    public static (int Attempts, int Failures) LimitsFor(bool testHooks) =>
+        testHooks ? (3000, 800) : (MaxAttempts, MaxFailures);
+
+    private readonly (int Attempts, int Failures) _limits;
+    public LoginRateLimiter(bool testHooks = false) => _limits = LimitsFor(testHooks);
+
     private readonly Dictionary<string, List<DateTimeOffset>> _failures = new();
     private readonly Dictionary<string, List<DateTimeOffset>> _attempts = new();
 
@@ -16,7 +26,7 @@ public sealed class LoginRateLimiter
     {
         lock (_failures)
         {
-            return Count(_failures, ip, now) >= MaxFailures || Count(_attempts, ip, now) >= MaxAttempts;
+            return Count(_failures, ip, now) >= _limits.Failures || Count(_attempts, ip, now) >= _limits.Attempts;
         }
     }
 

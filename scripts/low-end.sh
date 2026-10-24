@@ -4,6 +4,7 @@
 # on an older quota (640 MB, 0.40 CPU, no extra swap).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+STACK="${STACK:?STACK is required}"
 
 PARENT=/sys/fs/cgroup/teammates-lowend
 if [[ -f /sys/fs/cgroup/cgroup.controllers ]]; then
@@ -16,8 +17,8 @@ if [[ -f /sys/fs/cgroup/cgroup.controllers ]]; then
 fi
 
 sudo MAX_COMPUTERS=2 CGROUP_PARENT=/teammates-lowend \
-  docker compose --profile lowend -f docker-compose.yml -f deploy/compose.low-end.yml up -d "$@"
-for id in $(sudo docker ps -q --filter label=teammates.managed=1); do
+  docker compose -p "$STACK" --profile lowend -f docker-compose.yml -f deploy/compose.low-end.yml up -d "$@"
+for id in $(sudo docker ps -q --filter label=teammates.managed=1 --filter "label=com.docker.compose.project=$STACK"); do
   sudo docker update --memory 640m --memory-swap 640m --cpus 0.40 "$id" || true
 done
 echo "low-end caps applied"

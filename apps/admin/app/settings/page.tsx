@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 
 import { useEffect, useState } from "react";
 import { plans, useAdmin } from "@/components/admin-state";
@@ -43,6 +44,7 @@ export default function AdminSettingsPage() {
   return (
     <Section title="Settings" detail="The platform model, branding, domains, legal pages, and data requests." testid="section-settings">
       {remote.loading && !remote.data ? <SkeletonBlock /> : null}
+      <p>Manage provider connections, model roles, caching and credit prices in <Link href="/ai-models">AI models</Link>.</p>
       <form data-testid="platform-form" onSubmit={(event) => void savePlatform(event)} className="rounded-[12px] border border-border bg-card p-4 shadow-(--shadow-card)">
         <h3 className="text-base font-medium">Model and credits</h3>
         <p className="mt-1 text-sm text-muted-foreground">The label is the name stored for staff. People using the product do not see a model name. No provider key is stored here.</p>
@@ -59,9 +61,9 @@ export default function AdminSettingsPage() {
           </label>
           {plans.map((plan) => (
             <label key={plan} className="grid gap-2 text-sm" htmlFor={`grant-${plan}`}>
-              <span>{plan[0].toUpperCase() + plan.slice(1)} credits / month</span>
+              <span>{plan[0].toUpperCase() + plan.slice(1)} credits / week</span>
               <input id={`grant-${plan}`} data-testid={`grant-${plan}`} className="min-h-11 rounded-[8px] border border-input bg-card px-3 tabular-nums" inputMode="numeric" value={allowances[plan] ?? ""} onChange={(event) => setAllowances((current) => ({ ...current, [plan]: event.target.value }))} />
-              <span className="text-sm text-muted-foreground">Credits included each month on the {plan} plan.</span>
+              <span className="text-sm text-muted-foreground">Credits included each week on the {plan} plan.</span>
             </label>
           ))}
         </div>

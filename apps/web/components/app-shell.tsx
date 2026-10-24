@@ -1,7 +1,11 @@
 "use client";
 
 import { Bell, ChevronRight, CircleHelp, CreditCard, Info, Menu, MoreHorizontal, PanelLeft, PanelLeftClose, Plus, Search, Settings, Upload, User, Users, X } from "lucide-react";
+import { initPerf } from "@/lib/perf";
+import { ListSkeleton } from "@/components/ui/skeleton";
+import { Plug } from "lucide-react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { usePathname, useRouter } from "next/navigation";
 import { type FormEvent, type ReactNode, type UIEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -10,40 +14,16 @@ import { HeroAvatar } from "@/components/avatar-motion/hero-avatar";
 import { MotionAvatar } from "@/components/avatar-motion/motion-avatar";
 import { BotAvatar } from "@/components/bot-avatar";
 import { BotAvatarPicker } from "@/components/bot-avatar-picker";
+import { RefreshNotice } from "@/components/refresh-notice";
+import { REFRESH_EVENT, wireConnectionEvents } from "@/lib/connection";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -61,6 +41,25 @@ import { defaultBotAvatar } from "@/lib/avatars";
 import { useBotAppearance } from "@/lib/bot-appearance";
 import type { AppLink } from "@/lib/app-links";
 
+
+
+import { patchRoster } from "@/lib/event-patches";
+import { parseAgentEvent, streamIsOpen } from "@/lib/events";
+
+
+
+import { applyAccent } from "@/lib/accent";
+import { get as getPrefetch, put as putPrefetch } from "@/lib/prefetch-cache.mjs";
+
+const AppCommandPalette = dynamic(() => import("@/components/app-command-palette").then(module => module.AppCommandPalette), { ssr: false });
+const PluginsPane = dynamic(() => import("@/components/plugins-pane").then((module) => module.PluginsPane));
+
+function useOpened(open: boolean) {
+  const [opened, setOpened] = useState(open);
+  useEffect(() => { if (open) setOpened(true); }, [open]);
+  return open || opened;
+}
+
 type RosterBot = {
   id: string;
   name: string;
@@ -70,6 +69,8 @@ type RosterBot = {
   avatar: string;
   avatarShape: string;
   avatarColor: string;
+  isPrimary: boolean;
+  bio: string;
   attention: boolean;
 };
 
@@ -90,6 +91,8 @@ function readBots(data: unknown): RosterBot[] {
         avatar: String(record.avatar ?? ""),
         avatarShape: String(record.avatarShape ?? ""),
         avatarColor: String(record.avatarColor ?? ""),
+        isPrimary: record.isPrimary === true,
+        bio: String(record.bio ?? ""),
         attention: record.attention === true,
       };
     })
@@ -137,9 +140,12 @@ function statusDotClass(status: string, attention: boolean) {
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
+  useEffect(() => { initPerf(); }, []);
   const pathname = usePathname();
   const router = useRouter();
+  const authPage = pathname === "/login" || pathname === "/invite";
   const [bots, setBots] = useState<RosterBot[]>([]);
+  const [botsLoaded, setBotsLoaded] = useState(false);
   const [username, setUsername] = useState("Account");
   const [displayName, setDisplayName] = useState("Account");
   const [avatarUrl, setAvatarUrl] = useState("");
@@ -150,6 +156,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [mobile, setMobile] = useState(false);
   const [palette, setPalette] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const createMounted = useOpened(createOpen);
   const [notes, setNotes] = useState<Note[]>([]);
   const [streamState, setStreamState] = useState("reconnecting");
   const [streamId, setStreamId] = useState("");
@@ -159,7 +166,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const shortcutsMounted = useOpened(shortcutsOpen);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const feedbackMounted = useOpened(feedbackOpen);
   const [quickSwitch, setQuickSwitch] = useState(false);
 
   const load = useCallback(async () => {
@@ -178,6 +187,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       setAvatarUrl(typeof me.avatarUrl === "string" ? me.avatarUrl : "");
       setApps(readApps(pluginData));
       setSuggested(recommendedApps(catalogOrFallback(readCatalogApps(catalogData).items)).slice(0, 3));
+      setBotsLoaded(true);
+      setUsername(me.username || "Account");
       setNotes(
         asList(noteData, ["items", "notifications"]).map((entry) => {
           const record = (entry ?? {}) as Record<string, unknown>;
@@ -190,7 +201,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         }),
       );
     } catch {
-      setBots([]);
+      // Keep the last good roster; the "Couldn't refresh" notice offers a retry.
+      setBotsLoaded(true);
     }
   }, []);
 
@@ -207,19 +219,23 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (pathname === "/login" || pathname === "/invite" || pathname === "/login/reset" || pathname === "/offline" || pathname === "/status") return;
+    if (authPage) return;
+    wireConnectionEvents();
     void load();
-    const timer = window.setInterval(() => void load(), 15_000);
+    const timer = window.setInterval(() => { if (!streamIsOpen()) void load(); }, 15_000);
     const refresh = () => void load();
     const openCreate = () => setCreateOpen(true);
     window.addEventListener("teammates-bots-changed", refresh);
     window.addEventListener("teammates-profile-changed", refresh);
+    window.addEventListener(REFRESH_EVENT, refresh);
     window.addEventListener("teammates-open-create", openCreate);
-    let debounce = 0;
     const stopEvents = subscribeEvents(
-      () => {
-        window.clearTimeout(debounce);
-        debounce = window.setTimeout(() => void load(), 300);
+      data => {
+        const event = parseAgentEvent(data);
+        if (!event) return;
+        if (event.type === "notification.created" && event.notification) { setNotes(current => [event.notification as Note, ...current.filter(note => note.id !== (event.notification as Note).id)]); return; }
+        if (["stream.gap", "invalidate", "bots"].includes(event.type) || (!event.bot && !event.taskId && !event.botId)) { void load(); return; }
+        setBots(current => patchRoster(current, event) ?? current);
       },
       (status) => {
         setStreamState(status.state);
@@ -231,13 +247,13 @@ export function AppShell({ children }: { children: ReactNode }) {
     }
     return () => {
       window.clearInterval(timer);
-      window.clearTimeout(debounce);
       stopEvents();
       window.removeEventListener("teammates-bots-changed", refresh);
       window.removeEventListener("teammates-profile-changed", refresh);
+      window.removeEventListener(REFRESH_EVENT, refresh);
       window.removeEventListener("teammates-open-create", openCreate);
     };
-  }, [load, pathname]);
+  }, [load, authPage]);
 
   useEffect(() => {
     const onLink = (event: Event) => {
@@ -301,7 +317,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       if (action === "back") router.back(); if (action === "forward") router.forward();
       if (action === "connect") setPluginsOpen(true);
       if (action === "focus-chat") document.querySelector<HTMLElement>("[data-testid='composer']")?.focus();
-      if (action === "selection") { const selected = window.getSelection()?.toString().trim(); if (selected) { const composer = document.querySelector<HTMLTextAreaElement>("[data-testid='composer']"); if (composer) { composer.value += `\n> ${selected.replace(/\n/g, "\n> ")}`; composer.dispatchEvent(new Event("input", { bubbles: true })); composer.focus(); } } }
+      if (action === "selection") { event.preventDefault(); window.dispatchEvent(new Event("teammates-add-selection")); }
       if (action === "previous-bot" || action === "next-bot") { const index = bots.findIndex(bot => bot.id === activeBot?.id); const next = (index + (action === "next-bot" ? 1 : -1) + bots.length) % bots.length; if (bots[next]) router.push(`/bots/${bots[next].id}`); }
       if (action === "zoom-in" || action === "zoom-out" || action === "zoom-reset") { const value = action === "zoom-reset" ? 1 : Math.max(.75, Math.min(1.5, Number(localStorage.getItem("teammates-zoom") || 1) + (action === "zoom-in" ? .1 : -.1))); localStorage.setItem("teammates-zoom", String(value)); document.documentElement.style.zoom = String(value); }
       if (action === "fullscreen") { if (document.fullscreenElement) void document.exitFullscreen(); else void document.documentElement.requestFullscreen?.(); }
@@ -321,6 +337,27 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [bots]);
 
   const unread = notes.filter((note) => !note.readAt).length;
+  const warmingWorkspaces = useRef(new Set<string>());
+
+
+  const warmBotWorkspace = useCallback((botId: string) => {
+    const key = `/api/bots/${botId}/workspace`;
+    if (getPrefetch(key) !== undefined || warmingWorkspaces.current.has(key)) return;
+    warmingWorkspaces.current.add(key);
+    void api<unknown>(key)
+      .then((value) => putPrefetch(key, value))
+      .catch(() => {})
+      .finally(() => warmingWorkspaces.current.delete(key));
+  }, []);
+  const activeBot = bots.find((bot) => pathname === `/bots/${bot.id}`);
+  const accentColor = activeBot ? (activeBot.avatarColor || defaultBotAvatar(activeBot.id).color) : null;
+  useEffect(() => {
+    const apply = () => applyAccent(accentColor, document.documentElement.classList.contains("light") ? "light" : "dark");
+    apply();
+    const observer = new MutationObserver(apply);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, [accentColor]);
 
   if (pathname === "/login" || pathname === "/invite" || pathname === "/login/reset" || pathname === "/offline" || pathname === "/status") return <>{children}</>;
 
@@ -357,7 +394,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   }
 
   const compact = collapsed && !mobile;
-  const activeBot = bots.find((bot) => pathname === `/bots/${bot.id}`);
+
   const accountName = displayName || username;
 
   function onRosterScroll(event: UIEvent<HTMLElement>) {
@@ -444,12 +481,14 @@ export function AppShell({ children }: { children: ReactNode }) {
           </Button>
         )}
       </div>
+      {compact ? null : <RefreshNotice variant="sidebar" />}
       {compact || !activeBot ? null : (
         <div data-testid="selected-bot-tile" className="flex flex-col items-center px-3 pb-3 text-center">
           <span className="relative grid h-[60px] w-[60px] place-items-center rounded-avatar bg-accent">
             <RosterLook bot={activeBot} size={48} hero />
             <span className={cn("absolute bottom-1 right-1 size-2.5 rounded-full border border-sidebar", statusDotClass(activeBot.status, activeBot.attention))} />
           </span>
+          {activeBot.bio ? <p data-testid="sidebar-bio">{activeBot.bio}</p> : null}
           <span className="mt-2 max-w-full truncate text-meta font-medium uppercase tracking-wide">{activeBot.name}</span>
           <span className="max-w-full truncate text-meta text-muted-foreground">{activeBot.role || activeBot.status}</span>
         </div>
@@ -474,7 +513,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           )
         ) : null}
         {groups.map(([section, items]) => (
-          <Collapsible key={section} defaultOpen>
+          <Collapsible key={section} defaultOpen className="motion-fade">
             {compact ? null : (
               <CollapsibleTrigger className="flex w-full items-center gap-1 rounded-md px-2 py-1 text-micro font-medium uppercase tracking-wide text-muted-foreground hover:bg-sidebar-accent [&[data-state=open]>svg]:rotate-90">
                 <ChevronRight className="h-3 w-3 transition-transform" />
@@ -491,6 +530,9 @@ export function AppShell({ children }: { children: ReactNode }) {
                         <ContextMenuTrigger asChild>
                           <Link
                             href={`/bots/${bot.id}`}
+                            prefetch
+                            onMouseEnter={() => warmBotWorkspace(bot.id)}
+                            onFocus={() => warmBotWorkspace(bot.id)}
                             onClick={() => setOpen(false)}
                             aria-current={active ? "page" : undefined}
                             title={bot.name}
@@ -754,8 +796,8 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Button variant="outline" data-testid="copy-version-info" onClick={() => { void navigator.clipboard?.writeText("AI Teammates 0.4.0"); toast.success("Version info copied."); }}>Copy version info</Button>
           </DialogContent>
         </Dialog>
-        <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
-        <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
+        {shortcutsMounted ? <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} /> : null}
+        {feedbackMounted ? <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} /> : null}
         <Dialog open={quickSwitch} onOpenChange={setQuickSwitch}><DialogContent data-testid="quick-switcher"><DialogHeader><DialogTitle>Switch teammate</DialogTitle></DialogHeader><div className="grid gap-1">{bots.map(bot => <Button key={bot.id} variant="ghost" className="justify-start" onClick={() => { router.push(`/bots/${bot.id}`); setQuickSwitch(false); }}><BotAvatar botId={bot.id} shape={bot.avatarShape} color={bot.avatarColor} size={26} />{bot.name}</Button>)}</div></DialogContent></Dialog>
       </div>
     </TooltipProvider>

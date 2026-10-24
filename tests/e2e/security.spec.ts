@@ -1,10 +1,10 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
-import { autoAllowBrowserOpens } from "./helpers";
+import { autoAllowBrowserOpens, login } from "./helpers";
+import { PG_CONTAINER, AGENT_CONTAINER, API_CONTAINER, MOCK_CONTAINER, computerContainer } from "./containers";
 
-const owner = process.env.OWNER_USERNAME ?? "saad";
-const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
+const STACK = process.env.STACK!;
 const LOGIN_CANARY = "CanaryLoginPassword9911";
 const POST = "Post this note to the public board: hello from the yard";
 const SIGNIN = "Sign in at the portal";
@@ -41,14 +41,6 @@ function resultText(task: TaskRow): string {
   }
 }
 
-async function login(page: Page) {
-  await page.goto("/login");
-  await page.getByTestId("login-username").fill(owner);
-  await page.getByTestId("login-password").fill(password);
-  await page.getByTestId("login-submit").click();
-  await expect(page.getByTestId("new-bot")).toBeVisible();
-}
-
 async function listTasks(page: Page, botId: string): Promise<TaskRow[]> {
   const response = await page.request.get(`/api/bots/${botId}/tasks`);
   expect(response.ok()).toBeTruthy();
@@ -71,7 +63,7 @@ async function send(page: Page, text: string, _asTask = false) {
   const composer = page.getByTestId("composer");
   await composer.fill(text);
   await page.getByTestId("send-chat").click();
-  await expect(composer).toHaveValue("");
+  if (_asTask) await expect(composer).toHaveValue("");
 }
 
 async function assignTracked(page: Page, botId: string, text: string) {
@@ -81,6 +73,12 @@ async function assignTracked(page: Page, botId: string, text: string) {
   expect(created, "task was created").toBeTruthy();
   return created!.id;
 }
+
+// Bots this spec creates; deleted after each test so repeated runs stay under the bot quota.
+const createdBots: string[] = [];
+test.afterEach(async ({ page }) => {
+  for (const id of createdBots.splice(0)) await page.request.delete(`/api/bots/${id}`).catch(() => undefined);
+});
 
 test("policy card, data-policy block, and login form", async ({ page }) => {
   test.setTimeout(600_000);
@@ -96,6 +94,7 @@ test("policy card, data-policy block, and login form", async ({ page }) => {
   await page.getByTestId("sidebar").getByRole("link", { name }).click({ timeout: 180_000 });
   await expect(page).toHaveURL(/\/bots\//);
   const botId = page.url().split("/bots/")[1].split(/[?#]/)[0];
+  createdBots.push(botId);
   autoAllowBrowserOpens(page, botId);
 
   const postId = await assignTracked(page, botId, POST);
@@ -136,14 +135,15 @@ test("policy card, data-policy block, and login form", async ({ page }) => {
   const computer = await page.request.get("/api/computer");
   expect(computer.ok()).toBeTruthy();
   const computerBody = (await computer.json()) as { computerId?: string };
-  const slug = `tm${(computerBody.computerId || botId).replace(/-/g, "").toLowerCase()}`;
+  const slug = computerContainer(computerBody.computerId || botId);
   const pageText = capture([
     "docker",
     "exec",
     slug,
     "python3",
     "-c",
-    "import json,os,urllib.request; body=json.dumps({'selector':'#status'}).encode(); req=urllib.request.Request('http://127.0.0.1:7700/desktops/'+os.environ['COMPUTER_ID']+'/browser/extract', data=body, headers={'Authorization':'Bearer '+os.environ['COMPUTER_TOKEN'],'Content-Type':'application/json'}); print(urllib.request.urlopen(req).read().decode())",
+    // Desktop effects are fenced: read the agent epoch, pick the signin tab explicitly (extract defaults to the newest tracked tab), then extract.
+    "import json,os,urllib.request; base='http://127.0.0.1:7700/desktops/'+os.environ['COMPUTER_ID']; h={'Authorization':'Bearer '+os.environ['COMPUTER_TOKEN'],'Content-Type':'application/json'}; call=lambda p,b: json.loads(urllib.request.urlopen(urllib.request.Request(base+p, data=json.dumps(b).encode(), headers=h)).read().decode()); st=call('/lease', {'actorId':'e2e','action':'state'}); pg=json.loads(urllib.request.urlopen(urllib.request.Request(base+'/pages', headers=h)).read().decode())['pages']; tid=[x['targetId'] for x in pg if 'signin.html' in x['url']][-1]; print(json.dumps(call('/browser/extract', {'targetId':tid,'selector':'#status','actor_id':'agent:e2e','epoch':st['epoch']})))",
   ]);
   expect(pageText).toContain("logged in");
   expect(pageText).not.toContain(LOGIN_CANARY);
@@ -167,22 +167,26 @@ test("policy card, data-policy block, and login form", async ({ page }) => {
     expect(await response.text(), path).not.toContain(LOGIN_CANARY);
   }
   let logs = "";
-  for (const container of ["teammates-api-1", "teammates-agent-1", "teammates-mock-openrouter-1", slug]) {
+  for (const container of [API_CONTAINER, AGENT_CONTAINER, MOCK_CONTAINER, slug]) {
     logs += capture(["docker", "logs", "--tail", "20000", container], 60_000);
   }
   expect(logs).not.toContain(LOGIN_CANARY);
   const columns = capture([
     "docker",
     "exec",
-    "teammates-postgres-1",
+    PG_CONTAINER,
     "psql",
     "-U",
     "agent",
     "-d",
     "agent",
     "-tA",
+    // Stream rows (no string_agg): one aggregate over every model request OOM-killed
+    // the memory-capped postgres backend on a long-lived test database.
+    "-v",
+    "FETCH_COUNT=200",
     "-c",
-    "SELECT coalesce(string_agg(content,' '),'') FROM messages; SELECT coalesce(string_agg(prompt_json::text,' '),'') FROM model_requests; SELECT coalesce(string_agg(result::text,' '),'') FROM task_steps; SELECT coalesce(string_agg(chain_canonical,' '),'') FROM audit_events; SELECT coalesce(string_agg(fields::text,' '),'') FROM login_prompts;",
+    "SELECT content FROM messages; SELECT prompt_json::text FROM model_requests; SELECT result::text FROM task_steps; SELECT chain_canonical FROM audit_events; SELECT fields::text FROM login_prompts;",
   ]);
   expect(columns).not.toContain(LOGIN_CANARY);
   expect(columns).not.toContain("4242424242424242");

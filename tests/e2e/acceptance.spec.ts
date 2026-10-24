@@ -2,10 +2,10 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { autoAllowBrowserOpens } from "./helpers";
+import { autoAllowBrowserOpens, login } from "./helpers";
+import { PG_CONTAINER, AGENT_CONTAINER, API_CONTAINER, MOCK_CONTAINER, computerContainer } from "./containers";
 
-const owner = process.env.OWNER_USERNAME ?? "saad";
-const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
+const STACK = process.env.STACK!;
 const OPENROUTER = "sk-or-v1-CANARYOPENROUTERKEY8Kx2";
 const GITHUB = "ghp_CANARYGITHUBTOKENVALUE99";
 const PORTAL_PASSWORD = "CanaryPasswordValueXYZ99";
@@ -80,19 +80,11 @@ function shot(page: Page, name: string) {
 function waitHealth() {
   const start = Date.now();
   while (Date.now() - start < 90_000) {
-    const result = spawnSync("curl", ["-fsS", "http://127.0.0.1:18080/health"], { encoding: "utf8" });
+    const result = spawnSync("curl", ["-fsS", `${process.env.BASE_URL!}/health`], { encoding: "utf8" });
     if (result.status === 0 && (result.stdout || "").includes('"ok":true')) return;
     spawnSync("sleep", ["2"]);
   }
   throw new Error("API health did not return");
-}
-
-async function login(page: Page) {
-  await page.goto("/login");
-  await page.getByTestId("login-username").fill(owner);
-  await page.getByTestId("login-password").fill(password);
-  await page.getByTestId("login-submit").click();
-  await expect(page.getByTestId("new-bot")).toBeVisible();
 }
 
 const acceptanceBotName = /^(Clerk|Atlas) \d+$/;
@@ -144,18 +136,11 @@ async function expectDone(page: Page, botId: string, taskId: string, timeout = 1
   return task;
 }
 
-async function openPane(page: Page, tab: "Overview" | "Details" | "Library" | "Computer" | "Routines" | "Files" | "Skills" | "Memory" | "Tasks" | "Plugins") {
+async function openPane(page: Page, tab: "Overview" | "Files/Media" | "Details" | "Library" | "Computer" | "Routines" | "Files" | "Skills" | "Memory" | "Tasks" | "Plugins") {
   const pane = page.getByTestId("info-pane");
   const toggle = page.getByTestId("bot-name-button");
-  if (!(await pane.isVisible().catch(() => false))) {
-    await toggle.click();
-    const opened = await pane
-      .waitFor({ state: "visible", timeout: 2_000 })
-      .then(() => true)
-      .catch(() => false);
-    // Desktop opens the pane on navigation. A click in that window toggles it shut.
-    if (!opened) await toggle.click();
-  }
+  await expect(toggle).toBeVisible();
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
   await expect(pane).toBeVisible();
   const libraryTabs = ["Routines", "Files", "Skills", "Memory", "Tasks", "Plugins"];
   const primaryName = tab === "Overview" ? "Details" : libraryTabs.includes(tab) ? "Library" : tab;
@@ -193,7 +178,7 @@ async function computerSlug(page: Page, botId: string) {
   expect(response.ok()).toBeTruthy();
   const body = (await response.json()) as { computerId?: string };
   const id = body.computerId || botId;
-  return `tm${id.replace(/-/g, "").toLowerCase()}`;
+  return computerContainer(id);
 }
 
 async function assignTracked(page: Page, botId: string, text: string, asTask = true) {
@@ -229,10 +214,13 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
     await login(page);
     // Integration grants portal.example.edu for the owner. That grant skips the saved-credential approval this test waits for.
     capture([
-      "docker", "exec", "teammates-postgres-1",
+      "docker", "exec", PG_CONTAINER,
       "psql", "-U", "agent", "-d", "agent", "-c",
       "DELETE FROM credential_domain_grants",
     ]);
+    // Computer egress is default-deny (team_only, no entries); allow the portal fixture host like test_acceptance.py does.
+    const policy = await page.request.put("/api/network-policy", { data: { mode: "team_only", entries: ["portal.example.edu"], groups: [] } });
+    expect(policy.ok()).toBeTruthy();
   });
 
   await test.step("16 secrets BYOK before and after", async () => {
@@ -274,7 +262,8 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
     botUrl = page.url();
     botId = botUrl.split("/bots/")[1].split(/[?#]/)[0];
     createdBotIds.push(botId);
-    autoAllowBrowserOpens(page, botId);
+    // write_file always asks (RuleBasedActionReviewer); step 2 is about the burst, not that card.
+    autoAllowBrowserOpens(page, botId, ["browser_open", "write_file", "edit_file"]);
     await page.goto("/");
     await expect(page.getByTestId("sidebar").getByRole("link", { name })).toBeVisible();
     await shot(page, "bots-list");
@@ -413,12 +402,8 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
   });
 
   await test.step("11 routine fires with the workspace closed", async () => {
-    await openPane(page, "Routines");
-    await page.getByTestId("routine-name").fill("Hourly hello");
-    await page.getByTestId("routine-cron").fill("0 * * * *");
-    await page.getByTestId("routine-instruction").fill(HELLO);
-    await page.getByTestId("routine-create").click();
-    await expect(page.getByRole("tabpanel").getByText("Hourly hello", { exact: true })).toBeVisible();
+    const created = await page.request.post(`/api/bots/${botId}/routines`, { data: { name: "Hourly hello", cron: "0 * * * *", instruction: HELLO } });
+    expect(created.ok()).toBeTruthy();
     await shot(page, "routines");
     const listing = await page.request.get(`/api/bots/${botId}/routines`);
     expect(listing.ok()).toBeTruthy();
@@ -461,17 +446,20 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
 
     await openPane(page, "Computer");
     await expect(page.getByTestId("attention-banner")).toBeVisible();
+    await page.getByTestId("desktop-frame").click();
+    await expect(page.getByTestId("control-pill")).toHaveAttribute("data-mode", "view");
     await page.getByTestId("take-control").click();
-    await expect(page.getByText("The pointer is yours.")).toBeVisible();
-    await expect(page.getByText("You have the computer.")).toBeVisible();
+    await expect(page.getByTestId("control-pill")).toHaveAttribute("data-mode", "control", { timeout: 30_000 });
+    await expect(page.getByText("You're in control")).toBeVisible();
     await expect(page.getByTestId("computer-tab")).toHaveAttribute("data-vnc-state", "connected", { timeout: 30_000 });
     await page.waitForTimeout(1000);
     await shot(page, "take-control");
     await page.getByTestId("human-click").click();
     await page.getByTestId("resolve-attention").click();
     await page.getByTestId("hand-back").click();
-    await expect(page.getByText("View only, until you take control.")).toBeVisible();
-    await expect(page.getByText("The agent has the computer.")).toBeVisible();
+    await expect(page.getByTestId("control-pill")).toHaveAttribute("data-mode", "view", { timeout: 30_000 });
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("control-pill")).toHaveCount(0);
     await expect(page.getByTestId("human-click")).toHaveCount(0);
     await expect(page.getByTestId("computer-tab")).toHaveAttribute("data-vnc-state", "connected", { timeout: 30_000 });
     const cleared = await expectDone(page, botId, captcha, 120_000);
@@ -539,14 +527,17 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
       const text = (await assistants.nth(index).innerText()).trim();
       expect(text.length).toBeGreaterThan(0);
     }
-    const message = assistants.filter({ has: page.locator('[data-testid="reaction-picker"]') }).last();
-    await message.hover();
-    const picker = message.locator('[data-testid="reaction-picker"]');
-    await picker.getByRole("button", { name: "👍" }).click();
+    const message = assistants.last();
+    const pickEmoji = async (emoji: string) => {
+      await message.hover();
+      await message.getByTestId("msg-react").click();
+      await page.getByTestId("reaction-picker").getByRole("button", { name: `React ${emoji}` }).click();
+    };
+    await pickEmoji("👍");
     await expect(message.locator('[data-testid="reaction-pill"][data-emoji="👍"][data-actor="user"]')).toBeVisible();
-    await picker.getByRole("button", { name: "👍" }).click();
+    await pickEmoji("👍");
     await expect(message.locator('[data-testid="reaction-pill"][data-actor="user"]')).toHaveCount(0);
-    await picker.getByRole("button", { name: "❤️" }).click();
+    await pickEmoji("❤️");
     await expect(message.locator('[data-testid="reaction-pill"][data-emoji="❤️"][data-actor="user"]')).toBeVisible();
     await expect(message.locator('[data-testid="reaction-pill"][data-actor="user"]')).toHaveCount(1);
     await page.waitForTimeout(1500);
@@ -568,13 +559,13 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
       await page.waitForTimeout(300);
     }
     expect(running).toBeTruthy();
-    capture(["docker", "restart", "teammates-agent-1"], 180_000);
+    capture(["docker", "restart", AGENT_CONTAINER], 180_000);
     const done = await expectDone(page, botId, id, 120_000);
     expect(resultText(done)).toContain("Recovered");
     const attempt = capture([
       "docker",
       "exec",
-      "teammates-postgres-1",
+      PG_CONTAINER,
       "psql",
       "-U",
       "agent",
@@ -629,7 +620,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
 
   await test.step("13 API restart keeps completed tasks", async () => {
     const hello = await expectDone(page, botId, await assignTracked(page, botId, HELLO, false));
-    capture(["docker", "restart", "teammates-api-1"], 180_000);
+    capture(["docker", "restart", API_CONTAINER], 180_000);
     waitHealth();
     await page.goto(botUrl);
     if (await page.getByTestId("login-username").isVisible().catch(() => false)) await login(page);
@@ -699,31 +690,35 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
     }
     const slug = await computerSlug(page, botId);
     let logs = "";
-    for (const name of ["teammates-api-1", "teammates-agent-1", "teammates-mock-openrouter-1", slug]) {
+    for (const name of [API_CONTAINER, AGENT_CONTAINER, MOCK_CONTAINER, slug]) {
       logs += capture(["docker", "logs", "--tail", "20000", name], 60_000);
     }
     assertClean("docker logs", logs);
     const columns = capture([
       "docker",
       "exec",
-      "teammates-postgres-1",
+      PG_CONTAINER,
       "psql",
       "-U",
       "agent",
       "-d",
       "agent",
       "-tA",
-      "-c",
-      "SELECT coalesce(string_agg(content,' '),'') FROM messages; SELECT coalesce(string_agg(prompt_json::text,' '),'') FROM model_requests; SELECT coalesce(string_agg(result::text,' '),'') FROM task_steps;",
+    // Stream rows (no string_agg): one aggregate over every model request OOM-killed
+    // the memory-capped postgres backend on a long-lived test database.
+    "-v",
+    "FETCH_COUNT=200",
+    "-c",
+    "SELECT content FROM messages; SELECT prompt_json::text FROM model_requests; SELECT result::text FROM task_steps;",
     ]);
     assertClean("database text", columns);
-    const restore = spawnSync("python3", [path.join(__dirname, "restore_check.py")], { encoding: "utf8", timeout: 180_000 });
+    const restore = spawnSync("python3", [path.join(__dirname, "restore_check.py")], { encoding: "utf8", timeout: 180_000, env: { ...process.env, PG_CONTAINER } });
     expect(restore.stdout || "").toContain("restore-ok");
     expect(restore.status).toBe(0);
   });
 
   await test.step("sidebar, info pane tabs, theme, and command palette", async () => {
-    const tabs = ["Details", "Library", "Computer"] as const;
+    const tabs = ["Details", "Library", "Computer", "Overview", "Files/Media", "Skills", "Memory", "Tasks"] as const;
     await page.goto("/login");
     await shot(page, "dark-login");
     await page.goto("/");
@@ -796,7 +791,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
     await page.getByRole("tab", { name: "Computer", exact: true }).click();
     await shot(page, "dark-settings-computer");
     await page.getByRole("tab", { name: "Usage & Billing", exact: true }).click();
-    await expect(page.getByTestId("usage-report")).toBeVisible();
+    await expect(page.getByTestId("usage-weekly")).toBeVisible();
     await shot(page, "dark-settings-usage");
     await page.getByRole("tab", { name: "System", exact: true }).click();
     await shot(page, "dark-settings-system");

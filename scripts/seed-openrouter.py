@@ -23,10 +23,13 @@ def owner_credentials(environ):
 
 
 def seed(environ=os.environ, *, opener=None, credentials=owner_credentials, sleep=time.sleep):
+    base = environ.get('SEED_API_URL')
+    if not base:
+        raise RuntimeError('SEED_API_URL is required to seed OpenRouter credentials')
+    base = base.rstrip('/')
     key = environ.get('OPENROUTER_API_KEY', '')
     if not key:
         return 0
-    base = environ.get('SEED_API_URL', 'http://127.0.0.1:18080').rstrip('/')
     opener = opener or urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
     def call(method, path, body=None):
         data = json.dumps(body).encode() if body is not None else None

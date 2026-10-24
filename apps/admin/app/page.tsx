@@ -1,5 +1,7 @@
 "use client";
 
+import { AiOverview } from "@/components/ai-controls";
+import { ComputerHealth } from "@/components/computer-health";
 import { useAdmin } from "@/components/admin-state";
 import { money, Section, SkeletonBlock, Stat, useConsole } from "@/components/panel";
 
@@ -31,6 +33,8 @@ export default function AdminDashboard() {
 
   return (
     <Section title="Overview" detail="People, monthly revenue, awake computers, and spend. Figures come from the database." testid="section-overview">
+      <AiOverview />
+      <ComputerHealth />
       {overview.loading && !live ? <SkeletonBlock /> : null}
       {measured ? (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

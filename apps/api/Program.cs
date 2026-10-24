@@ -47,19 +47,27 @@ var compute = new DockerComputeProvider(new DockerComputeOptions
     ImageRef = config["COMPUTE_IMAGE"] ?? "teammates-computer:dev",
     NetworkName = string.IsNullOrWhiteSpace(config["COMPUTE_NETWORK"]) ? null : config["COMPUTE_NETWORK"],
     SeccompPath = config["SECCOMP_PROFILE"],
+    Stack = string.IsNullOrWhiteSpace(config["COMPUTE_STACK"]) ? config["COMPOSE_PROJECT"] : config["COMPUTE_STACK"],
     MaxComputers = HostBudget.MaxComputers(HostBudget.ReadMemTotalBytes(), config["MAX_COMPUTERS"]),
+    WarmPoolSize = int.TryParse(config["WARM_POOL_SIZE"], out var poolSize) ? poolSize : 0,
+    // Plan RAM is a ceiling (default 8 GB on the $30 plan); the reservation lets the host overcommit.
+    MemoryBytes = (long.TryParse(config["COMPUTER_MEMORY_MB"], out var memoryMb) && memoryMb >= 256 ? memoryMb : 8192) * 1024 * 1024,
+    MemoryReservationBytes = (long.TryParse(config["COMPUTER_MEMORY_RESERVATION_MB"], out var reserveMb) && reserveMb >= 0 ? reserveMb : 512) * 1024 * 1024,
+    ReadinessDeadline = TimeSpan.FromSeconds(int.TryParse(config["COMPUTER_READINESS_TIMEOUT_SECONDS"], out var readySeconds) ? readySeconds : 45),
     ComputerToken = config["COMPUTER_TOKEN"] ?? "",
-    DisplayGeometry = config["DISPLAY_GEOMETRY"] ?? "1024x768",
-    DisplayDepth = config["DISPLAY_DEPTH"] ?? "16",
+    DisplayGeometry = config["DISPLAY_GEOMETRY"] ?? "1920x1200",
+    DisplayDepth = config["DISPLAY_DEPTH"] ?? "24",
     IsolationSocket = string.IsNullOrWhiteSpace(config["ISOLATION_SOCKET"]) ? null : config["ISOLATION_SOCKET"],
     IsolationToken = config["ISOLATION_TOKEN"] ?? "",
     CgroupParent = string.IsNullOrWhiteSpace(config["CGROUP_PARENT"]) ? null : config["CGROUP_PARENT"],
     CgroupRoot = string.IsNullOrWhiteSpace(config["CGROUP_ROOT"]) ? "/sys/fs/cgroup" : config["CGROUP_ROOT"]!,
     IdlePower = ComputerPower.ParseMode(config["IDLE_POWER"]),
+    EgressProxyPort = BoxContract.EgressProxy,
     IdleSuspend = int.TryParse(config["IDLE_SUSPEND_MINUTES"], out var suspendMinutes) && suspendMinutes >= 0 ? TimeSpan.FromMinutes(suspendMinutes) : TimeSpan.FromMinutes(10),
     IdleHibernate = int.TryParse(config["IDLE_HIBERNATE_MINUTES"], out var hibernateMinutes) && hibernateMinutes > 0 ? TimeSpan.FromMinutes(hibernateMinutes) : TimeSpan.FromMinutes(30),
     ResumeTarget = int.TryParse(config["IDLE_RESUME_TARGET_SECONDS"], out var resumeSeconds) && resumeSeconds > 0 ? TimeSpan.FromSeconds(resumeSeconds) : TimeSpan.FromSeconds(15)
-}, secrets, snapshots, computeLog.CreateLogger<DockerComputeProvider>());
+}.WithCpuBudget(config["COMPUTER_CPU_GUARANTEE"], config["COMPUTER_CPU_BURST"],
+    string.Equals(config["COMPUTER_NO_CPU_LIMITS"], "true", StringComparison.OrdinalIgnoreCase)), secrets, snapshots, computeLog.CreateLogger<DockerComputeProvider>());
 
 var s3 = new AmazonS3Client(new BasicAWSCredentials(config["S3_ACCESS_KEY"] ?? "agent", config["S3_SECRET_KEY"] ?? "teammates-dev-s3"), new AmazonS3Config
 {
@@ -69,20 +77,52 @@ var s3 = new AmazonS3Client(new BasicAWSCredentials(config["S3_ACCESS_KEY"] ?? "
 });
 var platform = new Platform(data, master, compute, s3, config);
 compute.MissingComputer = platform.BeginComputerRecovery;
-compute.OnComputerRestored = platform.ResumeRecoveringTasks;
+compute.OnComputerRestored = async id =>
+{
+    // A recreated computer starts from the shared base image: restore saved files before resuming its tasks.
+    try { await platform.Sync.PullAsync(id, CancellationToken.None); } catch (Exception) { /* logged per bot in workspace_sync */ }
+    await platform.ResumeRecoveringTasks(id);
+};
+compute.BeforeSleep = async (id, ct) =>
+{
+    await platform.Cleanup.CleanBeforeSleepAsync(id, ct);
+    await platform.Sync.PushAsync(id, ct);
+};
+compute.AfterWake = id => _ = platform.Sync.PullAsync(id, CancellationToken.None);
 secrets.Platform = platform;
-var loginBroker = new LoginBroker();
+var loginBroker = new LoginBroker(data, master);
 var loginFlow = new LoginFlow(platform, loginBroker);
 var runtime = new Runtime(platform, loginFlow);
 builder.Services.AddSingleton(platform);
+builder.Services.AddSingleton(new DeviceHub(data, platform));
+builder.Services.AddHostedService(sp => sp.GetRequiredService<DeviceHub>());
 builder.Services.AddSingleton(new DeviceGate(data));
 builder.Services.AddSingleton(loginBroker);
 builder.Services.AddSingleton(loginFlow);
 builder.Services.AddSingleton(runtime);
+builder.Services.AddSingleton(platform.AiRegistry);
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AiModelRegistry>());
+builder.Services.AddHostedService<AiCatalog>();
+builder.Services.AddHostedService<AiWaiters>();
+builder.Services.AddSingleton(data);
+builder.Services.AddSingleton<PerfRecorder>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<PerfRecorder>());
+builder.Services.AddSingleton<ComputerPrewarmService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ComputerPrewarmService>());
+if (!string.Equals(config["WARM_POOL_MAINTENANCE"], "false", StringComparison.OrdinalIgnoreCase))
+    builder.Services.AddHostedService<ComputerWarmPoolService>();
 builder.Services.AddHostedService<Maintenance>();
+builder.Services.AddHostedService<ApprovalLearningWorker>();
+builder.Services.AddHostedService<SessionCacheInvalidator>();
+builder.Services.AddHostedService(sp => new TaskLeaseMaintenance(
+    ct => TaskLeaseMaintenance.Sweep(platform, ct), sp.GetRequiredService<ILogger<TaskLeaseMaintenance>>()));
 builder.Services.AddHostedService<PluginCatalogJob>();
+builder.Services.AddHostedService<LibraryThumbnailWorker>();
+builder.Services.AddHostedService<TicketCleanupService>();
+builder.Services.AddHostedService<DesktopLeaseSweepService>();
 
 var app = builder.Build();
+compute.RecordPerformance = app.Services.GetRequiredService<PerfRecorder>().Record;
 app.UseExceptionHandler(handler => handler.Run(async ctx =>
 {
     var feature = ctx.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>();
@@ -103,6 +143,14 @@ app.UseExceptionHandler(handler => handler.Run(async ctx =>
         });
         return;
     }
+    if (feature?.Error is ComputeException busy && busy.Code == ComputeErrorCode.Conflict && busy.Message.StartsWith("another lifecycle operation"))
+    {
+        // A start, stop or restore is already running for this computer. The caller should retry shortly.
+        ctx.Response.StatusCode = 503;
+        ctx.Response.Headers["Retry-After"] = "2";
+        await ctx.Response.WriteAsJsonAsync(new { error = "computer_busy" });
+        return;
+    }
     var message = OutputRedactor.Redact(feature?.Error.Message);
     app.Logger.LogError("request failed {Path} {Message}", ctx.Request.Path, message);
     ctx.Response.StatusCode = 500;
@@ -115,7 +163,19 @@ app.Use(async (ctx, next) =>
     Interlocked.Add(ref platform.HttpMicros, (long)(DateTimeOffset.UtcNow - started).TotalMicroseconds);
     Interlocked.Increment(ref platform.HttpCount);
 });
-app.UseWebSockets();
+app.Use(async (ctx, next) =>
+{
+    var clock = System.Diagnostics.Stopwatch.GetTimestamp();
+    try { await next(); }
+    finally
+    {
+        if (ctx.Request.Path.StartsWithSegments("/api") && ctx.Request.Path != "/api/events" && ctx.Request.Path != "/api/rum"
+            && ctx.Response.ContentType?.Contains("json", StringComparison.OrdinalIgnoreCase) == true
+            && ctx.GetEndpoint() is Microsoft.AspNetCore.Routing.RouteEndpoint endpoint)
+            ctx.RequestServices.GetRequiredService<PerfRecorder>().Api(endpoint.RoutePattern.RawText ?? "/api", System.Diagnostics.Stopwatch.GetElapsedTime(clock).TotalMilliseconds);
+    }
+});
+app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(25), KeepAliveTimeout = TimeSpan.FromSeconds(15) });
 var ownerPassword = config["OWNER_PASSWORD"];
 OwnerPasswordGuard.Ensure(string.Equals(config["REQUIRE_OWNER_PASSWORD"], "true", StringComparison.OrdinalIgnoreCase), ownerPassword);
 await platform.MigrateAndSeed(config["OWNER_USERNAME"] ?? "saad", string.IsNullOrWhiteSpace(ownerPassword) ? OwnerPasswordGuard.DevDefault : ownerPassword);
@@ -145,9 +205,20 @@ app.Use(async (ctx, next) =>
     }
     await next();
 });
+SpeedTelemetry.Map(app, platform);
+ComputerPrewarmService.Map(app);
 Routes.Map(app, platform, runtime);
+AiAdmin.Map(app, platform);
+TeachRoutes.Map(app, platform);
+VncTicketRoutes.Map(app, platform);
 SecurityRoutes.Map(app, platform, loginFlow);
+WebBotAuthRoutes.Map(app, platform);
+BotMessaging.Map(app, platform);
 Devices.Map(app, platform);
+DeviceCommandRoutes.Map(app, platform, app.Services.GetRequiredService<DeviceHub>());
+app.MapNetworkPolicyRoutes(platform);
+EgressRelay.Map(app, platform);
+app.MapEgressControlRoutes(platform);
 Feedback.Map(app, platform);
 AccountRoutes.Map(app, platform);
 AdminConsole.Map(app, platform);
@@ -222,15 +293,53 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
             {
                 await runtime.RecoverOutbound(stoppingToken);
                 await using var conn = await platform.Data.OpenConnectionAsync(stoppingToken);
-                var expired = await conn.ExecuteAsync("UPDATE tasks SET status='queued', lease_owner=NULL, lease_until=NULL, waiting_reason='lease_expired', updated_at=now() WHERE status='running' AND lease_until < now()");
-                if (expired > 0) platform.Tasks.Pulse();
+                var expiredLeaseUsers = (await conn.QueryAsync<Guid>("""
+                    WITH expired AS (
+                      UPDATE desktop_lease SET holder_kind='none', holder_user_id=NULL, tab_id=NULL,
+                        epoch=epoch+1, expires_at=clock_timestamp(), updated_at=clock_timestamp()
+                      WHERE holder_kind='human' AND expires_at <= clock_timestamp()
+                      RETURNING computer_id
+                    ) SELECT DISTINCT uc.user_id FROM expired e JOIN user_computers uc ON uc.computer_id=e.computer_id
+                    """)).ToHashSet();
+                var databaseExpired = await conn.QueryAsync<Guid>("SELECT DISTINCT b.owner_id FROM bots b JOIN control_locks l ON l.bot_id=b.id WHERE l.holder='human' AND l.updated_at < now() - interval '45 seconds'");
+                expiredLeaseUsers.UnionWith(databaseExpired);
+                foreach (var userId in expiredLeaseUsers)
+                {
+                    await conn.ExecuteAsync("""
+                        UPDATE control_locks SET holder='agent', epoch=GREATEST(epoch, COALESCE((
+                          SELECT MAX(l.epoch) FROM desktop_lease l JOIN user_computers uc ON uc.computer_id=l.computer_id
+                          WHERE uc.user_id=@user), epoch)), updated_at=now()
+                        WHERE bot_id IN (SELECT id FROM bots WHERE owner_id=@user)
+                        """, new { user = userId });
+                    var resumed = await conn.ExecuteAsync("UPDATE tasks SET waiting_reason='await_continue', lease_owner=NULL, lease_until=NULL, updated_at=now() WHERE bot_id IN (SELECT id FROM bots WHERE owner_id=@user) AND status='waiting_human' AND waiting_reason IN ('takeover','captcha_or_mfa','You''re in control — tell me when to continue')", new { user = userId });
+                    var computer = await conn.ExecuteScalarAsync<Guid?>("SELECT computer_id FROM user_computers WHERE user_id=@user", new { user = userId });
+                    if (computer != null)
+                    {
+                        var epoch = await conn.ExecuteScalarAsync<long?>("SELECT epoch FROM control_locks WHERE bot_id IN (SELECT desktop_bot_id FROM user_computers WHERE user_id=@user)", new { user = userId }) ?? 1;
+                        try { await platform.Compute.SetHolderAsync(new ComputerId(computer.Value.ToString()), "fenced", (ulong)epoch, stoppingToken); }
+                        catch (Exception ex) { logger.LogDebug("expired desktop lease release deferred {Message}", OutputRedactor.Redact(ex.Message)); }
+                    }
+                    await platform.Audit(userId.ToString(), "desktop.lease.expire", null, null, new { expired = true });
+                    await platform.Publish(new { type = "computer.mode", mode = "watching" });
+                }
+                await ReconcileDesktopLeases(conn, stoppingToken);
                 await ResumeRecoveredComputers(stoppingToken);
                 if (++_tick == 1 || _tick % 30 == 0)
                 {
                     try { await UptimeMonitor.Sweep(platform, stoppingToken); }
                     catch (Exception ex) { logger.LogDebug("uptime sweep skipped {Message}", OutputRedactor.Redact(ex.Message)); }
                 }
-                if (_tick % 10 == 0) await SampleComputers(stoppingToken);
+                if (_tick % 10 == 0)
+                {
+                    await SampleComputers(stoppingToken);
+                    try { await platform.Resources.SampleAndReconcileAsync(stoppingToken); }
+                    catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogDebug("resource sample skipped {Message}", OutputRedactor.Redact(ex.Message)); }
+                }
+                if (_tick % 30 == 7)
+                {
+                    try { await platform.Cleanup.TickAsync(stoppingToken); }
+                    catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning("cleanup skipped {Message}", OutputRedactor.Redact(ex.Message)); }
+                }
                 if (_tick % 15 == 0)
                 {
                     await SuspendIdle(conn, stoppingToken);
@@ -240,42 +349,22 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
                         logger.LogError("computer isolation alert: {Message}", OutputRedactor.Redact(ex.Message));
                     }
                 }
-                var due = await conn.QueryAsync<(Guid Id, Guid BotId, string Instruction, string Name, string WatchKind, string WatchRef, string WatchFingerprint)>(
-                    "SELECT id, bot_id, instruction, name, coalesce(watch_kind,''), coalesce(watch_ref,''), coalesce(watch_fingerprint,'') FROM routines WHERE enabled AND next_run_at IS NOT NULL AND next_run_at <= now()");
-                foreach (var routine in due)
-                {
-                    var skipModel = false;
-                    if (routine.WatchKind is "http" or "memory")
-                    {
-                        var material = routine.WatchKind == "http"
-                            ? await WatchHttp(routine.WatchRef, stoppingToken)
-                            : await WatchMemory(conn, routine.BotId);
-                        if (material == null || !RoutineWatch.Changed(routine.WatchFingerprint, RoutineWatch.Fingerprint(material)))
-                        {
-                            skipModel = true;
-                            await conn.ExecuteAsync("INSERT INTO routine_runs (routine_id, status) VALUES (@routine, 'skipped')", new { routine = routine.Id });
-                        }
-                        else
-                        {
-                            await conn.ExecuteAsync("UPDATE routines SET watch_fingerprint=@fp WHERE id=@id", new { id = routine.Id, fp = RoutineWatch.Fingerprint(material) });
-                        }
-                    }
-                    var running = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM tasks WHERE routine_id=@id AND status IN ('queued','running','planning')", new { id = routine.Id });
-                    if (running == 0 && !skipModel)
-                    {
-                        var conversation = await conn.ExecuteScalarAsync<Guid>("SELECT id FROM conversations WHERE bot_id=@id ORDER BY created_at LIMIT 1", new { id = routine.BotId });
-                        var task = await conn.ExecuteScalarAsync<Guid>("INSERT INTO tasks (bot_id, conversation_id, title, instruction, kind, routine_id, status) VALUES (@bot, @conversation, @title, @instruction, 'work', @routine, 'queued') RETURNING id", new { bot = routine.BotId, conversation, title = routine.Name, instruction = routine.Instruction, routine = routine.Id });
-                        await conn.ExecuteAsync("INSERT INTO routine_runs (routine_id, task_id, status) VALUES (@routine, @task, 'queued')", new { routine = routine.Id, task });
-                        platform.Tasks.Pulse();
-                    }
-                    var cron = await conn.ExecuteScalarAsync<string>("SELECT cron FROM routines WHERE id=@id", new { id = routine.Id });
-                    var next = Cron.Next(cron ?? "0 * * * *", DateTimeOffset.UtcNow, TimeZoneInfo.Utc);
-                    await conn.ExecuteAsync("UPDATE routines SET last_run_at=now(), next_run_at=@next WHERE id=@id", new { id = routine.Id, next });
-                }
+                await RoutineRuns.Tick(platform, conn, DateTimeOffset.UtcNow, async (kind, reference, botId, token) =>
+                    kind == "http" ? await WatchHttp(reference, token) : await WatchMemory(conn, botId), stoppingToken);
             }
             catch (Exception ex)
             {
                 logger.LogWarning("maintenance skipped {Message}", OutputRedactor.Redact(ex.Message));
+            }
+            if (_tick % 3 == 0)
+            {
+                try { await platform.Jobs.WatchAsync(stoppingToken); }
+                catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogDebug("job watch skipped {Message}", OutputRedactor.Redact(ex.Message)); }
+            }
+            if (_tick % 15 == 1)
+            {
+                try { await platform.Usage.TickAsync(stoppingToken); }
+                catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogDebug("usage meter skipped {Message}", OutputRedactor.Redact(ex.Message)); }
             }
             try { await logins.ExpirePending(); }
             catch (Exception ex) { logger.LogDebug("login sweep skipped {Message}", OutputRedactor.Redact(ex.Message)); }
@@ -308,12 +397,8 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
 
     private static async Task<string?> WatchMemory(NpgsqlConnection conn, Guid botId)
     {
-        var rows = await conn.QueryAsync<string>("SELECT content FROM memories WHERE bot_id=@id ORDER BY updated_at DESC LIMIT 50", new { id = botId });
-        return string.Join('\n', rows.Select(row =>
-        {
-            var text = row ?? "";
-            return text.Length > 500 ? text[..500] : text;
-        }));
+        var rows = await conn.QueryAsync<(Guid Id, DateTime UpdatedAt)>("SELECT id, updated_at FROM memories WHERE bot_id=@id AND status='active' AND deleted_at IS NULL AND author NOT IN ('routine','peer') ORDER BY updated_at DESC LIMIT 50", new { id = botId });
+        return string.Join('\n', rows.Select(row => row.Id.ToString("N") + ":" + row.UpdatedAt.ToUniversalTime().Ticks));
     }
 
     private async Task ResumeRecoveredComputers(CancellationToken ct)
@@ -337,6 +422,35 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
         }
     }
 
+    private async Task ReconcileDesktopLeases(NpgsqlConnection conn, CancellationToken ct)
+    {
+        await conn.ExecuteAsync("""
+            UPDATE desktop_lease l SET expires_at=clock_timestamp()+interval '90 seconds', updated_at=clock_timestamp()
+            FROM user_computers uc WHERE l.computer_id=uc.computer_id AND l.holder_kind='agent'
+              AND EXISTS (SELECT 1 FROM bots b WHERE b.owner_id=uc.user_id)
+            """);
+        var leases = await conn.QueryAsync<(Guid ComputerId, Guid DesktopBotId, string HolderKind, long Epoch)>("""
+            SELECT uc.computer_id AS "ComputerId", uc.desktop_bot_id AS "DesktopBotId",
+                   l.holder_kind AS "HolderKind", l.epoch AS "Epoch"
+            FROM user_computers uc JOIN desktop_lease l ON l.computer_id=uc.computer_id AND l.display=1
+            WHERE EXISTS (SELECT 1 FROM bots b WHERE b.owner_id=uc.user_id)
+            """);
+        foreach (var lease in leases)
+        {
+            var holder = lease.HolderKind switch { "human" => "human", "agent" => "agent", _ => "fenced" };
+            try
+            {
+                await conn.ExecuteAsync("UPDATE control_locks SET holder=@holder, epoch=GREATEST(epoch,@epoch), updated_at=now() WHERE bot_id=@bot", new { holder, epoch = lease.Epoch, bot = lease.DesktopBotId });
+                await platform.Compute.SetHolderAsync(new ComputerId(lease.ComputerId.ToString()), holder, (ulong)lease.Epoch, ct);
+            }
+            catch (Exception ex)
+            {
+                // Keep the computer fenced when the API cannot converge its cached state.
+                logger.LogDebug("desktop lease reconciliation deferred {Message}", OutputRedactor.Redact(ex.Message));
+            }
+        }
+    }
+
     private async Task SuspendIdle(NpgsqlConnection conn, CancellationToken ct)
     {
         var busy = (await conn.QueryAsync<Guid>(
@@ -348,6 +462,8 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
             UNION
             SELECT t.bot_id FROM tasks t
             WHERE t.status IN ('queued', 'running', 'planning', 'waiting_human', 'waiting_approval', 'waiting_resource')
+            UNION
+            SELECT j.computer_id FROM computer_jobs j WHERE j.status IN ('starting', 'running')
             """)).Select(id => id.ToString()).ToHashSet();
         await platform.Compute.SuspendIdleAsync(busy, platform.IdleSuspend, ct);
     }
@@ -364,9 +480,15 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
         {
             try
             {
-                memory += await platform.Compute.ReadMemoryBytesAsync(new ComputerId(id.ToString()), ct);
-                chrome += await platform.Compute.CountChromeAsync(new ComputerId(id.ToString()), ct);
+                var computerId = new ComputerId(id.ToString());
+                var container = await platform.Compute.ReadMemoryBytesAsync(computerId, ct);
+                memory += container;
+                chrome += await platform.Compute.CountChromeAsync(computerId, ct);
                 sampled++;
+                var desktop = await platform.Compute.ReadDesktopAsync(computerId, ct);
+                platform.ComputerSamples[id] = desktop is null
+                    ? new ComputerMemorySample(id, container == 0 ? "stopped" : "unknown", container, 0, 0, null, 0, DateTimeOffset.UtcNow)
+                    : new ComputerMemorySample(id, desktop.Desktop, container, desktop.RssBytes, desktop.DesktopRssBytes, desktop.CgroupBytes, desktop.ChromeProcesses, DateTimeOffset.UtcNow);
             }
             catch (Exception ex)
             {
@@ -375,6 +497,7 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
         }
         // A recreate or a pause misses one pass. Keep the last good sample so
         // the metrics page does not flash zero between passes.
+        foreach (var stale in platform.ComputerSamples.Keys.Except(ids).ToArray()) platform.ComputerSamples.TryRemove(stale, out _);
         if (sampled == 0) return;
         platform.ComputerMemory = memory;
         platform.ChromeProcesses = chrome;

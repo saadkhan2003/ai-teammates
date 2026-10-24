@@ -13,8 +13,9 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-BASE = os.environ.get("BASE_URL", "http://127.0.0.1:18080").rstrip("/")
-API = os.environ.get("API_URL", "http://127.0.0.1:18081").rstrip("/")
+import pytest
+from stack import AGENT_CONTAINER, API, API_CONTAINER, BASE, MOCK_CONTAINER, PG, computer_container
+
 OWNER = os.environ.get("OWNER_USERNAME", "saad")
 PASSWORD = os.environ.get("OWNER_PASSWORD", "teammates-dev")
 WORKER = os.environ.get("WORKER_TOKEN", "dev-worker-token-change-me")
@@ -32,6 +33,8 @@ class Client:
     def call(self, method: str, path: str, body=None, raw: bytes | None = None, headers=None, auth=True):
         data = raw if raw is not None else (None if body is None else json.dumps(body).encode())
         request = urllib.request.Request(BASE + path, data=data, method=method)
+        if path == "/api/auth/login":
+            request.add_header("X-Teammates-Test-Login", "true")
         if body is not None:
             request.add_header("Content-Type", "application/json")
         if auth and self.cookie:
@@ -61,13 +64,28 @@ def computer_slug(client: Client, bot_id: str) -> str:
     status, body = client.call("GET", "/api/computer")
     assert status == 200, body
     computer_id = (body or {}).get("computerId") or bot_id
-    return "tm" + str(computer_id).replace("-", "").lower()
+    return computer_container(computer_id)
+
+
+_OWNER_COOKIE: str | None = None
 
 
 def login() -> Client:
+    """Owner session, reused across tests while it stays valid.
+
+    The API allows 30 login attempts per IP per 10 minutes. A full suite run
+    signs in far more often than that, so tests share one session instead.
+    """
+    global _OWNER_COOKIE
+    if _OWNER_COOKIE:
+        client = Client()
+        client.cookie = _OWNER_COOKIE
+        if client.call("GET", "/api/auth/me")[0] == 200:
+            return client
     client = Client()
     status, body = client.call("POST", "/api/auth/login", {"username": OWNER, "password": PASSWORD}, auth=False)
     assert status == 200, body
+    _OWNER_COOKIE = client.cookie
     return client
 
 
@@ -95,16 +113,23 @@ def submit(client: Client, conversation: str, text: str, as_task=True) -> str:
     return body["taskId"]
 
 
+# The arch policy engine asks before write-class actions as well as new browser origins.
+# Anything the test decides itself (delete_file, type_secret, setup_env) stays out of this set.
+AUTO_ALLOW_ACTIONS = {"browser_open", "write_file", "edit_file"}
+
+
 def auto_allow_browser_opens(bot: str, stop: threading.Event) -> threading.Thread:
     """v0.4 asks for Allow once on every run that opens a new browser origin."""
     def loop() -> None:
-        helper_client = login()
+        helper_client = None
         while not stop.is_set():
             try:
+                # Login can be rate-limited late in a long run; keep trying instead of dying silently.
+                helper_client = helper_client or login()
                 status, workspace = helper_client.call("GET", f"/api/bots/{bot}/workspace")
                 if status == 200:
                     for item in workspace.get("approvals") or []:
-                        if item.get("action") == "browser_open":
+                        if item.get("action") in AUTO_ALLOW_ACTIONS:
                             helper_client.call("POST", f"/api/approvals/{item['id']}/decide", {"decision": "allow_once"})
             except Exception:
                 pass
@@ -162,7 +187,7 @@ def assert_clean(text: str) -> None:
 
 def _psql(sql: str) -> str:
     return subprocess.check_output(
-        ["sudo", "docker", "exec", "teammates-postgres-1", "psql", "-U", "agent", "-d", "agent", "-tA", "-c", sql],
+        ["sudo", "docker", "exec", PG, "psql", "-U", "agent", "-d", "agent", "-tA", "-c", sql],
         text=True,
     ).strip()
 
@@ -328,8 +353,32 @@ def exercise_reactions(client: Client, bot_id: str, conversation: str, hello_tas
         item["role"] == "assistant" and not (item.get("content") or "").strip()
         for item in after_thanks["messages"]
     )
-    assert int(_psql("SELECT count(*) FROM task_transcript WHERE content LIKE '%Hidden feedback%'")) >= 1
-    assert int(_psql("SELECT count(*) FROM bot_feedback WHERE consumed_at IS NOT NULL")) >= 1
+
+
+def _owner_bot_ids(client: Client) -> set[str]:
+    status, bots = client.call("GET", "/api/bots")
+    assert status == 200, bots
+    return {bot["id"] for bot in bots or []}
+
+
+@pytest.fixture(autouse=True)
+def _release_acceptance_bots():
+    """Delete the bots these tests create so repeated suite runs stay under the bot quota."""
+    from test_bot_messaging import _cleanup
+
+    owner = login()
+    before = _owner_bot_ids(owner)
+    yield
+    owner = login()
+    leaked = sorted(_owner_bot_ids(owner) - before)
+    if leaked:
+        _cleanup(owner, *leaked)
+    other = Client()
+    status, _ = other.call("POST", "/api/auth/login", {"username": "other-owner", "password": "other-secret"}, auth=False)
+    if status == 200:
+        foreign = sorted(_owner_bot_ids(other))
+        if foreign:
+            _cleanup(other, *foreign)
 
 
 def test_acceptance_suite():
@@ -379,9 +428,18 @@ def test_acceptance_suite():
     )
     assert status == 200, bot
     bot_id = bot["id"]
+    # The computer egress proxy is default-deny (team_only, no entries): the portal fixture host must be allowed.
+    status, policy = client.call("PUT", "/api/network-policy", {"mode": "team_only", "entries": ["portal.example.edu"], "groups": []})
+    assert status == 200, policy
+    time.sleep(12)  # the computer proxy pulls the policy every 10 s
     stop_browser_approvals = threading.Event()
     auto_allow_browser_opens(bot_id, stop_browser_approvals)
     conversation = bot["conversationId"]
+
+    evidence_task = wait_task(client, bot_id, submit(client, conversation, "EVIDENCE DEMO"), timeout=180)
+    assert evidence_task["status"] == "completed", evidence_task
+    evidence_status, evidence = client.call("GET", f"/api/tasks/{evidence_task['id']}/evidence")
+    assert evidence_status == 200 and any(item["mime"] == "image/png" for item in evidence), evidence
 
     started = time.time()
     burst = [
@@ -437,6 +495,17 @@ def test_acceptance_suite():
     )
     assert code["status"] == "completed", code
     assert "passed" in result_text(code).lower()
+    # Hidden reaction feedback is consumed by the first model turn after the reaction; later tasks guarantee one ran.
+    # Since briefs' approval signals, a positive reaction arrives as "[The user reacted ...]"; old bot_feedback rows keep "Hidden feedback".
+    feedback_deadline = time.time() + 20
+    while time.time() < feedback_deadline and int(_psql("SELECT count(*) FROM task_transcript WHERE content LIKE '%Hidden feedback%' OR content LIKE '%[The user reacted %'")) < 1:
+        time.sleep(0.5)
+    assert int(_psql("SELECT count(*) FROM task_transcript WHERE content LIKE '%Hidden feedback%' OR content LIKE '%[The user reacted %'")) >= 1
+    consumed_sql = "SELECT (SELECT count(*) FROM bot_feedback WHERE consumed_at IS NOT NULL) + (SELECT count(*) FROM approval_signals WHERE consumed_at IS NOT NULL)"
+    consumed_deadline = time.time() + 20
+    while time.time() < consumed_deadline and int(_psql(consumed_sql)) < 1:
+        time.sleep(0.5)
+    assert int(_psql(consumed_sql)) >= 1
 
     delete_id = submit(client, conversation, "Delete the file /workspace/secret.txt")
     approval = None
@@ -499,18 +568,28 @@ def test_acceptance_suite():
             break
         time.sleep(1)
     assert waiting and waiting["status"] == "waiting_human", waiting
-    status, taken = client.call("POST", f"/api/bots/{bot_id}/computer/take-control")
-    assert status == 200 and taken.get("token"), taken
-    status, clicked = client.call("POST", f"/api/bots/{bot_id}/computer/human-input", {"selector": "#human-check"})
+    # Legacy take-control is refused; control now needs a role ticket that carries the desktop lease.
+    status, legacy = client.call("POST", f"/api/bots/{bot_id}/computer/take-control")
+    assert status == 409 and legacy.get("error") == "control_requires_lease_ticket", legacy
+    tab = "acceptance-tab"
+    status, taken = client.call("POST", f"/api/computers/{bot_id}/vnc-ticket?role=control", headers={"X-Desktop-Tab": tab})
+    assert status == 200 and taken.get("token") and taken.get("role") == "control", taken
+    epoch = taken["epoch"]
+    status, clicked = client.call("POST", f"/api/bots/{bot_id}/computer/human-input", {"selector": "#human-check", "tabId": tab, "epoch": epoch})
     assert status == 200, clicked
     status, resolved = client.call("POST", f"/api/tasks/{captcha}/attention/resolve")
     assert status == 200, resolved
-    status, handed = client.call("POST", f"/api/bots/{bot_id}/computer/hand-back")
+    status, handed = client.call("POST", f"/api/bots/{bot_id}/computer/hand-back", {"tabId": tab, "epoch": epoch})
     assert status == 200, handed
+    # Hand-back leaves the desktop unowned and the task parked until the user explicitly continues.
+    status, resumed = client.call("POST", f"/api/computers/{bot_id}/continue")
+    assert status == 200 and resumed.get("ok"), resumed
     cleared = wait_task(client, bot_id, captcha, timeout=120)
     assert cleared["status"] == "completed", cleared
     assert "captcha" not in result_text(cleared).lower()
 
+    # A domain grant from an earlier run would skip the approval card. Start clean (test stack DB only).
+    _psql("DELETE FROM credential_domain_grants WHERE domain='portal.example.edu'")
     typed_id = submit(client, conversation, "Type the stored password into the login form at http://portal.example.edu:8099/login.html using secret://university/password")
     approve(client, bot_id, "type_secret", "allow_domain")
     typed = wait_task(client, bot_id, typed_id, timeout=150)
@@ -583,7 +662,7 @@ def test_acceptance_suite():
     assert "teammates_probe" in raw
 
     before = wait_task(client, bot_id, submit(client, conversation, "What should I call you?", as_task=False))
-    subprocess.check_call(["sudo", "docker", "restart", "teammates-api-1"])
+    subprocess.check_call(["sudo", "docker", "restart", API_CONTAINER])
     deadline = time.time() + 60
     while time.time() < deadline:
         try:
@@ -622,19 +701,19 @@ def test_acceptance_suite():
     status, after_delete = client.call("GET", f"/api/secrets/{github['id']}/usage")
     assert status == 200 and any(item.get("event") == "secret.deleted" for item in after_delete)
 
-    dump = subprocess.check_output(["sudo", "docker", "exec", "teammates-postgres-1", "pg_dump", "-U", "agent", "-d", "agent", "-Fc"], stderr=subprocess.DEVNULL)
+    dump = subprocess.check_output(["sudo", "docker", "exec", PG, "pg_dump", "-U", "agent", "-d", "agent", "-Fc"], stderr=subprocess.DEVNULL)
     master = open(os.environ.get("SECRETS_MASTER_KEY_PATH", os.path.join(os.path.dirname(__file__), "..", "..", "secrets", "secrets_master_key")), "rb").read()
     assert master not in dump
-    subprocess.check_call(["sudo", "docker", "exec", "-i", "teammates-postgres-1", "psql", "-U", "agent", "-d", "postgres", "-c", "DROP DATABASE IF EXISTS agent_restore"])
-    subprocess.check_call(["sudo", "docker", "exec", "-i", "teammates-postgres-1", "psql", "-U", "agent", "-d", "postgres", "-c", "CREATE DATABASE agent_restore"])
-    restore = subprocess.Popen(["sudo", "docker", "exec", "-i", "teammates-postgres-1", "pg_restore", "-U", "agent", "-d", "agent_restore", "--no-owner"], stdin=subprocess.PIPE)
+    subprocess.check_call(["sudo", "docker", "exec", "-i", PG, "psql", "-U", "agent", "-d", "postgres", "-c", "DROP DATABASE IF EXISTS agent_restore"])
+    subprocess.check_call(["sudo", "docker", "exec", "-i", PG, "psql", "-U", "agent", "-d", "postgres", "-c", "CREATE DATABASE agent_restore"])
+    restore = subprocess.Popen(["sudo", "docker", "exec", "-i", PG, "pg_restore", "-U", "agent", "-d", "agent_restore", "--no-owner"], stdin=subprocess.PIPE)
     restore.communicate(dump)
     hex_row = subprocess.check_output(
         [
             "sudo",
             "docker",
             "exec",
-            "teammates-postgres-1",
+            PG,
             "psql",
             "-U",
             "agent",
@@ -661,25 +740,30 @@ def test_acceptance_suite():
     assert opened == PORTAL_PASSWORD.encode()
     opened = b""
 
-    logs = subprocess.check_output(["sudo", "docker", "logs", "teammates-api-1"], stderr=subprocess.STDOUT, text=True, errors="replace")
-    logs += subprocess.check_output(["sudo", "docker", "logs", "teammates-agent-1"], stderr=subprocess.STDOUT, text=True, errors="replace")
+    logs = subprocess.check_output(["sudo", "docker", "logs", API_CONTAINER], stderr=subprocess.STDOUT, text=True, errors="replace")
+    logs += subprocess.check_output(["sudo", "docker", "logs", AGENT_CONTAINER], stderr=subprocess.STDOUT, text=True, errors="replace")
     logs += subprocess.check_output(["sudo", "docker", "logs", slug], stderr=subprocess.STDOUT, text=True, errors="replace")
-    logs += subprocess.check_output(["sudo", "docker", "logs", "teammates-mock-openrouter-1"], stderr=subprocess.STDOUT, text=True, errors="replace")
+    logs += subprocess.check_output(["sudo", "docker", "logs", MOCK_CONTAINER], stderr=subprocess.STDOUT, text=True, errors="replace")
     assert_clean(logs)
     columns = subprocess.check_output(
         [
             "sudo",
             "docker",
             "exec",
-            "teammates-postgres-1",
+            PG,
             "psql",
             "-U",
             "agent",
             "-d",
             "agent",
             "-tA",
+            # Stream row by row: one string_agg over every model request grew past the
+            # postgres container's memory limit on a long-lived test database and got
+            # the backend OOM-killed, which took the database into recovery.
+            "-v",
+            "FETCH_COUNT=200",
             "-c",
-            "SELECT coalesce(string_agg(content,' '),'') FROM messages; SELECT coalesce(string_agg(prompt_json::text,' '),'') FROM model_requests; SELECT coalesce(string_agg(result::text,' '),'') FROM task_steps;",
+            "SELECT content FROM messages; SELECT prompt_json::text FROM model_requests; SELECT result::text FROM task_steps;",
         ],
         text=True,
     )

@@ -24,6 +24,7 @@ export type PlanCard = {
   detail: string;
   priceCents: number;
   monthlyCredits: number;
+  weeklyCredits?: number;
   features?: string[];
 };
 

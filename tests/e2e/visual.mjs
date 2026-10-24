@@ -4,7 +4,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { chromium } from "./node_modules/playwright/index.mjs";
 
-const base = process.env.BASE_URL || "http://127.0.0.1:18080";
+const projects = [...new Set([process.env.E2E_COMPOSE_PROJECT, process.env.COMPOSE_PROJECT, process.env.STACK, process.env.COMPUTE_STACK].filter(Boolean))];
+if (projects.length !== 1 || projects[0] === "teammates" || !/^[a-z0-9][a-z0-9_-]*$/.test(projects[0])) {
+  throw new Error("Set one consistent isolated compose project name");
+}
+process.env.STACK = projects[0];
+const base = process.env.BASE_URL;
+if (!base) throw new Error("BASE_URL is required");
 const owner = process.env.OWNER_USERNAME || "saad";
 const password = process.env.OWNER_PASSWORD || "teammates-dev";
 const outDir = path.resolve("docs/evidence/visual");
@@ -224,7 +230,9 @@ async function run() {
         const pane = await openPane(page, narrow);
         await shot(page, `${prefix}-info-pane`, rows);
         for (const tab of ["Overview", "Computer", "Routines", "Files", "Skills", "Memory", "Tasks", "Plugins"]) {
-          const trigger = pane.getByRole("tab", { name: tab, exact: true });
+          const nested = ["Routines", "Files", "Skills", "Memory", "Tasks", "Plugins"].includes(tab);
+          if (nested) await pane.getByRole("tab", { name: "Library", exact: true }).click();
+          const trigger = pane.getByRole("tab", { name: tab === "Overview" ? "Details" : tab, exact: true });
           await trigger.scrollIntoViewIfNeeded();
           await trigger.click();
           await shot(page, `${prefix}-tab-${tab.toLowerCase().replace("/", "-")}`, rows);

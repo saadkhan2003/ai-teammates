@@ -1,21 +1,15 @@
 #!/bin/sh
+# Opens the folder of the bot that owns this display, never another bot's.
 export DISPLAY="${DISPLAY:-:1}"
 if [ -z "${BOT_ROOT:-}" ]; then
-  pid=$(pidof openbox 2>/dev/null || true)
-  if [ -n "$pid" ] && [ -r "/proc/$pid/environ" ]; then
-    BOT_ROOT=$(tr '\0' '\n' < "/proc/$pid/environ" | sed -n 's/^BOT_ROOT=//p' | head -1)
-  fi
-fi
-if [ -z "${BOT_ROOT:-}" ]; then
-  for script in /run/service/wm-*/run; do
-    [ -r "$script" ] || continue
+  script="${DESK_SERVICE_DIR:-/run/service}/wm-${DISPLAY#:}/run"
+  if [ -r "$script" ]; then
     BOT_ROOT=$(sed -n 's/^export BOT_ROOT=//p' "$script" | head -1)
-    [ -n "$BOT_ROOT" ] && break
-  done
+  fi
 fi
 if [ -z "${BOT_ROOT:-}" ] || [ ! -d "$BOT_ROOT" ]; then
   echo "bot workspace is not available" >&2
   exit 1
 fi
-cd "$BOT_ROOT"
-exec pcmanfm --new-win "$BOT_ROOT"
+cd "$BOT_ROOT" || exit 1
+exec thunar "$BOT_ROOT"

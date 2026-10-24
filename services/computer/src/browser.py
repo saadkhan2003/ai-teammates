@@ -4,13 +4,44 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import workspace
+import box_contract
 from desktops import DesktopManager, cdp_port
 from pure import attention_reason, looks_like_phish, origin_of, redact, scrub_tree
+try:
+    from .private_browser import block_normal_browser_private_hosts
+except ImportError:
+    from private_browser import block_normal_browser_private_hosts
+
+
+async def terminate_process_group(proc: asyncio.subprocess.Process, grace_seconds: float = 2) -> None:
+    if proc.returncode is not None:
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        await asyncio.wait_for(proc.wait(), grace_seconds)
+    except asyncio.TimeoutError:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        await asyncio.shield(proc.wait())
+    except asyncio.CancelledError:
+        # A repeated cancellation after the drain must not interrupt SIGKILL.
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        await asyncio.shield(proc.wait())
+        raise
 
 
 class BrowserHub:
@@ -112,10 +143,12 @@ class BrowserHub:
             pass
 
     async def open_tab(self, bot_id: str, url: str, wait: str | None) -> dict:
+        await self.desks.show_browser(bot_id)
         browser = await self.connect(bot_id)
         context = self._context(browser)
         await self._trim_tabs(bot_id, context)
         page = await context.new_page()
+        await block_normal_browser_private_hosts(page)
         await page.goto(url, wait_until="domcontentloaded", timeout=20000)
         if wait:
             try:
@@ -187,6 +220,7 @@ class BrowserHub:
         }
 
     async def type_secret(self, bot_id: str, target_id: str, selector: str, value: str, expected_origin: str) -> dict:
+        await self.desks.show_browser(bot_id)
         page = self._page(bot_id, target_id)
         locator = page.locator(selector).first
         try:
@@ -218,6 +252,7 @@ class BrowserHub:
         return {"ok": True}
 
     async def fill_login(self, bot_id: str, target_id: str, fields: list, expected_origin: str, submit_selector: str) -> dict:
+        await self.desks.show_browser(bot_id)
         """Type login fields only when the live frame matches the requested origin. Values are not returned."""
         await self.list_pages(bot_id)
         try:
@@ -272,40 +307,40 @@ class BrowserHub:
             typed.clear()
 
     async def click(self, bot_id: str, target_id: str, selector: str) -> dict:
+        await self.desks.show_browser(bot_id)
         page = self._page(bot_id, target_id)
         await page.locator(selector).first.click(timeout=5000)
         return {"ok": True, "url": page.url}
 
     async def human_click(self, bot_id: str, target_id: str, selector: str) -> dict:
+        await self.desks.show_browser(bot_id)
         desk = self.desks.desktops[bot_id]
         if desk.holder != "human":
             return {"ok": False, "reason": "not_holder"}
         page = self._page(bot_id, target_id)
+        # Show the target tab to the person, then click in viewport coordinates over CDP.
+        # Mapping to X screen coordinates via screenX/outerHeight is unreliable here: a
+        # background tab reports stale metrics, and the foreground tab reports the X frame
+        # (shadow included), so an xdotool click missed the button by tens of pixels.
+        try:
+            await page.bring_to_front()
+        except Exception:
+            pass
         box = await page.locator(selector).first.bounding_box(timeout=5000)
         if not box:
             return {"ok": False, "reason": "element_invalid"}
-        meta = await page.evaluate(
-            """() => ({
-                sx: window.screenX || 0,
-                sy: window.screenY || 0,
-                chrome: Math.max((window.outerHeight || 0) - (window.innerHeight || 0), 0)
-            })"""
-        )
-        x = int(meta["sx"] + box["x"] + box["width"] / 2)
-        y = int(meta["sy"] + meta["chrome"] + box["y"] + box["height"] / 2)
-        proc = await asyncio.create_subprocess_exec(
-            "xdotool", "mousemove", "--screen", "0", str(x), str(y), "click", "1",
-            env={"DISPLAY": f":{desk.display}", "HOME": "/data/home/desk", "PATH": "/usr/bin:/bin"},
-        )
-        code = await proc.wait()
-        return {"ok": code == 0, "x": x, "y": y}
+        x = box["x"] + box["width"] / 2
+        y = box["y"] + box["height"] / 2
+        await page.mouse.click(x, y)
+        return {"ok": True, "x": int(x), "y": int(y)}
 
     async def screenshot(self, bot_id: str, target_id: str | None) -> bytes:
+        await self.desks.show_browser(bot_id)
         page = await self._resolve_page(bot_id, target_id)
         return await page.screenshot(type="png")
 
     def _cookie_file(self, bot_id: str) -> Path:
-        return Path("/data/profiles") / bot_id / "teammates-cookies.json"
+        return workspace.profile_dir(bot_id) / "teammates-cookies.json"
 
     async def set_cookie(self, bot_id: str, name: str, value: str, url: str) -> None:
         # Chrome keeps CDP cookies in memory until it exits cleanly. A Docker
@@ -382,16 +417,26 @@ class BrowserHub:
             if target_id is None:
                 target_id = await self._target_id(context, page)
                 self.pages.setdefault(bot_id, {})[target_id] = page
-            rows.append({"targetId": target_id, "url": page.url, "title": await page.title()})
+            try:
+                title = await page.title()
+            except Exception:
+                # A renderer the OOM killer took leaves a crashed tab behind. Drop it so one dead
+                # tab cannot wedge every later tab listing, human-input and tool call.
+                self.pages.get(bot_id, {}).pop(target_id, None)
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+                continue
+            rows.append({"targetId": target_id, "url": page.url, "title": title})
         return rows
 
     async def _resolve_page(self, bot_id: str, target_id: str | None):
         await self.connect(bot_id)
         if target_id:
             return self._page(bot_id, target_id)
-        pages = self.pages.get(bot_id) or {}
-        if pages:
-            return next(reversed(pages.values()))
+        # Newest tab by browser order (dict insertion order can drift once
+        # tabs are re-tracked or closed).
         listed = await self.list_pages(bot_id)
         if not listed:
             raise KeyError("no pages")
@@ -415,15 +460,28 @@ async def run_command(bot_id: str, command: str, extra_env: dict[str, str] | Non
     for value in scrub:
         if value and value in command:
             return {"exitCode": 126, "stdout": "", "stderr": "command contains a resolved secret", "rejected": True}
-    uid, root, home = workspace.prepare(bot_id)
+    try:
+        uid, root, home = workspace.prepare(bot_id)
+    except workspace.WorkspaceDeleted:
+        return {"exitCode": 126, "stdout": "", "stderr": "workspace_deleted", "rejected": True}
     command = workspace.rewrite_command(command, root)
     env = {
         "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "HOME": str(home),
         "BOT_ROOT": str(root),
         "BOT_ID": workspace.safe_id(bot_id),
+        **workspace.dev_env(uid),
         "LANG": "C.UTF-8",
         "TERM": "xterm",
+        # Shell tools and Chrome share the same local policy enforcement point.
+        "HTTP_PROXY": f"http://127.0.0.1:{box_contract.EGRESS_PROXY}",
+        "HTTPS_PROXY": f"http://127.0.0.1:{box_contract.EGRESS_PROXY}",
+        "ALL_PROXY": f"http://127.0.0.1:{box_contract.EGRESS_PROXY}",
+        "http_proxy": f"http://127.0.0.1:{box_contract.EGRESS_PROXY}",
+        "https_proxy": f"http://127.0.0.1:{box_contract.EGRESS_PROXY}",
+        "all_proxy": f"http://127.0.0.1:{box_contract.EGRESS_PROXY}",
+        "NO_PROXY": "localhost,127.0.0.1,::1",
+        "no_proxy": "localhost,127.0.0.1,::1",
     }
     if extra_env:
         env.update(extra_env)
@@ -442,13 +500,17 @@ async def run_command(bot_id: str, command: str, extra_env: dict[str, str] | Non
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         preexec_fn=drop,
+        start_new_session=True,
     )
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout)
         code = proc.returncode
     except asyncio.TimeoutError:
-        proc.kill()
+        await terminate_process_group(proc)
         return {"exitCode": -1, "stdout": "", "stderr": "timeout", "rejected": False}
+    except asyncio.CancelledError:
+        await terminate_process_group(proc)
+        raise
     scrub_tree(scrub, root)
     out = redact(stdout.decode(errors="replace")[-20000:], scrub)
     err = redact(stderr.decode(errors="replace")[-8000:], scrub)

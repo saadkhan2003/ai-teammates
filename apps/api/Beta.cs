@@ -124,6 +124,7 @@ public static class Beta
                 if (!Access.CanGrant(actorRole, next) || !Access.CanChangeStatus(actorRole, targetRole))
                     return Results.Json(new { error = "forbidden" }, statusCode: 403);
                 await conn.ExecuteAsync("UPDATE users SET role=@role WHERE id=@id", new { id, role = next });
+                await platform.SessionChanged(id);
                 targetRole = next;
             }
             if (body.TryGetProperty("status", out var statusEl))
@@ -136,6 +137,7 @@ public static class Beta
                 if (status == "disabled")
                     await conn.ExecuteAsync("DELETE FROM sessions WHERE user_id=@id", new { id });
             }
+            await platform.SessionChanged(id);
             var row = await conn.QuerySingleAsync("SELECT id, username, display_name, role, status FROM users WHERE id=@id", new { id });
             return Results.Json(Platform.ToDict(row));
         });
@@ -165,7 +167,8 @@ public static class Beta
                 stuckTasks = stuck,
                 pendingApprovals = pending,
                 computerMemoryBytes = platform.ComputerMemory,
-                chromeProcesses = platform.ChromeProcesses
+                chromeProcesses = platform.ChromeProcesses,
+                computerMemory = await ComputerMemoryRows(conn, platform)
             });
         });
 
@@ -246,8 +249,66 @@ public static class Beta
             }
             catch (ComputeException ex)
             {
+                // A stopped computer whose container is gone stays stopped; it is rebuilt only when asked for.
+                if (ex.Code == ComputeErrorCode.NotFound
+                    && await conn.ExecuteScalarAsync<string>("SELECT status FROM user_computers WHERE user_id=@id", new { id = user }) == "stopped")
+                    return Results.Json(new { status = "stopped", computerId = id, missing = true });
                 return Results.Json(new { status = "unknown", computerId = id, error = ex.Code.ToString() });
             }
+        });
+
+        // Desktop state for the computer panel. Read-only: never wakes the computer or its desktop.
+        app.MapGet("/api/computer/desktop", async (HttpContext ctx, CancellationToken ct) =>
+        {
+            var user = await User(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            await using var conn = await platform.Data.OpenConnectionAsync(ct);
+            var id = await conn.ExecuteScalarAsync<Guid?>("SELECT computer_id FROM user_computers WHERE user_id=@id", new { id = user });
+            if (id == null) return Results.Json(new { desktop = "absent" });
+            var previous = DockerComputeProvider.QuietActivity.Value;
+            DockerComputeProvider.QuietActivity.Value = true;
+            try
+            {
+                var sample = await platform.Compute.ReadDesktopAsync(new ComputerId(id.Value.ToString()), ct);
+                if (sample is null) return Results.Json(new { desktop = "unknown", computerId = id });
+                return Results.Json(new { desktop = sample.Desktop, computerId = id, idleSeconds = sample.IdleSeconds, rssBytes = sample.RssBytes, desktopRssBytes = sample.DesktopRssBytes });
+            }
+            finally
+            {
+                DockerComputeProvider.QuietActivity.Value = previous;
+            }
+        });
+
+        app.MapPost("/api/computer/stop", async (HttpContext ctx, CancellationToken ct) =>
+        {
+            var user = await User(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            await using var conn = await platform.Data.OpenConnectionAsync(ct);
+            var id = await conn.ExecuteScalarAsync<Guid?>("SELECT computer_id FROM user_computers WHERE user_id=@user", new { user });
+            if (id == null) return Results.NoContent();
+            // A computer is shared by all of this owner's bots. Releasing it
+            // must never interrupt another bot or a task that can wake it again.
+            if (await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM bots WHERE owner_id=@user)", new { user }))
+                return Results.Conflict(new { error = "computer_in_use" });
+            // Mark it stopped first so a missing container is never rebuilt by the stop itself.
+            await conn.ExecuteAsync("UPDATE user_computers SET status='stopped' WHERE user_id=@user AND computer_id=@id", new { user, id });
+            string state;
+            try
+            {
+                var computer = await platform.Compute.StopComputerAsync(new ComputerId(id.Value.ToString()),
+                    new StopOptions(false, TimeSpan.FromSeconds(10)), IdempotencyKey.Require("stop-" + Guid.NewGuid().ToString("n")), ct);
+                state = computer.State.ToString().ToLowerInvariant();
+            }
+            catch (ComputeException ex) when (ex.Code == ComputeErrorCode.NotFound)
+            {
+                state = "stopped"; // the container is already gone
+            }
+            catch (ComputeException ex) when (ex.Code == ComputeErrorCode.Conflict && platform.Compute.IsComputerRestoring(new ComputerId(id.Value.ToString())))
+            {
+                state = "stopping"; // the rebuild finishes, sees the stop and puts it back to sleep
+            }
+            await platform.Audit(user.Value.ToString(), "computer.stopped", null, null, new { computerId = id });
+            return Results.Json(new { ok = true, status = state });
         });
 
         app.MapPost("/api/computer/restart", async (HttpContext ctx, CancellationToken ct) =>
@@ -256,6 +317,7 @@ public static class Beta
             if (user == null) return Results.Unauthorized();
             var id = await Computer(platform, user.Value);
             if (id == null) return Results.NotFound();
+            await using (var wanted = await platform.Data.OpenConnectionAsync(ct)) await Platform.WantComputer(wanted, user.Value);
             var computer = await platform.Compute.RestartComputerAsync(new ComputerId(id.Value.ToString()), IdempotencyKey.Require("restart-" + Guid.NewGuid().ToString("n")), ct);
             return Results.Json(new { ok = true, status = computer.State.ToString().ToLowerInvariant() });
         });
@@ -267,6 +329,7 @@ public static class Beta
             var id = await Computer(platform, user.Value);
             if (id == null) return Results.NotFound();
             await using var conn = await platform.Data.OpenConnectionAsync(ct);
+            await Platform.WantComputer(conn, user.Value);
             var name = await conn.ExecuteScalarAsync<string>(
                 "SELECT b.name FROM bots b JOIN user_computers c ON c.desktop_bot_id = b.id WHERE c.user_id=@id",
                 new { id = user });
@@ -285,23 +348,40 @@ public static class Beta
             var avatarColor = body.TryGetProperty("avatarColor", out var colorEl) ? colorEl.GetString() : null;
             if (avatarShape is not null && !System.Text.RegularExpressions.Regex.IsMatch(avatarShape, @"^blob(1[0-5]|[1-9])$")) return Results.BadRequest(new { error = "invalid avatar shape" });
             if (avatarColor is not null && avatarColor.Length != 0 && !System.Text.RegularExpressions.Regex.IsMatch(avatarColor, @"^#[0-9a-fA-F]{6}$")) return Results.BadRequest(new { error = "invalid avatar color" });
+            if (body.TryGetProperty("bio", out var bioEl))
+            {
+                var bio = BotBio.Normalize(bioEl.ValueKind == JsonValueKind.String ? bioEl.GetString() : "");
+                if (bio == null) return Results.BadRequest(new { error = "invalid bio" });
+                await conn.ExecuteAsync("UPDATE bots SET bio=@bio, updated_at=now() WHERE id=@id", new { id, bio });
+            }
             if (body.TryGetProperty("name", out var name))
                 await conn.ExecuteAsync("UPDATE bots SET name=@name, updated_at=now() WHERE id=@id", new { id, name = name.GetString() ?? "Teammate" });
             if (body.TryGetProperty("role", out var roleEl))
                 await conn.ExecuteAsync("UPDATE bots SET role=@role, updated_at=now() WHERE id=@id", new { id, role = roleEl.GetString() ?? "" });
             if (body.TryGetProperty("instructions", out var instructions))
                 await conn.ExecuteAsync("UPDATE bots SET instructions=@instructions, updated_at=now() WHERE id=@id", new { id, instructions = instructions.GetString() ?? "" });
-            if (body.TryGetProperty("model", out var model))
-                await conn.ExecuteAsync("UPDATE bots SET model=@model, updated_at=now() WHERE id=@id", new { id, model = model.GetString() ?? "" });
             if (body.TryGetProperty("section", out var section))
                 await conn.ExecuteAsync("UPDATE bots SET section=@section, updated_at=now() WHERE id=@id", new { id, section = string.IsNullOrWhiteSpace(section.GetString()) ? "Teammates" : section.GetString() });
             if (body.TryGetProperty("avatar", out var avatar))
                 await conn.ExecuteAsync("UPDATE bots SET avatar=@avatar, updated_at=now() WHERE id=@id", new { id, avatar = avatar.GetString() ?? "" });
             if (avatarShape is not null) await conn.ExecuteAsync("UPDATE bots SET avatar_shape=@value, updated_at=now() WHERE id=@id", new { id, value = avatarShape });
             if (avatarColor is not null) await conn.ExecuteAsync("UPDATE bots SET avatar_color=@value, updated_at=now() WHERE id=@id", new { id, value = avatarColor });
+            if (body.TryGetProperty("peerMessaging", out var peerEl) && peerEl.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                await conn.ExecuteAsync("UPDATE bots SET peer_messaging=@on, updated_at=now() WHERE id=@id", new { id, on = peerEl.ValueKind == JsonValueKind.True });
+                await platform.Audit(user.ToString() ?? "", "bot.peer_messaging", id, null, new { enabled = peerEl.ValueKind == JsonValueKind.True });
+            }
             if (body.TryGetProperty("notifications", out var notes))
                 await conn.ExecuteAsync("UPDATE bots SET notifications_enabled=@on, updated_at=now() WHERE id=@id", new { id, on = notes.ValueKind != JsonValueKind.False });
-            var row = await conn.QuerySingleAsync("SELECT id, name, role, instructions, status, model, avatar, avatar_shape, avatar_color, section, notifications_enabled FROM bots WHERE id=@id", new { id });
+            if (body.TryGetProperty("isPrimary", out var primaryEl) && primaryEl.ValueKind == JsonValueKind.True)
+            {
+                await using var tx = await conn.BeginTransactionAsync();
+                await conn.ExecuteAsync("UPDATE bots SET is_primary=false WHERE owner_id=@owner AND is_primary AND id<>@id", new { id, owner = user }, tx);
+                await conn.ExecuteAsync("UPDATE bots SET is_primary=true, updated_at=now() WHERE id=@id", new { id }, tx);
+                await tx.CommitAsync();
+            }
+            await platform.Publish(new { type = "bot.updated", botId = id });
+            var row = await conn.QuerySingleAsync("SELECT id, name, role, instructions, status, avatar, avatar_shape, avatar_color, section, notifications_enabled, is_primary, bio, peer_messaging FROM bots WHERE id=@id", new { id });
             return Results.Json(Platform.ToDict(row));
         });
 
@@ -316,6 +396,8 @@ public static class Beta
             if (computer != null)
                 await BotFs.WipeAsync(platform.Compute, new ComputerId(computer.Value.ToString()), id, ct);
             await conn.ExecuteAsync("DELETE FROM bots WHERE id=@id AND owner_id=@owner", new { id, owner = user });
+            await conn.ExecuteAsync("UPDATE bots SET is_primary=true WHERE id=(SELECT id FROM bots WHERE owner_id=@owner ORDER BY created_at LIMIT 1) AND NOT EXISTS (SELECT 1 FROM bots WHERE owner_id=@owner AND is_primary)", new { owner = user });
+            await platform.PublishTo(user.Value, new { type = "bot.deleted", botId = id });
             return Results.NoContent();
         });
 
@@ -414,13 +496,13 @@ public static class Beta
         });
     }
 
-    private static async Task<Guid?> User(HttpContext ctx, Platform platform)
+    internal static async Task<Guid?> User(HttpContext ctx, Platform platform)
     {
         ctx.Request.Cookies.TryGetValue("teammates_session", out var token);
         return await platform.UserForSession(token);
     }
 
-    private static async Task<string?> Role(Platform platform, Guid id)
+    internal static async Task<string?> Role(Platform platform, Guid id)
     {
         await using var conn = await platform.Data.OpenConnectionAsync();
         return await conn.ExecuteScalarAsync<string>("SELECT role FROM users WHERE id=@id", new { id });
@@ -451,4 +533,24 @@ public static class Beta
 
     private static string Hash(string token) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token))).ToLowerInvariant();
+
+    // Per-computer memory for admin health: desktop on or asleep, and process RSS.
+    private static async Task<object[]> ComputerMemoryRows(System.Data.Common.DbConnection conn, Platform platform)
+    {
+        var names = (await conn.QueryAsync<(Guid id, string name)>(
+            "SELECT uc.computer_id, u.username FROM user_computers uc JOIN users u ON u.id=uc.user_id"))
+            .ToDictionary(r => r.id, r => r.name);
+        return platform.ComputerSamples.Values.OrderBy(s => s.ComputerId).Select(s => (object)new
+        {
+            computerId = s.ComputerId,
+            owner = names.GetValueOrDefault(s.ComputerId, ""),
+            desktop = s.Desktop,
+            rssBytes = s.RssBytes,
+            desktopRssBytes = s.DesktopRssBytes,
+            containerBytes = s.ContainerBytes,
+            cgroupBytes = s.CgroupBytes,
+            chromeProcesses = s.ChromeProcesses,
+            sampledAt = s.SampledAt
+        }).ToArray();
+    }
 }

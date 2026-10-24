@@ -19,8 +19,8 @@ def test_default_caddyfile_hides_internal_and_metrics():
 
 def test_production_caddyfile_is_https_and_still_closed():
     text = _text("deploy/Caddyfile.production")
-    assert "handle /internal/*" not in text
-    assert "handle /metrics" not in text
+    assert "handle /internal/*" in text and "respond 404" in text
+    assert "handle /metrics" in text and "respond 404" in text
     assert "example.com" in text
     assert "email admin@example.com" in text
     assert "issuer acme" in text
@@ -70,12 +70,12 @@ def test_admin_site_is_separate_and_allowlisted():
         assert "reverse_proxy api:8080" in block
         assert "/internal" not in block
         assert "/metrics" not in block
-        assert "/vnc" not in block
+        assert "handle /vnc" not in block
     assert ":8081" in _text("Caddyfile")
     assert ":8081" in _text("deploy/Caddyfile.test")
     assert "admin.example.com" in _text("deploy/Caddyfile.production")
     compose = _text("docker-compose.yml")
-    assert "18082:8081" in compose
+    assert '127.0.0.1:${ADMIN_PORT:-18082}:8081' in compose
     assert "context: ./apps/admin" in compose
     assert "cgroup_parent: /teammates-lowend" in _text("deploy/compose.low-end.yml")
     assert "\n  admin:\n" in _text("deploy/compose.low-end.yml")
@@ -93,3 +93,27 @@ def test_test_caddyfile_is_opt_in():
     makefile = _text("Makefile")
     assert "deploy/compose.test.yml" in makefile
     assert "API_URL" in makefile
+
+
+def test_production_caddy_explicitly_hides_internal_metrics_and_keeps_streams_alive():
+    text = _text("deploy/Caddyfile.production")
+    assert "handle /internal/*" in text and "respond 404" in text
+    assert "handle /metrics" in text and "respond 404" in text
+    assert "stream_timeout" in text
+    assert "keepalive" in text
+    assert "KeepAliveInterval" in _text("apps/api/Program.cs")
+    assert "flush_interval -1" in text
+
+
+def test_production_compose_does_not_publish_vnc_or_novnc_ports():
+    text = _text("deploy/compose.production.yml")
+    assert "5900:" not in text and "6080:" not in text
+
+
+def test_compression_excludes_event_and_vnc_paths_on_public_and_admin_listeners():
+    for name in ("Caddyfile", "deploy/Caddyfile.production", "deploy/Caddyfile.test"):
+        text = _text(name)
+        assert text.count("@compress not path /api/events /vnc/*") == 2
+        assert text.count("encode @compress zstd gzip") == 2
+        assert text.index("handle /api/events") < text.index("handle /api/*")
+        assert "flush_interval -1" in text.split("handle /vnc/*", 1)[1]

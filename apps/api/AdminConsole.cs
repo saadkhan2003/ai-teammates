@@ -53,7 +53,7 @@ public static class AdminConsole
         {
             var activeUsers = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM users WHERE status='active'");
             var signups = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM users WHERE created_at >= date_trunc('month', now())");
-            var mrr = await conn.ExecuteScalarAsync<long>("SELECT coalesce(sum(p.price_cents), 0) FROM billing_accounts b JOIN users u ON u.id=b.user_id AND u.status='active' JOIN plan_limits p ON p.plan_id=b.plan_id");
+            var mrr = await conn.ExecuteScalarAsync<long>("SELECT coalesce(sum(p.price_usd * 100), 0)::bigint FROM users u JOIN billing_plans p ON p.id=u.plan_id WHERE u.status='active'");
             var awake = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM user_computers WHERE status IN ('running', 'recovering')");
             var spendToday = await conn.ExecuteScalarAsync<decimal>("SELECT coalesce(sum(cost_usd), 0) FROM model_calls WHERE created_at >= date_trunc('day', now())");
             var spendMonth = await conn.ExecuteScalarAsync<decimal>("SELECT coalesce(sum(cost_usd), 0) FROM model_calls WHERE created_at >= date_trunc('month', now())");
@@ -349,7 +349,7 @@ public static class AdminConsole
 
         app.MapGet("/api/admin/console/plans", (HttpContext ctx, CancellationToken _) => Run(ctx, platform, "read", async (_, _, conn) =>
         {
-            var plans = await conn.QueryAsync("SELECT plan_id, price_cents, weekly_credits, storage_mb, ram_mb, cpu_millis FROM plan_limits ORDER BY price_cents");
+            var plans = await conn.QueryAsync("SELECT id AS plan_id, (price_usd*100)::int AS price_cents, weekly_credits, storage_quota_gb*1024 AS storage_mb, ram_mb, (cpu_max_cores*1000)::int AS cpu_millis FROM billing_plans ORDER BY price_usd");
             var topup = await conn.QuerySingleAsync("SELECT enabled, pack_credits, pack_cents, max_packs_per_week FROM topup_rules WHERE id='default'");
             var overrides = await conn.QueryAsync(
                 """
@@ -367,20 +367,20 @@ public static class AdminConsole
 
         app.MapPut("/api/admin/console/plans/{planId}", (HttpContext ctx, string planId, JsonElement body) => Run(ctx, platform, "plan", async (actor, _, conn) =>
         {
-            if (PlanCatalog.Find(planId) == null) return Results.BadRequest(new { error = "Unknown plan." });
+            if (!await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM billing_plans WHERE id=@planId)", new { planId })) return Results.BadRequest(new { error = "Unknown plan." });
             var price = Int(body, "priceCents");
             var weekly = Int(body, "weeklyCredits");
             var storage = Int(body, "storageMb");
             var ram = Int(body, "ramMb");
             var cpu = Int(body, "cpuMillis");
-            if (price == null || weekly == null || storage == null || ram == null || cpu == null || !AdminLimits.PlanOk(price.Value, weekly.Value, storage.Value, ram.Value, cpu.Value))
-                return Results.BadRequest(new { error = "Storage stays at or under 50 GB, RAM at or under 8 GB, and CPU at or under 8000 millis." });
+            if (price == null || weekly == null || storage == null || ram == null || cpu == null || (price < 0 || price > 10_000_000 || weekly < 0 || weekly > 10_000_000 || storage < 1 || storage > 10_240_000 || ram < 512 || ram > 262144 || cpu < 250 || cpu > 64000))
+                return Results.BadRequest(new { error = "Check the plan limits: storage 1–10,000 GB, RAM 512 MB–256 GB, and CPU 250–64,000 millis." });
             await conn.ExecuteAsync(
                 """
-                INSERT INTO plan_limits (plan_id, price_cents, weekly_credits, storage_mb, ram_mb, cpu_millis, updated_at)
-                VALUES (@planId, @price, @weekly, @storage, @ram, @cpu, now())
-                ON CONFLICT (plan_id) DO UPDATE SET price_cents=EXCLUDED.price_cents, weekly_credits=EXCLUDED.weekly_credits,
-                    storage_mb=EXCLUDED.storage_mb, ram_mb=EXCLUDED.ram_mb, cpu_millis=EXCLUDED.cpu_millis, updated_at=now()
+                UPDATE billing_plans SET price_usd=@price/100.0, weekly_credits=@weekly,
+                    storage_quota_gb=GREATEST(1,ceil(@storage/1024.0)::int), ram_mb=GREATEST(512,@ram),
+                    cpu_min_cores=LEAST(cpu_min_cores,GREATEST(0.25,@cpu/1000.0)), cpu_max_cores=GREATEST(0.25,@cpu/1000.0), updated_at=now()
+                WHERE id=@planId
                 """, new { planId, price, weekly, storage, ram, cpu });
             await platform.Audit(actor.ToString(), "admin.plan", null, null, new { planId, price, weekly, storage, ram, cpu });
             return Results.Json(new { planId, priceCents = price, weeklyCredits = weekly, storageMb = storage, ramMb = ram, cpuMillis = cpu });
@@ -408,7 +408,7 @@ public static class AdminConsole
             int? ram = Optional(body, "ramMb");
             int? cpu = Optional(body, "cpuMillis");
             int? weekly = Optional(body, "weeklyCredits");
-            if (storage is < 1 or > AdminLimits.MaxStorageMb || ram is < 256 or > AdminLimits.MaxRamMb || cpu is < 100 or > AdminLimits.MaxCpuMillis || weekly is < 0 or > 1_000_000)
+            if (storage is < 1 or > AdminLimits.MaxStorageMb || ram is < 512 or > AdminLimits.MaxRamMb || cpu is < 250 or > AdminLimits.MaxCpuMillis || weekly is < 0 or > 1_000_000)
                 return Results.BadRequest(new { error = "That override is outside the cap." });
             await conn.ExecuteAsync(
                 """
@@ -454,6 +454,7 @@ public static class AdminConsole
             if (!Guid.TryParse(Str(body, "userId"), out var userId)) return Results.BadRequest(new { error = "Choose a person." });
             var credits = Int(body, "credits");
             if (credits is null or < 1 or > 1_000_000) return Results.BadRequest(new { error = "Enter a credit amount." });
+            await AccountRoutes.EnsureBilling(conn, userId);
             var balance = await conn.ExecuteScalarAsync<int?>("SELECT credit_balance FROM billing_accounts WHERE user_id=@userId", new { userId });
             if (balance == null) return Results.NotFound();
             int next;
@@ -472,6 +473,7 @@ public static class AdminConsole
             var rule = await conn.QuerySingleAsync<(int Credits, int Cents, int Max)>("SELECT pack_credits, pack_cents, max_packs_per_week FROM topup_rules WHERE id='default'");
             var used = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM credit_ledger WHERE user_id=@userId AND kind='topup' AND created_at >= now() - interval '7 days'", new { userId });
             if (used >= rule.Max) return Results.BadRequest(new { error = "That account is at the weekly pack cap." });
+            await AccountRoutes.EnsureBilling(conn, userId);
             var balance = await conn.ExecuteScalarAsync<int?>("SELECT credit_balance FROM billing_accounts WHERE user_id=@userId", new { userId });
             if (balance == null) return Results.NotFound();
             var next = BillingMath.AdjustBalance(balance.Value, null, rule.Credits);
@@ -556,7 +558,7 @@ public static class AdminConsole
                 GROUP BY u.id
                 ORDER BY bytes DESC
                 """);
-            var cleanups = await conn.QueryAsync("SELECT id, status, bytes_freed, note, started_at, finished_at FROM cleanup_runs ORDER BY started_at DESC LIMIT 10");
+            var cleanups = await conn.QueryAsync("SELECT id, status, bytes_freed, note, started_at, finished_at FROM admin_cleanup_runs ORDER BY started_at DESC LIMIT 10");
             var backups = await conn.QueryAsync("SELECT id, label, status, bytes, note, started_at, finished_at FROM backups ORDER BY started_at DESC LIMIT 10");
             object store;
             try
@@ -575,7 +577,7 @@ public static class AdminConsole
 
         app.MapPost("/api/admin/console/cleanup", (HttpContext ctx, CancellationToken _) => Run(ctx, platform, "cleanup", async (actor, _, conn) =>
         {
-            var run = await conn.ExecuteScalarAsync<Guid>("INSERT INTO cleanup_runs (status, note) VALUES ('running', 'Artifacts older than 90 days.') RETURNING id");
+            var run = await conn.ExecuteScalarAsync<Guid>("INSERT INTO admin_cleanup_runs (status, note) VALUES ('running', 'Artifacts older than 90 days.') RETURNING id");
             var old = (await conn.QueryAsync<(Guid Id, string Key, long Size)>("SELECT id, object_key, size_bytes FROM artifacts WHERE created_at < now() - interval '90 days'")).ToList();
             long freed = 0;
             var removed = 0;
@@ -590,12 +592,12 @@ public static class AdminConsole
                 }
                 catch (Exception ex)
                 {
-                    await conn.ExecuteAsync("UPDATE cleanup_runs SET status='failed', bytes_freed=@freed, note=@note, finished_at=now() WHERE id=@run", new { run, freed, note = ex.GetType().Name });
+                    await conn.ExecuteAsync("UPDATE admin_cleanup_runs SET status='failed', bytes_freed=@freed, note=@note, finished_at=now() WHERE id=@run", new { run, freed, note = ex.GetType().Name });
                     return Results.Json(new { id = run, status = "failed", removed, bytesFreed = freed }, statusCode: 502);
                 }
             }
             var note = removed == 0 ? "Nothing older than 90 days." : $"Removed {removed} objects.";
-            await conn.ExecuteAsync("UPDATE cleanup_runs SET status='completed', bytes_freed=@freed, note=@note, finished_at=now() WHERE id=@run", new { run, freed, note });
+            await conn.ExecuteAsync("UPDATE admin_cleanup_runs SET status='completed', bytes_freed=@freed, note=@note, finished_at=now() WHERE id=@run", new { run, freed, note });
             await platform.Audit(actor.ToString(), "admin.cleanup", null, null, new { removed, freed });
             return Results.Json(new { id = run, status = "completed", removed, bytesFreed = freed, note });
         }));

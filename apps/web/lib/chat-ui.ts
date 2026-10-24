@@ -239,15 +239,8 @@ export function routineSchedule(cron: string): string {
   return cron;
 }
 
-export function displayModelName(model?: string | null): string {
-  const value = (model ?? "").trim();
-  if (!value || /^(unknown|mock|none|default|provider default)$/i.test(value)) return "";
-  const slug = value.toLowerCase().replace(/[\s_]+/g, "-");
-  if (slug === "claude-haiku-5.5" || slug === "claude-haiku-5-5" || slug.endsWith("/claude-haiku-5.5") || slug.endsWith("/claude-haiku-5-5")) {
-    return "Claude Haiku 5.5";
-  }
-  return value;
-}
+/** Model identities are administered outside the user application. */
+export function displayModelName(_model?: string | null): string { return ""; }
 
 export function splitJobMentions(text: string): Array<{ kind: "text"; text: string } | { kind: "job"; id: string }> {
   const parts = text.split(/(\[\[job:[0-9a-fA-F-]{8,}\]\])/g);

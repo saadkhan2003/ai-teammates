@@ -5,6 +5,28 @@ namespace Teammates.UnitTests;
 public class V03Tests
 {
     [Fact]
+    public async Task FileTransferBoundsUploadAndSniffsUnsafeContent()
+    {
+        await using var input = new MemoryStream(new byte[] { 1, 2, 3, 4 });
+        await Assert.ThrowsAsync<Teammates.Api.FileTransferTooLargeException>(() => Teammates.Api.BotFileTransfer.ReadBoundedAsync(input, 3, CancellationToken.None));
+        Assert.Equal("text/plain; charset=utf-8", Teammates.Api.BotFileTransfer.SniffContentType("note.txt", "hello"u8));
+        Assert.Equal("application/octet-stream", Teammates.Api.BotFileTransfer.SniffContentType("note.txt", new byte[] { 0, 1, 2 }));
+        Assert.True(Teammates.Api.BotFileTransfer.BlockedByDlp("seeded test secret sk-test-fake_1234567890"));
+    }
+
+    [Fact]
+    public void Video_tools_are_available_and_require_scoped_ids_and_questions()
+    {
+        Assert.NotNull(Teammates.Api.ToolSchema.Validate("watch_video", JsonDocument.Parse("{}").RootElement));
+        Assert.Null(Teammates.Api.ToolSchema.Validate("watch_video", JsonDocument.Parse("{\"source\":\"/workspace/demo.mp4\"}").RootElement));
+        Assert.Null(Teammates.Api.ToolSchema.Validate("watch_video", JsonDocument.Parse("{\"video_id\":\"item-1\"}").RootElement));
+        Assert.NotNull(Teammates.Api.ToolSchema.Validate("ask_video", JsonDocument.Parse("{\"video_id\":\"item-1\"}").RootElement));
+        var names = Teammates.Api.ToolSchema.ForModel().Cast<Dictionary<string, object>>()
+            .Select(tool => (string)((Dictionary<string, object>)tool["function"])["name"]!).ToHashSet();
+        Assert.Contains("watch_video", names);
+        Assert.Contains("ask_video", names);
+    }
+    [Fact]
     public void BotWorkspacesDoNotOverlap()
     {
         var left = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");

@@ -44,9 +44,9 @@
     },
     {
       "id": "approval-rules",
-      "href": "/settings",
+      "href": "/settings/approval-rules",
       "label": "Approval rules",
-      "description": "Server rules for shell, secrets, deletes, and new sites. They are not switches on this page."
+      "description": "Manage scoped rules for shell, secrets, deletes, and new sites. Owner approval and data policy still apply."
     },
     {
       "id": "policy",

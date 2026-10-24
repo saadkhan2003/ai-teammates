@@ -1,9 +1,8 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { COMPUTER_STACK_FILTER, computerContainer } from "./containers";
 import { expect, test } from "@playwright/test";
 
-const owner = process.env.OWNER_USERNAME ?? "saad";
-const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
 const CYCLES = 20;
 
 function capture(args: string[], timeout = 30_000): string {
@@ -74,8 +73,6 @@ fi
 
 test("opening and closing the computer view does not pile up x11vnc sockets", async ({ page }) => {
   test.setTimeout(360_000);
-  const login = await page.request.post("/api/auth/login", { data: { username: owner, password } });
-  expect(login.ok()).toBeTruthy();
   const botsResponse = await page.request.get("/api/bots");
   expect(botsResponse.ok()).toBeTruthy();
   const bots = (await botsResponse.json()) as { id?: string; name?: string }[];
@@ -84,11 +81,17 @@ test("opening and closing the computer view does not pile up x11vnc sockets", as
   const computerResponse = await page.request.get("/api/computer");
   expect(computerResponse.ok()).toBeTruthy();
   const computer = (await computerResponse.json()) as { computerId?: string };
-  const names = capture(["docker", "ps", "--format", "{{.Names}}"]).split("\n").map((name) => name.trim()).filter(Boolean);
-  const candidates = [computer.computerId, bot?.id]
-    .filter((id): id is string => Boolean(id))
-    .map((id) => `tm${id.replace(/-/g, "").toLowerCase()}`);
-  const container = candidates.find((name) => names.includes(name)) ?? names.find((name) => name.startsWith("tm"));
+  const candidates = [computerContainer(computer.computerId || bot!.id!)];
+  // Earlier specs may have stopped or recreated the computer. Ask for it and wait until it runs, so this spec does not depend on order.
+  let container: string | undefined;
+  const upDeadline = Date.now() + 120_000;
+  while (Date.now() < upDeadline) {
+    const names = capture(["docker", "ps", "--filter", COMPUTER_STACK_FILTER, "--format", "{{.Names}}"]).split("\n").map((name) => name.trim()).filter(Boolean);
+    container = candidates.find((name) => names.includes(name));
+    if (container) break;
+    await page.request.post("/api/computer/restart", { data: {}, timeout: 90_000 }).catch(() => null);
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
   expect(container, `computer container from ${candidates.join(", ")}`).toBeTruthy();
 
   let preconditionRestart = false;

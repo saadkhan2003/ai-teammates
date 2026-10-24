@@ -30,7 +30,7 @@ export type AdminPayload = {
   users: AdminUser[];
 };
 
-const plans = ["free", "pro", "team"];
+const plans = ["free", "standard", "pro", "team"];
 const themes: ThemeMode[] = ["light", "dark", "system"];
 
 type Draft = { planId: string; credits: string };
@@ -155,7 +155,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
         body: JSON.stringify({
           modelId,
           modelLabel,
-          allowances: { free: Number(allowances.free), pro: Number(allowances.pro), team: Number(allowances.team) },
+          allowances: Object.fromEntries(Object.entries(allowances).map(([id, credits]) => [id, Number(credits)])),
         }),
       });
       setNotice("Platform settings saved.");
@@ -236,7 +236,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
   const groups = [
     { label: "Operate", links: [{ href: "/", label: "Overview", exact: true }, { href: "/users", label: "Users" }, { href: "/bots", label: "Bots" }, { href: "/computers", label: "Computers" }] },
     { label: "Commercial", links: [{ href: "/plans", label: "Plans" }, { href: "/billing", label: "Billing" }] },
-    { label: "Product", links: [{ href: "/models", label: "Models" }, { href: "/storage", label: "Storage" }, { href: "/plugins", label: "Plugins" }, { href: "/flags", label: "Flags" }, { href: "/announcements", label: "Announcements" }] },
+    { label: "Product", links: [{ href: "/models", label: "Models" }, { href: "/ai-models", label: "AI models" }, { href: "/speed", label: "Speed" }, { href: "/storage", label: "Storage" }, { href: "/plugins", label: "Plugins" }, { href: "/flags", label: "Flags" }, { href: "/announcements", label: "Announcements" }] },
     { label: "Trust", links: [{ href: "/support", label: "Support" }, { href: "/security", label: "Security" }, { href: "/health", label: "Health" }, { href: "/settings", label: "Settings" }] },
   ];
 

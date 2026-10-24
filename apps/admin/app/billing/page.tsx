@@ -1,5 +1,6 @@
 "use client";
 
+import { UsageCreditControls } from "@/components/usage-credit-controls";
 import { useState } from "react";
 import { useAdmin } from "@/components/admin-state";
 import { Card, ConfirmButton, control, DataTable, Empty, Field, fileSize, money, onSubmit, primary, Section, SkeletonBlock, useConsole, useToast } from "@/components/panel";
@@ -23,6 +24,7 @@ export default function BillingPage() {
 
   return (
     <Section title="Usage and billing" detail="Credits split by AI calls, computer tasks, and stored files. The payment provider does not charge a card in this build." testid="section-billing">
+      <UsageCreditControls />
       {data.loading && !data.data ? <SkeletonBlock /> : null}
       <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
         <Card title="Payment provider" help="Paddle and Lemon Squeezy stay unavailable until a later build.">

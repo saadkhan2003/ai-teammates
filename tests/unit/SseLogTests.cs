@@ -10,6 +10,8 @@ public class SseLogTests
         var log = new SseLog();
         var first = log.Append("{\"type\":\"task\"}");
         var second = log.Append("{\"type\":\"message\"}");
+        Assert.True(first.PublishedAt > 0);
+        Assert.Equal(first.PublishedAt, log.PublishedAt(first.Id));
         var replay = log.After(first.Id);
         Assert.Single(replay);
         Assert.Equal(second.Id, replay[0].Id);
@@ -28,6 +30,7 @@ public class SseLogTests
             if (i == 0) first = frame.Id;
         }
         var replay = log.After(0);
+        Assert.Null(log.PublishedAt(first));
         Assert.Equal(SseLog.Capacity, replay.Count);
         Assert.DoesNotContain(replay, frame => frame.Id == first);
     }

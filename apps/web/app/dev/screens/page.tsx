@@ -1,10 +1,13 @@
 "use client";
 
+import dynamic from "next/dynamic";
+import type { ChatMessage } from "@/lib/types";
+import { StatusBadge } from "@/lib/status";
 import { Approvals } from "@/components/approvals";
 import { ChatPane } from "@/components/chat-pane";
 import { PluginsPane } from "@/components/plugins-pane";
-import { StatusBadge } from "@/lib/status";
-import type { ChatMessage } from "@/lib/types";
+
+const ScreenGallery = dynamic(() => import("@/components/screen-gallery"), { ssr: false });
 
 const messages: ChatMessage[] = [
   {
@@ -99,6 +102,7 @@ export default function ScreenGalleryPage() {
           <ChatPane conversationId={undefined} messages={messages} botName="Field clerk" onSent={() => undefined} />
         </div>
         <PluginsPane />
+        <ScreenGallery />
       </div>
     </div>
   );

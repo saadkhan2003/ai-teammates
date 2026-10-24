@@ -11,6 +11,10 @@ RUN dotnet publish apps/api/Teammates.Api.csproj -c Release -o /out
 FROM mcr.microsoft.com/dotnet/aspnet:10.0.13-alpine3.24
 WORKDIR /app
 COPY --from=build /out .
+ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
+    DOTNET_gcServer=0 \
+    DOTNET_GCHeapHardLimit=0x10000000
+EXPOSE 8080
 COPY db/001_init.sql /migrations/001_init.sql
 COPY db/002_reactions.sql /migrations/002_reactions.sql
 COPY db/003_v02.sql /migrations/003_v02.sql
@@ -25,13 +29,52 @@ COPY db/011_devices.sql /migrations/011_devices.sql
 COPY db/012_reliability.sql /migrations/012_reliability.sql
 COPY db/013_feedback.sql /migrations/013_feedback.sql
 COPY db/014_avatar.sql /migrations/014_avatar.sql
-COPY db/015_chat_ui.sql /migrations/015_chat_ui.sql
-COPY db/016_coding_job_diff.sql /migrations/016_coding_job_diff.sql
-COPY db/017_theme.sql /migrations/017_theme.sql
-COPY db/018_recommended_apps.sql /migrations/018_recommended_apps.sql
-COPY db/018_account.sql /migrations/018_account.sql
-COPY db/019_uptime.sql /migrations/019_uptime.sql
-COPY db/020_admin_console.sql /migrations/020_admin_console.sql
+COPY db/015_bot_messaging.sql /migrations/015_bot_messaging.sql
+COPY db/016_chat_actions.sql /migrations/016_chat_actions.sql
+COPY db/017_primary.sql /migrations/017_primary.sql
+COPY db/018_bio.sql /migrations/018_bio.sql
+COPY db/019_coding_work.sql /migrations/019_coding_work.sql
+COPY db/020_coding_items.sql /migrations/020_coding_items.sql
+COPY db/021_routine_timezone.sql /migrations/021_routine_timezone.sql
+COPY db/022_routines_v2.sql /migrations/022_routines_v2.sql
+COPY db/023_routine_test.sql /migrations/023_routine_test.sql
+COPY db/024_library.sql /migrations/024_library.sql
+COPY db/025_library_actions.sql /migrations/025_library_actions.sql
+COPY db/026_library_shares.sql /migrations/026_library_shares.sql
+COPY db/027_memory_notes.sql /migrations/027_memory_notes.sql
+COPY db/028_long_run_resume.sql /migrations/028_long_run_resume.sql
+COPY db/029_resume_timing.sql /migrations/029_resume_timing.sql
+COPY db/030_tool_dedupe.sql /migrations/030_tool_dedupe.sql
+COPY db/031_pause_on_budget.sql /migrations/031_pause_on_budget.sql
+COPY db/032_transcript_archive.sql /migrations/032_transcript_archive.sql
+COPY db/033_watchdog.sql /migrations/033_watchdog.sql
+COPY db/034_approval_rules.sql /migrations/034_approval_rules.sql
+COPY db/035_approval_rules_upgrade.sql /migrations/035_approval_rules_upgrade.sql
+COPY db/036_rule_scope.sql /migrations/036_rule_scope.sql
+COPY db/037_device_commands.sql /migrations/037_device_commands.sql
+COPY db/038_computer_windows.sql /migrations/038_computer_windows.sql
+COPY db/039_desktop_lease.sql /migrations/039_desktop_lease.sql
+COPY db/040_tickets_state.sql /migrations/040_tickets_state.sql
+COPY db/041_skill_library.sql /migrations/041_skill_library.sql
+COPY db/042_video_analyses.sql /migrations/042_video_analyses.sql
+COPY db/043_speed_telemetry.sql /migrations/043_speed_telemetry.sql
+COPY db/044_ai_models.sql /migrations/044_ai_models.sql
+COPY db/045_ai_controls.sql /migrations/045_ai_controls.sql
+COPY db/046_computer_jobs.sql /migrations/046_computer_jobs.sql
+COPY db/047_task_briefs.sql /migrations/047_task_briefs.sql
+COPY db/048_brief_lessons.sql /migrations/048_brief_lessons.sql
+COPY db/049_approval_signals.sql /migrations/049_approval_signals.sql
+COPY db/050_usage_credits.sql /migrations/050_usage_credits.sql
+COPY db/051_resources.sql /migrations/051_resources.sql
+COPY db/057_chat_ui.sql /migrations/057_chat_ui.sql
+COPY db/058_coding_job_diff.sql /migrations/058_coding_job_diff.sql
+COPY db/059_theme.sql /migrations/059_theme.sql
+COPY db/060_recommended_apps.sql /migrations/060_recommended_apps.sql
+COPY db/061_account.sql /migrations/061_account.sql
+COPY db/062_uptime.sql /migrations/062_uptime.sql
+COPY db/063_admin_console.sql /migrations/063_admin_console.sql
+COPY evals/golden/ /app/evals/golden/
+COPY services/agent/skills/builtin/ /skills/builtin/
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
     DOTNET_gcServer=0 \
     DOTNET_GCHeapHardLimit=0x10000000

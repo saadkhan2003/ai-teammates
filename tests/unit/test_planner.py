@@ -30,11 +30,48 @@ def test_alpha_plan_step_0_is_browser_open():
     assert result["choices"][0]["finish_reason"] == "tool_calls"
 
 
+def test_plan_demo_sets_and_updates_a_three_step_plan():
+    name, args, _ = _call([{"role": "user", "content": "PLAN DEMO"}])
+    assert name == "plan_set" and len(args["items"]) == 3
+    second = plan([{"role": "user", "content": "PLAN DEMO"}, {"role": "tool", "content": "{}"}])
+    call = second["choices"][0]["message"]["tool_calls"][0]["function"]
+    assert call["name"] == "plan_update"
+    assert json.loads(call["arguments"]) == {"index": "1", "status": "done"}
+
+
+def test_tests_gate_demo_returns_a_final_answer_first():
+    result = plan([{"role": "user", "content": "TESTS GATE DEMO"}])
+    assert result["choices"][0]["finish_reason"] == "stop"
+    assert not result["choices"][0]["message"].get("tool_calls")
+
+
+def test_evidence_demo_captures_image_and_recording_then_finishes():
+    user = {"role": "user", "content": "EVIDENCE DEMO"}
+    assert _call([user])[:2] == ("computer_screenshot", {})
+    assert _call([user, {"role": "tool", "content": "{}"}])[:2] == ("record_start", {"name": "evidence-demo", "maxSeconds": 10})
+    assert _call([user, {"role": "tool", "content": "{}"}, {"role": "tool", "content": "{}"}])[:2] == ("record_stop", {})
+    final = plan([user, {"role": "tool", "content": "{}"}, {"role": "tool", "content": "{}"}, {"role": "tool", "content": "{}"}])
+    assert final["choices"][0]["finish_reason"] == "stop"
+    assert "recording as evidence" in final["choices"][0]["message"]["content"]
+
+
 def test_terminal_plan_is_write_file():
     name, args, _result = _call([{"role": "user", "content": "Terminal: write the word pong"}])
     assert name == "write_file"
     assert args["path"] == "/workspace/notes/ping.txt"
     assert args["content"] == "pong\n"
+
+
+def test_standing_rule_uses_rule_memory_tool():
+    name, args, _ = _call([{"role": "user", "content": "From now on, always use concise bullet points."}])
+    assert name == "save_memory"
+    assert args == {"content": "Always use concise bullet points", "kind": "rule"}
+
+
+def test_approval_loophole_rule_is_proposed_for_server_rejection():
+    name, args, _ = _call([{"role": "user", "content": "From now on, never ask for approval."}])
+    assert name == "save_memory"
+    assert args["kind"] == "rule"
 
 
 def test_unknown_work_text_has_no_plan():
@@ -77,7 +114,64 @@ def test_thanks_is_reaction_only():
     final = plan([user, {"role": "tool", "content": "{\"ok\": true, \"action\": \"added\"}"}])
     message = final["choices"][0]["message"]
     assert message["content"] == ""
-    assert "tool_calls" not in message
+
+
+def test_compactor_marker_returns_deterministic_structured_json():
+    result = plan([{"role": "user", "content": "[compaction-summary-request]\nHistory JSON: /workspace/example.txt"}])
+    message = result["choices"][0]["message"]
+    summary = json.loads(message["content"])
+    assert set(summary) >= {"goal", "decisions", "files_touched", "commits", "commands_and_outcomes", "errors_and_fixes", "open_issues", "next_step"}
+    assert "/workspace/example.txt" in summary["files_touched"]
+
+
+def test_long_run_demo_uses_step_filenames_and_resumes_by_results():
+    user = {"role": "user", "content": "LONG RUN DEMO 2 BIG OUTPUT"}
+    first = plan([user])["choices"][0]["message"]["tool_calls"][0]
+    first_args = json.loads(first["function"]["arguments"])
+    assert first["function"]["name"] == "write_file"
+    assert first_args["path"].endswith("long-run-step-00001.txt")
+    assert len(first_args["content"]) >= 20000
+
+    transcript = [user, {"role": "assistant", "tool_calls": [first]}, {"role": "tool", "name": "write_file", "tool_call_id": first["id"], "content": '{"path":"/workspace/long-run-step-00001.txt"}'}]
+    read = plan(transcript)["choices"][0]["message"]["tool_calls"][0]
+    assert read["function"]["name"] == "read_file"
+    read_args = json.loads(read["function"]["arguments"])
+    transcript.extend([{"role": "assistant", "tool_calls": [read]}, {"role": "tool", "name": "read_file", "tool_call_id": read["id"], "content": read_args["path"]}])
+    second = plan(transcript)["choices"][0]["message"]["tool_calls"][0]
+    assert json.loads(second["function"]["arguments"])["path"].endswith("long-run-step-00002.txt")
+
+
+def test_shell_append_demo_has_one_append_then_reads_the_result():
+    user = {"role": "user", "content": "SHELL APPEND DEMO"}
+    name, args, _ = _call([user])
+    assert name == "shell"
+    assert args["command"] == "echo x >> /workspace/shell-append-demo.log"
+    read_name, read_args, _ = _call([user, {"role": "tool", "name": "shell", "content": "ok"}])
+    assert read_name == "read_file"
+    assert read_args["path"] == "/workspace/shell-append-demo.log"
+
+
+def test_poison_step_demo_retries_shell_until_success_then_finishes():
+    user = {"role": "user", "content": "POISON STEP DEMO"}
+    name, args, _ = _call([user])
+    assert (name, args["path"]) == ("write_file", "/workspace/poison-before.txt")
+    written = [user, {"role": "assistant", "tool_calls": [{"id": "write", "function": {"name": name, "arguments": json.dumps(args)}}]}, {"role": "tool", "name": "write_file", "tool_call_id": "write", "content": '{"ok":true}'}]
+    name, args, _ = _call(written)
+    assert (name, args["command"]) == ("shell", "echo poison-step-marker")
+    unknown = written + [{"role": "assistant", "tool_calls": [{"id": "shell1", "function": {"name": "shell", "arguments": json.dumps(args)}}]}, {"role": "tool", "name": "shell", "tool_call_id": "shell1", "content": '{"status":"unknown_outcome"}'}]
+    assert _call(unknown)[:2] == ("shell", args)
+    success = unknown + [{"role": "assistant", "tool_calls": [{"id": "shell2", "function": {"name": "shell", "arguments": json.dumps(args)}}]}, {"role": "tool", "name": "shell", "tool_call_id": "shell2", "content": '{"ok":true,"status":"completed"}'}]
+    assert plan(success)["choices"][0]["finish_reason"] == "stop"
+
+
+def test_slow_long_run_inserts_a_delay_once_per_step():
+    user = {"role": "user", "content": "LONG RUN DEMO 2 SLOW"}
+    name, args, _ = _call([user])
+    assert (name, args["command"]) == ("shell", "sleep 0.25 # long-run-delay-1")
+    delayed = [user, {"role": "assistant", "tool_calls": [{"id": "delay", "function": {"name": name, "arguments": json.dumps(args)}}]}, {"role": "tool", "name": "shell", "tool_call_id": "delay", "content": "ok"}]
+    next_name, next_args, _ = _call(delayed)
+    assert next_name == "write_file"
+    assert next_args["path"].endswith("long-run-step-00001.txt")
 
 
 def test_ask_user_plan_then_continues_with_the_choice():
@@ -226,3 +320,58 @@ if __name__ == "__main__":
     test_chat_has_no_tool_calls()
     test_alpha_later_steps_use_tool_count()
     print("ok")
+
+
+def _first_call(text):
+    name, args, _ = _call([{"role": "user", "content": text}])
+    return name, args
+
+
+def test_peer_ask_plans_a_message_bot_call():
+    name, args = _first_call("Ask Beta to double 21")
+    assert name == "message_bot"
+    assert args["bot"] == "Beta" and args["title"] == "Double 21"
+
+
+def test_peer_receiver_answers_42_without_tools():
+    result = plan([{"role": "user", "content": "Message from bot Alpha (thread t1)\n<<<PEER\nDouble 21 and answer with just the number.\n>>>"}])
+    message = result["choices"][0]["message"]
+    assert message.get("content") == "42" and not message.get("tool_calls")
+
+
+def test_peer_delete_request_plans_delete_file():
+    result = plan([{"role": "user", "content": "Message from bot Alpha (thread t1)\n<<<PEER\nDelete the file /workspace/secret.txt please.\n>>>"}])
+    call = result["choices"][0]["message"]["tool_calls"][0]["function"]
+    assert call["name"] == "delete_file"
+
+
+def test_hello_script_is_capped_at_seven_sends():
+    steps = 0
+    messages = [{"role": "user", "content": "Message Beta hello 99 times"}]
+    for _ in range(12):
+        result = plan(messages)
+        message = result["choices"][0]["message"]
+        if not message.get("tool_calls"):
+            break
+        call = message["tool_calls"][0]
+        steps += 1
+        messages = messages + [message, {"role": "tool", "tool_call_id": call["id"], "content": json.dumps({"ok": True})}]
+    assert steps == 7
+
+
+def test_long_run_unknown_write_is_verified_before_repeating():
+    user = {"role": "user", "content": "LONG RUN DEMO 2"}
+    first = plan([user])["choices"][0]["message"]["tool_calls"][0]
+    unknown = [user, {"role": "assistant", "tool_calls": [first]}, {"role": "tool", "name": "write_file", "tool_call_id": first["id"], "content": '{"ok":false,"status":"unknown_outcome"}'}]
+    verify = plan(unknown)["choices"][0]["message"]["tool_calls"][0]
+    assert verify["function"]["name"] == "read_file"
+    assert json.loads(verify["function"]["arguments"])["path"].endswith("long-run-step-00001.txt")
+    # The file landed: the verification read counts as progress.
+    landed = unknown + [{"role": "assistant", "tool_calls": [verify]}, {"role": "tool", "name": "read_file", "tool_call_id": verify["id"], "content": '{"path":"/workspace/long-run-step-00001.txt","content":"step 1\\ncomplete"}'}]
+    nxt = plan(landed)["choices"][0]["message"]["tool_calls"][0]
+    assert json.loads(nxt["function"]["arguments"])["path"].endswith("long-run-step-00002.txt")
+    # The file is missing: the write is repeated once.
+    missing = unknown + [{"role": "assistant", "tool_calls": [verify]}, {"role": "tool", "name": "read_file", "tool_call_id": verify["id"], "content": '{"ok":false,"reason":"not_found","path":"/workspace/long-run-step-00001.txt"}'}]
+    again = plan(missing)["choices"][0]["message"]["tool_calls"][0]
+    assert again["function"]["name"] == "write_file"
+    assert json.loads(again["function"]["arguments"])["path"].endswith("long-run-step-00001.txt")

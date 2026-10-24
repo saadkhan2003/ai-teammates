@@ -6,6 +6,7 @@
     "test:avatar-motion": "playwright test --config avatar-motion.playwright.config.ts"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "1.64.1"
   }
 }

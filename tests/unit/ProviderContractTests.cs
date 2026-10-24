@@ -36,8 +36,9 @@ public class ProviderContractTests
     public void CompletionRequestsUsageAndMaxTokens()
     {
         using var internalMessages = JsonDocument.Parse(Fixture("messages_internal.json"));
-        var body = Teammates.Api.ProviderWire.Completion("openai/gpt-4.1-mini", internalMessages.RootElement, Array.Empty<object>());
+        var body = Teammates.Api.ProviderWire.Completion("anthropic/claude-haiku-5.5", internalMessages.RootElement, Array.Empty<object>());
         using var doc = JsonDocument.Parse(JsonSerializer.Serialize(body));
+        Assert.Equal("anthropic/claude-haiku-5.5", doc.RootElement.GetProperty("model").GetString());
         Assert.Equal(Teammates.Api.ProviderWire.MaxTokens, doc.RootElement.GetProperty("max_tokens").GetInt32());
         Assert.True(doc.RootElement.GetProperty("usage").GetProperty("include").GetBoolean());
         Assert.Equal("function", doc.RootElement.GetProperty("messages")[2].GetProperty("tool_calls")[0].GetProperty("type").GetString());

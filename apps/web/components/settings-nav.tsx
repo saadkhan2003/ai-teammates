@@ -30,6 +30,7 @@ const groups: { label: string; items: NavItem[] }[] = [
   {
     label: "Workspace",
     items: [
+      { href: "/settings/approval-rules", label: "Approval rules", testId: "nav-approval-rules", icon: Shield },
       { href: "/settings/policy", label: "Policy", testId: "nav-policy", icon: Shield },
       { href: "/settings/computer", label: "Computer", icon: Laptop },
       { href: "/settings/plugins", label: "Plugins", icon: Puzzle },

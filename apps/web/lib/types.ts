@@ -1,3 +1,4 @@
+import type { BotThreadView } from "@/lib/bot-thread";
 export type Bot = {
   id: string;
   name: string;
@@ -5,10 +6,12 @@ export type Bot = {
   instructions: string;
   status?: string;
   avatarShape?: string;
+  isPrimary?: boolean;
+  bio?: string;
   avatarColor?: string;
   avatar?: string;
-  model?: string;
   notificationsEnabled?: boolean;
+  peerMessaging?: boolean;
 };
 
 export type Task = {
@@ -34,11 +37,23 @@ export type Reaction = {
 
 export type ChatMessage = {
   id: string;
+  clientId?: string | null;
+  sendState?: "pending" | "failed";
   role: string;
   content: string;
   createdAt?: string;
   replyTo?: string | null;
   reactions?: Reaction[];
+  parts?: MessagePartView[] | null;
+  skill?: { id: string; label: string } | null;
+  attachments?: Array<{ path: string; name: string; mime?: string }> | null;
+  videoAnalysis?: { summary?: string; duration?: number; timeline?: Array<{ timestamp?: number; summary?: string }> } | null;
+  deleted?: boolean;
+  requestId?: string | null;
+  taskStatus?: string | null;
+  replyToMessageId?: string | null;
+  kind?: string;
+  childTasks?: Array<{ taskId: string; title: string; status: string; hasBrief: boolean }>;
   replyToId?: string;
 };
 
@@ -57,6 +72,11 @@ export type CodingJob = {
   taskId?: string;
 };
 
+export type MessagePartView =
+  | { type: "text"; text: string }
+  | { type: "quote"; text: string; sourceMessageId?: string | null }
+  | { type: "reply"; messageId: string; author?: string; excerpt?: string };
+
 export type Approval = {
   id: string;
   action?: string;
@@ -65,6 +85,12 @@ export type Approval = {
   status?: string;
   riskClass?: string;
   summary?: string;
+  /** Pending on another teammate's task that this teammate started. Deciding it here decides it everywhere. */
+  relayed?: boolean;
+  threadId?: string | null;
+  threadTitle?: string | null;
+  requestedBy?: string | null;
+  botName?: string | null;
 };
 
 export type LoginField = {
@@ -101,13 +127,14 @@ export type Workspace = {
   conversationId: string;
   tasks: Task[];
   messages: ChatMessage[];
+  messagesHasMore?: boolean;
   approvals: Approval[];
+  botThreads?: BotThreadView[];
   secretRequests?: SecretRequest[];
   loginRequests?: LoginRequest[];
   pages: BrowserPage[];
   holder: "agent" | "human";
-  llmProvider: string;
-  openrouterConnected: boolean;
+  aiConnected: boolean;
   codingJobs?: CodingJob[];
 };
 
@@ -122,7 +149,14 @@ export type FileEntry = {
 export type MemoryItem = {
   id: string;
   content: string;
+  kind: "profile" | "rule" | "journal" | "fact" | "summary";
+  status: string;
+  pinned: boolean;
+  visibility: string;
+  author: string;
   createdAt?: string;
+  updatedAt?: string;
+  lastConfirmedAt?: string;
 };
 
 export type Skill = {
@@ -138,9 +172,31 @@ export type Routine = {
   cron: string;
   instruction?: string;
   nextRunAt?: string;
+  enabled?: boolean;
   watchKind?: string;
   watchRef?: string;
-  enabled?: boolean;
+  kind?: "recurring" | "once" | string;
+  runAt?: string;
+  timezone?: string;
+  pausedReason?: string | null;
+  failureStreak?: number;
+  quietRule?: string | null;
+  expiresAt?: string | null;
+  jitterSeconds?: number;
+  runs?: RoutineRun[];
+};
+
+export type RoutineRun = {
+  id: string;
+  taskId?: string | null;
+  status: string;
+  triggeredAt?: string;
+  finishedAt?: string | null;
+  scheduledFor?: string | null;
+  error?: string | null;
+  skipReason?: string | null;
+  summary?: string | null;
+  notified?: boolean;
 };
 
 export type Artifact = {
@@ -186,4 +242,5 @@ export type SecretTestResult = {
 export type DesktopToken = {
   token: string;
   mode: string;
+  epoch?: number;
 };

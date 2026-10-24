@@ -1,7 +1,8 @@
 import { mkdirSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 
-const dir = "/opt/cursor/artifacts/admin-app";
+const dir = process.env.SHOT_DIR ?? "test-results/admin-app";
+test.skip(!process.env.ADMIN_URL, "ADMIN_URL is required for the imported admin shell.");
 
 type User = {
   id: string;
@@ -152,6 +153,7 @@ test("admin app renders in light and dark and edits users", async ({ page }) => 
   await page.getByTestId("model-label").fill("Claude Haiku 5.5");
   await page.getByTestId("platform-save").click();
   await expect(page.getByText("Platform settings saved.")).toBeVisible();
+  await expect(page.getByRole("link", { name: "AI models", exact: true }).first()).toBeVisible();
   await fit();
   await page.screenshot({ path: `${dir}/light-settings.png`, fullPage: true });
 
@@ -175,6 +177,7 @@ test("admin app renders in light and dark and edits users", async ({ page }) => 
   await expect(page.getByTestId("platform-form")).toBeVisible();
   await fit();
   await page.screenshot({ path: `${dir}/dark-settings.png`, fullPage: true });
+  state.signedIn = false; // login screenshots: the login page sends signed-in staff to the dashboard
   await page.goto("/login?theme=dark");
   await expect(page.getByTestId("admin-login")).toBeVisible();
   await page.screenshot({ path: `${dir}/dark-login.png`, fullPage: true });

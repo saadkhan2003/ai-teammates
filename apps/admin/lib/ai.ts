@@ -1,0 +1,12 @@
+export type Model = { id: string; label: string; vision: boolean; tools: boolean; caching: boolean; context_tokens: number; max_completion_tokens?: number; supported_parameters?: string[]; input_modalities?: string[]; expiration_date?: string; pricing?: Record<string, string> };
+export type Provider = { id: string; name: string; kind: string; base_url: string; enabled: boolean; models: Model[]; key_set: boolean; key_updated_at?: string };
+export type Target = { provider: string; model: string };
+export type Role = { primary: Target; fallbacks: Target[]; max_tokens?: number; temperature?: number; privacy?: boolean; min_context_tokens?: number };
+export type Rollout = { candidate_version: number | null; percent: number };
+export type Config = { roles: Record<string, Role>; caching: { enabled: boolean; anthropic_cache_control: boolean; session_id_per_conversation: boolean; ttl: string }; latency: { preferred_max_latency_ms: number | null }; credit_prices: Record<string, Record<string, { input_per_mtok: number; output_per_mtok: number; multiplier: number }>>; rollout: Rollout; retry?: { max_retries: number; allowed_fails: number; cooldown_seconds: number }; budgets?: unknown };
+export type Version = { version: number; config: Config; note: string; is_active: boolean; created_at: string };
+export type State = { providers: Provider[]; active_config: Config | null; version: number; rollout: Rollout; bootstrap: boolean; last_change?: string; bootstrap_config?: { kind: string; model: string } };
+export const emptyConfig = (): Config => ({ roles: {}, caching: { enabled: true, anthropic_cache_control: true, session_id_per_conversation: true, ttl: "5m" }, latency: { preferred_max_latency_ms: null }, credit_prices: {}, rollout: { candidate_version: null, percent: 0 } });
+export const input = "min-h-10 w-full rounded-[6px] border border-input bg-card px-3 text-sm";
+export const button = "inline-flex min-h-10 items-center justify-center rounded-[6px] border border-border px-3 text-sm hover:bg-accent disabled:opacity-50";
+export const card = "rounded-[8px] border border-border bg-card p-4 space-y-4";

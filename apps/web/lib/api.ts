@@ -1,4 +1,6 @@
+import { reportFailure, reportSuccess, wireConnectionEvents } from "@/lib/connection";
 import type { DesktopToken, SecretTestResult } from "@/lib/types";
+import { normalizeMemoryRows } from "@/lib/memory-notes";
 
 export class ApiError extends Error {
   status: number;
@@ -30,12 +32,21 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   if (typeof init.body === "string" && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  const response = await fetch(path, {
-    ...init,
-    headers,
-    credentials: "include",
-    cache: "no-store",
-  });
+  wireConnectionEvents();
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      ...init,
+      headers,
+      credentials: "include",
+      cache: "no-store",
+    });
+  } catch (caught) {
+    if (!(caught instanceof DOMException && caught.name === "AbortError")) reportFailure();
+    throw caught;
+  }
+  if ([502, 503, 504].includes(response.status)) reportFailure();
+  else reportSuccess();
   if (
     response.status === 401 &&
     typeof window !== "undefined" &&
@@ -43,6 +54,7 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   ) {
     window.location.assign("/login");
   }
+  if (path === "/api/auth/logout" && response.ok && typeof window !== "undefined") window.dispatchEvent(new Event("teammates-session-reset"));
   return response;
 }
 
@@ -97,14 +109,7 @@ export function normalizeFiles(data: unknown) {
 }
 
 export function normalizeMemories(data: unknown) {
-  return asList(data, ["memories", "items"]).map((entry, index) => {
-    const record = (entry ?? {}) as Record<string, unknown>;
-    return {
-      id: text(record.id) || `memory-${index + 1}`,
-      content: text(record.content ?? record.text),
-      createdAt: text(record.createdAt ?? record.created_at) || undefined,
-    };
-  });
+  return normalizeMemoryRows(data);
 }
 
 export function normalizeSkills(data: unknown) {
@@ -128,9 +133,28 @@ export function normalizeRoutines(data: unknown) {
       cron: text(record.cron),
       instruction: text(record.instruction) || undefined,
       nextRunAt: text(record.nextRunAt ?? record.next_run_at) || undefined,
+      enabled: record.enabled !== false,
       watchKind: text(record.watchKind ?? record.watch_kind) || undefined,
       watchRef: text(record.watchRef ?? record.watch_ref) || undefined,
-      enabled: record.enabled !== false,
+      kind: text(record.kind) || "recurring",
+      runAt: text(record.runAt ?? record.run_at) || undefined,
+      timezone: text(record.timezone) || "UTC",
+      pausedReason: text(record.pausedReason ?? record.paused_reason) || null,
+      failureStreak: Number(record.failureStreak ?? record.failure_streak) || 0,
+      quietRule: text(record.quietRule ?? record.quiet_rule) || null,
+      expiresAt: text(record.expiresAt ?? record.expires_at) || null,
+      jitterSeconds: Number(record.jitterSeconds ?? record.jitter_seconds) || 0,
+      runs: Array.isArray(record.runs) ? record.runs.map((run) => {
+        const item = (run ?? {}) as Record<string, unknown>;
+        return {
+          id: text(item.id), taskId: text(item.taskId ?? item.task_id) || null, status: text(item.status),
+          triggeredAt: text(item.triggeredAt ?? item.triggered_at) || undefined,
+          finishedAt: text(item.finishedAt ?? item.finished_at) || null,
+          scheduledFor: text(item.scheduledFor ?? item.scheduled_for) || null,
+          error: text(item.error) || null, skipReason: text(item.skipReason ?? item.skip_reason) || null,
+          summary: text(item.summary) || null, notified: item.notified !== false,
+        };
+      }) : [],
     };
   });
 }
@@ -233,6 +257,7 @@ export function readDesktopToken(data: unknown): DesktopToken {
   return {
     token: text(record.token),
     mode: text(record.mode) || "view",
+    epoch: typeof record.epoch === "number" ? record.epoch : undefined,
   };
 }
 
@@ -285,8 +310,8 @@ export function extractPrompt(entry: unknown): string {
     .join("\n\n");
 }
 
-export function isOpenRouterSecret(secret: { namespace?: string; name?: string }): boolean {
-  return secret.namespace === "openrouter" && secret.name === "default";
+export function isModelConnectionSecret(secret: { namespace?: string; name?: string }): boolean {
+  return secret.namespace === "ai_connection" && secret.name === "default";
 }
 
 export function splitList(value: string): string[] {

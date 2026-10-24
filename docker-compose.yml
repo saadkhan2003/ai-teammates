@@ -6,8 +6,7 @@ services:
     ports:
       - "18080:80"
       - "18443:443"
-      # Admin site. 18081 stays reserved for the API test publish.
-      - "18082:8081"
+      - "127.0.0.1:${ADMIN_PORT:-18082}:8081"
     environment:
       ADMIN_ALLOWLIST: ${ADMIN_ALLOWLIST:-0.0.0.0/0 ::/0}
     volumes:
@@ -15,6 +14,8 @@ services:
     networks:
       - front
     depends_on:
+      admin:
+        condition: service_started
       web:
         condition: service_started
       admin:
@@ -74,6 +75,8 @@ services:
       OWNER_USERNAME: ${OWNER_USERNAME:-saad}
       OWNER_PASSWORD: ${OWNER_PASSWORD:-teammates-dev}
       WORKER_TOKEN: ${WORKER_TOKEN:-dev-worker-token-change-me}
+      WEB_BOT_AUTH_ALLOWED_HOSTS: ${WEB_BOT_AUTH_ALLOWED_HOSTS:-}
+      WEB_BOT_AUTH_SIGNATURE_AGENT: ${WEB_BOT_AUTH_SIGNATURE_AGENT:-}
       COMPUTER_TOKEN: ${COMPUTER_TOKEN:-dev-computer-token-change-me}
       METRICS_TOKEN: ${METRICS_TOKEN:-dev-metrics-token-change-me}
       DOCKER_HOST: tcp://docker-proxy:2375
@@ -82,12 +85,18 @@ services:
       ISOLATION_TOKEN: ${ISOLATION_TOKEN:-dev-isolation-token-change-me}
       COMPUTE_IMAGE: teammates-computer:dev
       COMPUTE_PROVIDER: docker
+      COMPUTE_STACK: ${COMPUTE_STACK:-}
       SECCOMP_PROFILE: /var/lib/teammates/seccomp-chrome.json
       SNAPSHOT_DIR: /var/lib/teammates/snapshots
       MAX_COMPUTERS: ${MAX_COMPUTERS:-}
+      WARM_POOL_SIZE: ${WARM_POOL_SIZE:-0}
+      COMPUTER_READINESS_TIMEOUT_SECONDS: ${COMPUTER_READINESS_TIMEOUT_SECONDS:-45}
+      COMPUTER_CPU_GUARANTEE: ${COMPUTER_CPU_GUARANTEE:-2}
+      COMPUTER_CPU_BURST: ${COMPUTER_CPU_BURST:-4}
+      COMPUTER_NO_CPU_LIMITS: ${COMPUTER_NO_CPU_LIMITS:-false}
       CGROUP_PARENT: ${CGROUP_PARENT:-}
-      DISPLAY_GEOMETRY: ${DISPLAY_GEOMETRY:-1024x768}
-      DISPLAY_DEPTH: ${DISPLAY_DEPTH:-16}
+      DISPLAY_GEOMETRY: ${DISPLAY_GEOMETRY:-1920x1200}
+      DISPLAY_DEPTH: ${DISPLAY_DEPTH:-24}
       COMPUTER_DNS: ${COMPUTER_DNS:-1.1.1.1,8.8.8.8}
       COMPUTER_SECOND_DISPLAY: ${COMPUTER_SECOND_DISPLAY:-true}
       IDLE_SUSPEND_MINUTES: ${IDLE_SUSPEND_MINUTES:-10}
@@ -103,7 +112,7 @@ services:
       MODEL_PLANNER: ${MODEL_PLANNER:-mock/planner}
       MODEL_EMBEDDING: local-hash-64
       SECRETS_MASTER_KEY_FILE: /run/secrets/secrets_master_key
-      ENABLE_TEST_HOOKS: ${ENABLE_TEST_HOOKS:-true}
+      ENABLE_TEST_HOOKS: ${ENABLE_TEST_HOOKS:-false}
       MAX_PARALLEL_TASKS_PER_USER: ${MAX_PARALLEL_TASKS_PER_USER:-6}
     secrets:
       - secrets_master_key
@@ -145,7 +154,11 @@ services:
       API_URL: http://api:8080
       WORKER_TOKEN: ${WORKER_TOKEN:-dev-worker-token-change-me}
       WORKER_ID: ${WORKER_ID:-worker-1}
-      MAX_PARALLEL_TASKS: ${MAX_PARALLEL_TASKS_PER_USER:-6}
+      WEB_BOT_AUTH_ALLOWED_HOSTS: ${WEB_BOT_AUTH_ALLOWED_HOSTS:-}
+      WEB_BOT_AUTH_SIGNATURE_AGENT: ${WEB_BOT_AUTH_SIGNATURE_AGENT:-}
+      WORKER_PARALLEL_TASKS: ${WORKER_PARALLEL_TASKS:-4}
+      MODEL_CONTEXT_TOKENS: ${MODEL_CONTEXT_TOKENS:-32000}
+      COMPACT_MAX_MESSAGES: ${COMPACT_MAX_MESSAGES:-120}
       MALLOC_ARENA_MAX: "2"
     networks:
       back: {}

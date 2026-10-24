@@ -1,0 +1,29 @@
+#!/bin/sh
+# browser-window hide|show: iconify or restore the main Chromium window of this display.
+# hide: one pass, exit 3 when no window was found yet (the caller retries).
+# The desktop idles on the wallpaper and dock; the window comes back when the bot uses the browser.
+export DISPLAY="${DISPLAY:-:1}"
+action="${1:-show}"
+tries=1
+i=0
+while [ "$i" -lt "$tries" ]; do
+  found=0
+  for id in $(xdotool search --class chromium 2>/dev/null) $(xdotool search --class Chromium 2>/dev/null); do
+    geom=$(xdotool getwindowgeometry --shell "$id" 2>/dev/null || true)
+    width=$(printf '%s\n' "$geom" | awk -F= '/^WIDTH=/{print $2}')
+    height=$(printf '%s\n' "$geom" | awk -F= '/^HEIGHT=/{print $2}')
+    [ -n "$width" ] && [ -n "$height" ] || continue
+    [ $((width * height)) -gt 40000 ] || continue
+    found=1
+    if [ "$action" = hide ]; then
+      xdotool windowminimize "$id" >/dev/null 2>&1 || true
+    else
+      xdotool windowactivate "$id" >/dev/null 2>&1 || true
+    fi
+  done
+  [ "$found" = 1 ] && [ "$action" = hide ] && exit 0
+  [ "$action" = show ] && exit 0
+  i=$((i+1)); sleep 0.5
+done
+[ "$action" = hide ] && exit 3
+exit 0

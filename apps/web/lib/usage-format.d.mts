@@ -1,0 +1,13 @@
+export function percentLabel(percent: number | null | undefined): string;
+export function barWidth(percent: number | null | undefined): string;
+export function resetsLabel(days: number | null | undefined): string;
+export function creditsLabel(value: number | null | undefined): string;
+export function onDemandOptions(options: number[] | null | undefined): Array<{ value: string; label: string }>;
+export function elapsedLabel(seconds: number | null | undefined): string;
+export function screenLastUsedLabel(iso: string | null | undefined, now?: number): string | null;
+export function jobStatusLabel(status: string): string;
+export function isActiveJob(status: string): boolean;
+export function showBackgroundPill(running: number | null | undefined, screenBusy: boolean): boolean;
+export function bytesLabel(bytes: number | null | undefined): string;
+export function coresLabel(min: number | null | undefined, max: number | null | undefined): string;
+export function storageTone(state: string | null | undefined): string;

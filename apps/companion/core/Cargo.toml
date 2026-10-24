@@ -1,0 +1,29 @@
+[package]
+name = "companion-core"
+version = "0.4.0"
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+keyring = ["dep:keyring"]
+
+[dependencies]
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+futures-util = "0.3"
+keyring = { version = "3", optional = true, default-features = false, features = ["apple-native", "windows-native", "linux-native-sync-persistent"] }
+libc = "0.2"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+semver = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "process", "io-util", "net", "sync"] }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+url = "=2.4.1"
+uuid = { version = "=1.16.0", features = ["serde", "v4"] }
+
+[[bin]]
+name = "companion-cli"
+path = "src/bin/companion-cli.rs"

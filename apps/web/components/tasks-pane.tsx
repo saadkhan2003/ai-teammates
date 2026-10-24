@@ -13,12 +13,12 @@ import { errorMessage } from "@/lib/utils";
 export function TasksPane({
   botId,
   tasks,
-  openrouterConnected,
+  aiConnected,
   onChanged,
 }: {
   botId: string;
   tasks: Task[];
-  openrouterConnected: boolean;
+  aiConnected: boolean;
   onChanged?: () => void;
 }) {
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -44,8 +44,8 @@ export function TasksPane({
   return (
     <div data-testid="task-list">
       {tasks.length === 0 ? (
-        <p className="rounded-lg border border-line bg-paper px-4 py-3 text-body-sm text-muted-foreground">
-          No tasks yet. Send a message in Chat and the status will show up here.
+        <p className="rounded-lg border border-line bg-paper px-4 py-3 text-sm text-muted-foreground">
+          No tasks yet. Send work from Chat and the status will show up here.
         </p>
       ) : (
         <ScrollArea className="h-[min(60dvh,640px)]">
@@ -71,12 +71,12 @@ export function TasksPane({
                     </div>
                   ) : null}
                 </dl>
-                {task.status === "failed" && task.error ? <p role="alert" data-testid="task-error" className="mt-2 whitespace-pre-wrap text-body-sm text-destructive">{task.error}</p> : null}
-                {task.waitingReason ? <p className="mt-2 text-body-sm">{task.waitingReason}</p> : null}
-                {task.status === "waiting_resource" && openrouterConnected === false ? (
-                  <p className="mt-2 text-body-sm">
+                {task.status === "failed" && task.error ? <p role="alert" data-testid="task-error" className="mt-2 whitespace-pre-wrap text-sm text-destructive">{task.error}</p> : null}
+                {task.waitingReason ? <p className="mt-2 text-sm">{task.waitingReason}</p> : null}
+                {task.status === "waiting_resource" && aiConnected === false ? (
+                  <p className="mt-2 text-sm">
                     <Link href="/settings/secrets" className="font-medium text-copper-deep underline">
-                      Add a platform key
+                      Connect AI
                     </Link>
                   </p>
                 ) : null}

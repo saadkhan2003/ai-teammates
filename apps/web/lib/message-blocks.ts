@@ -1,14 +1,18 @@
+import { parseResumeBlock } from "@/lib/resume-blocks";
+import type { ResumeBlock } from "@/lib/resume-blocks";
+
 export type QuestionOption = { label: string; style: "primary" | "danger" };
 
 export type MessageBlock =
   | { kind: "text"; text: string }
   | { kind: "question"; prompt: string; options: QuestionOption[]; multiple: boolean; allowCustom: boolean; answer: string[] | null }
-  | { kind: "memory"; action: "saved" | "forgot"; text: string }
+  | { kind: "memory"; action: "saved" | "updated" | "forgot" | "suggested" | "blocked"; memoryId?: string; memoryKind?: string; text: string; previous?: string; reason?: string }
   | { kind: "form"; title: string; fields: FormField[] }
   | { kind: "file"; name: string; url?: string; mime?: string; size?: number }
   | { kind: "image"; name: string; url: string }
   | { kind: "video"; name: string; url: string }
-  | { kind: "coding-jobs" };
+  | { kind: "coding-jobs" }
+  | ResumeBlock;
 
 export type FormField = { name: string; label: string; secret?: boolean };
 
@@ -16,6 +20,8 @@ function asBlock(value: unknown): MessageBlock | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
   const type = String(record.type ?? record.kind ?? "");
+  const resume = parseResumeBlock(record);
+  if (resume) return resume;
   if (type === "question") {
     const styles = Array.isArray(record.styles) ? record.styles.map((item) => String(item)) : [];
     const options: QuestionOption[] = [];
@@ -45,8 +51,9 @@ function asBlock(value: unknown): MessageBlock | null {
     };
   }
   if (type === "memory" || type === "note") {
-    const action = String(record.action ?? "saved") === "forgot" ? "forgot" : "saved";
-    return { kind: "memory", action, text: String(record.content ?? record.text ?? record.fact ?? "") };
+    const action = String(record.action ?? "saved");
+    if (!["saved", "updated", "forgot", "suggested", "blocked"].includes(action)) return null;
+    return { kind: "memory", action: action as "saved" | "updated" | "forgot" | "suggested" | "blocked", memoryId: String(record.memoryId ?? record.memory_id ?? "") || undefined, memoryKind: String(record.kindName ?? record.memoryKind ?? record.noteKind ?? (record.type === "memory" ? record.kind : "") ?? "") || undefined, text: String(record.content ?? record.text ?? record.fact ?? ""), previous: typeof record.previous === "string" ? record.previous : undefined, reason: typeof record.reason === "string" ? record.reason : undefined };
   }
   if (type === "form" || type === "secure-form") {
     const fields: FormField[] = [];
@@ -88,7 +95,7 @@ export function messageBlocks(content: string): MessageBlock[] {
     }
   }
   const blocks: MessageBlock[] = [];
-  const pattern = /```(question|form|file|image|video|memory|coding-jobs)\n([\s\S]*?)```/g;
+  const pattern = /```(question|form|file|image|video|memory|coding-jobs|resume|resume_card)\n([\s\S]*?)```/g;
   let last = 0;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(content))) {

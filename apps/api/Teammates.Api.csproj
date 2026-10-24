@@ -6,10 +6,12 @@
     <RootNamespace>Teammates.Api</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <Content Include="../../services/agent/skills/builtin/*.md" Link="skills/builtin/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <EmbeddedResource Include="../../services/agent/workspace_shell.py" LogicalName="workspace_shell.py" />
     <EmbeddedResource Include="stdio_wrap.py" LogicalName="stdio_wrap.py" />
     <EmbeddedResource Include="app-guide.json" LogicalName="app-guide.json" />
     <EmbeddedResource Include="add_message_reply_to.sql" LogicalName="add_message_reply_to.sql" />
+    <EmbeddedResource Include="workspace_sync.py" LogicalName="workspace_sync.py" />
     <EmbeddedResource Include="..\..\services\computer\src\workspace.py" Link="workspace.py" LogicalName="workspace.py" />
   </ItemGroup>
   <ItemGroup>
@@ -20,5 +22,6 @@
     <PackageReference Include="AWSSDK.S3" Version="3.7.511.8" />
     <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
     <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.13" />
+    <PackageReference Include="NSec.Cryptography" Version="24.4.0" />
   </ItemGroup>
 </Project>

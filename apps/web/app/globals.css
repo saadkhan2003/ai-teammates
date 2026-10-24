@@ -5,6 +5,106 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Light greys from the desktop reference. Dark is the same system, inverted. */
+:root {
+  --background: #141414;
+  --foreground: #f5f5f5;
+  --card: #181818;
+  --card-foreground: #f5f5f5;
+  --popover: #181818;
+  --popover-foreground: #f5f5f5;
+  --primary: #f5f5f5;
+  --primary-foreground: #111111;
+  --secondary: #222222;
+  --secondary-foreground: #f5f5f5;
+  --muted: #282828;
+  --muted-foreground: #9a9a9a;
+  --accent: #242424;
+  --accent-foreground: #f5f5f5;
+  --destructive: #e11d48;
+  --destructive-foreground: #ffffff;
+  --border: #2a2a2a;
+  --input: #282828;
+  --ring: #737373;
+  --chart-1: #f5f5f5;
+  --chart-2: #a1a1a1;
+  --chart-3: #737373;
+  --chart-4: #3a3a3a;
+  --chart-5: #2a2a2a;
+  --radius: 6px;
+  --radius-button: 6px;
+  --radius-input: 6px;
+  --radius-card: 6px;
+  --radius-bubble: 6px;
+  --sidebar: #141414;
+  --sidebar-foreground: #f5f5f5;
+  --sidebar-primary: #f5f5f5;
+  --sidebar-primary-foreground: #111111;
+  --sidebar-accent: #242424;
+  --sidebar-accent-foreground: #f5f5f5;
+  --sidebar-border: #2a2a2a;
+  --sidebar-ring: #737373;
+  --brand: #c4622d;
+  --sage: #8fd0a8;
+  --sage-soft: rgba(143, 208, 168, 0.14);
+  --user-bubble: #3a3a3a;
+  --user-bubble-foreground: #f5f5f5;
+  --assistant-bubble: #262626;
+  --assistant-bubble-foreground: #f5f5f5;
+  --bot-accent: #e5253c;
+  --bot-accent-fg: #ffffff;
+  --bot-accent-text: #ff6b7b;
+  --bot-accent-ring: #ff6b7b;
+  --bot-accent-soft: rgba(229, 37, 60, 0.18);
+  --bot-accent-border: #ee6070;
+  --app-height: 100dvh;
+  --app-top: 0px;
+  color-scheme: dark;
+}
+
+html.light {
+  --background: #fafafa;
+  --foreground: #111111;
+  --card: #ffffff;
+  --card-foreground: #111111;
+  --popover: #ffffff;
+  --popover-foreground: #111111;
+  --primary: #111111;
+  --primary-foreground: #ffffff;
+  --secondary: #ebebeb;
+  --secondary-foreground: #111111;
+  --muted: #f6f6f6;
+  --muted-foreground: #8a8a8a;
+  --accent: #e4e4e4;
+  --accent-foreground: #111111;
+  --destructive: #be123c;
+  --destructive-foreground: #ffffff;
+  --border: #e5e5e5;
+  --input: #e5e5e5;
+  --ring: #a3a3a3;
+  --chart-1: #111111;
+  --chart-2: #525252;
+  --chart-3: #737373;
+  --chart-4: #d4d4d4;
+  --chart-5: #f6f6f6;
+  --sidebar: #f6f6f6;
+  --sidebar-foreground: #111111;
+  --sidebar-primary: #111111;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e4e4e4;
+  --sidebar-accent-foreground: #111111;
+  --sidebar-border: #ececec;
+  --sidebar-ring: #a3a3a3;
+  --brand: #c4622d;
+  --sage: #1f7a45;
+  --sage-soft: #e7f6ec;
+  --user-bubble: #111111;
+  --user-bubble-foreground: #ffffff;
+  --assistant-bubble: #ebebeb;
+  --assistant-bubble-foreground: #111111;
+  color-scheme: light;
+}
+
 @layer base {
   * {
     @apply border-border;
@@ -131,10 +231,6 @@ time,
   }
 }
 
-::selection {
-  background: color-mix(in srgb, var(--brand) 28%, transparent);
-  color: var(--foreground);
-}
 
 :focus-visible {
   outline: 2px solid var(--ring);
@@ -314,3 +410,87 @@ html:not(.light) .logo-dark-tile {
   background: var(--background);
   padding: 0;
 }
+
+/* Shimmer: the bright band sweeps across the words, ~2 s loop, still when motion is reduced. */
+.shimmer-word {
+  color: color-mix(in srgb, var(--foreground) 45%, transparent);
+  animation: shimmer-word 2s linear infinite;
+  animation-delay: calc(var(--i) / var(--n) * 1.3s - 2s);
+}
+@keyframes shimmer-word {
+  0%, 55%, 100% { color: color-mix(in srgb, var(--foreground) 45%, transparent); }
+  25% { color: var(--foreground); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shimmer-word { animation: none; color: var(--foreground); }
+}
+
+/* Bot-accent scrollbar and selection */
+* { scrollbar-color: var(--bot-accent-soft, rgba(255, 48, 69, 0.18)) transparent; }
+::selection { background: var(--bot-accent-soft, rgba(255, 48, 69, 0.3)); }
+
+
+/* Motion tokens: one set of durations and easings for the whole app (150-250 ms). */
+:root {
+  --motion-fast: 150ms;
+  --motion-base: 200ms;
+  --motion-slow: 250ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+@keyframes motion-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes motion-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes motion-pop-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(0.97); } }
+@keyframes motion-pop { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: none; } }
+/* Message arrival and approval cards: fade and slide up. */
+.motion-rise { animation: motion-rise var(--motion-base) var(--ease-out) both; }
+/* Skeleton to content cross-fade. */
+.motion-fade { animation: motion-fade var(--motion-slow) var(--ease-out) both; }
+/* Full computer view opening. */
+.motion-pop { animation: motion-pop var(--motion-base) var(--ease-out) both; }
+/* Full computer view closing. */
+.motion-pop-out { animation: motion-pop-out var(--motion-base) var(--ease-in-out) both; }
+/* Cards and rows: quiet hover and press. */
+.motion-card { transition: background-color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), box-shadow var(--motion-base) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+.motion-card:hover { transform: translateY(-1px); }
+.motion-card:active { transform: scale(0.99); }
+/* Expand and collapse of clamped text. */
+.motion-clamp { transition: max-height var(--motion-slow) var(--ease-in-out); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .motion-card:hover, .motion-card:active { transform: none; }
+}
+
+/* Collapsible sections open and close by height. */
+@keyframes collapsible-down { from { height: 0; opacity: 0; } to { height: var(--radix-collapsible-content-height); opacity: 1; } }
+@keyframes collapsible-up { from { height: var(--radix-collapsible-content-height); opacity: 1; } to { height: 0; opacity: 0; } }
+[data-radix-collapsible-content] { overflow: hidden; }
+[data-radix-collapsible-content][data-state="open"] { animation: collapsible-down var(--motion-base) var(--ease-out); }
+[data-radix-collapsible-content][data-state="closed"] { animation: collapsible-up var(--motion-base) var(--ease-out); }
+
+/* Jump-to-message highlight: held ~3 s, then fades out with ease-out over 600 ms (timing is set in lib/history.ts). */
+[data-jump] { border-radius: 1rem; }
+[data-jump="on"] { background-color: var(--bot-accent-soft); box-shadow: 0 0 0 4px var(--bot-accent-soft); }
+[data-jump="fade"] { background-color: transparent; box-shadow: 0 0 0 4px transparent; transition: background-color 600ms cubic-bezier(0, 0, 0.2, 1), box-shadow 600ms cubic-bezier(0, 0, 0.2, 1); }
+@media (prefers-reduced-motion: reduce) { [data-jump="fade"] { transition: none; } }
+
+/* Note 41 thin type: Inter ~380 body, 450 labels, 600 headings max; #e7e9ea primary on dark. */
+.thin-type {
+  font-weight: 380;
+  color: #e7e9ea;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-optical-sizing: auto;
+  font-feature-settings: "cv11", "ss01";
+}
+html.light .thin-type { color: var(--foreground); }
+.thin-type .t-label { font-weight: 450; }
+.thin-type .t-head { font-weight: 600; }

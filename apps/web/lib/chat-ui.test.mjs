@@ -4,7 +4,12 @@ import fs from "node:fs";
 import ts from "typescript";
 
 function load(path) {
-  const source = fs.readFileSync(new URL(path, import.meta.url), "utf8");
+  let source = fs.readFileSync(new URL(path, import.meta.url), "utf8");
+  if (path === "./message-blocks.ts") {
+    const resumeSource = fs.readFileSync(new URL("./resume-blocks.ts", import.meta.url), "utf8");
+    const resumeJs = ts.transpileModule(resumeSource, { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText;
+    source = source.replace('"@/lib/resume-blocks"', JSON.stringify(`data:text/javascript;base64,${Buffer.from(resumeJs).toString("base64")}`));
+  }
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } }).outputText;
   return import(`data:text/javascript;base64,${Buffer.from(js).toString("base64")}`);
 }

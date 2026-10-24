@@ -174,11 +174,13 @@ public static class AccountRoutes
         {
             var user = await User(ctx, platform);
             if (user == null) return Results.Unauthorized();
-            var plan = PlanCatalog.Find(Str(body, "planId"));
-            if (plan == null) return Results.BadRequest(new { error = "Unknown plan." });
             await using var conn = await platform.Data.OpenConnectionAsync();
-            var allowances = await Allowances(conn);
-            var (balance, allowance, planId) = BillingMath.ApplyPlan(plan.Id, allowances);
+            var configured = await conn.QuerySingleOrDefaultAsync<BillingPlan>("SELECT " + UsageMeter.PlanColumns() + " FROM billing_plans WHERE id=@id", new { id = Str(body, "planId") });
+            if (configured == null) return Results.BadRequest(new { error = "Unknown plan." });
+            var plan = new Plan(configured.Id, configured.Name, "Weekly usage plan", (int)(configured.PriceUsd * 100), (int)Math.Min(1_000_000, configured.WeeklyCredits * 4), []);
+            var planId = plan.Id;
+            var balance = plan.MonthlyCredits;
+            var allowance = balance;
             var checkout = provider.Checkout(new CheckoutRequest(planId, plan.PriceCents, "usd", user.Value.ToString()));
             if (checkout.ChargesCard || checkout.Provider != BillingProviders.Mock || checkout.Status != "completed")
                 return Results.Json(new { error = "Only the mock provider is available." }, statusCode: 409);
@@ -200,6 +202,8 @@ public static class AccountRoutes
                     """,
                     new { id = user, invoiceNumber, planId, amount = plan.PriceCents });
             }
+            await conn.ExecuteAsync("UPDATE users SET plan_id=@planId WHERE id=@id", new { id = user, planId });
+            platform.Usage.Invalidate(user.Value);
             await platform.Audit(user.Value.ToString(), "billing.checkout", null, null, new { planId, provider = checkout.Provider, chargesCard = false });
             return Results.Json(new { provider = checkout.Provider, status = checkout.Status, planId, chargesCard = false, checkoutUrl = (string?)null, invoiceNumber });
         });
@@ -270,7 +274,7 @@ public static class AccountRoutes
             var rows = (await conn.QueryAsync<AdminRow>(
                 """
                 SELECT u.id, u.username, u.display_name, coalesce(u.email, '') AS email, u.role, u.status,
-                       coalesce(b.plan_id, 'free') AS plan_id,
+                       u.plan_id AS plan_id,
                        coalesce(b.credit_balance, 500) AS credit_balance,
                        coalesce(b.credit_allowance, 500) AS credit_allowance,
                        count(m.id) AS model_calls,
@@ -281,6 +285,12 @@ public static class AccountRoutes
                 GROUP BY u.id, b.plan_id, b.credit_balance, b.credit_allowance
                 ORDER BY u.created_at
                 """)).ToList();
+            foreach (var row in rows)
+            {
+                var summary = await platform.Usage.SummaryAsync(row.Id, fresh: true);
+                row.CreditAllowance = (int)Math.Min(int.MaxValue, summary.Allowance);
+                row.CreditBalance = (int)Math.Min(int.MaxValue, Math.Max(0, summary.Allowance - summary.UsedCredits));
+            }
             var query = ctx.Request.Query["q"].ToString();
             var users = rows
                 .Where(row => AccountSearch.Matches(query, row.Username, row.DisplayName, row.Email))
@@ -321,13 +331,18 @@ public static class AccountRoutes
                 return Results.BadRequest(new { error = "Enter a model id and a label." });
             if (!body.TryGetProperty("allowances", out var raw) || raw.ValueKind != JsonValueKind.Object)
                 return Results.BadRequest(new { error = "Enter a credit grant for each plan." });
+            var knownPlans = (await conn.QueryAsync<string>("SELECT id FROM billing_plans")).ToHashSet(StringComparer.Ordinal);
             var allowances = new Dictionary<string, int>();
-            foreach (var plan in PlanCatalog.All)
+            foreach (var value in raw.EnumerateObject())
             {
-                if (!raw.TryGetProperty(plan.Id, out var value) || !value.TryGetInt32(out var credits) || credits < 0 || credits > 1_000_000)
-                    return Results.BadRequest(new { error = "Enter a credit grant for each plan." });
-                allowances[plan.Id] = credits;
+                if (!knownPlans.Contains(value.Name) || !value.Value.TryGetInt32(out var credits) || credits < 0 || credits > 1_000_000)
+                    return Results.BadRequest(new { error = "Enter a valid weekly credit grant for each plan." });
+                allowances[value.Name] = credits;
             }
+            if (allowances.Count == 0) return Results.BadRequest(new { error = "Enter a credit grant for a plan." });
+            foreach (var (id, credits) in allowances)
+                await conn.ExecuteAsync("UPDATE billing_plans SET weekly_credits=@credits,updated_at=now() WHERE id=@id", new { id, credits });
+            platform.Usage.InvalidateAll();
             await Upsert(conn, "model_id", modelId);
             await Upsert(conn, "model_label", modelLabel);
             await Upsert(conn, "credit_allowances", JsonSerializer.Serialize(allowances));
@@ -351,8 +366,10 @@ public static class AccountRoutes
             if (body.TryGetProperty("planId", out _))
             {
                 var nextPlan = Str(body, "planId");
-                if (PlanCatalog.Find(nextPlan) == null) return Results.BadRequest(new { error = "Unknown plan." });
-                (balance, allowance, planId) = BillingMath.ApplyPlan(nextPlan!, await Allowances(conn));
+                var configured = await conn.QuerySingleOrDefaultAsync<BillingPlan>("SELECT " + UsageMeter.PlanColumns() + " FROM billing_plans WHERE id=@nextPlan", new { nextPlan });
+                if (configured == null) return Results.BadRequest(new { error = "Unknown plan." });
+                planId = configured.Id;
+                balance = allowance = (int)Math.Min(1_000_000, configured.WeeklyCredits * 4);
             }
             int? setTo = body.TryGetProperty("creditBalance", out var setEl) && setEl.TryGetInt32(out var setValue) ? setValue : null;
             int? delta = body.TryGetProperty("creditDelta", out var deltaEl) && deltaEl.TryGetInt32(out var deltaValue) ? deltaValue : null;
@@ -369,6 +386,12 @@ public static class AccountRoutes
             await conn.ExecuteAsync(
                 "UPDATE billing_accounts SET plan_id=@planId, credit_balance=@balance, credit_allowance=@allowance, provider='mock', updated_at=now() WHERE user_id=@id",
                 new { id, planId, balance, allowance });
+            await conn.ExecuteAsync("UPDATE users SET plan_id=@planId WHERE id=@id", new { id, planId });
+            var summary = await platform.Usage.SummaryAsync(id, fresh: true);
+            var remaining = (int)Math.Min(int.MaxValue, Math.Max(0, summary.Allowance - summary.UsedCredits));
+            var grant = delta ?? (setTo is { } requested ? requested - remaining : 0);
+            if (grant != 0) await conn.ExecuteAsync("INSERT INTO credit_ledger(user_id,kind,credits,note,actor_id) VALUES(@id,'grant',@grant,'staff balance adjustment',@actor)", new { id, grant, actor });
+            platform.Usage.Invalidate(id);
             await platform.Audit(actor.Value.ToString(), "billing.adjust", null, null, new { userId = id, planId, balance });
             return Results.Json(new { id, planId, creditBalance = balance, creditAllowance = allowance });
         });
@@ -411,13 +434,13 @@ public static class AccountRoutes
         };
     }
 
-    static async Task EnsureBilling(System.Data.Common.DbConnection conn, Guid id)
+    internal static async Task EnsureBilling(System.Data.Common.DbConnection conn, Guid id)
     {
         var free = PlanCatalog.Find("free")!;
         await conn.ExecuteAsync(
             """
             INSERT INTO billing_accounts (user_id, plan_id, credit_balance, credit_allowance, provider)
-            VALUES (@id, 'free', @credits, @credits, 'mock')
+            SELECT u.id,u.plan_id,LEAST(1000000,p.weekly_credits*4)::int,LEAST(1000000,p.weekly_credits*4)::int,'mock' FROM users u JOIN billing_plans p ON p.id=u.plan_id WHERE u.id=@id
             ON CONFLICT (user_id) DO NOTHING
             """,
             new { id, credits = free.MonthlyCredits });
@@ -444,18 +467,22 @@ public static class AccountRoutes
         var row = await LoadBilling(conn, id);
         var invoices = await conn.QueryAsync<InvoiceRow>("SELECT id, number, plan_id, amount_cents, currency, status, provider, issued_at FROM invoices WHERE user_id=@id ORDER BY issued_at DESC", new { id });
         var mock = string.Equals(platform.LlmProvider, "mock", StringComparison.OrdinalIgnoreCase);
+        var plans = await conn.QueryAsync<BillingPlan>("SELECT " + UsageMeter.PlanColumns() + " FROM billing_plans ORDER BY price_usd");
+        var currentPlan = await conn.ExecuteScalarAsync<string>("SELECT plan_id FROM users WHERE id=@id", new { id });
+        var summary = await platform.Usage.SummaryAsync(id, fresh: true);
         return new
         {
-            planId = row.PlanId,
-            creditBalance = row.CreditBalance,
-            creditAllowance = row.CreditAllowance,
-            usedCredits = BillingMath.Used(row.CreditAllowance, row.CreditBalance),
-            usedPercent = BillingMath.Percent(row.CreditAllowance, row.CreditBalance),
+            planId = currentPlan ?? row.PlanId,
+            creditBalance = Math.Max(0, summary.Allowance - summary.UsedCredits),
+            creditAllowance = summary.Allowance,
+            usedCredits = summary.UsedCredits,
+            usedPercent = summary.Percent,
             provider = BillingProviders.Mock,
             chargesCard = false,
             mockMode = mock,
-            renewsAt = BillingMath.RenewsAt(row.PeriodStart),
-            plans = PlanCatalog.All.Select(plan => new { id = plan.Id, name = plan.Name, detail = plan.Detail, priceCents = plan.PriceCents, monthlyCredits = plan.MonthlyCredits, features = plan.Features }),
+            renewsAt = summary.ResetsAt,
+            period = "week",
+            plans = plans.Select(plan => new { id = plan.Id, name = plan.Name, detail = "Weekly usage plan", priceCents = (int)(plan.PriceUsd * 100), monthlyCredits = (int)Math.Min(1_000_000, plan.WeeklyCredits * 4), weeklyCredits = plan.WeeklyCredits, features = new[] { $"{plan.WeeklyCredits:N0} credits each week", $"{plan.StorageQuotaGb} GB storage" } }),
             invoices = invoices.Select(item => new
             {
                 id = item.Id,
@@ -479,11 +506,9 @@ public static class AccountRoutes
         return (id!, label!.Trim());
     }
 
-    static async Task<Dictionary<string, int>> Allowances(System.Data.Common.DbConnection conn)
-    {
-        var json = await conn.ExecuteScalarAsync<string>("SELECT value FROM platform_settings WHERE key='credit_allowances'");
-        return PlanCatalog.TryParseAllowances(json, out var parsed) ? parsed : PlanCatalog.DefaultAllowances();
-    }
+    static async Task<Dictionary<string, int>> Allowances(System.Data.Common.DbConnection conn) =>
+        (await conn.QueryAsync<(string Id, long Credits)>("SELECT id,weekly_credits FROM billing_plans"))
+            .ToDictionary(row => row.Id,row => (int)Math.Min(int.MaxValue,row.Credits));
 
     static async Task Upsert(System.Data.Common.DbConnection conn, string key, string value)
     {

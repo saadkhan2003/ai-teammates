@@ -2,9 +2,13 @@
 
 import { Eye, MousePointer2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { type ReactNode } from "react";
+import { ComputerState, DisplayDots, type ComputerPhase } from "@/components/computer-preview-state";
+import { Maximize2, Minimize2, Minus, X } from "lucide-react";
 import { toast } from "sonner";
 import { BotAvatar } from "@/components/bot-avatar";
 import { Button } from "@/components/ui/button";
+import { ComputerJobs } from "@/components/computer-jobs";
 import { api, readDesktopToken } from "@/lib/api";
 import { controlActionLabel } from "@/lib/chat-ui";
 import type { BrowserPage, Task } from "@/lib/types";
@@ -29,9 +33,9 @@ function keysymFor(char: string) {
   return code < 0x100 ? code : 0x01000000 + code;
 }
 
-function socketUrl(token: string) {
+function socketUrl(token: string, windowId: string) {
   const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${scheme}://${window.location.host}/vnc/websockify?token=${encodeURIComponent(token)}`;
+  return `${scheme}://${window.location.host}/vnc/websockify?token=${encodeURIComponent(token)}&window=${encodeURIComponent(windowId)}`;
 }
 
 function statusLabel(state: VncState) {
@@ -103,6 +107,16 @@ function releaseSocket(rfb: RfbClient | null): Promise<void> {
   });
 }
 
+function desktopTabId(): string {
+  const key = "teammates.desktop.tab";
+  let value = sessionStorage.getItem(key);
+  if (!value) {
+    value = crypto.randomUUID();
+    sessionStorage.setItem(key, value);
+  }
+  return value;
+}
+
 export function ComputerPane({
   botId,
   tasks,
@@ -113,9 +127,15 @@ export function ComputerPane({
   caption,
   avatarShape,
   avatarColor,
-  fullscreen = false,
+  avatar,
+  displays = 1,
+  fullscreen: fullscreenProp = false,
   onExpand,
   onExitFullscreen,
+  recording = false,
+  autoControlKey = 0,
+  handBackKey = 0,
+  onHandedBack,
 }: {
   botId: string;
   tasks: Task[];
@@ -126,13 +146,35 @@ export function ComputerPane({
   caption?: string;
   avatarShape?: string;
   avatarColor?: string;
+  avatar?: ReactNode;
+  displays?: number;
   fullscreen?: boolean;
   onExpand?: () => void;
   onExitFullscreen?: () => void;
+  recording?: boolean;
+  /** Bumping this number takes control of the desktop (used when teaching a task). */
+  autoControlKey?: number;
+  /** Bumping this number hands control back when this pane currently holds it. */
+  handBackKey?: number;
+  onHandedBack?: () => void;
 }) {
+  // Leaving the full view plays a short fade-and-shrink before the panel layout comes back.
+  const [exiting, setExiting] = useState(false);
+  const wasFull = useRef(fullscreenProp);
+  useEffect(() => {
+    const was = wasFull.current;
+    wasFull.current = fullscreenProp;
+    if (fullscreenProp) { setExiting(false); return; }
+    if (!was || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    setExiting(true);
+    const timer = window.setTimeout(() => setExiting(false), 200);
+    return () => window.clearTimeout(timer);
+  }, [fullscreenProp]);
+  const fullscreen = fullscreenProp || exiting;
   const screenRef = useRef<HTMLDivElement>(null);
   const rfbRef = useRef<RfbClient | null>(null);
   const sessionRef = useRef(0);
+  const leaseEpoch = useRef(0);
   const modeRef = useRef<DesktopMode>("view");
   const ignoreRef = useRef(new Set<number>());
   const connectGen = useRef(0);
@@ -152,6 +194,8 @@ export function ComputerPane({
   const mobileRef = useRef(false);
   const armedControl = useRef(false);
   const stageRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [collapsedView, setCollapsedView] = useState(false);
   const frameRef = useRef<HTMLDivElement>(null);
   const keyRef = useRef<HTMLInputElement>(null);
   const keyValue = useRef("");
@@ -162,7 +206,12 @@ export function ComputerPane({
   const [vncState, setVncState] = useState<VncState>("disconnected");
   const [mode, setMode] = useState<DesktopMode>("view");
   const [error, setError] = useState<string | null>(null);
+  const [connectFailed, setConnectFailed] = useState(false);
+  const [desktopAsleep, setDesktopAsleep] = useState(false);
+  const wakeRequested = useRef(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState(true);
+  const [online, setOnline] = useState(true);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [keyboard, setKeyboard] = useState(false);
@@ -201,7 +250,7 @@ export function ComputerPane({
     screen.replaceChildren();
     const session = ++sessionRef.current;
     const RFB = imported.default;
-    const rfb = new RFB(screen, socketUrl(token)) as unknown as RfbClient;
+    const rfb = new RFB(screen, socketUrl(token, botIdRef.current)) as unknown as RfbClient;
     const resolved: DesktopMode = mobileRef.current && nextMode === "control" && !armedControl.current ? "view" : nextMode;
     rfb.scaleViewport = true;
     rfb.showDotCursor = true;
@@ -258,28 +307,57 @@ export function ComputerPane({
         await releaseSocket(previous);
       }
       if (gen !== connectGen.current || !wantViewRef.current) return;
-      const raw = await api<unknown>(path, { method: "POST" });
+      const raw = await api<unknown>(path, { method: "POST", headers: { "X-Desktop-Tab": desktopTabId() } });
       if (gen !== connectGen.current || !wantViewRef.current) return;
       const token = readDesktopToken(raw);
+      if (typeof token.epoch === "number") leaseEpoch.current = token.epoch;
       const mode = token.mode === "control" ? "control" : nextMode;
       await openSocket(token.token, mode, gen);
     });
   }
 
-  async function startView() {
+  // Headless computers: the desktop only starts for browser or desktop work, Watch or Take
+  // control. Opening the panel checks first and shows "Desktop asleep" instead of waking it.
+  async function desktopIsAsleep(): Promise<boolean> {
+    try {
+      const state = await api<{ desktop?: string }>("/api/computer/desktop");
+      return state?.desktop === "asleep";
+    } catch {
+      return false;
+    }
+  }
+
+  async function startView(force = false) {
     if (!wantViewRef.current) return;
     if (liveRef.current || openingRef.current || pendingRef.current) return;
     pendingRef.current = true;
     clearReconnect();
     const gen = ++connectGen.current;
     setError(null);
+    if (!force && !wakeRequested.current && (await desktopIsAsleep())) {
+      if (gen === connectGen.current) {
+        pendingRef.current = false;
+        setConnecting(false);
+        setConnectFailed(false);
+        setDesktopAsleep(true);
+      }
+      return;
+    }
+    if (gen !== connectGen.current || !wantViewRef.current) {
+      pendingRef.current = false;
+      return;
+    }
+    setDesktopAsleep(false);
+    setConnecting(true);
     try {
-      await openView("view", `/api/bots/${botIdRef.current}/computer/view-token`, gen);
+      await openView("view", `/api/computers/${botIdRef.current}/vnc-ticket?role=watch`, gen);
     } catch (caught) {
       if (gen !== connectGen.current || !wantViewRef.current) return;
       liveRef.current = false;
       openingRef.current = false;
       setVncState("disconnected");
+      setConnecting(false);
+      setConnectFailed(true);
       setError(errorMessage(caught, "Could not open the desktop."));
       scheduleViewReconnect();
     } finally {
@@ -302,7 +380,7 @@ export function ComputerPane({
   }
 
   useEffect(() => {
-    const onChange = () => setNativeFs(document.fullscreenElement === stageRef.current);
+    const onChange = () => setNativeFs(!!document.fullscreenElement && (document.fullscreenElement === stageRef.current || document.fullscreenElement === rootRef.current));
     document.addEventListener("fullscreenchange", onChange);
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, []);
@@ -335,6 +413,45 @@ export function ComputerPane({
     // Reconnect when the bot changes. Cleanup closes the previous socket first.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [botId]);
+
+  useEffect(() => {
+    if (vncState === "connected") { setConnecting(false); setConnectFailed(false); setDesktopAsleep(false); wakeRequested.current = false; }
+  }, [vncState]);
+
+  // While the desktop sleeps, look again every few seconds; connect once a task wakes it.
+  useEffect(() => {
+    if (!desktopAsleep) return;
+    const timer = window.setInterval(() => {
+      if (!wantViewRef.current || document.visibilityState !== "visible") return;
+      void desktopIsAsleep().then((asleep) => {
+        if (asleep || !wantViewRef.current) return;
+        setDesktopAsleep(false);
+        void startView();
+      });
+    }, 5000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [desktopAsleep]);
+
+  useEffect(() => {
+    const update = () => setOnline(navigator.onLine);
+    update();
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => { window.removeEventListener("online", update); window.removeEventListener("offline", update); };
+  }, []);
+
+  const phase: ComputerPhase = !online ? "offline" : vncState === "connected" ? "live" : desktopAsleep ? "desktop-asleep" : error || connectFailed ? "error" : connecting ? "connecting" : "sleeping";
+
+  function retryConnect() {
+    wantViewRef.current = true;
+    reconnectAttempt.current = 0;
+    clearReconnect();
+    // Watch: this is the one panel action that starts a sleeping desktop.
+    wakeRequested.current = true;
+    setDesktopAsleep(false);
+    void startView(true);
+  }
 
   const paneOpened = useRef(false);
   useEffect(() => {
@@ -381,7 +498,7 @@ export function ComputerPane({
     pendingRef.current = true;
     const gen = ++connectGen.current;
     try {
-      await openView("control", `/api/bots/${botId}/computer/take-control`, gen);
+      await openView("control", `/api/computers/${botId}/vnc-ticket?role=control&transfer=true`, gen);
       if (gen === connectGen.current) onChanged();
     } catch (caught) {
       if (gen === connectGen.current) setError(errorMessage(caught, "Could not take control."));
@@ -390,6 +507,35 @@ export function ComputerPane({
       setBusy(null);
     }
   }
+
+  useEffect(() => {
+    if (mode !== "control") return;
+    const timer = window.setInterval(() => {
+      void api(`/api/computers/${botId}/lease`, { method: "POST", body: JSON.stringify({ action: "heartbeat", tabId: desktopTabId(), epoch: leaseEpoch.current }) }).then((result) => {
+        const value = result as { epoch?: unknown };
+        if (typeof value?.epoch === "number") leaseEpoch.current = value.epoch;
+      }).catch(() => {
+        setError("The control lease expired. Take control again to continue.");
+      });
+    }, 10_000 + Math.floor(Math.random() * 1000));
+    return () => window.clearInterval(timer);
+  }, [botId, mode]);
+
+  const autoKey = useRef(autoControlKey);
+  useEffect(() => {
+    if (autoControlKey === autoKey.current) return;
+    autoKey.current = autoControlKey;
+    if (autoControlKey > 0) void takeControl();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoControlKey]);
+
+  const handBackKeyRef = useRef(handBackKey);
+  useEffect(() => {
+    if (handBackKey === handBackKeyRef.current) return;
+    handBackKeyRef.current = handBackKey;
+    if (handBackKey > 0 && modeRef.current === "control") void handBack();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handBackKey]);
 
   function place(nextZoom: number, nextPan: { x: number; y: number }) {
     const frame = frameRef.current;
@@ -415,7 +561,7 @@ export function ComputerPane({
   }
 
   async function toggleFullscreen() {
-    const node = stageRef.current;
+    const node = fullscreenRef.current ? rootRef.current : stageRef.current;
     if (!node) return;
     try {
       if (document.fullscreenElement) await document.exitFullscreen();
@@ -503,7 +649,7 @@ export function ComputerPane({
     const gen = ++connectGen.current;
     pendingRef.current = true;
     try {
-      await api(`/api/bots/${botId}/computer/hand-back`, { method: "POST" });
+      await api(`/api/bots/${botId}/computer/hand-back`, { method: "POST", body: JSON.stringify({ tabId: desktopTabId(), epoch: leaseEpoch.current }) });
       ignoreRef.current.add(sessionRef.current);
       const closing = activeSocket ?? rfbRef.current;
       rfbRef.current = null;
@@ -517,10 +663,49 @@ export function ComputerPane({
       setVncState("disconnected");
       await startView();
       onChanged();
+      onHandedBack?.();
     } catch (caught) {
       setError(errorMessage(caught, "Could not hand the computer back."));
     } finally {
       if (gen === connectGen.current) pendingRef.current = false;
+      setBusy(null);
+    }
+  }
+
+  async function forceRelease() {
+    const reason = window.prompt("Reason for releasing this desktop lease:")?.trim();
+    if (!reason) return;
+    setBusy("force-release");
+    setError(null);
+    try {
+      await api(`/api/computers/${botId}/lease/force-release`, {
+        method: "POST",
+        body: JSON.stringify({ reason, epoch: leaseEpoch.current }),
+      });
+      armedControl.current = false;
+      modeRef.current = "view";
+      setMode("view");
+      const closing = activeSocket ?? rfbRef.current;
+      rfbRef.current = null;
+      await enqueueSocket(() => releaseSocket(closing));
+      if (wantViewRef.current) await startView();
+      onChanged();
+    } catch (caught) {
+      setError(errorMessage(caught, "Could not release the desktop lease."));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function continueBot() {
+    setBusy("continue");
+    setError(null);
+    try {
+      await api(`/api/computers/${botId}/continue`, { method: "POST" });
+      onChanged();
+    } catch (caught) {
+      setError(errorMessage(caught, "Could not continue the bot."));
+    } finally {
       setBusy(null);
     }
   }
@@ -546,7 +731,7 @@ export function ComputerPane({
     try {
       await api(`/api/bots/${botId}/computer/human-input`, {
         method: "POST",
-        body: JSON.stringify({ selector: "#human-check" }),
+        body: JSON.stringify({ selector: "#human-check", tabId: desktopTabId(), epoch: leaseEpoch.current }),
       });
       toast.success("Click sent.");
       onChanged();
@@ -572,6 +757,7 @@ export function ComputerPane({
       if (event.pointerType === "mouse" || event.pointerType === "") {
         // noVNC inserts a capture element on pointerdown, so the later click is retargeted
         // and never reaches this frame. Expand from the pointerdown itself.
+        if ((event.target as HTMLElement | null)?.closest?.("[data-no-expand]")) return;
         if (compactRef.current && !fullscreenRef.current) expandRef.current?.();
         return;
       }
@@ -647,93 +833,75 @@ export function ComputerPane({
       )}
     </div>
   );
+  useEffect(() => {
+    if (!fullscreen) return;
+    setCollapsedView(false);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || document.fullscreenElement) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onExitFullscreen?.();
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [fullscreen, onExitFullscreen]);
+
+  async function closeView() {
+    if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
+    if (mode === "control" || holder === "human") await handBack();
+    onExitFullscreen?.();
+  }
+
+  const fillWindow = fullscreen || nativeFs || !compact;
   const view = (
     <div
+      ref={rootRef}
       data-testid="computer-tab"
+      data-power={power}
       data-vnc-state={vncState}
       data-desktop-mode={mode}
-      data-power={power}
-      className={cn("flex min-h-0 min-w-0 flex-col gap-3", !compact && "md:flex-1", fullscreen && "fixed inset-0 z-[80] gap-2 overflow-hidden bg-background p-3")}
+      className={cn("flex min-h-0 min-w-0 flex-col gap-3", !compact && "md:flex-1", fullscreen && !exiting && "motion-pop", exiting && "motion-pop-out pointer-events-none", fullscreen && "dark fixed inset-0 z-[80] gap-0 overflow-hidden bg-[#141414] px-3 pb-[11px] pt-[33px] text-neutral-100 sm:px-6")}
     >
-      <div ref={stageRef} data-testid="desktop-stage" className={cn("relative flex min-h-0 min-w-0 flex-col gap-2", fill && "h-full flex-1 bg-background")}>
+      <div ref={stageRef} data-testid="desktop-stage" className={cn("relative flex min-h-0 min-w-0 flex-col gap-2 bg-background", !compact && "md:min-h-[14rem] md:flex-1", fullscreen && "flex-1 gap-[3px] bg-transparent")}>
         {fullscreen ? (
-          <div className="flex shrink-0 items-center justify-end">
+          <div className="absolute inset-x-0 -top-8 flex h-7 items-center justify-end gap-1" data-testid="computer-topbar">
+            <p className="sr-only">{caption || "Teammate"}&apos;s computer</p>
             <p data-testid="vnc-status" className="sr-only">{statusLabel(vncState)}</p>
-            <Button type="button" data-testid="computer-close" variant="outline" className="min-h-11 bg-card" onClick={onExitFullscreen}>
-              Close
-            </Button>
+            {mode === "control" ? <Button type="button" data-testid="desktop-keyboard-toggle" variant="ghost" size="sm" className="h-7 px-2 text-xs text-neutral-300 hover:bg-white/10 hover:text-white" aria-pressed={keyboard} onClick={toggleKeyboard}>Keyboard</Button> : null}
+            {zoom > 1.01 ? <Button type="button" data-testid="desktop-fit" variant="ghost" size="sm" className="h-7 px-2 text-xs text-neutral-300 hover:bg-white/10 hover:text-white" onClick={fitWidth}>Fit</Button> : null}
+            <button type="button" data-testid="computer-minimise" className="inline-grid h-7 w-7 place-items-center rounded-md text-neutral-300 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/60" aria-label="Minimise to the panel" title="Minimise to the panel" onClick={() => { if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined); onExitFullscreen?.(); }}><Minimize2 className="h-4 w-4 text-[#e8a35a]" aria-hidden /></button>
+            <button type="button" data-testid="computer-collapse" className="inline-grid h-7 w-7 place-items-center rounded-md text-neutral-300 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/60" aria-expanded={!collapsedView} aria-controls="computer-frame-wrap" title={collapsedView ? "Restore" : "Collapse"} onClick={() => setCollapsedView(v => !v)}><Minus className="h-4 w-4" aria-hidden /><span className="sr-only">{collapsedView ? "Restore" : "Collapse"}</span></button>
+            <button type="button" data-testid="desktop-fullscreen" className="inline-grid h-7 w-7 place-items-center rounded-md text-neutral-300 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/60" aria-pressed={nativeFs} title={nativeFs ? "Exit full screen" : "Full screen"} onClick={() => void toggleFullscreen()}><Maximize2 className="h-4 w-4" aria-hidden /><span className="sr-only">{nativeFs ? "Compact" : "Full screen"}</span></button>
+            <button type="button" data-testid="computer-close" className="inline-grid h-7 w-7 place-items-center rounded-md text-neutral-300 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/60" aria-label="Close the computer" title="Close the computer" onClick={() => void closeView()}><X className="h-4 w-4" aria-hidden /></button>
           </div>
-        ) : (
-          <div className="flex shrink-0 flex-col gap-1">
-            <p className="text-body-sm text-muted-foreground">{holder === "human" ? "You have the computer." : "The agent has the computer."}</p>
-            <p data-testid="vnc-status" className="text-body-sm font-medium">{statusLabel(vncState)}</p>
-            {mode === "view" ? (
-              <p data-testid="watch-only" className="text-body-sm font-medium md:hidden">
-                Watch only
-              </p>
-            ) : null}
-            <p className="text-meta text-muted-foreground">{mode === "control" ? "The pointer is yours." : "View only, until you take control."}</p>
-          </div>
-        )}
-        {asleep ? (
-          <button type="button" data-testid="computer-asleep" className="flex w-full flex-col items-center gap-1 rounded-xl bg-card px-3 py-5 text-card-foreground" disabled={busy !== null} onClick={() => void wake()}>
-            <span className="flex items-end gap-2">
-              <span className="opacity-50 grayscale">
-                <BotAvatar botId={botId} shape={avatarShape} color={avatarColor} size={40} />
-              </span>
-              <span className="pb-1 text-body-sm tracking-widest text-muted-foreground" aria-hidden>z z</span>
-            </span>
-            <span className="text-body-sm font-medium">Computer is asleep</span>
-            <span data-testid="computer-wake" className="text-meta text-muted-foreground">Tap to wake</span>
-          </button>
         ) : null}
-        <div className={cn("grid w-full place-items-center", asleep && "hidden", fill && "min-h-0 w-full flex-1")}>
-          <div data-testid="computer-thumbnail" className="group relative w-full">
-            <div
-              ref={frameRef}
-              data-testid="desktop-frame"
-              data-zoom={zoom.toFixed(2)}
-              className={cn(
-                "relative touch-none overflow-hidden bg-background",
-                fullscreen ? "rounded-dialog" : "rounded-control",
-                fill ? "h-full min-h-[12rem] w-full" : "aspect-video w-full",
-                compact && !fullscreen && "cursor-pointer",
-              )}
-              onClickCapture={() => {
-                if (compact && !fullscreen) onExpand?.();
-              }}
-            >
-              <div
-                ref={screenRef}
-                className="absolute inset-0"
-                style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%`, left: pan.x, top: pan.y }}
-                aria-label="Bot desktop"
-              />
-            </div>
-            {!fullscreen ? (
-              <button
-                type="button"
-                data-testid="computer-open"
-                className={cn("absolute inset-0 z-10 grid place-items-center bg-overlay opacity-0 pointer-events-none transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100", fullscreen ? "rounded-dialog" : "rounded-control")}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onExpand?.();
-                }}
-              >
-                <span className="computer-open-label rounded-full px-3 py-1 text-body-sm font-medium">↗ Open</span>
-              </button>
-            ) : null}
-          </div>
-        </div>
-        {!fullscreen && caption ? (
-          <p data-testid="computer-caption" className="text-center text-meta text-muted-foreground">{caption}&apos;s screen</p>
-        ) : null}
-        <div className={cn("flex justify-center", fullscreen && "pointer-events-none absolute inset-x-0 bottom-4")}>
-          <div className={fullscreen ? "pointer-events-auto" : undefined}>{controlPill}</div>
-        </div>
-        {!fullscreen ? (
+        {compact ? null : fullscreen ? null : (
+        <div className="flex shrink-0 flex-col gap-2">
+          <p className="text-sm text-muted-foreground">
+            {holder === "human" ? "You have the computer." : "The agent has the computer."}
+          </p>
+          <p data-testid="vnc-status" className="text-sm font-medium">
+            {statusLabel(vncState)}
+          </p>
+          {mode === "view" ? (
+            <p data-testid="watch-only" className="text-sm font-medium md:hidden">
+              Watch only
+            </p>
+          ) : null}
           <div className="flex flex-wrap gap-2">
-            <Button data-testid="desktop-fullscreen" variant="secondary" className="min-h-11 flex-1" onClick={() => void toggleFullscreen()}>
+            <Button data-testid="take-control" className="min-h-11 flex-1" disabled={busy !== null} onClick={() => void takeControl()}>
+              Take over here
+            </Button>
+            <Button data-testid="hand-back" variant="secondary" className="min-h-11 flex-1 border-2 border-foreground font-semibold" disabled={busy !== null} onClick={() => void handBack()}>
+              Hand back
+            </Button>
+            {holder === "human" ? <Button data-testid="force-release" variant="destructive" className="min-h-11 flex-1" disabled={busy !== null} onClick={() => void forceRelease()}>Force release</Button> : null}
+            <Button
+              data-testid="desktop-fullscreen"
+              variant="secondary"
+              className="min-h-11 flex-1"
+              onClick={() => void toggleFullscreen()}
+            >
               Full screen
             </Button>
             <Button data-testid="desktop-keyboard-toggle" variant="secondary" className="min-h-11 flex-1" aria-pressed={keyboard} onClick={toggleKeyboard}>
@@ -743,12 +911,84 @@ export function ComputerPane({
               Fit width
             </Button>
           </div>
+          <p className="text-xs text-muted-foreground">
+            {mode === "control" ? "The pointer is yours." : "View only, until you take control."}
+          </p>
+        </div>
+        )}
+        <div data-testid="computer-thumbnail" id="computer-frame-wrap" className={cn("grid w-full place-items-center", fullscreen && collapsedView && "hidden", fillWindow && (fullscreen || nativeFs ? "min-h-0 w-full flex-1 [container-type:size]" : "md:min-h-[14rem] md:w-full md:flex-1 md:[container-type:size]"))}>
+        <div
+          ref={frameRef}
+          data-testid="desktop-frame"
+          data-phase={phase}
+          data-zoom={zoom.toFixed(2)}
+          className={cn(
+            "relative touch-none overflow-hidden bg-background",
+            fillWindow
+              ? (fullscreen ? "aspect-[16/10] w-[min(100cqw,160cqh)]" : nativeFs ? "h-full w-full" : "aspect-[16/10] w-full md:aspect-auto md:h-full")
+              : "aspect-[16/10] w-full",
+            compact && "cursor-pointer rounded-xl border border-border bg-black",
+            fullscreen && "rounded-lg border border-white/10 bg-black shadow-[0_8px_40px_rgba(0,0,0,0.55)]",
+            fullscreen && recording && "outline outline-2 outline-offset-2 outline-red-500",
+            fullscreen && mode === "control" && !recording && "ring-2 ring-bot/70",
+          )}
+          data-recording={recording ? "true" : undefined}
+          role={compact && !fullscreen ? "button" : undefined}
+          tabIndex={compact && !fullscreen ? 0 : undefined}
+          aria-label={compact && !fullscreen ? `Open ${caption || "Teammate"}'s computer` : undefined}
+          onKeyDown={compact && !fullscreen ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onExpand?.(); } } : undefined}
+          onClickCapture={(event) => {
+            if ((event.target as HTMLElement).closest?.("[data-no-expand]")) return;
+            if (compact && !fullscreen) onExpand?.();
+          }}
+        >
+          <div
+            ref={screenRef}
+            className="absolute inset-0"
+            style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%`, left: pan.x, top: pan.y }}
+            aria-label="Bot desktop"
+          />
+          {(compact && !fullscreen && phase !== "live") || (fullscreen && (phase === "error" || phase === "offline" || phase === "desktop-asleep")) ? (
+            <ComputerState phase={phase} name={caption || "Teammate"} avatar={avatar} onRetry={retryConnect} />
+          ) : null}
+          {compact && !fullscreen && phase === "live" ? <button type="button" data-testid="computer-open" onClick={() => onExpand?.()} className="absolute right-2 top-2">↗ Open</button> : null}
+          {compact && !fullscreen ? <DisplayDots count={displays} /> : null}
+          {compact && !fullscreen && (mode === "control" || holder === "human") ? (
+            <span data-testid="control-chip" className="absolute right-2 top-2 rounded-full bg-bot px-2.5 py-1 text-xs font-medium text-bot-foreground shadow">You&apos;re in control · bot paused</span>
+          ) : null}
+        </div>
+        </div>
+        {compact && !fullscreen ? <div className="flex justify-center">{controlPill}</div> : null}
+        {compact && !fullscreen ? (
+          <p className="text-center text-sm text-muted-foreground" data-testid="computer-caption">{caption || "Teammate"}&apos;s screen</p>
         ) : null}
+        {fullscreen && collapsedView ? <p className="grid flex-1 place-items-center text-sm text-neutral-400">The desktop is collapsed.</p> : null}
+        {fullscreen ? (
+          <div data-testid="control-pill" data-mode={mode} role="status" className="flex shrink-0 justify-center">
+            <div className="flex h-10 items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] p-[3px] text-sm sm:h-[26px] sm:text-[11px]">
+              {mode === "control" ? (
+                <>
+                  <span className="ml-2 h-2 w-2 rounded-full bg-bot" aria-hidden />
+                  <span className="px-1 font-medium">You&apos;re in control</span>
+                  <span className="hidden pr-1 text-xs text-neutral-400 sm:inline">{caption || "Teammate"} is paused</span>
+                  <Button data-testid="hand-back" size="sm" className="h-8 rounded-full bg-red-600 px-4 text-sm sm:h-5 sm:px-2.5 sm:text-[11px] text-white hover:bg-red-500" disabled={busy !== null} onClick={() => void handBack()}>{actionLabel}</Button>
+                </>
+              ) : (
+                <>
+                  <Eye className="ml-2 h-3 w-3 text-neutral-500" aria-hidden />
+                  <span data-testid="watch-only" className="pl-1 pr-2 text-neutral-400">Watching</span>
+                  <Button data-testid="take-control" size="sm" className="h-8 rounded-full bg-white px-4 text-sm font-medium sm:h-5 sm:px-2.5 sm:text-[11px] text-neutral-900 hover:bg-neutral-200" disabled={busy !== null} onClick={() => void takeControl()}>{actionLabel}</Button>
+                </>
+              )}
+            </div>
+          </div>
+        ) : null}
+        {!(fullscreen && collapsedView) ? <ComputerJobs botId={botId} controlled={mode === "control" || holder === "human"} dark={fullscreen} /> : null}
         {keyboard ? (
           <input
             ref={keyRef}
             data-testid="desktop-keyboard"
-            className="min-h-11 w-full rounded-md border border-border bg-card px-3 text-lead"
+            className="min-h-11 w-full rounded-md border border-border bg-card px-3 text-base"
             enterKeyHint="send"
             autoCapitalize="off"
             autoCorrect="off"
@@ -767,20 +1007,20 @@ export function ComputerPane({
         ) : null}
       </div>
       {!fullscreen && error ? (
-        <p role="alert" className="text-body-sm text-destructive">
+        <p role="alert" className="text-sm text-destructive">
           {error}
         </p>
       ) : null}
-      {!fullscreen && waiting.length > 0 ? (
-        <div data-testid="attention-banner" role="status" className="rounded-lg border border-border bg-card p-4">
+      {waiting.length > 0 ? (
+        <div data-testid="attention-banner" role="status" className={cn("rounded-lg border border-border bg-card p-4", fullscreen && "mx-auto w-[min(32rem,92vw)] shrink-0 max-h-[40vh] overflow-y-auto border-white/10 bg-neutral-900 text-neutral-100 shadow-xl")}>
           <p className="font-medium">A task is waiting on you.</p>
-          <p className="mt-1 text-body-sm">The bot stopped for a human check. Take control, finish it, then hand the computer back.</p>
+          <p className="mt-1 text-sm">The bot waits for you to finish the human step and explicitly continue.</p>
           <ul className="mt-3 flex flex-col gap-3">
-            {waiting.map((task) => (
+            {waiting.filter((task) => task.waitingReason !== "await_continue").map((task) => (
               <li key={task.id} className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <p className="text-body-sm font-medium">{task.title || task.instruction || "Waiting task"}</p>
-                  {task.waitingReason ? <p className="text-body-sm text-muted-foreground">{task.waitingReason}</p> : null}
+                  <p className="text-sm font-medium">{task.title || task.instruction || "Waiting task"}</p>
+                  {task.waitingReason ? <p className="text-sm text-muted-foreground">{task.waitingReason}</p> : null}
                 </div>
                 <Button data-testid="resolve-attention" size="sm" disabled={busy !== null} onClick={() => void resolveAttention(task.id)}>
                   Resolve attention
@@ -788,6 +1028,11 @@ export function ComputerPane({
               </li>
             ))}
           </ul>
+          {waiting.some((task) => task.waitingReason === "await_continue") && mode !== "control" ? (
+            <Button data-testid="continue-bot" size="sm" className="mt-3" disabled={busy !== null} onClick={() => void continueBot()}>
+              Continue bot
+            </Button>
+          ) : null}
           {mode === "control" ? (
             <div className="mt-3">
               <Button data-testid="human-click" size="sm" variant="secondary" disabled={busy !== null} onClick={() => void humanClick()}>
@@ -795,27 +1040,25 @@ export function ComputerPane({
               </Button>
             </div>
           ) : (
-            <p className="mt-3 text-meta text-muted-foreground">Take control before sending the human click.</p>
+            <p className="mt-3 text-xs text-muted-foreground">Take control before sending the human click.</p>
           )}
         </div>
       ) : null}
-      {!fullscreen ? (
-        <section>
-          <h3 className="text-body-sm font-medium">Open pages</h3>
-          {pages.length === 0 ? (
-            <p className="mt-2 text-body-sm text-muted-foreground">No browser pages open.</p>
-          ) : (
-            <ul className="mt-2 flex flex-col gap-2">
-              {pages.map((page) => (
-                <li key={page.targetId} data-testid="browser-page" className="rounded-lg border border-border bg-card px-3 py-2">
-                  <p className="text-body-sm font-medium">{page.title || "Untitled page"}</p>
-                  <p className="truncate text-meta text-muted-foreground">{page.url}</p>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      ) : null}
+      {!fullscreen ? <section>
+        <h3 className="text-sm font-medium">Open pages</h3>
+        {pages.length === 0 ? (
+          <p className="mt-2 text-sm text-muted-foreground">No browser pages open.</p>
+        ) : (
+          <ul className="mt-2 flex flex-col gap-2">
+            {pages.map((page) => (
+              <li key={page.targetId} data-testid="browser-page" className="rounded-lg border border-line bg-paper px-3 py-2">
+                <p className="text-sm font-medium">{page.title || "Untitled page"}</p>
+                <p className="truncate text-xs text-muted-foreground">{page.url}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section> : null}
     </div>
   );
   return view;

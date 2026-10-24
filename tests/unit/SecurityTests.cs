@@ -81,9 +81,10 @@ public class SecurityTests
     [Fact]
     public void RedactorCoversCanaries()
     {
-        var text = "sk-or-v1-CANARYOPENROUTERKEY8Kx2 ghp_CANARYGITHUBTOKENVALUE99 RegistryTokenCanary9911";
+        var text = "sk-or-v1-CANARYOPENROUTERKEY8Kx2 sk_live_CANARYSTRIPEKEY123456 ghp_CANARYGITHUBTOKENVALUE99 RegistryTokenCanary9911";
         var redacted = OutputRedactor.Redact(text, ["RegistryTokenCanary9911"]);
         Assert.DoesNotContain("CANARYOPENROUTERKEY", redacted);
+        Assert.DoesNotContain("CANARYSTRIPEKEY", redacted);
         Assert.DoesNotContain("CANARYGITHUB", redacted);
         Assert.DoesNotContain("RegistryTokenCanary9911", redacted);
         Assert.Contains("[REDACTED]", redacted);

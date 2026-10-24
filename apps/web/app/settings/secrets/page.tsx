@@ -1,20 +1,15 @@
 "use client";
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import { StateMessage } from "@/components/state-message";
 
+import { ListSkeleton } from "@/components/ui/skeleton";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { cardClass, controlClass, PageEmpty, PageError, PageSkeleton, pillClass, SectionTitle } from "@/components/account/chrome";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  api,
-  isOpenRouterSecret,
-  normalizeSecret,
-  normalizeSecrets,
-  normalizeUsage,
-  readSecretTest,
-  splitList,
-} from "@/lib/api";
+import { api, isModelConnectionSecret, normalizeSecret, normalizeSecrets, normalizeUsage, readSecretTest, splitList } from "@/lib/api";
 import type { SecretRecord, SecretTestResult, SecretUsageEvent } from "@/lib/types";
 import { errorMessage, formatWhen } from "@/lib/utils";
 
@@ -30,7 +25,7 @@ const SECRET_TYPES = [
   "GENERIC",
 ];
 
-const OPENROUTER_DRAFT = { namespace: "openrouter", name: "default", type: "API_KEY" };
+const AI_CONNECTION_DRAFT = { namespace: "ai_connection", name: "default", type: "API_KEY" };
 
 function TestReadout({ result }: { result: SecretTestResult | null }) {
   if (!result) return null;
@@ -64,7 +59,7 @@ export default function SecretsPage() {
   const [addBots, setAddBots] = useState("");
   const [usageNonce, setUsageNonce] = useState(0);
 
-  const openRouter = secrets.find(isOpenRouterSecret) ?? null;
+  const aiConnection = secrets.find(isModelConnectionSecret) ?? null;
 
   const load = useCallback(async () => {
     try {
@@ -73,7 +68,7 @@ export default function SecretsPage() {
       setError(null);
       setSelectedId((current) => {
         if (current) return current;
-        return next.find(isOpenRouterSecret)?.id ?? next[0]?.id ?? null;
+        return next.find(isModelConnectionSecret)?.id ?? next[0]?.id ?? null;
       });
     } catch (caught) {
       setError(errorMessage(caught, "Could not load secrets."));
@@ -118,7 +113,7 @@ export default function SecretsPage() {
     try {
       const data = await api<unknown>("/api/secrets/test", {
         method: "POST",
-        body: JSON.stringify({ ...OPENROUTER_DRAFT, value }),
+        body: JSON.stringify({ ...AI_CONNECTION_DRAFT, value }),
       });
       setTestResult(readSecretTest(data));
     } catch (caught) {
@@ -128,7 +123,7 @@ export default function SecretsPage() {
     }
   }
 
-  async function saveOpenRouter(event: FormEvent<HTMLFormElement>) {
+  async function saveAiConnection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy("save");
     setFormError(null);
@@ -137,13 +132,13 @@ export default function SecretsPage() {
       const created = normalizeSecret(
         await api<unknown>("/api/secrets", {
           method: "POST",
-          body: JSON.stringify({ ...OPENROUTER_DRAFT, value: draft }),
+          body: JSON.stringify({ ...AI_CONNECTION_DRAFT, value: draft }),
         }),
       );
       setValue("");
       setTestResult(null);
       if (created.id) setSelectedId(created.id);
-      toast.success("Platform key saved.");
+      toast.success("AI connection key saved.");
       await load();
     } catch (caught) {
       setFormError(errorMessage(caught, "Could not save that key."));
@@ -265,19 +260,33 @@ export default function SecretsPage() {
   return (
     <div id="vault" data-testid="settings-vault" className="flex flex-col gap-[var(--space-section)]">
       <header>
-        <h2 className="text-title">Vault</h2>
-        <p className="mt-1 text-body-sm text-muted-foreground">
-          Security keys are write-only. Teammates see a reference, never the raw secret.
+        <h2 className="text-sm font-medium">Vault</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Values are write-only. Bots see references such as secret://work/api_key, never the raw secret.
         </p>
       </header>
 
-      {loading ? <PageSkeleton /> : null}
-      {!loading && error ? <PageError title="Could not load secrets." detail={error} onRetry={() => void load()} /> : null}
+      {loading ? <ListSkeleton label="Loading secrets" rows={3} /> : null}
+      {!loading && error ? (
+        <StateMessage
+          tone="error"
+          title="Could not load secrets."
+          detail={error}
+          action={
+            <Button variant="secondary" onClick={() => void load()}>
+              Retry
+            </Button>
+          }
+        />
+      ) : null}
 
-      {!loading && !error && !openRouter ? (
-        <section className={`${cardClass} p-4`}>
-          <SectionTitle>Security keys</SectionTitle>
-            <form className="mt-4 flex flex-col gap-4" onSubmit={saveOpenRouter}>
+      {!loading && !error && !aiConnection ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>AI connection key</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form className="flex flex-col gap-4" onSubmit={saveAiConnection}>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="secret-value">API key</Label>
                 <Input
@@ -307,34 +316,37 @@ export default function SecretsPage() {
                 </Button>
               </div>
             </form>
-        </section>
+          </CardContent>
+        </Card>
       ) : null}
 
-      {!loading && !error && openRouter ? (
-        <section className={`${cardClass} flex flex-col gap-4 p-4`}>
-          <SectionTitle>Platform key</SectionTitle>
+      {!loading && !error && aiConnection ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>AI connection</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
             <p data-testid="connected-banner" className="text-sage">Connected ✓</p>
-            <p data-testid="masked-suffix">Key ending in: ...{openRouter.maskedSuffix}</p>
+            <p data-testid="masked-suffix">Key ending in: ...{aiConnection.maskedSuffix}</p>
             <TestReadout result={testResult} />
             {formError ? (
               <p role="alert" className="text-body-sm text-clay">
                 {formError}
               </p>
             ) : null}
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap gap-2">
-                <Button type="button" variant="outline" className={pillClass} disabled={busy !== null} onClick={() => void testSaved(openRouter)}>
-                  Test
-                </Button>
-                <Button data-testid="rotate-secret" type="button" variant="outline" className={pillClass} disabled={busy !== null} onClick={() => void rotate(openRouter)}>
-                  Rotate
-                </Button>
-              </div>
-              <Button data-testid="delete-secret" type="button" variant="destructive" className={pillClass} disabled={busy !== null} onClick={() => void remove(openRouter)}>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="secondary" disabled={busy !== null} onClick={() => void testSaved(aiConnection)}>
+                Test
+              </Button>
+              <Button data-testid="rotate-secret" type="button" variant="secondary" disabled={busy !== null} onClick={() => void rotate(aiConnection)}>
+                Rotate
+              </Button>
+              <Button data-testid="delete-secret" type="button" variant="destructive" disabled={busy !== null} onClick={() => void remove(aiConnection)}>
                 Delete
               </Button>
             </div>
-        </section>
+          </CardContent>
+        </Card>
       ) : null}
 
       {!loading && !error ? (
@@ -406,8 +418,8 @@ export default function SecretsPage() {
                 <Label htmlFor="add-bots">Bot grants</Label>
                 <Input id="add-bots" value={addBots} onChange={(event) => setAddBots(event.target.value)} placeholder="Bot ids, comma separated. Empty means every bot." />
               </div>
-              {formError && openRouter ? (
-                <p role="alert" className="text-body-sm text-clay sm:col-span-2">
+              {formError && aiConnection ? (
+                <p role="alert" className="text-sm text-clay sm:col-span-2">
                   {formError}
                 </p>
               ) : null}
@@ -434,7 +446,7 @@ export default function SecretsPage() {
                   className="w-full text-left"
                 >
                   <p className="break-all font-medium">
-                    {secret.namespace === "openrouter" ? "Platform key" : `secret://${secret.namespace}/${secret.name}`}
+                    {secret.namespace === AI_CONNECTION_DRAFT.namespace ? "Platform key" : `secret://${secret.namespace}/${secret.name}`}
                   </p>
                   <p className="text-body-sm text-muted-foreground">
                     {secret.type} · {secret.maskedSuffix ? `····${secret.maskedSuffix}` : "••••"} · last used {formatWhen(secret.lastUsedAt)}
@@ -457,10 +469,10 @@ export default function SecretsPage() {
         </section>
       ) : null}
 
-      <section data-testid="secret-usage" className={`${cardClass} p-4`}>
-        <SectionTitle>Usage</SectionTitle>
-        {!selectedId ? <p className="mt-2 text-body-sm text-muted-foreground">Save a secret to see its usage.</p> : null}
-        {usageLoading ? <p className="mt-2 text-body-sm text-muted-foreground">Loading usage…</p> : null}
+      <section data-testid="secret-usage" className="rounded-lg border border-line bg-paper p-4">
+        <h2 className="font-display text-2xl">Usage</h2>
+        {!selectedId ? <p className="mt-2 text-sm text-muted-foreground">Save a secret to see its usage.</p> : null}
+        {usageLoading ? <ListSkeleton label="Loading usage" rows={1} /> : null}
         {usageError ? (
           <p role="alert" className="mt-2 text-body-sm text-clay">
             Could not load usage. {usageError}

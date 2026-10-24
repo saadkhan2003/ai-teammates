@@ -43,14 +43,17 @@ public class ResourceBudgetTests
     }
 
     [Fact]
-    public void Picks_two_computers_on_a_4gb_host_and_three_on_8gb()
+    public void Picks_two_computers_on_a_4gb_host_and_more_than_three_on_8gb()
     {
         Assert.Equal(2, HostBudget.MaxComputers(4L * 1024 * 1024 * 1024, null));
         Assert.Equal(2, HostBudget.MaxComputers(4L * 1000 * 1000 * 1000, ""));
         Assert.Equal(2, HostBudget.MaxComputers(5L * 1024 * 1024 * 1024, " "));
-        Assert.Equal(3, HostBudget.MaxComputers(8L * 1024 * 1024 * 1024, null));
-        Assert.Equal(3, HostBudget.MaxComputers(7L * 1024 * 1024 * 1024, null));
-        Assert.Equal(3, HostBudget.MaxComputers(16L * 1024 * 1024 * 1024, null));
+        Assert.Equal(5, HostBudget.MaxComputers(8L * 1024 * 1024 * 1024, null));
+        Assert.Equal(4, HostBudget.MaxComputers(6L * 1024 * 1024 * 1024, null));
+        Assert.Equal(10, HostBudget.MaxComputers(16L * 1024 * 1024 * 1024, null));
+        Assert.Equal(42, HostBudget.MaxComputers(64L * 1024 * 1024 * 1024, null));
+        Assert.Equal(64, HostBudget.MaxComputers(512L * 1024 * 1024 * 1024, null));
+        Assert.True(HostBudget.MaxComputers(8L * 1024 * 1024 * 1024, null) > 3);
         Assert.Equal(2, HostBudget.MaxComputers(16L * 1024 * 1024 * 1024, "2"));
         Assert.Equal(4, HostBudget.MaxComputers(4L * 1024 * 1024 * 1024, "4"));
     }

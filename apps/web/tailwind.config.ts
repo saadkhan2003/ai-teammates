@@ -6,12 +6,21 @@ const config: Config = {
   content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}"],
   theme: {
     extend: {
+      transitionDuration: { fast: "var(--motion-fast)", base: "var(--motion-base)", slow: "var(--motion-slow)" },
+      transitionTimingFunction: { out: "var(--ease-out)", spring: "var(--ease-spring)" },
       colors: {
         bg: "var(--background)",
         ink: "var(--foreground)",
         paper: "var(--card)",
         line: "var(--border)",
         clay: "var(--destructive)",
+        bot: {
+          DEFAULT: "var(--bot-accent)",
+          foreground: "var(--bot-accent-fg)",
+          text: "var(--bot-accent-text)",
+          soft: "var(--bot-accent-soft)",
+          border: "var(--bot-accent-border)",
+        },
         sage: "var(--sage)",
         success: "var(--success)",
         "sage-soft": "var(--sage-soft)",

@@ -7,9 +7,11 @@ import { cardClass, controlClass, focusClass, pillClass, SectionTitle } from "@/
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
+import { SettingsSelect } from "@/components/settings-select";
+import { SettingsSwitch as Switch } from "@/components/settings-switch";
 import { api } from "@/lib/api";
 import { applyAccent, parseTheme, readTheme, saveTheme, type ThemeMode } from "@/lib/theme";
+import { EDITORS, type EditorId, readEnabledEditors, writeEnabledEditors } from "@/lib/editors";
 
 const ACCENTS = [
   { id: "blue", swatch: "#8eb6ff" },
@@ -43,6 +45,7 @@ export default function GeneralSettingsPage() {
   const [zone, setZone] = useState("UTC");
   const [alerts, setAlerts] = useState(false);
   const [accent, setAccent] = useState("blue");
+  const [editors, setEditors] = useState<EditorId[]>([]);
 
   useEffect(() => {
     setMode(readTheme());
@@ -50,10 +53,12 @@ export default function GeneralSettingsPage() {
     setZone(window.localStorage.getItem("teammates-timezone") || "UTC");
     setAlerts(window.localStorage.getItem("teammates-desktop-notifications") === "on");
     setAccent(window.localStorage.getItem("teammates-accent-id") || "blue");
-    void api<{ username?: string; role?: string; theme?: string }>("/api/auth/me")
+    setEditors(readEnabledEditors());
+    void api<{ username?: string; role?: string; theme?: string; timezone?: string }>("/api/auth/me")
       .then((me) => {
         setUsername(me.username ?? "");
         setRole(me.role ?? "");
+        if (me.timezone) setZone(me.timezone);
         const saved = parseTheme(me.theme);
         if (saved) setMode(saved);
       })
@@ -79,6 +84,13 @@ export default function GeneralSettingsPage() {
   function chooseZone(value: string) {
     setZone(value);
     window.localStorage.setItem("teammates-timezone", value);
+    void api("/api/auth/timezone", { method: "PATCH", body: JSON.stringify({ timezone: value }) }).catch(() => undefined);
+  }
+
+  function chooseEditor(id: EditorId, on: boolean) {
+    const next = EDITORS.filter((e) => (e.id === id ? on : editors.includes(e.id))).map((e) => e.id);
+    setEditors(next);
+    writeEnabledEditors(next);
   }
 
   async function chooseAlerts(next: boolean) {
@@ -216,6 +228,7 @@ export default function GeneralSettingsPage() {
       <section className="rounded-card border border-destructive/40 bg-card p-4 shadow-[var(--shadow-card)]">
         <SectionTitle className="text-destructive">Sign out</SectionTitle>
         <p className="mt-1 text-body-sm text-muted-foreground">Ends this browser session.</p>
+        <section aria-label="Editors"><SectionTitle>Editors</SectionTitle>{EDITORS.map(editor => <label key={editor.id} className="flex items-center gap-2"><Switch data-testid={`editor-${editor.id}`} checked={editors.includes(editor.id)} onCheckedChange={on => chooseEditor(editor.id, on)} />{editor.label}</label>)}</section>
         <form className="mt-4 flex justify-end" onSubmit={signOut}>
           <Button type="submit" variant="destructive" className={pillClass}>
             Sign out

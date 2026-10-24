@@ -6,8 +6,8 @@ import os
 import urllib.error
 import urllib.request
 
-BASE = os.environ.get("BASE_URL", "http://127.0.0.1:18080").rstrip("/")
-API = os.environ.get("API_URL", "http://127.0.0.1:18081").rstrip("/")
+from stack import BASE
+from stack import API
 OWNER = os.environ.get("OWNER_USERNAME", "saad")
 PASSWORD = os.environ.get("OWNER_PASSWORD", "teammates-dev")
 WORKER = os.environ.get("WORKER_TOKEN", "dev-worker-token-change-me")
@@ -45,13 +45,15 @@ class Client:
 
 
 def login() -> Client:
+    # Share the owner session with the other suites (login is rate limited).
+    from test_acceptance import login as owner_login
+
     client = Client()
-    status, body = client.call("POST", "/api/auth/login", {"username": OWNER, "password": PASSWORD}, auth=False)
-    assert status == 200, body
+    client.cookie = owner_login().cookie
     return client
 
 
-def test_install_connect_call_and_audit():
+def test_install_connect_call_and_audit(bot_factory):
     owner = login()
     status, catalog = owner.call(
         "POST",
@@ -129,9 +131,7 @@ def test_install_connect_call_and_audit():
     if isinstance(bots, list) and bots:
         bot_id = bots[0]["id"]
     else:
-        status, bot = owner.call("POST", "/api/bots", {"name": "Plugin clerk", "role": "Calls plugins", "instructions": "Use tools."})
-        assert status == 200, bot
-        bot_id = bot["id"]
+        bot_id = bot_factory(owner, "Plugin clerk", "Calls plugins")
     status, enabled = owner.call("PUT", f"/api/plugins/{installed['id']}/bots/{bot_id}", {"enabled": True})
     assert status == 200 and enabled["enabled"] is True, enabled
 

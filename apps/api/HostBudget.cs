@@ -1,21 +1,23 @@
 namespace Teammates.Api;
 
 /// <summary>
-/// Default computer count for a small host. An explicit MAX_COMPUTERS wins.
-/// Otherwise a machine with at least 6 GiB of MemTotal (an 8 GB VPS) gets 3,
-/// and anything smaller, including a 4 GB VPS, gets 2. Larger hosts stay at 3
-/// until an operator sets the variable.
+/// Default awake-computer count per host. An explicit MAX_COMPUTERS wins.
+/// Computers overcommit RAM (an 8 GB ceiling each, a small reservation, idle ones paused),
+/// so a host with at least 6 GiB gets one slot per 1.5 GiB, at least 4 and at most 64.
+/// Anything smaller, including a 4 GB VPS, gets 2.
 /// </summary>
 public static class HostBudget
 {
     public const long EightGigabyteClass = 6L * 1024 * 1024 * 1024;
+    public const long SlotBytes = 1536L * 1024 * 1024;
+    public const int MinimumLargeHost = 4;
 
     public static int MaxComputers(long memTotalBytes, string? configured)
     {
         var raw = configured?.Trim();
         if (int.TryParse(raw, out var set) && set > 0) return set;
-        if (memTotalBytes >= EightGigabyteClass) return 3;
-        return 2;
+        if (memTotalBytes < EightGigabyteClass) return 2;
+        return (int)Math.Clamp(memTotalBytes / SlotBytes, MinimumLargeHost, 64);
     }
 
     public static long ReadMemTotalBytes()

@@ -2,6 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
+from typing import Mapping
+
+try:
+    from .web_bot_auth import CURRENT_AUTH_CONFIG, WebBotAuthHook, apply_geo_settings
+except ImportError:  # worker executes this module as a top-level script package
+    from web_bot_auth import CURRENT_AUTH_CONFIG, WebBotAuthHook, apply_geo_settings
 
 ATTENTION_PHRASES = (
     "please complete the captcha",
@@ -10,6 +18,8 @@ ATTENTION_PHRASES = (
     "enter the one-time code",
     "mfa required",
 )
+
+log = logging.getLogger(__name__)
 
 
 def attention_of(text: str) -> str | None:
@@ -21,7 +31,7 @@ def attention_of(text: str) -> str | None:
 
 
 class BrowserHub:
-    def __init__(self) -> None:
+    def __init__(self, web_bot_auth: Mapping | None = None) -> None:
         self._playwright = None
         self._playwright_lock = asyncio.Lock()
         self._browsers: dict = {}
@@ -29,6 +39,8 @@ class BrowserHub:
         self._guard = asyncio.Lock()
         self._pages: dict[str, dict[str, object]] = {}
         self._last: dict[str, str] = {}
+        self._web_bot_auth = web_bot_auth
+        self._auth_hooks: dict[int, WebBotAuthHook] = {}
 
     async def aclose(self) -> None:
         for browser in list(self._browsers.values()):
@@ -37,6 +49,7 @@ class BrowserHub:
             except Exception:
                 pass
         self._browsers.clear()
+        self._auth_hooks.clear()
         if self._playwright is not None:
             await self._playwright.stop()
             self._playwright = None
@@ -59,6 +72,7 @@ class BrowserHub:
             return self._playwright
 
     async def connect(self, cdp_url: str):
+        connect_started = time.perf_counter()
         lock = await self._lock(cdp_url)
         async with lock:
             existing = self._browsers.get(cdp_url)
@@ -69,23 +83,30 @@ class BrowserHub:
                 except Exception:
                     connected = False
             if connected:
+                log.info("browser cached_reused=%s", True)
+                log.info("browser connect ms=%d", int((time.perf_counter() - connect_started) * 1000))
                 return existing
+            log.info("browser cached_reused=%s", False)
             self._pages.pop(cdp_url, None)
             self._last.pop(cdp_url, None)
             playwright = await self._ensure_playwright()
             last: Exception | None = None
             browser = None
-            for _ in range(15):
+            for attempt in range(1, 16):
+                attempt_started = time.perf_counter()
                 try:
-                    browser = await playwright.chromium.connect_over_cdp(cdp_url)
+                    browser = await playwright.chromium.connect_over_cdp(cdp_url, timeout=10000)
                     last = None
                     break
                 except Exception as exc:
                     last = exc
+                    log.info("browser connect_attempt=%d error=%s ms=%d", attempt, type(exc).__name__, int((time.perf_counter() - attempt_started) * 1000))
                     await asyncio.sleep(1)
             if browser is None:
+                log.info("browser connect ms=%d", int((time.perf_counter() - connect_started) * 1000))
                 raise last or RuntimeError("cdp unavailable")
             self._browsers[cdp_url] = browser
+            log.info("browser connect ms=%d", int((time.perf_counter() - connect_started) * 1000))
             return browser
 
     def last_target(self, cdp_url: str) -> str | None:
@@ -96,22 +117,55 @@ class BrowserHub:
         wait = args.get("wait")
         if not url:
             return _empty("missing_url")
+        started = time.perf_counter()
         browser = await self.connect(cdp_url)
+        log.info("browser phase=%s ms=%d", "connect", int((time.perf_counter() - started) * 1000))
+        started = time.perf_counter()
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
         page = await context.new_page()
+        log.info("browser phase=%s ms=%d", "context/new_page", int((time.perf_counter() - started) * 1000))
+        started = time.perf_counter()
+        await self._install_web_bot_auth(page)
+        log.info("browser phase=%s ms=%d", "_install_web_bot_auth", int((time.perf_counter() - started) * 1000))
+        started = time.perf_counter()
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=20000)
         except Exception:
             await page.close()
             raise
+        log.info("browser phase=%s ms=%d", "goto", int((time.perf_counter() - started) * 1000))
+        started = time.perf_counter()
         if wait:
             try:
                 await page.wait_for_selector(str(wait), state="visible", timeout=12000)
             except Exception:
                 pass
+        log.info("browser phase=%s ms=%d", "wait", int((time.perf_counter() - started) * 1000))
         target_id = await _target_id(context, page)
         self._remember(cdp_url, target_id, page)
-        return await self._snapshot(page, target_id, attention=False)
+        started = time.perf_counter()
+        result = await self._snapshot(page, target_id, attention=False)
+        log.info("browser phase=%s ms=%d", "snapshot", int((time.perf_counter() - started) * 1000))
+        return result
+
+    async def _install_web_bot_auth(self, page) -> None:
+        config = CURRENT_AUTH_CONFIG.get() or self._web_bot_auth
+        if not config:
+            return
+        existing = self._auth_hooks.get(id(page))
+        if existing is not None:
+            existing.update_config(config)
+            return
+        session = await page.context.new_cdp_session(page)
+        if config.get("geo_settings"):
+            await apply_geo_settings(session, config["geo_settings"])
+            await session.send("Network.setExtraHTTPHeaders", {"headers": {"Accept-Language": config.get("accept_language", "en")}})
+            user_agent = config.get("user_agent")
+            if user_agent and user_agent != "native":
+                await session.send("Network.setUserAgentOverride", {"userAgent": user_agent, "acceptLanguage": config.get("accept_language", "en")})
+        hook = WebBotAuthHook(session, config.get("allowed_hosts", ()), config.get("signature_agent", ""), config.get("signer"), blocked_hosts=config.get("blocked_hosts", ()))
+        await hook.enable()
+        self._auth_hooks[id(page)] = hook
 
     async def browser_extract(self, cdp_url: str, args: dict) -> dict:
         page, target_id = await self._resolve(cdp_url, _target(args))
@@ -149,13 +203,19 @@ class BrowserHub:
         await self.connect(cdp_url)
         pages = self._pages.get(cdp_url) or {}
         if target_id and target_id in pages:
-            return pages[target_id], target_id
+            page = pages[target_id]
+            await self._install_web_bot_auth(page)
+            return page, target_id
         last = self._last.get(cdp_url)
         if last and last in pages:
-            return pages[last], last
+            page = pages[last]
+            await self._install_web_bot_auth(page)
+            return page, last
         if pages:
             found = next(reversed(pages))
-            return pages[found], found
+            page = pages[found]
+            await self._install_web_bot_auth(page)
+            return page, found
         raise RuntimeError("no browser page")
 
     def _remember(self, cdp_url: str, target_id: str, page) -> None:

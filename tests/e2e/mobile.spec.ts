@@ -1,14 +1,17 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
+import { PG_CONTAINER } from "./containers";
 
 const owner = process.env.OWNER_USERNAME ?? "saad";
 const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
-const tabs = ["Details", "Library", "Computer"] as const;
+const tabs = ["Details", "Library", "Computer", "Overview", "Files/Media", "Skills", "Memory", "Tasks", "Plugins"] as const;
 const pages = ["/", "/settings", "/settings/secrets", "/settings/computer", "/settings/usage", "/system", "/invite"] as const;
 
+test.use({ storageState: { cookies: [], origins: [] } });
+
 function psql(sql: string) {
-  const args = ["exec", "-i", "teammates-postgres-1", "psql", "-U", "agent", "-d", "agent", "-v", "ON_ERROR_STOP=1", "-c", sql];
+  const args = ["exec", "-i", PG_CONTAINER, "psql", "-U", "agent", "-d", "agent", "-v", "ON_ERROR_STOP=1", "-c", sql];
   let result = spawnSync("docker", args, { encoding: "utf8" });
   if (result.error || result.status !== 0) result = spawnSync("sudo", ["docker", ...args], { encoding: "utf8" });
   if (result.status !== 0) throw new Error(result.stderr || result.stdout || "psql failed");
@@ -30,6 +33,12 @@ async function openPane(page: Page, tab: (typeof tabs)[number]) {
 }
 
 test.describe.configure({ mode: "serial", timeout: 240_000 });
+
+// Bots this spec creates; deleted after each test so repeated runs stay under the bot quota.
+const createdBots: string[] = [];
+test.afterEach(async ({ page }) => {
+  for (const id of createdBots.splice(0)) await page.request.delete(`/api/bots/${id}`).catch(() => undefined);
+});
 
 test("phone layout, events, and live desktop", async ({ page }, testInfo) => {
   const project = testInfo.project.name;
@@ -61,6 +70,12 @@ test("phone layout, events, and live desktop", async ({ page }, testInfo) => {
   await page.getByTestId("login-password").fill(password);
   await page.getByTestId("login-submit").click();
   await expect(page.getByTestId("app-shell")).toBeVisible();
+  // The phone run must not depend on bots left behind by other specs.
+  const made = await page.request.post("/api/bots", { data: { name: `Clerk ${Date.now().toString().slice(-4)}` } });
+  expect(made.ok()).toBeTruthy();
+  createdBots.push((await made.json() as { id: string }).id);
+  await page.reload();
+  await expect(page.getByTestId("app-shell")).toBeVisible();
   await noHorizontalScroll(page);
   await shot("home");
 
@@ -91,6 +106,7 @@ test("phone layout, events, and live desktop", async ({ page }, testInfo) => {
   expect(tabOverflow).toBeGreaterThanOrEqual(0);
 
   await openPane(page, "Computer");
+  await page.getByTestId("desktop-frame").click();
   await expect(page.getByTestId("watch-only")).toBeVisible();
   await expect(page.getByTestId("computer-tab")).toHaveAttribute("data-desktop-mode", "view");
   await expect(page.getByTestId("vnc-status")).toHaveText("Connected", { timeout: 90_000 });
@@ -111,7 +127,7 @@ test("phone layout, events, and live desktop", async ({ page }, testInfo) => {
   await shot("computer");
 
   await page.getByTestId("take-control").click();
-  await expect(page.getByText("The pointer is yours.")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("control-pill")).toHaveAttribute("data-mode", "control", { timeout: 30_000 });
   await expect(page.getByTestId("watch-only")).toBeHidden();
   await page.getByTestId("desktop-keyboard-toggle").click();
   await expect(page.getByTestId("desktop-keyboard")).toBeVisible();
@@ -119,8 +135,9 @@ test("phone layout, events, and live desktop", async ({ page }, testInfo) => {
   await expect.poll(async () => page.evaluate(() => document.fullscreenElement !== null)).toBe(true);
   await page.getByTestId("desktop-fullscreen").click();
   await page.getByTestId("hand-back").click();
-  await expect(page.getByText("View only, until you take control.")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("control-pill")).toHaveAttribute("data-mode", "view", { timeout: 30_000 });
   await expect(page.getByTestId("watch-only")).toBeVisible();
+  await page.getByTestId("computer-minimise").click();
 
   await page.getByTestId("info-pane-close").click();
   const marker = `mobile ping ${Date.now().toString().slice(-6)}`;
@@ -134,15 +151,20 @@ test("phone layout, events, and live desktop", async ({ page }, testInfo) => {
   await expect(page.getByTestId("message-item").filter({ hasText: marker })).toBeVisible();
   await expect(page.getByTestId("event-stream")).not.toHaveAttribute("data-last-id", "");
   const lastId = await page.getByTestId("event-stream").getAttribute("data-last-id");
+  // An agent reply can land between reading data-last-id and the reconnect,
+  // so the resume header may carry that id or any later one.
+  const before = resumed.length;
+  const atOrAfter = (id: string) => id !== "" && (id === lastId || (/^\d+$/.test(id) && /^\d+$/.test(lastId ?? "") && BigInt(id) >= BigInt(lastId ?? "0")));
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
-  await expect.poll(() => resumed.includes(lastId ?? "")).toBe(true);
+  await expect.poll(() => resumed.slice(before).some(atOrAfter)).toBe(true);
   await expect(page.getByTestId("event-stream")).toHaveAttribute("data-state", "open");
   await noHorizontalScroll(page);
   await shot("chat");
 
   const botId = new URL(page.url()).pathname.split("/").pop() ?? "";
   expect(botId).toMatch(/^[0-9a-f-]{36}$/i);
-  psql(`INSERT INTO approvals (bot_id, action, target, reason, status) VALUES ('${botId}', 'send_email', 'ada@example.com', 'Mobile layout check', 'pending');`);
+  // Product approvals always belong to a task (the approvals list joins tasks), so seed both.
+  psql(`WITH t AS (INSERT INTO tasks (bot_id, title, instruction, status) VALUES ('${botId}', 'Mobile layout check', 'Mobile layout check', 'waiting_approval') RETURNING id) INSERT INTO approvals (bot_id, task_id, action, target, reason, status) SELECT '${botId}', id, 'send_email', 'ada@example.com', 'Mobile layout check', 'pending' FROM t;`);
   await page.reload();
   const approvalCard = page.getByTestId("approval-card").filter({ hasText: "send_email" });
   await expect(approvalCard).toBeVisible();
@@ -150,7 +172,7 @@ test("phone layout, events, and live desktop", async ({ page }, testInfo) => {
   expect(approval!.width).toBeGreaterThan((page.viewportSize()?.width ?? 0) * 0.7);
   await noHorizontalScroll(page);
   await shot("approval");
-  psql("DELETE FROM approvals WHERE reason = 'Mobile layout check';");
+  psql("DELETE FROM approvals WHERE reason = 'Mobile layout check'; DELETE FROM tasks WHERE title = 'Mobile layout check' AND status = 'waiting_approval';");
 
   for (const path of pages) {
     await page.goto(path);

@@ -23,7 +23,7 @@ ROUTES = (ROOT / "apps/api/Routes.cs").read_text()
 HOST_MEMORY_MIB = 3600
 HOST_CPUS = 2.0
 COMPUTER_MEMORY_MIB = 640
-COMPUTER_CPUS = 0.40
+COMPUTER_CPU_BURST = 4.0
 COMPUTERS = 2
 
 
@@ -90,10 +90,9 @@ def totals(blocks: dict[str, str]) -> tuple[int, float]:
     return memory, cpus
 
 
-def test_caps_fit_a_4gb_two_core_host():
+def test_memory_caps_fit_a_4gb_host_and_infrastructure_cpu_is_bounded():
     memory, cpus = totals(always_on(service_blocks(COMPOSE)))
     memory += COMPUTERS * COMPUTER_MEMORY_MIB
-    cpus += COMPUTERS * COMPUTER_CPUS
     assert memory <= HOST_MEMORY_MIB, memory
     assert cpus <= HOST_CPUS, cpus
 
@@ -101,7 +100,6 @@ def test_caps_fit_a_4gb_two_core_host():
 def test_three_computers_fit_an_8gb_host():
     memory, cpus = totals(always_on(service_blocks(COMPOSE)))
     memory += 3 * COMPUTER_MEMORY_MIB
-    cpus += 3 * COMPUTER_CPUS
     assert memory <= 7000, memory
     assert cpus <= 4.0, cpus
 
@@ -117,14 +115,20 @@ def test_platform_defaults_are_right_sized():
     assert "jit=off" in COMPOSE
     assert "GOMEMLIMIT:" in COMPOSE
     assert "640L * 1024 * 1024" in OPTIONS
-    assert "400_000_000" in OPTIONS
+    # Computer weights share the available CPUs; burst ceilings are not reservations.
+    assert "CpuShares { get; init; } = 2048" in OPTIONS
+    assert "NanoCpus { get; init; } = 4_000_000_000" in OPTIONS
+    assert "COMPUTER_CPU_GUARANTEE: ${COMPUTER_CPU_GUARANTEE:-2}" in COMPOSE
+    assert "COMPUTER_CPU_BURST: ${COMPUTER_CPU_BURST:-4}" in COMPOSE
     assert "ShmSize = 64L * 1024 * 1024" in PROVIDER
     assert "MemorySwap = host.Memory" in PROVIDER
     assert '["/tmp"] = "rw,nosuid,nodev,size=64m"' in PROVIDER
     assert "teammates.disk_backend" in PROVIDER
     assert "IdlePowerMode.Hibernate" in OPTIONS
     assert "EightGigabyteClass = 6L * 1024 * 1024 * 1024" in HOST
-    assert "return 3" in HOST
+    # Overcommitted RAM: large hosts get one slot per 1.5 GiB, never fewer than 4 (> 3).
+    assert "MinimumLargeHost = 4" in HOST
+    assert "SlotBytes = 1536L * 1024 * 1024" in HOST
     assert "return 2" in HOST
     sample = PROGRAM.split("private async Task SampleComputers", 1)[1].split("private async Task", 1)[0]
     assert "ReadMemoryBytesAsync" in sample
@@ -132,23 +136,30 @@ def test_platform_defaults_are_right_sized():
     assert "du" not in sample
 
 
-def test_desktop_uses_a_lightweight_panel():
-    script = (ROOT / "services/computer/desktop/start-panels").read_text()
-    assert "tint2" in script
-    assert "feh" in script
-    assert "xfce4-panel" not in script
-    assert "openbox --sm-disable" in DESKTOPS
-    assert "start-panels" in DESKTOPS
+def test_desktop_is_xfwm4_picom_and_a_plank_dock():
+    panels = (ROOT / "services/computer/desktop/start-panels").read_text()
+    assert "plank -n dock1" in panels
+    assert "feh" in panels
+    assert "xfce4-panel" not in panels and "tint2" not in panels
+    assert "icon-size=48" in panels
+    assert "theme='Transparent'" in panels
+    assert "hide-mode='window-dodge'" in panels
+    assert "position='bottom'" in panels
+    for app in ("chromium", "files", "terminal"):
+        assert app in panels
+    wm = (ROOT / "services/computer/desktop/start-wm").read_text()
+    assert "xfwm4 --compositor=off" in wm
+    assert "picom" in wm and "--backend xrender" in wm
+    assert "borderless_maximize" in wm and 'value="O|SHMC"' in wm
+    assert "start-wm" in DESKTOPS and "start-panels" in DESKTOPS
     assert "xterm -geometry 80x18" not in DESKTOPS
-    rc = (ROOT / "services/computer/desktop/rc.xml").read_text()
-    assert "<maximized>yes</maximized>" in rc
-    menu = (ROOT / "services/computer/desktop/menu.xml").read_text()
-    assert "Terminal Emulator" in menu
-    assert "File Manager" in menu
-    assert "Web Browser" in menu
-    top = (ROOT / "services/computer/desktop/top.tint2rc").read_text()
-    assert "Applications" in top
-    assert "xfce4-panel" not in top
+    assert "1920x1200" in DOCKERFILE and "DISPLAY_DEPTH=24" in DOCKERFILE
+    for package in ("xfwm4", "picom", "plank", "thunar", "xfce4-terminal"):
+        assert package in DOCKERFILE
+    assert "openbox" not in DOCKERFILE and "tint2" not in DOCKERFILE
+    assert "exec thunar" in (ROOT / "services/computer/desktop/launch-files").read_text()
+    assert "xfce4-terminal" in (ROOT / "services/computer/desktop/launch-terminal").read_text()
+    assert not (ROOT / "services/computer/desktop/top.tint2rc").exists()
 
 
 def test_computer_image_does_not_idle_a_vnc_stack():
@@ -161,10 +172,8 @@ def test_computer_image_does_not_idle_a_vnc_stack():
     assert "--disable-sync" in DESKTOPS
     assert "--disk-cache-size=33554432" in DESKTOPS
     assert DESKTOPS.count("down=True") == 2
-    assert "openbox --sm-disable" in DESKTOPS
+    assert "xfwm4" in (ROOT / "services/computer/desktop/start-wm").read_text()
     assert 'await _svc("-k", service)' in DESKTOPS
-    assert "number>1" in DOCKERFILE
-    assert "animateIconify>no" in DOCKERFILE
     assert "interval=30s" in DOCKERFILE
     bundle = ROOT / "services/computer/s6/user-bundles.d/user/contents.d/websockify"
     assert not bundle.exists()

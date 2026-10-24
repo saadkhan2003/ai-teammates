@@ -43,3 +43,25 @@ def test_sibling_workspace_is_not_readable(tmp_path, monkeypatch):
     assert not workspace.root_for(left).exists()
     assert not left_home.exists()
     assert workspace.root_for(right).exists()
+
+
+def test_locate_rejects_nul_and_symlink_escape(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKSPACE_ROOT", str(tmp_path / "ws"))
+    monkeypatch.setenv("BOT_ROOT", str(tmp_path / "ws" / "bots" / ("a" * 32)))
+    root = workspace.bot_root()
+    root.mkdir(parents=True)
+    try:
+        workspace.locate("/workspace/a\x00/b")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("NUL path was accepted")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (root / "escape").symlink_to(outside, target_is_directory=True)
+    try:
+        workspace.locate("/workspace/escape/file")
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError("symlink escaped the workspace")

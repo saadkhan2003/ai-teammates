@@ -82,7 +82,7 @@ make test-e2e           # Playwright, system Chrome
 make test               # all of the above
 ```
 
-`make eval-real` is not part of `make test` or CI, and it was not run in this workspace. It exits if `OPENROUTER_API_KEY` is missing. Point `LLM_PROVIDER=openrouter` and `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1`, restart the API, then run it. The script reads the key from the environment only long enough to store it through SecretBroker as `secret://openrouter/default` (create, or rotate if one is already saved). It never prints the key. See [Real-model eval](#real-model-eval).
+`make eval-real` is not part of `make test` or CI, and it was not run in this workspace. It exits if `OPENROUTER_API_KEY` is missing. Point `LLM_PROVIDER=openrouter`, `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1` and `MODEL_PLANNER=anthropic/claude-haiku-5.5` (the real default), restart the API, then run it. The script reads the key from the environment only long enough to store it through SecretBroker as `secret://openrouter/default` (create, or rotate if one is already saved). It never prints the key. See [Real-model eval](#real-model-eval).
 
 CI lints the proto (`buf lint`, and `buf breaking` once the proto exists on `main`), and runs unit plus fake contract tests. It does not boot the full stack.
 
@@ -92,7 +92,7 @@ Sign in at [http://127.0.0.1:18080](http://127.0.0.1:18080) as `saad` / `teammat
 
 1. Open Settings → Secrets. The OpenRouter form is empty until a key is saved. Paste any mock key that starts with `sk-or-` and is at least 20 characters (the bundled mock accepts these). Test connection, then Save securely. The page should say Connected and show only the last four characters.
 2. Create a bot from the home page or New bot. The first bot on an account starts that account's computer. Later bots share it. The chat composer stays usable while work runs. Click the bot's name to open the same details pane on every bot.
-3. Assign work the mock planner knows, one message at a time:
+3. Send work the mock planner knows, one message at a time:
    - `What should I call you?`
    - `Terminal: write the word pong into /workspace/notes/ping.txt`
    - `Remember that my favorite editor is Helix`

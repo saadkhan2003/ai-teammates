@@ -14,8 +14,13 @@ public static class ActionClasses
     public const string Delete = "delete";
     public const string CredentialUse = "credential_use";
     public const string ExternalPost = "external_post";
+    public const string BotMessage = "bot_message";
+    public const string BotManage = "bot_manage";
 
-    public static readonly string[] All = [Read, Write, SendMessage, Payment, Sign, Delete, CredentialUse, ExternalPost];
+    public static readonly string[] All = [Read, Write, SendMessage, Payment, Sign, Delete, CredentialUse, ExternalPost, BotMessage, BotManage];
+
+    /// <summary>Classes that a peer-origin task (a bot message, or a bot-created routine) may never run on an ALLOW.</summary>
+    public static readonly string[] PeerForcedAsk = [Payment, Sign, Delete, CredentialUse, ExternalPost, SendMessage, BotManage];
 
     public static readonly IReadOnlyDictionary<string, string> Defaults = new Dictionary<string, string>
     {
@@ -26,14 +31,24 @@ public static class ActionClasses
         [Sign] = PolicyEngine.Ask,
         [Delete] = PolicyEngine.Ask,
         [CredentialUse] = PolicyEngine.Ask,
-        [ExternalPost] = PolicyEngine.Ask
+        [ExternalPost] = PolicyEngine.Ask,
+        [BotMessage] = PolicyEngine.Ask,
+        [BotManage] = PolicyEngine.Ask
     };
 }
 
 public sealed class UserPolicy
 {
     public Dictionary<string, string> Classes { get; } = new(ActionClasses.Defaults, StringComparer.Ordinal);
+    public HashSet<string> PrivateHosts { get; } = new(StringComparer.OrdinalIgnoreCase);
     public bool ModelAssist { get; set; }
+
+    public bool IsPrivateHost(string? host)
+    {
+        if (string.IsNullOrWhiteSpace(host) || host.Length > 253) return false;
+        var normalized = host.Trim().TrimEnd('.').ToLowerInvariant();
+        return PrivateHosts.Any(suffix => normalized == suffix || normalized.EndsWith("." + suffix, StringComparison.Ordinal));
+    }
 
     public static UserPolicy Default { get; } = new();
 
@@ -51,6 +66,17 @@ public sealed class UserPolicy
             using var doc = JsonDocument.Parse(json);
             if (doc.RootElement.TryGetProperty("modelAssist", out var assist) && assist.ValueKind is JsonValueKind.True or JsonValueKind.False)
                 policy.ModelAssist = assist.GetBoolean();
+            if (doc.RootElement.TryGetProperty("privateHosts", out var privateHosts) && privateHosts.ValueKind == JsonValueKind.Array && privateHosts.GetArrayLength() <= 500)
+            {
+                foreach (var entry in privateHosts.EnumerateArray())
+                {
+                    if (entry.ValueKind != JsonValueKind.String) continue;
+                    var host = (entry.GetString() ?? "").Trim().ToLowerInvariant();
+                    if (host.StartsWith("*.", StringComparison.Ordinal)) host = host[2..];
+                    host = host.TrimEnd('.');
+                    if (ValidPrivateHost(host)) policy.PrivateHosts.Add(host);
+                }
+            }
             if (doc.RootElement.TryGetProperty("classes", out var classes) && classes.ValueKind == JsonValueKind.Object)
             {
                 foreach (var prop in classes.EnumerateObject())
@@ -67,6 +93,12 @@ public sealed class UserPolicy
             return new UserPolicy();
         }
         return policy;
+    }
+
+    private static bool ValidPrivateHost(string host)
+    {
+        if (host.Length is < 3 or > 253 || host.Contains("..", StringComparison.Ordinal)) return false;
+        return host.Split('.').All(label => label.Length is > 0 and <= 63 && label[0] != '-' && label[^1] != '-' && label.All(c => char.IsAsciiLetterOrDigit(c) || c == '-'));
     }
 }
 
@@ -147,13 +179,30 @@ public static class ActionClassifier
     private static readonly HashSet<string> BuiltInTools = new(StringComparer.Ordinal)
     {
         "browser_open", "browser_extract", "browser_click", "browser_screenshot",
+        "computer_screenshot", "computer_click", "computer_type", "computer_key", "computer_scroll", "record_start", "record_stop",
         "write_file", "read_file", "edit_file", "delete_file", "shell", "setup_env",
-        "type_secret", "browser.type_secret", "save_memory", "search_memory", "save_artifact",
+        "type_secret", "browser.type_secret", "save_memory", "update_memory", "forget_memory", "search_memory", "save_artifact",
         "request_secret", "request_login", "react_to_message", "reply_to_message", "send_message", "external_post", "sign",
-        "search_tools", "load_tool"
+        "search_tools", "load_tool", "load_skill", "write_skill", "watch_video", "ask_video",
+        "list_bots", "message_bot", "reply_to_bot", "thread_status", "create_bot", "update_bot", "list_routines", "create_routine", "get_routine", "update_routine", "pause_routine", "resume_routine", "delete_routine",
+        "plan_set", "plan_update", "git_status", "git_diff", "git_commit", "run_tests", "create_pr", "watch_ci", "spawn_child_task", "child_status",
+        "job_start", "job_status", "job_logs", "job_cancel"
     };
 
     public static bool IsBuiltIn(string tool) => BuiltInTools.Contains(tool);
+
+    /// <summary>update_bot with only a bio and no target bot edits the caller's own bio.</summary>
+    public static bool SelfBioOnly(JsonElement args)
+    {
+        if (args.ValueKind != JsonValueKind.Object) return false;
+        var bio = false;
+        foreach (var prop in args.EnumerateObject())
+        {
+            if (prop.Name == "bio") bio = prop.Value.ValueKind == JsonValueKind.String;
+            else if (prop.Value.ValueKind is not JsonValueKind.Null) return false;
+        }
+        return bio;
+    }
 
     public static string Classify(string tool, JsonElement args)
     {
@@ -165,8 +214,21 @@ public static class ActionClassifier
         if (tool is "transfer_funds" or "move_money" or "wire_transfer" or "send_payment") return ActionClasses.Payment;
         if (tool is "trade_security" or "place_order" or "buy_stock" or "sell_stock") return ActionClasses.Payment;
         if (tool is "sign" or "sign_document" || blob.Contains("\"sign\"") && blob.Contains("document")) return ActionClasses.Sign;
+        // Starting a conversation asks the user. Continuing a thread the user already approved does not.
+        if (tool == "reply_to_bot") return ActionClasses.Write;
+        if (tool == "message_bot")
+            return args.ValueKind == JsonValueKind.Object && args.TryGetProperty("thread_id", out var thread) && thread.ValueKind == JsonValueKind.String && Guid.TryParse(thread.GetString(), out _)
+                ? ActionClasses.Write
+                : ActionClasses.BotMessage;
+        if (tool is "create_bot" or "create_routine" or "update_routine" or "resume_routine" or "delete_routine") return ActionClasses.BotManage;
+        if (tool is "load_skill" or "watch_video" or "ask_video") return ActionClasses.Read;
+        if (tool == "write_skill") return ActionClasses.Write;
+        if (tool == "pause_routine") return ActionClasses.Write;
+        if (tool == "update_bot") return SelfBioOnly(args) ? ActionClasses.Write : ActionClasses.BotManage;
+        if (tool is "list_bots" or "thread_status" or "list_routines" or "get_routine") return ActionClasses.Read;
         if (tool is "send_message" or "send_email" or "send_sms") return ActionClasses.SendMessage;
         if (tool is "external_post" or "publish" or "post_message") return ActionClasses.ExternalPost;
+        if (tool == "create_pr") return ActionClasses.ExternalPost;
         if (tool is "delete_file" || blob.Contains("\"rm ") || blob.Contains(" rm ")) return ActionClasses.Delete;
         if (tool is "type_secret" or "browser.type_secret" or "request_login" or "request_secret" or "setup_env")
             return ActionClasses.CredentialUse;
@@ -176,18 +238,39 @@ public static class ActionClassifier
             case "search_memory":
             case "browser_extract":
             case "browser_screenshot":
+            case "computer_screenshot":
             case "browser_open":
             case "browser_click":
             case "search_tools":
             case "load_tool":
+            case "load_skill":
+                return ActionClasses.Read;
+            case "computer_click":
+            case "computer_type":
+            case "computer_key":
+            case "computer_scroll":
+            case "record_start":
+            case "record_stop":
+                return ActionClasses.Write;
+            case "git_status":
+            case "git_diff":
+            case "watch_ci":
+            case "job_status":
+            case "job_logs":
+            case "child_status":
                 return ActionClasses.Read;
             case "write_file":
             case "edit_file":
             case "shell":
+            case "job_start":
+            case "job_cancel":
             case "save_memory":
+            case "update_memory":
+            case "forget_memory":
             case "save_artifact":
             case "react_to_message":
             case "reply_to_message":
+            case "write_skill":
                 return ActionClasses.Write;
         }
         if (tool.StartsWith("get_", StringComparison.Ordinal) || tool.StartsWith("list_", StringComparison.Ordinal) || tool.StartsWith("read_", StringComparison.Ordinal))
@@ -329,7 +412,7 @@ public static class ModelAssist
 
 public static class PolicyGate
 {
-    public static PolicyDecision Evaluate(string tool, JsonElement args, ISet<string> seenDomains, UserPolicy policy, IEnumerable<DenyRule> extra, string? instruction, bool approved, ISet<string>? grantedHosts = null, PluginCallHint? plugin = null)
+    public static PolicyDecision Evaluate(string tool, JsonElement args, ISet<string> seenDomains, UserPolicy policy, IEnumerable<DenyRule> extra, string? instruction, bool approved, ISet<string>? grantedHosts = null, PluginCallHint? plugin = null, bool originIsPeer = false)
     {
         var risk = PluginRiskLabels.Apply(PluginRisk.ClassifyCall(tool, args, plugin), plugin?.RiskLabel);
         var summary = Summarize(tool, args, risk);
@@ -350,7 +433,8 @@ public static class PolicyGate
         var mode = policy.Mode(risk);
         if (mode == PolicyEngine.Deny)
             return new PolicyDecision(PolicyEngine.Deny, risk, summary, "denied_by_user_policy", false);
-        var granted = CredentialGrants.Covers(risk, args, grantedHosts);
+        if (originIsPeer && mode == PolicyEngine.Allow && ActionClasses.PeerForcedAsk.Contains(risk)) mode = PolicyEngine.Ask;
+        var granted = !originIsPeer && CredentialGrants.Covers(risk, args, grantedHosts);
         var formIsConsent = tool == "request_login" && !HasVaultRefs(args);
         if (!approved && !granted && !formIsConsent && (mode == PolicyEngine.Ask || legacy == PolicyEngine.Ask))
             return new PolicyDecision(PolicyEngine.Ask, risk, summary, summary, false);
@@ -388,11 +472,37 @@ public static class PolicyGate
             ActionClasses.Sign => $"Sign {target}".Trim(),
             ActionClasses.CredentialUse => $"Use a credential on {target}".Trim(),
             ActionClasses.Write => $"Write {target}".Trim(),
+            ActionClasses.BotMessage => $"Message teammate {Dlp.Redact(First(args, "bot", "thread_id"))}: {Dlp.Redact(First(args, "title", "text"))}".Trim(),
+            ActionClasses.BotManage => tool switch
+            {
+                "create_bot" => $"Create teammate {Dlp.Redact(First(args, "name"))}".Trim(),
+                "update_bot" => $"Update teammate {Dlp.Redact(First(args, "bot", "name"))}".Trim(),
+                "create_routine" => RoutineSentence("Create routine", args),
+                "update_routine" => RoutineSentence("Update routine", args),
+                "resume_routine" => $"Resume routine {Dlp.Redact(First(args, "routine"))}".Trim(),
+                "delete_routine" => $"Delete routine {Dlp.Redact(First(args, "routine"))}".Trim(),
+                _ => $"Change {Dlp.Redact(First(args, "name", "bot"))}".Trim()
+            },
             _ => $"Read {target}".Trim()
         };
+        if (risk is ActionClasses.BotMessage or ActionClasses.BotManage) return sentence.Length > 200 ? sentence[..200] : sentence;
         if (string.IsNullOrWhiteSpace(target)) sentence = $"{risk} via {tool}";
         else sentence = $"{sentence} ({tool})";
         return sentence;
+    }
+
+    private static string RoutineSentence(string verb, JsonElement args)
+    {
+        var name = Dlp.Redact(First(args, "name", "routine"));
+        var bot = Dlp.Redact(First(args, "bot"));
+        var cron = First(args, "cron");
+        var when = cron.Length > 0 ? CronWords.Describe(cron) : First(args, "run_at");
+        var text = $"{verb} {name}".Trim();
+        if (bot.Length > 0) text += $" for {bot}";
+        if (when.Length > 0) text += $" - {when}" + (First(args, "timezone") is { Length: > 0 } zone ? $" ({zone})" : "");
+        var instruction = Dlp.Redact(First(args, "instruction"));
+        if (instruction.Length > 0) text += $": {(instruction.Length > 60 ? instruction[..60] + "..." : instruction)}";
+        return text.Trim();
     }
 
     private static int Rank(string mode) => mode switch

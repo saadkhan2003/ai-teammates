@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { login } from "./helpers";
 
 const owner = process.env.OWNER_USERNAME ?? "saad";
-const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
+
 const BOT_NAME = "Question card";
 const ASK = "Ask which Rakazo ideas should go in now";
 const PROMPT = "Which Rakazo ideas should go in now?";
@@ -39,17 +40,6 @@ async function shot(target: Page | Locator, name: string) {
   const repo = `${repoDir}/${name}.png`;
   await target.screenshot({ path: artifact });
   fs.copyFileSync(artifact, repo);
-}
-
-async function login(page: Page) {
-  await page.addInitScript(() => {
-    localStorage.setItem("teammates-theme", "light");
-  });
-  await page.goto("/login");
-  await page.getByTestId("login-username").fill(owner);
-  await page.getByTestId("login-password").fill(password);
-  await page.getByTestId("login-submit").click();
-  await expect(page.getByTestId("app-shell")).toBeVisible();
 }
 
 async function deleteNamed(page: Page, name: string) {
@@ -101,6 +91,7 @@ test.afterEach(async ({ page }) => {
 
 test("question card answer survives reload and memory notices render", async ({ page }, testInfo) => {
   const prefix = testInfo.project.name === "desktop" ? "light-desktop" : "light-390";
+  await page.addInitScript(() => localStorage.setItem("teammates-theme", "light"));
   await login(page);
   await deleteNamed(page, BOT_NAME);
   const botId = await createBot(page);

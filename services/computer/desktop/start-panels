@@ -1,5 +1,5 @@
 #!/bin/sh
-# Wallpaper once, then a top clock and a bottom dock. Both panels are tint2.
+# Wallpaper once, then the bottom Plank dock (Chromium, Files, Terminal). No top panel.
 set -eu
 display="${1:-:1}"
 export DISPLAY="$display"
@@ -10,10 +10,37 @@ while [ "$i" -lt 100 ]; do
   i=$((i + 1))
   sleep 0.1
 done
+# The window manager publishes its session bus address; the dock joins the same bus.
+i=0
+while [ "$i" -lt 100 ] && [ ! -s "$HOME/.desk-dbus" ]; do
+  i=$((i + 1))
+  sleep 0.1
+done
+if [ -s "$HOME/.desk-dbus" ]; then
+  DBUS_SESSION_BUS_ADDRESS=$(cat "$HOME/.desk-dbus")
+  export DBUS_SESSION_BUS_ADDRESS
+fi
 feh --no-fehbg --bg-fill /usr/share/backgrounds/teammates.png || true
-tint2 -c /opt/desk/tint2/top.tint2rc &
-top_pid=$!
-tint2 -c /opt/desk/tint2/dock.tint2rc &
-dock_pid=$!
-trap 'kill "$top_pid" "$dock_pid" 2>/dev/null || true' EXIT
-wait "$top_pid" "$dock_pid"
+
+# Plank settings through the GSettings keyfile backend (no dconf daemon).
+export GSETTINGS_BACKEND=keyfile
+mkdir -p "$HOME/.config/glib-2.0/settings" "$HOME/.config/plank/dock1/launchers"
+cat > "$HOME/.config/glib-2.0/settings/keyfile" <<'KEYS'
+[net/launchpad/plank/docks/dock1]
+position='bottom'
+icon-size=48
+theme='Transparent'
+hide-mode='window-dodge'
+hide-delay=0
+unhide-delay=250
+zoom-enabled=false
+alignment='center'
+items-alignment='center'
+KEYS
+rm -f "$HOME/.config/plank/dock1/launchers/"*.dockitem
+n=0
+for app in chromium files terminal; do
+  n=$((n + 1))
+  printf '[PlankDockItemPreferences]\nLauncher=file:///opt/desk/applications/%s.desktop\n' "$app" > "$HOME/.config/plank/dock1/launchers/0$n-$app.dockitem"
+done
+exec plank -n dock1

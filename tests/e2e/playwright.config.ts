@@ -1,11 +1,21 @@
 import { defineConfig, devices } from "@playwright/test";
+import "./containers";
+
+for (const name of ["STACK", "BASE_URL"]) {
+  if (!process.env[name]) throw new Error(`${name} is required to run e2e tests`);
+}
 
 export default defineConfig({
+  grepInvert: process.env.PERF === "1" ? undefined : /@perf/,
+  globalSetup: "./global-setup.ts",
   testDir: ".",
   timeout: 1_200_000,
   expect: { timeout: 20_000 },
   use: {
-    baseURL: process.env.BASE_URL ?? "http://127.0.0.1:18080",
+    baseURL: process.env.BASE_URL!,
+    // Only ENABLE_TEST_HOOKS stacks honor this explicit login-limit opt-in.
+    extraHTTPHeaders: { "X-Teammates-Test-Login": "true" },
+    storageState: "./.auth/owner.json",
     actionTimeout: 20_000,
     channel: "chrome",
     screenshot: "only-on-failure",
@@ -14,7 +24,8 @@ export default defineConfig({
   },
   workers: 1,
   projects: [
-    { name: "desktop", testMatch: /(?:^|\/)(?:acceptance|security|links|vnc-lifecycle|question-card|plugins|new-teammate-form|create-bot|about|account-menu|settings-modal|shortcuts|settings-computer|chat-polish|events|chat-ui|checklist|theme-surfaces|sidebar-shell|link-preview|chat-messages|right-panel|composer-fidelity|radius-pass|library-hover|footer-pill|connect-apps|typography|button-contrast|image-gallery|spacing-pass|account-pages|admin-app|admin-console|surfaces|status-board)\.spec\.ts$/, use: { ...devices["Desktop Chrome"] } },
+    { name: "admin", testMatch: /admin-(?:app|ai-models|billing)\.spec\.ts/, use: { ...devices["Desktop Chrome"], baseURL: process.env.ADMIN_URL } },
+    { name: "desktop", testMatch: /(?:account-pages|admin-console|button-contrast|chat-messages|chat-ui|checklist|composer-fidelity|connect-apps|footer-pill|image-gallery|library-hover|link-preview|radius-pass|right-panel|sidebar-shell|spacing-pass|status-board|surfaces|theme-surfaces|typography|ui-shots|computer-jobs|usage-credits|speed-virtual|speed-phase[12]|perf-speed|acceptance|security|links|vnc-lifecycle|computer-view|question-card|memory-notes|approval-rules|plugins|new-teammate-form|create-bot|about|account-menu|settings-modal|shortcuts|settings-computer|chat-polish|events|refresh-notice|library-share|library-section|library-search|chat-features|teach-task|bot-messaging|reply-ux|routines-section|coding-section|computer-card|chat-pill|long-run-resume|skills-v2|learning|briefs)\.spec\.ts/, use: { ...devices["Desktop Chrome"] } },
     {
       name: "iphone-13",
       testMatch: /mobile\.spec\.ts|question-card\.spec\.ts|plugins\.spec\.ts/,

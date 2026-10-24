@@ -14,7 +14,9 @@ namespace Teammates.Api;
 public sealed class Platform
 {
     private readonly LoginRateLimiter _loginLimits = new();
+    public LoginRateLimiter PublicShareLimits { get; } = new();
     public NpgsqlDataSource Data { get; }
+    public IOneTimeTicketStore Tickets { get; }
     public byte[] MasterKey { get; }
     public DockerComputeProvider Compute { get; }
     public IAmazonS3 S3 { get; }
@@ -25,8 +27,25 @@ public sealed class Platform
     public bool TestHooks { get; }
     public string OpenRouterBase { get; }
     public string LlmProvider { get; }
+    public const string DefaultRealModel = "anthropic/claude-haiku-5.5";
     public string ModelName { get; }
+    public AiModelRegistry AiRegistry { get; }
+    public UsageMeter Usage { get; }
+    public ComputerJobs Jobs { get; }
+    public JobLogStreams JobLogs { get; }
+    public ResourceMeter Resources { get; }
+    public WorkspaceSync Sync { get; }
+    public CleanupService Cleanup { get; }
+    public IConfiguration Configuration { get; }
+    public IConfiguration Config => Configuration;
     public int MaxParallel { get; }
+    public int MaxAutoResumesPerHour { get; }
+    public int CodingRounds { get; }
+    public int CodingRoundsCumulative { get; }
+    public int ChatRounds { get; }
+    public int StallSoftSeconds { get; }
+    public int StallHardSeconds { get; }
+    public bool PauseOnBudget { get; }
     public TimeSpan IdleSuspend { get; }
     public string BootId { get; } = Guid.NewGuid().ToString("n");
     public TaskSignal Tasks { get; } = new();
@@ -38,15 +57,19 @@ public sealed class Platform
     public int MaxComputers { get; }
     public string BillingProviderName { get; }
     public bool ResendConfigured { get; }
+    /// <summary>Last per-computer sample: desktop on or asleep, process RSS, desktop RSS, and container memory.</summary>
+    public System.Collections.Concurrent.ConcurrentDictionary<Guid, ComputerMemorySample> ComputerSamples { get; } = new();
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(60) };
     private readonly IdempotencyStore _unused = new();
 
     public Platform(NpgsqlDataSource data, byte[] masterKey, DockerComputeProvider compute, IAmazonS3 s3, IConfiguration config)
     {
         Data = data;
+        Tickets = new PostgresOneTimeTicketStore(data);
         MasterKey = masterKey;
         Compute = compute;
         S3 = s3;
+        Configuration = config;
         Bucket = config["S3_BUCKET"] ?? "artifacts";
         WorkerToken = config["WORKER_TOKEN"] ?? "";
         MetricsToken = config["METRICS_TOKEN"] ?? "";
@@ -54,99 +77,145 @@ public sealed class Platform
         TestHooks = string.Equals(config["ENABLE_TEST_HOOKS"], "true", StringComparison.OrdinalIgnoreCase);
         OpenRouterBase = (config["OPENROUTER_BASE_URL"] ?? "http://mock-openrouter:8090/api/v1").TrimEnd('/');
         LlmProvider = config["LLM_PROVIDER"] ?? "mock";
-        ModelName = config["MODEL_PLANNER"] ?? "mock/planner";
+        ModelName = PlannerModel(config["LLM_PROVIDER"], config["MODEL_PLANNER"]);
         MaxParallel = int.TryParse(config["MAX_PARALLEL_TASKS_PER_USER"], out var max) ? max : 6;
+        MaxAutoResumesPerHour = ConfigInt(config, "Resume:MaxAutoResumesPerHour", 5, 1, 20);
+        CodingRounds = ConfigInt(config, "RunBudget:CodingRounds", 12, 1, 100);
+        CodingRoundsCumulative = ConfigInt(config, "RunBudget:CodingRoundsCumulative", 60, CodingRounds, 500);
+        ChatRounds = ConfigInt(config, "RunBudget:ChatRounds", 12, 1, 500);
+        StallSoftSeconds = ConfigInt(config, "STALL_SOFT_SECONDS", 180, 30, 86400);
+        StallHardSeconds = Math.Max(StallSoftSeconds + 1, ConfigInt(config, "STALL_HARD_SECONDS", 600, 31, 172800));
+        PauseOnBudget = !bool.TryParse(config["RunBudget:PauseOnBudget"], out var pause) || pause;
         IdleSuspend = int.TryParse(config["IDLE_SUSPEND_MINUTES"], out var idleMinutes) && idleMinutes >= 0
             ? TimeSpan.FromMinutes(idleMinutes)
             : TimeSpan.FromMinutes(10);
         MaxComputers = HostBudget.MaxComputers(HostBudget.ReadMemTotalBytes(), config["MAX_COMPUTERS"]);
         BillingProviderName = string.IsNullOrWhiteSpace(config["BILLING_PROVIDER"]) ? "mock" : config["BILLING_PROVIDER"]!.Trim().ToLowerInvariant();
         ResendConfigured = !string.IsNullOrWhiteSpace(config["RESEND_API_KEY"]);
+        AiRegistry = new AiModelRegistry(this);
+        Usage = new UsageMeter(this);
+        Jobs = new ComputerJobs(this, Usage);
+        JobLogs = new JobLogStreams(this);
+        Resources = new ResourceMeter(this);
+        Sync = new WorkspaceSync(this, new S3ObjectStore(S3, Bucket)) { Enabled = !string.Equals(config["FILE_SYNC"], "off", StringComparison.OrdinalIgnoreCase) };
+        Cleanup = new CleanupService(this, config);
         _ = _unused;
     }
 
+    public static string PlannerModel(string? provider, string? configuredModel) =>
+        !string.IsNullOrWhiteSpace(configuredModel) ? configuredModel
+            : string.IsNullOrWhiteSpace(provider) || string.Equals(provider, "mock", StringComparison.OrdinalIgnoreCase)
+                ? "mock/planner" : DefaultRealModel;
+
+    private static int ConfigInt(IConfiguration config, string key, int fallback, int min, int max) =>
+        int.TryParse(config[key], out var value) ? Math.Clamp(value, min, max) : fallback;
+
     public async Task MigrateAndSeed(string ownerUser, string ownerPassword)
     {
-        var sql = await File.ReadAllTextAsync("/migrations/001_init.sql");
-        await using var conn = await Data.OpenConnectionAsync();
+        // Several API instances can start at once against one database; the first takes the lock and the rest wait for it.
+        await using var lockConn = await Data.OpenConnectionAsync();
+        await lockConn.ExecuteAsync("SELECT pg_advisory_lock(840020)");
+        try { await MigrateAndSeedLocked(ownerUser, ownerPassword); }
+        finally { await lockConn.ExecuteAsync("SELECT pg_advisory_unlock(840020)"); }
+    }
+
+    public static readonly string[] MigrationFiles =
+    [
+        "001_init.sql",
+        "002_reactions.sql",
+        "003_v02.sql",
+        "004_resources.sql",
+        "005_plugins.sql",
+        "006_security.sql",
+        "007_credential_grants.sql",
+        "008_plugin_catalog.sql",
+        "009_v03.sql",
+        "010_provider.sql",
+        "011_devices.sql",
+        "012_reliability.sql",
+        "013_feedback.sql",
+        "014_avatar.sql",
+        "015_bot_messaging.sql",
+        "016_chat_actions.sql",
+        "017_primary.sql",
+        "018_bio.sql",
+        "019_coding_work.sql",
+        "020_coding_items.sql",
+        "021_routine_timezone.sql",
+        "022_routines_v2.sql",
+        "023_routine_test.sql",
+        "024_library.sql",
+        "025_library_actions.sql",
+        "026_library_shares.sql",
+        "027_memory_notes.sql",
+        "028_long_run_resume.sql",
+        "029_resume_timing.sql",
+        "030_tool_dedupe.sql",
+        "031_pause_on_budget.sql",
+        "032_transcript_archive.sql",
+        "033_watchdog.sql",
+        "034_approval_rules.sql",
+        "035_approval_rules_upgrade.sql",
+        "036_rule_scope.sql",
+        "037_device_commands.sql",
+        "038_computer_windows.sql",
+        "039_desktop_lease.sql",
+        "040_tickets_state.sql",
+        "041_skill_library.sql",
+        "042_video_analyses.sql",
+        "043_speed_telemetry.sql",
+        "044_ai_models.sql",
+        "045_ai_controls.sql",
+        "046_computer_jobs.sql",
+        "047_task_briefs.sql",
+        "048_brief_lessons.sql",
+        "049_approval_signals.sql",
+        "050_usage_credits.sql",
+        "051_resources.sql",
+        "057_chat_ui.sql",
+        "058_coding_job_diff.sql",
+        "059_theme.sql",
+        "060_recommended_apps.sql",
+        "061_account.sql",
+        "062_uptime.sql",
+        "063_admin_console.sql",
+
+    ];
+
+    /// <summary>Applies every manifest file not yet recorded in schema_migrations (recorded by its three-digit prefix).</summary>
+    public static async Task ApplyMigrations(NpgsqlConnection conn, Func<string, Task<string>> read)
+    {
         var applied = await conn.ExecuteScalarAsync<bool>("SELECT to_regclass('public.schema_migrations') IS NOT NULL");
-        if (!applied) await conn.ExecuteAsync(sql);
+        if (!applied) await conn.ExecuteAsync(await read(MigrationFiles[0]));
         await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('001') ON CONFLICT DO NOTHING");
-        var hasReactions = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id='002'");
-        if (hasReactions == 0)
+        await ForgetSpeedPrefixes(conn);
+        foreach (var file in MigrationFiles.Skip(1))
         {
-            var reactions = await File.ReadAllTextAsync("/migrations/002_reactions.sql");
-            await conn.ExecuteAsync(reactions);
-            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('002') ON CONFLICT DO NOTHING");
-        }
-        var hasBeta = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id='003'");
-        if (hasBeta == 0)
-        {
-            var beta = await File.ReadAllTextAsync("/migrations/003_v02.sql");
-            await conn.ExecuteAsync(beta);
-            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('003') ON CONFLICT DO NOTHING");
-        }
-        var hasResources = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id='004'");
-        if (hasResources == 0)
-        {
-            var resources = await File.ReadAllTextAsync("/migrations/004_resources.sql");
-            await conn.ExecuteAsync(resources);
-            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('004') ON CONFLICT DO NOTHING");
-        }
-        var hasPlugins = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id='005'");
-        if (hasPlugins == 0)
-        {
-            var plugins = await File.ReadAllTextAsync("/migrations/005_plugins.sql");
-            await conn.ExecuteAsync(plugins);
-            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('005') ON CONFLICT DO NOTHING");
-        }
-        var hasSecurity = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id='006'");
-        if (hasSecurity == 0)
-        {
-            var security = await File.ReadAllTextAsync("/migrations/006_security.sql");
-            await conn.ExecuteAsync(security);
-            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('006') ON CONFLICT DO NOTHING");
-        }
-        var hasGrants = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id='007'");
-        if (hasGrants == 0)
-        {
-            var grants = await File.ReadAllTextAsync("/migrations/007_credential_grants.sql");
-            await conn.ExecuteAsync(grants);
-            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('007') ON CONFLICT DO NOTHING");
-        }
-        var hasCatalog = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id='008'");
-        if (hasCatalog == 0)
-        {
-            var catalog = await File.ReadAllTextAsync("/migrations/008_plugin_catalog.sql");
-            await conn.ExecuteAsync(catalog);
-            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('008') ON CONFLICT DO NOTHING");
-        }
-        var hasV03 = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id='009'");
-        if (hasV03 == 0)
-        {
-            var v03 = await File.ReadAllTextAsync("/migrations/009_v03.sql");
-            await conn.ExecuteAsync(v03);
-            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('009') ON CONFLICT DO NOTHING");
-        }
-        var hasProvider = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id='010'");
-        if (hasProvider == 0)
-        {
-            var provider = await File.ReadAllTextAsync("/migrations/010_provider.sql");
-            await conn.ExecuteAsync(provider);
-            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('010') ON CONFLICT DO NOTHING");
-        }
-        foreach (var (mid, file) in new[] { ("011", "011_devices.sql"), ("012", "012_reliability.sql"), ("013", "013_feedback.sql"), ("014", "014_avatar.sql"), ("015", "015_chat_ui.sql"), ("016", "016_coding_job_diff.sql"), ("017", "017_theme.sql"), ("018", "018_recommended_apps.sql"), ("018b", "018_account.sql"), ("019", "019_uptime.sql"), ("020", "020_admin_console.sql") })
-        {
+            var mid = file[..3];
             if (await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id=@mid", new { mid }) != 0) continue;
-            await conn.ExecuteAsync(await File.ReadAllTextAsync("/migrations/" + file));
-            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES (@mid) ON CONFLICT DO NOTHING", new { mid });
+            await using var tx = await conn.BeginTransactionAsync();
+            await conn.ExecuteAsync(await read(file), transaction: tx);
+            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES (@mid) ON CONFLICT DO NOTHING", new { mid }, tx);
+            await tx.CommitAsync();
         }
-        const string replyMigration = "add_message_reply_to";
-        if (await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id=@mid", new { mid = replyMigration }) == 0)
-        {
-            await conn.ExecuteAsync(EmbeddedText("add_message_reply_to.sql"));
-            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES (@mid) ON CONFLICT DO NOTHING", new { mid = replyMigration });
-        }
+    }
+
+    /// <summary>
+    /// The speed-v1 branch shipped usage_credits and resources as 047/048 before they became 050/051.
+    /// On such a database 047/048 are recorded but the brief tables are missing; forget those two ids so the
+    /// brief migrations run, and 050/051 (idempotent) re-apply over the tables that already exist.
+    /// </summary>
+    internal static Task ForgetSpeedPrefixes(NpgsqlConnection conn) =>
+        conn.ExecuteAsync("""
+            DELETE FROM schema_migrations WHERE id IN ('047','048')
+              AND to_regclass('public.billing_plans') IS NOT NULL
+              AND to_regclass('public.task_briefs') IS NULL
+            """);
+
+    private async Task MigrateAndSeedLocked(string ownerUser, string ownerPassword)
+    {
+        await using var conn = await Data.OpenConnectionAsync();
+        await ApplyMigrations(conn, file => File.ReadAllTextAsync("/migrations/" + file));
         var count = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM users");
         if (count == 0)
         {
@@ -185,20 +254,62 @@ public sealed class Platform
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
     }
+    public SessionUserCache SessionUsers { get; } = new();
 
     public async Task<Guid?> UserForSession(string? token)
     {
         if (string.IsNullOrWhiteSpace(token)) return null;
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token))).ToLowerInvariant();
+        if (SessionUsers.TryGet(hash, out var cached)) return cached;
+        var generation = SessionUsers.Generation;
         await using var conn = await Data.OpenConnectionAsync();
-        return await conn.ExecuteScalarAsync<Guid?>("SELECT user_id FROM sessions WHERE token_hash=@h AND expires_at > now()", new { h = hash });
+        var row = await conn.QuerySingleOrDefaultAsync<(Guid User, DateTimeOffset Expires)>("SELECT s.user_id, s.expires_at FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=@h AND s.expires_at > now() AND u.status='active'", new { h = hash });
+        if (row.User == Guid.Empty) return null;
+        SessionUsers.Set(hash, row.User, row.Expires, generation);
+        return row.User;
     }
 
-    public bool LoginBlocked(string ip) => _loginLimits.IsBlocked(ip, DateTimeOffset.UtcNow);
+    public async Task RevokeSession(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return;
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token))).ToLowerInvariant();
+        SessionUsers.Invalidate(hash: hash);
+        await using var conn = await Data.OpenConnectionAsync();
+        await conn.ExecuteAsync("DELETE FROM sessions WHERE token_hash=@hash", new { hash });
+        SessionUsers.Invalidate(hash: hash);
+        await conn.ExecuteAsync("SELECT pg_notify('session_user_changed', @payload)", new { payload = "hash:" + hash });
+    }
 
-    public void NoteLoginAttempt(string ip) => _loginLimits.NoteAttempt(ip, DateTimeOffset.UtcNow);
+    public async Task SessionChanged(Guid user)
+    {
+        SessionUsers.Invalidate(user);
+        await using var conn = await Data.OpenConnectionAsync();
+        await conn.ExecuteAsync("SELECT pg_notify('session_user_changed', @payload)", new { payload = "user:" + user.ToString("D") });
+    }
 
-    public void NoteLoginFailure(string ip) => _loginLimits.NoteFailure(ip, DateTimeOffset.UtcNow);
+    public async Task<bool> LoginBlocked(string ip, bool testLogin = false)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(ip.Length <= 128 ? ip : ip[..128]));
+        await using var conn = await Data.OpenConnectionAsync();
+        var limits = LoginRateLimiter.LimitsFor(TestHooks && testLogin);
+        return await conn.ExecuteScalarAsync<bool>("SELECT count(*) FILTER (WHERE failed) >= @failures OR count(*) >= @attempts FROM login_rate_events WHERE ip_hash=@hash AND created_at > clock_timestamp() - interval '10 minutes'", new { hash, failures = limits.Failures, attempts = limits.Attempts });
+    }
+
+    public async Task<long> NoteLoginAttempt(string ip)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(ip.Length <= 128 ? ip : ip[..128]));
+        await using var conn = await Data.OpenConnectionAsync();
+        var id = await conn.ExecuteScalarAsync<long>("INSERT INTO login_rate_events (ip_hash, failed) VALUES (@hash,false) RETURNING id", new { hash });
+        await conn.ExecuteAsync("DELETE FROM login_rate_events WHERE created_at < clock_timestamp() - interval '1 day'");
+        return id;
+    }
+
+    public async Task NoteLoginFailure(string ip, long attemptId)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(ip.Length <= 128 ? ip : ip[..128]));
+        await using var conn = await Data.OpenConnectionAsync();
+        await conn.ExecuteAsync("UPDATE login_rate_events SET failed=true WHERE id=@attemptId AND ip_hash=@hash", new { hash, attemptId });
+    }
 
     public async Task<string> CreateSession(Guid userId, string? ip = null)
     {
@@ -338,7 +449,10 @@ public sealed class Platform
             FROM secrets WHERE id=@id AND owner_user_id=@owner
             """,
             new { id, owner });
-        return row == null ? null : ToDict(row);
+        if (row == null) return null;
+        Dictionary<string, object?> result = ToDict(row);
+        if (result.GetValueOrDefault("provider") as string == "openrouter") result["provider"] = "ai_connection";
+        return result;
     }
 
     public async Task<byte[]?> Resolve(Guid owner, string reference, string tool, Guid? botId, string? destination, Guid? taskId, string actor)
@@ -415,7 +529,8 @@ public sealed class Platform
 
     public async Task Notify(Guid userId, string kind, string title, string body)
     {
-        var text = body.Length > 240 ? body[..240] : body;
+        var safeBody = Dlp.Redact(body);
+        var text = safeBody.Length > 240 ? safeBody[..240] : safeBody;
         await using var conn = await Data.OpenConnectionAsync();
         var enabled = await conn.ExecuteScalarAsync<bool?>(
             """
@@ -423,9 +538,12 @@ public sealed class Platform
             """,
             new { id = userId });
         if (enabled == false) return;
-        await conn.ExecuteAsync(
-            "INSERT INTO notifications (user_id, kind, title, body) VALUES (@user, @kind, @title, @body)",
+        text = Dlp.Redact(text);
+        title = Dlp.Redact(title);
+        var notificationId = await conn.ExecuteScalarAsync<Guid>(
+            "INSERT INTO notifications (user_id, kind, title, body) VALUES (@user, @kind, @title, @body) RETURNING id",
             new { user = userId, kind, title, body = text });
+        await PublishTo(userId, new { type = "notification.created", notification = new { id = notificationId, title, body = text, readAt = (string?)null } });
     }
 
     public async Task SweepSecretExpiry()
@@ -442,7 +560,10 @@ public sealed class Platform
     {
         if (!Guid.TryParse(id.Value, out var computerId)) return false;
         await using var conn = await Data.OpenConnectionAsync(ct);
-        var owner = await conn.ExecuteScalarAsync<Guid?>("SELECT user_id FROM user_computers WHERE computer_id=@id", new { id = computerId });
+        // Only a computer that is meant to be running is rebuilt. A stopped
+        // computer whose container disappeared stays stopped until its owner
+        // or one of their bots asks for it again.
+        var owner = await ClaimComputerRecovery(conn, computerId);
         if (owner == null) return false;
         var name = await conn.ExecuteScalarAsync<string>(
             """
@@ -451,9 +572,24 @@ public sealed class Platform
             WHERE c.computer_id = @id
             """,
             new { id = computerId });
-        await conn.ExecuteAsync("UPDATE user_computers SET status='recovering' WHERE computer_id=@id", new { id = computerId });
         _ = ObserveRestore(Compute.RestoreComputerAsync(id, owner.Value.ToString(), null, false, name, CancellationToken.None));
         return true;
+    }
+
+    /// <summary>Marks a wanted computer as recovering and returns its owner, or null when nobody asked for it to run.</summary>
+    public static Task<Guid?> ClaimComputerRecovery(NpgsqlConnection conn, Guid computerId) =>
+        conn.ExecuteScalarAsync<Guid?>(
+            "UPDATE user_computers SET status='recovering' WHERE computer_id=@id AND status IN ('running','recovering') RETURNING user_id",
+            new { id = computerId });
+
+    /// <summary>An explicit request from the owner or a new bot: the computer may run (and be rebuilt) again.</summary>
+    public static Task<int> WantComputer(NpgsqlConnection conn, Guid user) =>
+        conn.ExecuteAsync("UPDATE user_computers SET status='running' WHERE user_id=@user AND status='stopped'", new { user });
+
+    public async Task<Guid?> OwnerOfBot(Guid bot, CancellationToken ct)
+    {
+        await using var conn = await Data.OpenConnectionAsync(ct);
+        return await conn.ExecuteScalarAsync<Guid?>("SELECT owner_id FROM bots WHERE id=@bot", new { bot });
     }
 
     public async Task ResumeRecoveringTasks(ComputerId id)
@@ -463,7 +599,7 @@ public sealed class Platform
         var resumed = await conn.ExecuteAsync(
             """
             UPDATE tasks t
-            SET status='queued', waiting_reason=NULL, lease_owner=NULL, lease_until=NULL, updated_at=now()
+            SET status='queued', waiting_reason='computer_recovered', lease_owner=NULL, lease_until=NULL, updated_at=now()
             FROM bots b
             JOIN user_computers c ON c.user_id = b.owner_id
             WHERE t.bot_id = b.id
@@ -477,8 +613,36 @@ public sealed class Platform
               )
             """,
             new { id = computerId });
-        await conn.ExecuteAsync("UPDATE user_computers SET status='running' WHERE computer_id=@id", new { id = computerId });
+        // Only a rebuild that is still wanted becomes running. When the owner
+        // stopped it while it was being rebuilt, put it back to sleep.
+        if (await FinishComputerRecovery(conn, computerId) == "stopped")
+            _ = StopAfterRestore(id);
         if (resumed > 0) Tasks.Pulse();
+    }
+
+    /// <summary>Flips a recovering computer to running and returns the resulting status (null when there is no row).</summary>
+    public static Task<string?> FinishComputerRecovery(NpgsqlConnection conn, Guid computerId) =>
+        conn.ExecuteScalarAsync<string?>(
+            """
+            WITH done AS (UPDATE user_computers SET status='running' WHERE computer_id=@id AND status='recovering' RETURNING status)
+            SELECT COALESCE((SELECT status FROM done), (SELECT status FROM user_computers WHERE computer_id=@id))
+            """,
+            new { id = computerId });
+
+    private async Task StopAfterRestore(ComputerId id)
+    {
+        // The restore still holds the lifecycle gate while this callback runs.
+        for (var attempt = 0; attempt < 30; attempt++)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(1));
+            try
+            {
+                await Compute.StopComputerAsync(id, new StopOptions(false, TimeSpan.FromSeconds(10)), IdempotencyKey.Require("stop-restored-" + Guid.NewGuid().ToString("n")), CancellationToken.None);
+                return;
+            }
+            catch (ComputeException ex) when (ex.Code == ComputeErrorCode.Conflict) { }
+            catch (Exception) { return; }
+        }
     }
 
     private static async Task ObserveRestore(Task restore)
@@ -487,13 +651,24 @@ public sealed class Platform
         catch (Exception) { /* DockerComputeProvider logs the failed restore. */ }
     }
 
-    public Task Publish(object payload)
+    public async Task Publish(object payload)
     {
-        var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web));
-        var frame = Events.Append(json).Format();
-        foreach (var sink in Sinks.Values)
-            sink.Writer.TryWrite(frame);
+        try { PublishJson((await EventProjection.Enrich(Data, payload)).ToJsonString()); }
+        catch (Exception) { PublishJson("{\"type\":\"invalidate\"}"); } // An event projection must not fail a committed action.
+    }
+
+    public Task PublishTo(Guid owner, object payload)
+    {
+        var node = JsonSerializer.SerializeToNode(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web))!.AsObject();
+        node["ownerId"] = owner;
+        PublishJson(node.ToJsonString());
         return Task.CompletedTask;
+    }
+
+    private void PublishJson(string json)
+    {
+        var frame = Events.Append(json).Format();
+        foreach (var sink in Sinks.Values) sink.Writer.TryWrite(frame);
     }
 
     public System.Threading.Channels.Channel<string> Listen()
@@ -519,3 +694,5 @@ public sealed class Platform
         return parts[0] + string.Concat(parts.Skip(1).Select(part => part.Length == 0 ? "" : char.ToUpperInvariant(part[0]) + part[1..]));
     }
 }
+
+public sealed record ComputerMemorySample(Guid ComputerId, string Desktop, ulong ContainerBytes, long RssBytes, long DesktopRssBytes, long? CgroupBytes, int ChromeProcesses, DateTimeOffset SampledAt);

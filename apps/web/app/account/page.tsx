@@ -105,12 +105,12 @@ export default function AccountPage() {
     }
   }
 
-  async function toggleMethod(provider: string, connected: boolean) {
-    setBusyMethod(provider);
+  async function toggleMethod(identityProvider: string, connected: boolean) {
+    setBusyMethod(identityProvider);
     try {
       const next = connected
-        ? await api<AccountProfile>(`/api/account/identities/${provider}`, { method: "DELETE" })
-        : await api<AccountProfile>("/api/account/identities", { method: "POST", body: JSON.stringify({ provider }) });
+        ? await api<AccountProfile>(`/api/account/identities/${identityProvider}`, { method: "DELETE" })
+        : await api<AccountProfile>("/api/account/identities", { method: "POST", body: JSON.stringify({ provider: identityProvider }) });
       setProfile(next);
     } catch (caught) {
       toast.error(errorMessage(caught, "Could not update that sign-in method."));

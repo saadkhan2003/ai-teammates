@@ -8,7 +8,20 @@ import { api } from "@/lib/api";
 import type { Approval } from "@/lib/types";
 import { errorMessage } from "@/lib/utils";
 
-const decided = new Set(["approved", "denied", "allow_once", "allowed", "rejected", "deny", "allow_domain"]);
+const decided = new Set(["approved", "denied", "allow_once", "allowed", "rejected", "deny", "allow_domain", "allow_always"]);
+
+function canAlwaysAllow(approval: Approval) {
+  const tool = approval.action ?? "";
+  return !approval.relayed && ["read", "write", "send_message"].includes(approval.riskClass ?? "") && !["external_post", "type_secret", "request_secret", "setup_env"].includes(tool) && !/(secret|vault|credential)/i.test(tool);
+}
+
+function alwaysAllowText(approval: Approval) {
+  if (approval.action === "browser_open") return `Always allow ${domainOf(approval.target) || approval.target || "this site"} in this bot`;
+  if (approval.action === "shell" && approval.target) return `Always allow ${approval.target} in this bot`;
+  if (approval.action === "git_status") return "Always allow git status in this bot";
+  if (approval.action === "git_diff") return "Always allow git diff in this bot";
+  return `Always allow ${approval.action?.replaceAll("_", " ") || "this action"} ${approval.target || ""} in this bot`.replace(/\s+in this bot$/, " in this bot").replace(/\s{2,}/g, " ");
+}
 
 function domainOf(target?: string) {
   if (!target || !target.includes("://")) return "";
@@ -30,7 +43,7 @@ export function Approvals({ approvals, onChanged }: { approvals: Approval[]; onC
   // The workspace only lists pending approvals, so keep what was just decided on screen.
   const [settled, setSettled] = useState<Record<string, { action: string; target: string; denied: boolean }>>({});
 
-  async function decide(id: string, decision: "allow_once" | "allow_domain" | "deny") {
+  async function decide(id: string, decision: "allow_once" | "allow_domain" | "allow_always" | "deny") {
     setPendingId(id);
     setError(null);
     try {
@@ -42,7 +55,7 @@ export function Approvals({ approvals, onChanged }: { approvals: Approval[]; onC
       if (decidedItem) {
         setSettled((prev) => ({ ...prev, [id]: { action: decidedItem.action ?? "", target: decidedItem.target ?? "", denied: decision === "deny" } }));
       }
-      toast.success(decision === "deny" ? "Denied." : decision === "allow_domain" ? "Allowed for this domain." : "Allowed once.");
+      toast.success(decision === "deny" ? "Denied." : decision === "allow_domain" ? "Allowed for this domain." : decision === "allow_always" ? "Approval rule saved." : "Allowed once.");
       onChanged();
     } catch (caught) {
       setError(errorMessage(caught, "Could not record that decision."));
@@ -57,12 +70,12 @@ export function Approvals({ approvals, onChanged }: { approvals: Approval[]; onC
   return (
     <div className="flex flex-col gap-3">
       {settledOnly.map(([id, item]) => (
-        <div key={id} data-testid="approval-card" data-decided="true" className="rounded-md border border-border px-3 py-2 text-body-sm text-muted-foreground">{item.denied ? "Denied" : "Allowed"} {item.action} {domainOf(item.target) || item.target}</div>
+        <div key={id} data-testid="approval-card" data-decided="true" className="motion-fade rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">{item.denied ? "Denied" : "Allowed"} {item.action} {domainOf(item.target) || item.target}</div>
       ))}
       {approvals.map((approval) => !needsDecision(approval.status) ? (
-        <div key={approval.id} data-testid="approval-card" data-decided="true" className="rounded-md border border-border px-3 py-2 text-body-sm text-muted-foreground">{["denied", "deny", "rejected"].includes(approval.status ?? "") ? "Denied" : "Allowed"} {approval.action} {domainOf(approval.target) || approval.target}</div>
+        <div key={approval.id} data-testid="approval-card" data-decided="true" className="motion-fade rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">{["denied", "deny", "rejected"].includes(approval.status ?? "") ? "Denied" : "Allowed"} {approval.action} {domainOf(approval.target) || approval.target}</div>
       ) : (
-        <Card key={approval.id} data-testid="approval-card" className="min-w-0 max-w-full">
+        <Card key={approval.id} data-testid="approval-card" className="motion-rise min-w-0 max-w-full">
           <CardHeader className="p-4">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <CardTitle className="min-w-0 break-words text-body-sm">{approval.action || "Approval"}</CardTitle>
@@ -70,10 +83,11 @@ export function Approvals({ approvals, onChanged }: { approvals: Approval[]; onC
             </div>
           </CardHeader>
           <CardContent className="flex flex-col gap-2 p-4 pt-0">
-            {approval.riskClass ? <p className="text-meta uppercase tracking-wide text-muted-foreground">{approval.riskClass}</p> : null}
-            {approval.summary ? <p data-testid="approval-summary" className="break-words text-body-sm">{approval.summary}</p> : null}
-            {approval.target ? <p className="break-words text-body-sm">{approval.target}</p> : null}
-            {approval.reason && approval.reason !== approval.summary ? <p className="break-words text-body-sm text-muted-foreground">{approval.reason}</p> : null}
+            {approval.relayed || approval.threadTitle ? <p data-testid="approval-relayed" className="text-xs text-muted-foreground">{approval.relayed ? `${approval.botName ?? "A teammate"} needs this for “${approval.threadTitle ?? "a conversation"}”. Approving here approves it everywhere.` : `Asked by ${approval.requestedBy ?? "a teammate"} in “${approval.threadTitle}”.`}</p> : null}
+            {approval.riskClass ? <p className="text-xs uppercase tracking-wide text-muted-foreground">{approval.riskClass}</p> : null}
+            {approval.summary ? <p data-testid="approval-summary" className="break-words text-sm">{approval.summary}</p> : null}
+            {approval.target ? <p className="break-words text-sm">{approval.target}</p> : null}
+            {approval.reason && approval.reason !== approval.summary ? <p className="break-words text-sm text-muted-foreground">{approval.reason}</p> : null}
             {needsDecision(approval.status) ? (
               <div className="flex flex-col gap-2 sm:flex-row">
                 <Button
@@ -96,6 +110,12 @@ export function Approvals({ approvals, onChanged }: { approvals: Approval[]; onC
                   >
                     Always allow site
                   </Button>
+                ) : null}
+                {canAlwaysAllow(approval) ? (
+                  <div className="flex flex-col gap-1">
+                    <Button data-testid="approval-always" size="sm" variant="outline" className="rounded-md" disabled={pendingId === approval.id} onClick={() => void decide(approval.id, "allow_always")}>Always allow</Button>
+                    <p className="text-xs text-muted-foreground">{alwaysAllowText(approval)}</p>
+                  </div>
                 ) : null}
                 <Button
                   data-testid="deny"

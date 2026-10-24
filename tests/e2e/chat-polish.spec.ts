@@ -1,11 +1,8 @@
 import { expect, test } from "@playwright/test";
+import { login } from "./helpers";
 
 test("chat empty state, missing-key banner, Markdown, composer shortcuts and collapsed approvals", async ({ page }) => {
-  await page.goto("/login");
-  await page.getByTestId("login-username").fill(process.env.OWNER_USERNAME ?? "saad");
-  await page.getByTestId("login-password").fill(process.env.OWNER_PASSWORD ?? "teammates-dev");
-  await page.getByTestId("login-submit").click();
-  await expect(page.getByTestId("app-shell")).toBeVisible();
+  await login(page);
   const bot = "11111111-1111-4111-8111-111111111111";
   let messages: object[] = [];
   await page.route(`**/api/bots/${bot}/**`, route => route.fulfill({ json: [] }));

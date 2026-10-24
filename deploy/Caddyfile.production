@@ -9,6 +9,8 @@
 }
 
 (routes) {
+	@compress not path /api/events /vnc/*
+	encode @compress zstd gzip
 	header {
 		X-Content-Type-Options nosniff
 		Referrer-Policy same-origin
@@ -23,17 +25,29 @@
 	request_body {
 		max_size 32MB
 	}
+	handle /internal/* {
+		respond 404
+	}
+	handle /metrics {
+		respond 404
+	}
 	handle /api/events {
 		reverse_proxy api:8080 {
 			flush_interval -1
+			stream_timeout 24h
+			stream_close_delay 5m
 			transport http {
 				read_timeout 0
 				write_timeout 0
+				keepalive 30s
 			}
 		}
 	}
 	handle /api/* {
-		reverse_proxy api:8080
+		reverse_proxy api:8080 {
+			# Relay clients should send the same X-Relay-Affinity value for both WS ends.
+			lb_policy header X-Relay-Affinity
+		}
 	}
 	handle /health {
 		reverse_proxy api:8080
@@ -41,9 +55,12 @@
 	handle /vnc/* {
 		reverse_proxy api:8080 {
 			flush_interval -1
+			stream_timeout 24h
+			stream_close_delay 5m
 			transport http {
 				read_timeout 0
 				write_timeout 0
+				keepalive 30s
 			}
 		}
 	}
@@ -56,6 +73,13 @@
 # dev file (space-separated CIDRs). It does not publish /internal/*, /metrics,
 # or /vnc/*.
 (admin_routes) {
+	@compress not path /api/events /vnc/*
+	encode @compress zstd gzip
+	handle /api/events {
+		reverse_proxy api:8080 {
+			flush_interval -1
+		}
+	}
 	header {
 		X-Content-Type-Options nosniff
 		Referrer-Policy same-origin
@@ -68,9 +92,7 @@
 		max_size 32MB
 	}
 	@admin_denied not remote_ip {$ADMIN_ALLOWLIST:0.0.0.0/0 ::/0}
-	handle @admin_denied {
-		respond "Forbidden" 403
-	}
+	respond @admin_denied "Forbidden" 403
 	handle /api/* {
 		reverse_proxy api:8080
 	}
@@ -97,5 +119,10 @@ admin.example.com {
 	tls {
 		issuer acme
 	}
+	import admin_routes
+}
+
+# Loopback-published operator listener for isolated stacks.
+:8081 {
 	import admin_routes
 }

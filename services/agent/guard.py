@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 
 MARKER = "CANARY-INJECT"
 _LINE_SKIP = (
@@ -85,6 +86,15 @@ def should_halt(status) -> bool:
     return status in HALT_STATUSES
 
 
+def stamp_actor(payload: dict, worker_id: str) -> dict:
+    """Attach a bounded, non-secret actor id to computer-action API requests."""
+    if not isinstance(payload, dict) or not isinstance(worker_id, str) or not worker_id or len(worker_id) > 120:
+        raise ValueError("invalid action actor")
+    stamped = dict(payload)
+    stamped["actor_id"] = "agent:" + worker_id
+    return stamped
+
+
 def login_result(body: dict) -> dict:
     output = body.get("output") if isinstance(body.get("output"), dict) else {}
     login_status = str(output.get("status") or body.get("status") or "denied")
@@ -111,9 +121,33 @@ def present_tool(name: str, args: dict | None, result):
     """Browser text and shell output that fetched a page are untrusted data."""
     if not isinstance(result, dict):
         return result
+    if name in {"watch_video", "ask_video"}:
+        def mark_video(value):
+            if isinstance(value, list):
+                return [mark_video(item) for item in value]
+            if isinstance(value, dict):
+                return {key: wrap_untrusted(item, "video") if key in {"summary", "text", "content", "transcript", "answer"} and isinstance(item, str)
+                        else mark_video(item) for key, item in value.items()}
+            return value
+        return dict(mark_video(result), untrusted=True)
     if name in {"browser_open", "browser_extract", "browser_click", "browser_screenshot"} and "text" in result:
         marked = dict(result)
         marked["text"] = wrap_untrusted(str(result.get("text") or ""), "web")
+        marked["untrusted"] = True
+        return marked
+    if name == "thread_status" and result.get("lastMessage"):
+        marked = dict(result)
+        marked["lastMessage"] = wrap_untrusted(str(result.get("lastMessage")), "peer bot")
+        marked["untrusted"] = True
+        return marked
+    if name == "list_bots" and isinstance(result.get("bots"), list):
+        marked = dict(result)
+        marked["bots"] = [dict(b, bio=wrap_untrusted(str(b.get("bio") or ""), "peer bot")) if isinstance(b, dict) and b.get("bio") else b for b in result["bots"]]
+        marked["untrusted"] = True
+        return marked
+    if name == "job_logs" and isinstance(result.get("log"), str) and result.get("log"):
+        marked = dict(result)
+        marked["log"] = wrap_untrusted(str(result["log"]), "job log")
         marked["untrusted"] = True
         return marked
     command = ""
@@ -160,3 +194,55 @@ def scrub(value):
     if isinstance(value, list):
         return [scrub(item) for item in value]
     return value
+
+
+RISKY_PREEXEC_TOOLS = {
+    "shell", "setup_env", "job_start", "write_file", "edit_file", "delete_file", "external_post", "send_message", "sign",
+    "browser_click", "computer_click", "computer_type", "computer_key", "computer_use", "launch_app", "open_app",
+    "automation_write", "delegate", "spawn_child_task", "message_bot", "create_routine", "update_routine",
+}
+
+
+def normalize_argv(argv) -> list[str]:
+    """Validate and canonicalize argv for exact command-shape approval matching."""
+    if not isinstance(argv, (list, tuple)) or not 1 <= len(argv) <= 128:
+        raise ValueError("invalid argv")
+    normalized = []
+    total = 0
+    for item in argv:
+        if not isinstance(item, str) or len(item) > 4096 or "\x00" in item:
+            raise ValueError("invalid argv")
+        value = item.strip()
+        if not value:
+            raise ValueError("invalid argv")
+        total += len(value)
+        normalized.append(value)
+    if total > 16384:
+        raise ValueError("argv too large")
+    return normalized
+
+
+def preexec_decision(tool: str, args: dict, request, *, endpoint: str = "/internal/tools/preexec") -> str:
+    """Ask the authenticated API before a risky action. Any bad response fails closed."""
+    if tool not in RISKY_PREEXEC_TOOLS:
+        return "allow"
+    if not isinstance(args, dict) or len(json.dumps(args, default=str)) > 32768:
+        return "deny"
+    if tool == "shell":
+        command = args.get("command")
+        if not isinstance(command, str) or len(command) > 16384:
+            return "deny"
+        try:
+            args = dict(args, argv=normalize_argv(["/bin/sh", "-lc", command]))
+        except ValueError:
+            return "deny"
+    try:
+        response = request(endpoint, json={"tool": tool, "args": args}, timeout=5)
+        if getattr(response, "status_code", 500) != 200:
+            return "deny"
+        result = response.json()
+        if not isinstance(result, dict) or result.get("decision") not in {"allow", "ask", "deny"}:
+            return "deny"
+        return result["decision"]
+    except Exception:
+        return "deny"
