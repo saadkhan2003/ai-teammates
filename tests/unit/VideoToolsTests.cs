@@ -42,6 +42,15 @@ public sealed class VideoToolsTests
         Assert.Equal(allowed, ToolSchema.Validate("watch_video", args) == null);
     }
 
+    [Theory]
+    [InlineData("attachment_id", "00000000-0000-0000-0000-000000000001")]
+    [InlineData("path", "/workspace/demo.mp4")]
+    public void WatchVideoAcceptsAttachmentOrWorkspacePath(string field, string value)
+    {
+        using var args = JsonDocument.Parse(JsonSerializer.Serialize(new Dictionary<string, object> { [field] = value }));
+        Assert.Null(ToolSchema.Validate("watch_video", args.RootElement));
+    }
+
     [Fact]
     public void VideoAndSkillToolsCoexistAndCardOmitsRawMedia()
     {
@@ -61,6 +70,14 @@ public sealed class VideoToolsTests
         Assert.NotEqual(original, VideoTools.SettingsVersion(Teammates.Api.Platform.DefaultRealModel, "whisper-v2", "provider-a", "chunk=300"));
         Assert.NotEqual(original, VideoTools.SettingsVersion(Teammates.Api.Platform.DefaultRealModel, "whisper", "provider-b", "chunk=300"));
         Assert.NotEqual(original, VideoTools.SettingsVersion(Teammates.Api.Platform.DefaultRealModel, "whisper", "provider-a", "chunk=600"));
+    }
+
+    [Fact]
+    public void VideoCreditEntriesUseTheUserFacingLabelWithoutProviderDetails()
+    {
+        Assert.Equal("video", VideoTools.UsageRole);
+        Assert.Equal("video", VideoTools.UsageProvider);
+        Assert.Equal("Video watching", VideoTools.UsageLabel);
     }
 
     [Theory]

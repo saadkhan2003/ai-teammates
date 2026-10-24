@@ -120,7 +120,7 @@ public static class Routes
             await using var conn = await platform.Data.OpenConnectionAsync();
             var rows = await conn.QueryAsync(
                 """
-                SELECT b.id, b.name, b.role, b.instructions, b.status, b.created_at, b.section, b.avatar, b.avatar_shape, b.avatar_color, b.model, b.notifications_enabled, b.is_primary, b.bio, b.peer_messaging,
+                SELECT b.id, b.name, b.role, b.instructions, b.status, b.created_at, b.section, b.avatar, b.avatar_shape, b.avatar_color, b.notifications_enabled, b.is_primary, b.bio, b.peer_messaging,
                        (EXISTS (SELECT 1 FROM approvals a WHERE a.bot_id=b.id AND a.status='pending')
                         OR EXISTS (SELECT 1 FROM tasks t WHERE t.bot_id=b.id AND t.status IN ('waiting_human','waiting_approval'))) AS attention
                 FROM bots b WHERE b.owner_id=@id ORDER BY b.created_at
@@ -218,7 +218,7 @@ public static class Routes
             if (user == null) return Results.Unauthorized();
             if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             await using var conn = await platform.Data.OpenConnectionAsync();
-            var bot = Platform.ToDict(await conn.QuerySingleAsync("SELECT id, name, role, instructions, status, model, avatar, avatar_shape, avatar_color, section, notifications_enabled, is_primary, bio, peer_messaging FROM bots WHERE id=@id", new { id }));
+            var bot = Platform.ToDict(await conn.QuerySingleAsync("SELECT id, name, role, instructions, status, avatar, avatar_shape, avatar_color, section, notifications_enabled, is_primary, bio, peer_messaging FROM bots WHERE id=@id", new { id }));
             var conversationId = await conn.ExecuteScalarAsync<Guid>("SELECT id FROM conversations WHERE bot_id=@id ORDER BY created_at LIMIT 1", new { id });
             var tasks = (await conn.QueryAsync("SELECT id, title, instruction, status, kind, model_calls, waiting_reason, error, error_code, result::text AS result FROM tasks WHERE bot_id=@id ORDER BY created_at DESC LIMIT 50", new { id })).Select(Platform.ToDict);
             var (messages, messagesHasMore) = await LoadMessages(conn, conversationId, null, 200);
@@ -235,7 +235,7 @@ public static class Routes
                     dict["fields"] = JsonSerializer.Deserialize<JsonElement>(fieldJson);
                 return dict;
             });
-            return Results.Json(new { bot, conversationId, tasks, messages, messagesHasMore, approvals, botThreads, pages, holder, secretRequests, loginRequests, llmProvider = platform.LlmProvider, openrouterConnected = connected });
+            return Results.Json(new { bot, conversationId, tasks, messages, messagesHasMore, approvals, botThreads, pages, holder, secretRequests, loginRequests, openrouterConnected = connected });
         });
 
         app.MapPost("/api/conversations/{id:guid}/messages", async (HttpContext ctx, Guid id, JsonElement body) =>
@@ -532,7 +532,7 @@ public static class Routes
             if (user == null) return Results.Unauthorized();
             await using var conn = await platform.Data.OpenConnectionAsync();
             var secretId = await conn.ExecuteScalarAsync<Guid?>("SELECT id FROM secrets WHERE owner_user_id=@owner AND provider='openrouter' AND name='default' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>now())", new { owner = user });
-            return Results.Json(new { hasKey = secretId != null, provider = platform.LlmProvider, model = platform.ModelName, secretId });
+            return Results.Json(new { hasKey = secretId != null, secretId });
         });
 
         app.MapGet("/api/bots/{id:guid}/tasks", async (HttpContext ctx, Guid id) =>
@@ -1240,7 +1240,8 @@ public static class Routes
             var calls = await conn.ExecuteScalarAsync<long>("SELECT count(*) FROM model_calls WHERE owner_id=@id", new { id = user });
             var cost = await conn.ExecuteScalarAsync<decimal>("SELECT coalesce(sum(cost_usd),0) FROM model_calls WHERE owner_id=@id", new { id = user });
             var latency = await conn.ExecuteScalarAsync<double>("SELECT coalesce(avg(latency_ms),0)::float8 FROM model_calls WHERE owner_id=@id", new { id = user });
-            return Results.Json(new { modelCalls = calls, costUsd = cost, latencyMs = latency, llmProvider = platform.LlmProvider, computerMemoryBytes = platform.ComputerMemory, chromeProcesses = platform.ChromeProcesses });
+            var video = await conn.QuerySingleAsync<(long Calls, decimal Cost)>("SELECT count(*),coalesce(sum(cost_usd),0) FROM model_calls WHERE owner_id=@id AND role=@role", new { id = user, role = VideoTools.UsageRole });
+            return Results.Json(new { modelCalls = calls, costUsd = cost, latencyMs = latency, videoCalls = video.Calls, videoCostUsd = video.Cost, computerMemoryBytes = platform.ComputerMemory, chromeProcesses = platform.ChromeProcesses });
         });
 
         app.MapGet("/api/model-requests", async (HttpContext ctx) =>
@@ -1248,7 +1249,7 @@ public static class Routes
             var user = await RequireUser(ctx, platform);
             if (user == null) return Results.Unauthorized();
             await using var conn = await platform.Data.OpenConnectionAsync();
-            var rows = await conn.QueryAsync("SELECT id, model, prompt_json::text AS prompt, created_at FROM model_requests WHERE owner_id=@id ORDER BY created_at DESC LIMIT 30", new { id = user });
+            var rows = await conn.QueryAsync("SELECT id, prompt_json::text AS prompt, created_at FROM model_requests WHERE owner_id=@id ORDER BY created_at DESC LIMIT 30", new { id = user });
             return Results.Json(rows.Select(Platform.ToDict));
         });
 

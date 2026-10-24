@@ -6,11 +6,15 @@ namespace Teammates.Api;
 
 public static class VideoTools
 {
+    public const string UsageRole = "video";
+    public const string UsageProvider = "video";
+    public const string UsageLabel = "Video watching";
+
     public static bool IsTool(string tool) => tool is "watch_video" or "ask_video";
 
     public static string Source(JsonElement args)
     {
-        foreach (var field in new[] { "video_id", "source" })
+        foreach (var field in new[] { "attachment_id", "video_id", "path", "source" })
             if (args.TryGetProperty(field, out var value) && value.ValueKind == JsonValueKind.String
                 && !string.IsNullOrWhiteSpace(value.GetString())) return value.GetString()!;
         return "";

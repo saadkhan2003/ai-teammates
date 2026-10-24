@@ -5,7 +5,7 @@ import { Markdown } from "@/components/markdown";
 import { RefreshNotice } from "@/components/refresh-notice";
 import { ResumeCard, ResumeNotice } from "@/components/resume-card";
 import type { AgentEvent } from "@/lib/events";
-import { ArrowUp, Loader2, Notebook, Plus, Reply as ReplyIcon, X as XIcon, Quote } from "lucide-react";
+import { ArrowUp, Film, Loader2, Notebook, Plus, Reply as ReplyIcon, X as XIcon, Quote } from "lucide-react";
 import { highlightPlan, loadUntil } from "@/lib/history";
 import { BotAvatar } from "@/components/bot-avatar";
 import { BotActionRow, BotThreadRow } from "@/components/bot-thread";
@@ -789,6 +789,16 @@ function SecureFormCard({ title, fields }: { title: string; fields: FormField[] 
 }
 
 function EventCard({ event }: { event: AgentEvent }) {
+  if (event.type === "video_progress") {
+    const stage = String(event.stage ?? "Preparing video");
+    const current = Number(event.current);
+    const total = event.total;
+    const count = Number.isFinite(current) && total != null ? ` ${current}/${String(total)}` : "";
+    return <div data-testid="video-progress" role="status" className="inline-flex min-h-8 items-center gap-2 rounded-md border border-line bg-paper px-2.5 text-xs text-muted-foreground">
+      <Film className="h-3.5 w-3.5 text-foreground" aria-hidden />
+      <span className="font-medium text-foreground">{stage}{count}</span>
+    </div>;
+  }
   if (event.type === "grounding") {
     const verified = Number(event.verified ?? event.verifiedLinks);
     const removed = Number(event.removed ?? event.removedLinks);

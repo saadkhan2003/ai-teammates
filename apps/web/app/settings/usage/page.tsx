@@ -10,6 +10,8 @@ import { errorMessage } from "@/lib/utils";
 type Usage = {
   modelCalls?: number;
   costUsd?: number;
+  videoCalls?: number;
+  videoCostUsd?: number;
   latencyMs?: number;
   computerMemoryBytes?: number;
   chromeProcesses?: number;
@@ -84,6 +86,10 @@ export default function UsagePage() {
           </article>
         </section>
       ) : null}
+      {usage ? <section data-testid="video-usage" className="rounded-lg border border-line bg-paper px-4 py-3 text-sm">
+        <h2 className="font-medium">Video watching</h2>
+        <p className="mt-1 text-muted-foreground">{usage.videoCalls ?? 0} calls · ${Number(usage.videoCostUsd ?? 0).toFixed(4)}</p>
+      </section> : null}
       {quota ? (
         <section className="rounded-lg border border-line bg-paper p-5 text-sm">
           <h2 className="text-lg font-semibold">Quota</h2>

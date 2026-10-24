@@ -128,7 +128,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         var settingsVersion = VideoTools.SettingsVersion(
             Environment.GetEnvironmentVariable("VIDEO_SUMMARY_MODEL") ?? platform.ModelName,
             Environment.GetEnvironmentVariable("VIDEO_STT_MODEL") ?? "openai/whisper-large-v3-turbo",
-            Environment.GetEnvironmentVariable("VIDEO_STT_PROVIDER") ?? "deepinfra", processingSettings);
+            Environment.GetEnvironmentVariable("VIDEO_STT_PROVIDER") ?? "DeepInfra", processingSettings);
         if (operation == "source")
         {
             if (itemId is Guid && (string.IsNullOrEmpty(objectKey) || sourceSize > 1_000_000_000)) return Results.BadRequest(new { error = "invalid_video_source" });
@@ -190,7 +190,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
                 {
                     var audio = body.GetProperty("audio").GetString() ?? "";
                     model = Environment.GetEnvironmentVariable("VIDEO_STT_MODEL") ?? "openai/whisper-large-v3-turbo";
-                    payload = new { model, input_audio = new { data = audio, format = "mp3" }, provider = new { order = new[] { Environment.GetEnvironmentVariable("VIDEO_STT_PROVIDER") ?? "deepinfra" }, allow_fallbacks = false } };
+                    payload = new { model, input_audio = new { data = audio, format = "mp3" }, provider = new { order = new[] { Environment.GetEnvironmentVariable("VIDEO_STT_PROVIDER") ?? "DeepInfra" }, allow_fallbacks = false } };
                 }
                 else
                 {
@@ -207,14 +207,18 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
                 using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(timeout.Token));
                 if (kind == "stt")
                 {
-                    using var safePrompt = JsonDocument.Parse(JsonSerializer.Serialize(new { kind = "video_stt", model, audioBytes = (body.GetProperty("audio").GetString() ?? "").Length * 3 / 4 }));
-                    await StoreVideoModel(owner, botId, taskId, safePrompt.RootElement, model, default);
+                    var audioSeconds = body.TryGetProperty("audioSeconds", out var secondsNode) && secondsNode.TryGetDouble(out var seconds) ? seconds : 0;
+                    using var safePrompt = JsonDocument.Parse(JsonSerializer.Serialize(new { kind = "video_transcription", audioBytes = (body.GetProperty("audio").GetString() ?? "").Length * 3 / 4, audioSeconds }));
+                    await StoreVideoModel(owner, botId, taskId, safePrompt.RootElement, ProviderWire.ReadUsage(doc.RootElement));
                     await conn.ExecuteAsync("UPDATE tasks SET model_calls=model_calls+1,updated_at=now() WHERE id=@task", new { task = taskId });
                     return Results.Json(doc.RootElement.Clone());
                 }
                 var content = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content");
-                using var summaryPrompt = JsonDocument.Parse(JsonSerializer.Serialize(new { kind = "video_summary", model, multimodal = true }));
-                await StoreVideoModel(owner, botId, taskId, summaryPrompt.RootElement, model, ProviderWire.ReadUsage(doc.RootElement));
+                var usageEstimate = body.TryGetProperty("usageEstimate", out var usageNode) ? usageNode : default;
+                var frameCount = usageEstimate.ValueKind == JsonValueKind.Object && usageEstimate.TryGetProperty("frameCount", out var frameNode) && frameNode.TryGetInt32(out var frames) ? frames : 0;
+                var visionTokens = usageEstimate.ValueKind == JsonValueKind.Object && usageEstimate.TryGetProperty("visionTokens", out var tokenNode) && tokenNode.TryGetInt32(out var tokens) ? tokens : 0;
+                using var summaryPrompt = JsonDocument.Parse(JsonSerializer.Serialize(new { kind = "video_vision", frameCount, estimatedVisionTokens = visionTokens, multimodal = true }));
+                await StoreVideoModel(owner, botId, taskId, summaryPrompt.RootElement, ProviderWire.ReadUsage(doc.RootElement));
                 await conn.ExecuteAsync("UPDATE tasks SET model_calls=model_calls+1,updated_at=now() WHERE id=@task", new { task = taskId });
                 return Results.Json(new { content = content.ValueKind == JsonValueKind.String ? content.GetString() : content.GetRawText() });
             }
@@ -1499,12 +1503,12 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
             new { bot = botId, task = taskId, owner, role, provider = platform.LlmProvider, model = platform.ModelName, latency, promptTokens = usage.PromptTokens, completionTokens = usage.CompletionTokens, ok, cost = usage.CostUsd });
     }
 
-    private async Task StoreVideoModel(Guid owner, Guid botId, Guid taskId, JsonElement prompt, string model, TokenUsage usage)
+    private async Task StoreVideoModel(Guid owner, Guid botId, Guid taskId, JsonElement prompt, TokenUsage usage)
     {
         await using var conn = await platform.Data.OpenConnectionAsync();
         var json = prompt.GetRawText();
-        await conn.ExecuteAsync("INSERT INTO model_requests(owner_id,bot_id,task_id,provider,model,prompt_json) VALUES(@owner,@bot,@task,'openrouter',@model,CAST(@json AS jsonb))", new { owner, bot = botId, task = taskId, model, json });
-        await conn.ExecuteAsync("INSERT INTO model_calls(bot_id,task_id,owner_id,role,provider,model,latency_ms,prompt_tokens,completion_tokens,ok,cost_usd) VALUES(@bot,@task,@owner,'video','openrouter',@model,0,@promptTokens,@completionTokens,true,@cost)", new { bot = botId, task = taskId, owner, model, promptTokens = usage.PromptTokens, completionTokens = usage.CompletionTokens, cost = usage.CostUsd });
+        await conn.ExecuteAsync("INSERT INTO model_requests(owner_id,bot_id,task_id,provider,model,prompt_json) VALUES(@owner,@bot,@task,@provider,@label,CAST(@json AS jsonb))", new { owner, bot = botId, task = taskId, provider = VideoTools.UsageProvider, label = VideoTools.UsageLabel, json });
+        await conn.ExecuteAsync("INSERT INTO model_calls(bot_id,task_id,owner_id,role,provider,model,latency_ms,prompt_tokens,completion_tokens,ok,cost_usd) VALUES(@bot,@task,@owner,@role,@provider,@label,0,@promptTokens,@completionTokens,true,@cost)", new { bot = botId, task = taskId, owner, role = VideoTools.UsageRole, provider = VideoTools.UsageProvider, label = VideoTools.UsageLabel, promptTokens = usage.PromptTokens, completionTokens = usage.CompletionTokens, cost = usage.CostUsd });
     }
 
     private async Task<Guid> OwnerOf(Guid botId)

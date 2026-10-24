@@ -115,7 +115,6 @@ export type Workspace = {
   loginRequests?: LoginRequest[];
   pages: BrowserPage[];
   holder: "agent" | "human";
-  llmProvider: string;
   openrouterConnected: boolean;
 };
 

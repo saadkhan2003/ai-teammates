@@ -20,7 +20,7 @@ public static class ToolSchema
     [
         Fn("browser_open", "Open a URL in the bot browser", Req("url", "string", "Absolute URL"), Opt("wait", "string", "CSS selector to wait for")),
         Fn("browser_extract", "Read text from the current page", Opt("selector", "string", "CSS selector")),
-        Fn("watch_video", "Analyze an attached, library, or workspace video. Use its library item id or a workspace path.", Opt("video_id", "string", "Video library item id"), Opt("source", "string", "File path under this bot's workspace")),
+        Fn("watch_video", "Analyze an attached video or a video file under this bot's workspace. Optionally answer a question about it.", Opt("attachment_id", "string", "Attached video id"), Opt("path", "string", "File path under this bot's workspace"), Opt("video_id", "string", "Video library item id"), Opt("source", "string", "File path under this bot's workspace"), Opt("question", "string", "Optional question about the video")),
         Fn("ask_video", "Ask a follow-up about an analyzed library or workspace video", Req("question", "string", "Question about the video"), Opt("video_id", "string", "Video library item id"), Opt("source", "string", "File path under this bot's workspace"), Opt("around_ts", "number", "Focus on frames near this timestamp in seconds")),
         Fn("browser_click", "Click an element", Req("selector", "string", "CSS selector")),
         Fn("computer_screenshot", "Capture the desktop screen as task evidence"),
@@ -164,9 +164,9 @@ public static class ToolSchema
         }
         if (tool is "watch_video" or "ask_video")
         {
-            var hasVideoId = args.TryGetProperty("video_id", out var videoId) && videoId.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(videoId.GetString());
-            var hasSource = args.TryGetProperty("source", out var source) && source.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(source.GetString());
-            if (!hasVideoId && !hasSource) return tool + " requires video_id or source";
+            var hasVideoSource = new[] { "attachment_id", "video_id", "path", "source" }.Any(field =>
+                args.TryGetProperty(field, out var value) && value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(value.GetString()));
+            if (!hasVideoSource) return tool + " requires an attachment id or path";
             if (!VideoTools.SafeSource(VideoTools.Source(args))) return tool + " requires a safe video source";
         }
         if (tool == "computer_click" && args.TryGetProperty("button", out var button) && (!button.TryGetInt32(out var buttonValue) || buttonValue is < 1 or > 3)) return "computer_click button must be 1, 2, or 3";
