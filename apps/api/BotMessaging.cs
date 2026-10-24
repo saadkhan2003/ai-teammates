@@ -136,6 +136,14 @@ public static class BotMessaging
 
     public static async Task<object> Run(Platform platform, Guid owner, Guid botId, Guid taskId, string tool, JsonElement args, CancellationToken ct)
     {
+        if (tool is "message_bot" or "create_routine" or "update_routine" && args.TryGetProperty("brief", out _))
+        {
+            var prepared = await BriefStore.Prepare(platform, botId, taskId, args, true, ct);
+            if (prepared.Error is not null) return prepared.Error;
+            var rendered = System.Text.Json.Nodes.JsonNode.Parse(args.GetRawText())!.AsObject();
+            rendered[tool == "message_bot" ? "text" : "instruction"] = prepared.Value!.Markdown;
+            args = JsonSerializer.SerializeToElement(rendered);
+        }
         await using var conn = await platform.Data.OpenConnectionAsync(ct);
         var row = await conn.QuerySingleOrDefaultAsync("SELECT t.origin_thread_id, t.origin_depth, b.name FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE t.id=@taskId", new { taskId });
         if (row == null) return Fail("task_missing");

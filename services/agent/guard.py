@@ -194,7 +194,7 @@ def scrub(value):
 RISKY_PREEXEC_TOOLS = {
     "shell", "setup_env", "write_file", "edit_file", "delete_file", "external_post", "send_message", "sign",
     "browser_click", "computer_click", "computer_type", "computer_key", "computer_use", "launch_app", "open_app",
-    "automation_write", "delegate", "message_bot", "create_routine", "update_routine",
+    "automation_write", "delegate", "spawn_child_task", "message_bot", "create_routine", "update_routine",
 }
 
 

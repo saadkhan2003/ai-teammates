@@ -90,7 +90,7 @@ def split_for_summary(messages: list[dict], keep_tail: int = 20) -> tuple[list[d
     for i, message in enumerate(messages):
         content = _content(message)
         plan_name = str(message.get("name") or "") in {"plan_update", "plan_set"}
-        if "[resume-brief]" in content:
+        if "[resume-brief]" in content or "[brief-steering:" in content:
             pinned.add(i)
         if "[compaction summary " in content:
             pinned.add(i)

@@ -20,6 +20,7 @@ public static class Routes
     public static void Map(WebApplication app, Platform platform, Runtime runtime)
     {
         LibraryRoutes.Map(app, platform);
+        BriefRoutes.Map(app, platform);
         SkillLibraryRoutes.Map(app, platform, runtime);
         app.MapGet("/health", async () =>
         {
@@ -1656,7 +1657,7 @@ public static class Routes
                         (string?)ledger["snapshotRef"], (string?)ledger["snapshotAt"]);
                     resume = new { brief, interrupted = previousReason is "lease_expired" or "computer_recovered" or "network_interrupted" or "stalled" };
                 }
-                rows.Add(new { id = task.Id, botId = task.BotId, computerId = placement.Computer.Value, cdpUrl = $"http://{dns}:9222", instruction = task.Instruction, kind = task.Kind, attempt = task.Attempt, epoch = task.Epoch, checkpoint = checkpointJson, force_compact = task.ForceCompact, conversationId = task.ConversationId, messageId = task.SourceMessageId, role = injectRole ? botPrompt.Role : "", botInstructions = injectRole ? botPrompt.Instructions : "", memoryMode = notesFlag, botMemoryMode = memoryMode, standingRules = rules, scopedRules, ruleTokens, feedback, skill = skillJson, resume, budget = new { maxSteps = resolvedBudget.MaxSteps, maxSeconds = resolvedBudget.MaxSeconds, maxAttemptSteps = Math.Min(400, resolvedBudget.MaxSteps), maxAttemptSeconds = Math.Min(1800, resolvedBudget.MaxSeconds), maxRounds = modelRoundBudget.PerAttempt, maxRoundsCumulative = modelRoundBudget.Cumulative, pauseOnBudget, label = resolvedBudget.Label } });
+                rows.Add(new { id = task.Id, botId = task.BotId, computerId = placement.Computer.Value, cdpUrl = $"http://{dns}:9222", instruction = task.Instruction, kind = task.Kind, attempt = task.Attempt, epoch = task.Epoch, checkpoint = checkpointJson, force_compact = task.ForceCompact, conversationId = task.ConversationId, messageId = task.SourceMessageId, hasBrief = await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM task_briefs WHERE task_id=@id)", new { id = task.Id }), role = injectRole ? botPrompt.Role : "", botInstructions = injectRole ? botPrompt.Instructions : "", memoryMode = notesFlag, botMemoryMode = memoryMode, standingRules = rules, scopedRules, ruleTokens, feedback, skill = skillJson, resume, budget = new { maxSteps = resolvedBudget.MaxSteps, maxSeconds = resolvedBudget.MaxSeconds, maxAttemptSteps = Math.Min(400, resolvedBudget.MaxSteps), maxAttemptSeconds = Math.Min(1800, resolvedBudget.MaxSeconds), maxRounds = modelRoundBudget.PerAttempt, maxRoundsCumulative = modelRoundBudget.Cumulative, pauseOnBudget, label = resolvedBudget.Label } });
                 wake.Add(placement.Computer.Value);
             }
             await tx.CommitAsync();
@@ -2155,6 +2156,11 @@ public static class Routes
     internal static async Task<(List<Dictionary<string, object?>> Rows, bool HasMore)> LoadMessages(NpgsqlConnection conn, Guid conversationId, Guid? before, int limit)
     {
         var messages = (await conn.QueryAsync("SELECT m.id, m.role, m.content, m.created_at, m.metadata::text AS metadata, m.reply_to_message_id, m.deleted_at, m.kind, COALESCE(m.task_id, (SELECT t.id FROM tasks t WHERE t.source_message_id=m.id ORDER BY t.created_at DESC LIMIT 1)) AS request_id, (SELECT t.status FROM tasks t WHERE t.id = COALESCE(m.task_id, (SELECT t2.id FROM tasks t2 WHERE t2.source_message_id=m.id ORDER BY t2.created_at DESC LIMIT 1))) AS task_status FROM messages m WHERE m.conversation_id=@conversation AND (@before::uuid IS NULL OR (m.created_at, m.id) < (SELECT b.created_at, b.id FROM messages b WHERE b.id=@before AND b.conversation_id=@conversation)) ORDER BY m.created_at DESC, m.id DESC LIMIT @lim", new { conversation = conversationId, before, lim = limit + 1 })).Select(Platform.ToDict).ToList();
+        var children = (await conn.QueryAsync<(Guid TaskId, Guid Parent, string Title, string Status, bool HasBrief)>("""
+            SELECT t.id,t.parent_task_id,t.title,t.status,EXISTS(SELECT 1 FROM task_briefs tb WHERE tb.task_id=t.id)
+            FROM tasks t JOIN tasks parent ON parent.id=t.parent_task_id
+            WHERE t.conversation_id=@conversation AND parent.conversation_id=@conversation AND t.bot_id=parent.bot_id
+            """, new { conversation = conversationId })).ToArray();
         var reactionRows = (await conn.QueryAsync("SELECT r.id, r.message_id, r.actor_type::text AS actor_type, r.actor_id, r.emoji, r.created_at FROM message_reactions r JOIN messages m ON m.id=r.message_id WHERE m.conversation_id=@conversation ORDER BY r.created_at", new { conversation = conversationId })).Select(Platform.ToDict).ToList();
         foreach (var message in messages)
         {
@@ -2164,6 +2170,8 @@ public static class Routes
                 try { var meta = JsonSerializer.Deserialize<JsonElement>(metaText); message["parts"] = meta.TryGetProperty("parts", out var pe) ? pe : null; message["skill"] = meta.TryGetProperty("skill", out var se) ? se : null; message["attachments"] = meta.TryGetProperty("attachments", out var ae) ? ae : null; message["videoAnalysis"] = meta.TryGetProperty("videoAnalysis", out var video) ? video : null; } catch { message["parts"] = null; }
             }
             message.Remove("metadata");
+            if (message.GetValueOrDefault("role")?.ToString() == "assistant" && Guid.TryParse(message.GetValueOrDefault("requestId")?.ToString(), out var parent))
+                message["childTasks"] = children.Where(x => x.Parent == parent).Select(x => new { taskId = x.TaskId, title = x.Title, status = x.Status, hasBrief = x.HasBrief }).ToArray();
             message["deleted"] = message.TryGetValue("deletedAt", out var del) && del != null;
             message["reactions"] = reactionRows.Where(row => row["messageId"]?.ToString() == idText).Select(row => new { id = row["id"], actorType = row["actorType"], actorId = row["actorId"], emoji = row["emoji"], createdAt = row["createdAt"] }).ToList();
         }
