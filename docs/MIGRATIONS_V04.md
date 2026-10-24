@@ -1,7 +1,7 @@
 # v0.4 migrations
 
 Migrations 001–026 from base 392f23e are unchanged. Incoming migrations are
-linear and unique, 027–040; 090–099 remain reserved for skills/video streams.
+linear and unique, 027–041, including Skills v2.
 Platform.MigrationFiles and the API Dockerfile contain each SQL file once.
 Each migration after initialization commits atomically with its tracking row.
 
@@ -21,6 +21,7 @@ Each migration after initialization commits atomically with its tracking row.
 | 019_computer_windows.sql | 038_computer_windows.sql |
 | 021_desktop_lease.sql | 039_desktop_lease.sql |
 | 022_tickets_state.sql | 040_tickets_state.sql |
+| 090_skill_library.sql | 041_skill_library.sql |
 
 The unified approval table is created at 034, upgraded at 035 (also supporting
 historical layouts). Memory rule scopes at 036 follow memory notes at 027. Tickets at 040 depend on desktop
@@ -30,3 +31,7 @@ Only 001–026 are supported as previously applied base migrations. Databases
 that applied unmerged branch migrations with conflicting IDs must be backed up
 and reconciled against this mapping before upgrading; an ID alone cannot tell
 which branch schema was installed.
+
+Skills v2 at 041 adds `skill_library` and `skill_revisions`; the original replay
+`skills` table and task references are preserved. The pre-merge skills ID 090
+is not a supported applied migration; reconcile it with this mapping before upgrading.

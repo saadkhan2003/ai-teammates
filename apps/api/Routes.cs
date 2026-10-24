@@ -20,6 +20,7 @@ public static class Routes
     public static void Map(WebApplication app, Platform platform, Runtime runtime)
     {
         LibraryRoutes.Map(app, platform);
+        SkillLibraryRoutes.Map(app, platform, runtime);
         app.MapGet("/health", async () =>
         {
             var postgres = false;

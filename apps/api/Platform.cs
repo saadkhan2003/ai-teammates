@@ -132,6 +132,7 @@ public sealed class Platform
         "038_computer_windows.sql",
         "039_desktop_lease.sql",
         "040_tickets_state.sql",
+        "041_skill_library.sql",
     ];
 
     private async Task MigrateAndSeedLocked(string ownerUser, string ownerPassword)

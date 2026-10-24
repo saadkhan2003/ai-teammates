@@ -237,6 +237,7 @@ public static class OutputRedactor
         new(@"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----", System.Text.RegularExpressions.RegexOptions.Compiled),
         new(@"sk-or-[A-Za-z0-9_\-]{10,}", System.Text.RegularExpressions.RegexOptions.Compiled),
         new(@"sk-[A-Za-z0-9_\-]{10,}", System.Text.RegularExpressions.RegexOptions.Compiled),
+        new(@"sk_(?:live|test)_[A-Za-z0-9]{10,}", System.Text.RegularExpressions.RegexOptions.Compiled),
         new(@"ghp_[A-Za-z0-9]{10,}", System.Text.RegularExpressions.RegexOptions.Compiled),
         new(@"github_pat_[A-Za-z0-9_]{10,}", System.Text.RegularExpressions.RegexOptions.Compiled),
         new(@"glpat-[A-Za-z0-9_\-]{10,}", System.Text.RegularExpressions.RegexOptions.Compiled),

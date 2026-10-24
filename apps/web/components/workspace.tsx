@@ -578,7 +578,7 @@ export function Workspace({ botId }: { botId: string }) {
                     </div>
                   </TabsContent>
                   <TabsContent value="skills">
-                    <SkillsPane skills={skills.items} error={skills.error} loaded={skills.loaded} onChanged={() => void loadAux(["skills"])} />
+                    <SkillsPane botId={botId} skills={skills.items} error={skills.error} loaded={skills.loaded} onChanged={() => void loadAux(["skills"])} />
                   </TabsContent>
                   <TabsContent value="memory">
                     <MemoryPane botId={botId} memories={memories.items} error={memories.error} loaded={memories.loaded} onChanged={() => void loadAux(["memories"])} focusMemoryId={memoryFocusId} onFocused={() => setMemoryFocusId(undefined)} />

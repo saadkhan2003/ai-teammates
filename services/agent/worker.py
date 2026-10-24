@@ -599,6 +599,25 @@ class Worker:
         await self._complete(task, "Skill finished.")
 
     async def _complete_model(self, task: dict, messages: list) -> Any:
+        if not task.get("_skill_catalog_added"):
+            system = next((m for m in messages if isinstance(m, dict) and m.get("role") == "system"), None)
+            # Keep the primary system prompt first: compaction pins it, and feedback folds into it.
+            # The marker persists across leases, so a resumed transcript gets no duplicate catalog.
+            if system is not None and "[skill-catalog]" in str(system.get("content") or ""):
+                task["_skill_catalog_added"] = True
+            else:
+                try:
+                    catalog = await self.request_json("GET", f"/internal/skills/{_bot_id(task)}/catalog")
+                    lines = catalog.get("catalog", []) if isinstance(catalog, dict) else []
+                    if lines:
+                        text = "[skill-catalog]\nAvailable skills (load with load_skill(name)); bodies are loaded only when needed:\n" + "\n".join(str(line) for line in lines)[:4000]
+                        if system is not None and isinstance(system.get("content"), str):
+                            system["content"] += "\n\n" + text
+                        else:
+                            messages.insert(0, {"role": "system", "content": text})
+                    task["_skill_catalog_added"] = True
+                except Exception:
+                    log.exception("skill catalog unavailable")
         payload = await self.request_json(
             "POST",
             "/internal/model/complete",

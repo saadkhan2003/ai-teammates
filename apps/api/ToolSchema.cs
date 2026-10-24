@@ -55,6 +55,8 @@ public static class ToolSchema
         Fn("update_memory", "Correct a saved fact by writing a new version", Req("id", "string", "Memory id"), Req("content", "string", "Corrected fact")),
         Fn("forget_memory", "Forget a saved fact by id, query, or exact content", Opt("id", "string", "Memory id"), Opt("query", "string", "Search query"), Opt("content", "string", "Exact legacy content")),
         Fn("search_memory", "Search memory", Req("query", "string", "Query"), Opt("limit", "number", "1 to 20 results"), Opt("kind", "string", "Optional note kind")),
+        Fn("load_skill", "Load a skill guide by name", Req("name", "string", "Skill name")),
+        Fn("write_skill", "Create or update a bot-authored guide skill", Req("name", "string", "Slug"), Req("title", "string", "Title"), Req("when_to_use", "string", "One-line use case"), Req("body", "string", "Markdown body")),
         Fn("save_artifact", "Save a workspace file as an artifact", Req("name", "string", "File name"), Req("path", "string", "Path")),
         Fn("react_to_message", "React to a user message with one emoji. 👍 thanks or agreement, ❤️ appreciation, 🎉 good news, 😂 funny, ✅ a small visible request that is already done. Same emoji removes it. A reaction can be the whole reply when text would be overkill, and never replaces an answer, result, or error.",
             Req("message_id", "string", "User message id"),

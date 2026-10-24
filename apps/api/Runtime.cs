@@ -59,8 +59,8 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
     {
         var taskId = body.GetProperty("taskId").GetGuid();
         var botId = body.GetProperty("botId").GetGuid();
-        if (!await HoldsLease(taskId, EpochOf(body), ct)) return Results.StatusCode(409);
         var tool = body.GetProperty("tool").GetString() ?? "";
+        if (!await HoldsLease(taskId, EpochOf(body), ct, tool is "load_skill" or "write_skill" ? botId : null)) return Results.StatusCode(409);
         var args = body.GetProperty("args");
         if (tool == "update_routine" && await BotMessaging.UpdateBlocked(platform, await OwnerOf(botId), botId, taskId, args, ct) is { } blocked)
             return Results.Json(new { decision = "deny", ok = false, reason = blocked, riskClass = ActionClasses.BotManage });
@@ -101,8 +101,8 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
             || !body.TryGetProperty("tool", out var toolNode) || toolNode.ValueKind != JsonValueKind.String
             || !body.TryGetProperty("args", out var args))
             return Results.BadRequest(new { decision = "deny", reason = "invalid_preexec_request" });
-        if (!await HoldsLease(taskId, EpochOf(body), ct)) return Results.StatusCode(409);
         var tool = toolNode.GetString()!;
+        if (!await HoldsLease(taskId, EpochOf(body), ct, tool is "load_skill" or "write_skill" ? botId : null)) return Results.StatusCode(409);
         var gated = await Gate(botId, taskId, tool, args, false, ct);
         if (gated.Decision == PolicyEngine.Deny)
         {
@@ -127,7 +127,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         var botId = body.GetProperty("botId").GetGuid();
         var tool = body.GetProperty("tool").GetString() ?? "";
         // Reactions are recorded after a task has finished. They do not drive the computer.
-        if (tool != "react_to_message" && !await HoldsLease(taskId, EpochOf(body), ct)) return Results.StatusCode(409);
+        if (tool != "react_to_message" && !await HoldsLease(taskId, EpochOf(body), ct, tool is "load_skill" or "write_skill" ? botId : null)) return Results.StatusCode(409);
         var args = body.GetProperty("args");
         var invalid = ToolSchema.Validate(tool, args);
         if (invalid != null)
@@ -142,7 +142,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
             return Results.Json(new { ok = false, status = "denied", reason = blocked, riskClass = ActionClasses.BotManage });
         }
         var actorId = body.TryGetProperty("actor_id", out var actorValue) ? actorValue.GetString() ?? "" : "";
-        var desktopEpoch = await AgentDesktopEpoch(botId, ct);
+        var desktopEpoch = tool is "load_skill" or "write_skill" ? null : await AgentDesktopEpoch(botId, ct);
         if ((tool is "browser_open" or "browser_extract" or "browser_click" or "browser_screenshot" or "type_secret" or "request_login" or "shell" or "setup_env" or "computer_screenshot" or "computer_click" or "computer_type" or "computer_key" or "computer_scroll" or "record_start" or "record_stop") && desktopEpoch == null)
             return Results.Json(new { code = "DESKTOP_BUSY", reason = "You're in control — tell me when to continue" }, statusCode: 409);
         var gated = await Gate(botId, taskId, tool, args, false, ct);
@@ -390,6 +390,9 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
     private async Task<object> Dispatch(Guid owner, Guid botId, Guid taskId, string tool, JsonElement args, string actorId, long desktopEpoch, CancellationToken ct)
     {
         if (BotMessaging.IsTool(tool)) return await BotMessaging.Run(platform, owner, botId, taskId, tool, args, ct);
+        // Guide tools use the database only and share the same gated execution path.
+        if (tool == "load_skill") return await SkillLibraryRoutes.Load(platform, owner, botId, Arg(args, "name"), ct);
+        if (tool == "write_skill") return await SkillLibraryRoutes.Write(platform, owner, botId, taskId, args, ct);
         var placement = await platform.PlacementForBot(botId, ct);
         var computer = placement.Computer;
         switch (tool)
@@ -1033,10 +1036,10 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         return true;
     }
 
-    private async Task<bool> HoldsLease(Guid taskId, int epoch, CancellationToken ct)
+    private async Task<bool> HoldsLease(Guid taskId, int epoch, CancellationToken ct, Guid? bot = null)
     {
         await using var conn = await platform.Data.OpenConnectionAsync(ct);
-        var n = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM tasks WHERE id=@id AND status='running' AND lease_epoch=@epoch", new { id = taskId, epoch });
+        var n = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM tasks WHERE id=@id AND status='running' AND lease_epoch=@epoch AND (@bot::uuid IS NULL OR bot_id=@bot)", new { id = taskId, epoch, bot });
         return n == 1;
     }
 
