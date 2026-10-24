@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from typing import Mapping
 
 try:
@@ -16,6 +18,8 @@ ATTENTION_PHRASES = (
     "enter the one-time code",
     "mfa required",
 )
+
+log = logging.getLogger(__name__)
 
 
 def attention_of(text: str) -> str | None:
@@ -68,6 +72,7 @@ class BrowserHub:
             return self._playwright
 
     async def connect(self, cdp_url: str):
+        connect_started = time.perf_counter()
         lock = await self._lock(cdp_url)
         async with lock:
             existing = self._browsers.get(cdp_url)
@@ -78,23 +83,30 @@ class BrowserHub:
                 except Exception:
                     connected = False
             if connected:
+                log.info("browser cached_reused=%s", True)
+                log.info("browser connect ms=%d", int((time.perf_counter() - connect_started) * 1000))
                 return existing
+            log.info("browser cached_reused=%s", False)
             self._pages.pop(cdp_url, None)
             self._last.pop(cdp_url, None)
             playwright = await self._ensure_playwright()
             last: Exception | None = None
             browser = None
-            for _ in range(15):
+            for attempt in range(1, 16):
+                attempt_started = time.perf_counter()
                 try:
-                    browser = await playwright.chromium.connect_over_cdp(cdp_url)
+                    browser = await playwright.chromium.connect_over_cdp(cdp_url, timeout=10000)
                     last = None
                     break
                 except Exception as exc:
                     last = exc
+                    log.info("browser connect_attempt=%d error=%s ms=%d", attempt, type(exc).__name__, int((time.perf_counter() - attempt_started) * 1000))
                     await asyncio.sleep(1)
             if browser is None:
+                log.info("browser connect ms=%d", int((time.perf_counter() - connect_started) * 1000))
                 raise last or RuntimeError("cdp unavailable")
             self._browsers[cdp_url] = browser
+            log.info("browser connect ms=%d", int((time.perf_counter() - connect_started) * 1000))
             return browser
 
     def last_target(self, cdp_url: str) -> str | None:
@@ -105,23 +117,36 @@ class BrowserHub:
         wait = args.get("wait")
         if not url:
             return _empty("missing_url")
+        started = time.perf_counter()
         browser = await self.connect(cdp_url)
+        log.info("browser phase=%s ms=%d", "connect", int((time.perf_counter() - started) * 1000))
+        started = time.perf_counter()
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
         page = await context.new_page()
+        log.info("browser phase=%s ms=%d", "context/new_page", int((time.perf_counter() - started) * 1000))
+        started = time.perf_counter()
         await self._install_web_bot_auth(page)
+        log.info("browser phase=%s ms=%d", "_install_web_bot_auth", int((time.perf_counter() - started) * 1000))
+        started = time.perf_counter()
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=20000)
         except Exception:
             await page.close()
             raise
+        log.info("browser phase=%s ms=%d", "goto", int((time.perf_counter() - started) * 1000))
+        started = time.perf_counter()
         if wait:
             try:
                 await page.wait_for_selector(str(wait), state="visible", timeout=12000)
             except Exception:
                 pass
+        log.info("browser phase=%s ms=%d", "wait", int((time.perf_counter() - started) * 1000))
         target_id = await _target_id(context, page)
         self._remember(cdp_url, target_id, page)
-        return await self._snapshot(page, target_id, attention=False)
+        started = time.perf_counter()
+        result = await self._snapshot(page, target_id, attention=False)
+        log.info("browser phase=%s ms=%d", "snapshot", int((time.perf_counter() - started) * 1000))
+        return result
 
     async def _install_web_bot_auth(self, page) -> None:
         config = CURRENT_AUTH_CONFIG.get() or self._web_bot_auth
