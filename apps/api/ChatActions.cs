@@ -64,6 +64,8 @@ public static class ChatActions
         var taskId = await conn.ExecuteScalarAsync<Guid>(
             "INSERT INTO tasks (bot_id, conversation_id, title, instruction, kind, priority, status, source_message_id) VALUES (@bot, @conversation, @title, @instruction, @kind, @priority, 'queued', @source) RETURNING id",
             new { bot = (Guid)row.bot_id, conversation = (Guid)row.conversation_id, title = (string)latest.title, instruction = (string)latest.instruction, kind = (string)latest.kind, priority = (int)latest.priority, source });
+        await ApprovalSignals.Record(conn,null,(Guid)row.bot_id,user,(Guid)row.conversation_id,
+            (string)row.role == "assistant" ? messageId : null,"correction","redo","Redo this result",(string)latest.title,"redo:"+taskId,(Guid)latest.id);
         await platform.Audit("user:" + user, "chat.message_retried", (Guid)row.bot_id, taskId, new { messageId, source });
         await platform.Publish(new { type = "task", taskId });
         platform.Tasks.Pulse();

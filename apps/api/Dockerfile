@@ -60,5 +60,6 @@ COPY db/041_skill_library.sql /migrations/041_skill_library.sql
 COPY db/042_video_analyses.sql /migrations/042_video_analyses.sql
 COPY db/047_task_briefs.sql /migrations/047_task_briefs.sql
 COPY db/048_brief_lessons.sql /migrations/048_brief_lessons.sql
+COPY db/049_approval_signals.sql /migrations/049_approval_signals.sql
 COPY services/agent/skills/builtin/ /skills/builtin/
 ENTRYPOINT ["dotnet", "Teammates.Api.dll"]

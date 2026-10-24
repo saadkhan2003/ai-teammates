@@ -18,6 +18,12 @@ public static class FeedbackDelivery
               AND EXISTS (SELECT 1 FROM task_transcript t WHERE t.task_id=c.id AND t.role='system'
                   AND position('Hidden feedback, not chat and no reply expected: the user ' || f.action || ' ' || f.emoji || ' on message ' || f.message_id::text || '.' in t.content)>0)
             RETURNING f.id
+        ), signals_consumed AS (
+            UPDATE approval_signals s SET consumed_at=now() FROM completed c
+            WHERE s.task_id=c.id AND s.consumed_at IS NULL
+              AND EXISTS(SELECT 1 FROM task_transcript t WHERE t.task_id=c.id AND t.role='system'
+                  AND position('[approval-signal:' || s.id::text || ']' in t.content)>0)
+            RETURNING s.id
         )
         SELECT conversation_id, 1 AS applied FROM completed
         """;

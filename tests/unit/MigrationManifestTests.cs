@@ -27,7 +27,7 @@ public sealed class MigrationManifestTests
         var ids = listed.Select(file => int.Parse(file[..3])).ToArray();
         Assert.Equal(ids.Length, ids.Distinct().Count());
         // 043–046 are reserved by the parallel program.
-        Assert.Equal(Enumerable.Range(1, 42).Concat(new[] { 47, 48 }), ids);
+        Assert.Equal(Enumerable.Range(1, 42).Concat(new[] { 47, 48, 49 }), ids);
         Assert.DoesNotContain(ids, id => id is >= 90 and <= 99);
         var copies = Regex.Matches(File.ReadAllText(Path.Combine(root, "apps/api/Dockerfile")),
             @"(?m)^COPY db/(\S+\.sql) /migrations/(\S+\.sql)$");

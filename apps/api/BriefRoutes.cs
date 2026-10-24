@@ -46,6 +46,8 @@ public static class BriefRoutes
             await using var tx = await c.BeginTransactionAsync();
             var row = await c.QuerySingleAsync<SteeringRow>("INSERT INTO task_brief_steering(task_id,text,actor) VALUES(@id,@text,@actor) RETURNING id,text,created_at", new { id, text, actor = user }, tx);
             await BriefStore.AddLesson(c, task.Bot.Value, task.Owner, id, text, "steer", tx);
+            var signalTask = await c.QuerySingleAsync<(Guid? Conversation, string Title)>("SELECT conversation_id,title FROM tasks WHERE id=@id", new { id },tx);
+            await ApprovalSignals.Record(c,tx,task.Bot.Value,user.Value,signalTask.Conversation,null,"correction","steer",text,signalTask.Title,"steer:"+row.Id,id);
             await tx.CommitAsync();
             await p.Audit(user.Value.ToString(), "brief.steered", task.Bot.Value, id, new { steeringId = row.Id, text });
             await p.Publish(new { type = "task", taskId = id, botId = task.Bot.Value });
