@@ -34,6 +34,9 @@ public sealed class Platform
     public long HttpCount;
     public ulong ComputerMemory;
     public int ChromeProcesses;
+    public int MaxComputers { get; }
+    public string BillingProviderName { get; }
+    public bool ResendConfigured { get; }
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(60) };
     private readonly IdempotencyStore _unused = new();
 
@@ -55,6 +58,9 @@ public sealed class Platform
         IdleSuspend = int.TryParse(config["IDLE_SUSPEND_MINUTES"], out var idleMinutes) && idleMinutes >= 0
             ? TimeSpan.FromMinutes(idleMinutes)
             : TimeSpan.FromMinutes(10);
+        MaxComputers = HostBudget.MaxComputers(HostBudget.ReadMemTotalBytes(), config["MAX_COMPUTERS"]);
+        BillingProviderName = string.IsNullOrWhiteSpace(config["BILLING_PROVIDER"]) ? "mock" : config["BILLING_PROVIDER"]!.Trim().ToLowerInvariant();
+        ResendConfigured = !string.IsNullOrWhiteSpace(config["RESEND_API_KEY"]);
         _ = _unused;
     }
 
@@ -128,7 +134,7 @@ public sealed class Platform
             await conn.ExecuteAsync(provider);
             await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('010') ON CONFLICT DO NOTHING");
         }
-        foreach (var (mid, file) in new[] { ("011", "011_devices.sql"), ("012", "012_reliability.sql"), ("013", "013_feedback.sql"), ("014", "014_avatar.sql"), ("015", "015_chat_ui.sql"), ("016", "016_coding_job_diff.sql"), ("017", "017_theme.sql") })
+        foreach (var (mid, file) in new[] { ("011", "011_devices.sql"), ("012", "012_reliability.sql"), ("013", "013_feedback.sql"), ("014", "014_avatar.sql"), ("015", "015_chat_ui.sql"), ("016", "016_coding_job_diff.sql"), ("017", "017_theme.sql"), ("018", "018_account.sql"), ("019", "019_uptime.sql"), ("020", "020_admin_console.sql") })
         {
             if (await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id=@mid", new { mid }) != 0) continue;
             await conn.ExecuteAsync(await File.ReadAllTextAsync("/migrations/" + file));
@@ -179,12 +185,12 @@ public sealed class Platform
 
     public void NoteLoginFailure(string ip) => _loginLimits.NoteFailure(ip, DateTimeOffset.UtcNow);
 
-    public async Task<string> CreateSession(Guid userId)
+    public async Task<string> CreateSession(Guid userId, string? ip = null)
     {
         var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token))).ToLowerInvariant();
         await using var conn = await Data.OpenConnectionAsync();
-        await conn.ExecuteAsync("INSERT INTO sessions (user_id, token_hash, expires_at) VALUES (@u, @h, now() + interval '14 days')", new { u = userId, h = hash });
+        await conn.ExecuteAsync("INSERT INTO sessions (user_id, token_hash, expires_at, ip) VALUES (@u, @h, now() + interval '14 days', @ip)", new { u = userId, h = hash, ip = ip ?? "" });
         return token;
     }
 

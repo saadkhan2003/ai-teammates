@@ -128,10 +128,29 @@ catch (Exception ex)
 {
     app.Logger.LogError("computer isolation alert: computers will not start ({Message})", ex.Message);
 }
+app.Use(async (ctx, next) =>
+{
+    if (!ctx.Request.Path.StartsWithSegments("/api/admin"))
+    {
+        await next();
+        return;
+    }
+    await using var conn = await platform.Data.OpenConnectionAsync();
+    var cidrs = (await conn.QueryAsync<string>("SELECT cidr FROM admin_ip_allowlist")).AsList();
+    if (!AdminNet.Allows(ClientAddress.From(ctx), cidrs))
+    {
+        ctx.Response.StatusCode = 403;
+        await ctx.Response.WriteAsJsonAsync(new { error = "ip_denied" });
+        return;
+    }
+    await next();
+});
 Routes.Map(app, platform, runtime);
 SecurityRoutes.Map(app, platform, loginFlow);
 Devices.Map(app, platform);
 Feedback.Map(app, platform);
+AccountRoutes.Map(app, platform);
+AdminConsole.Map(app, platform);
 app.Run();
 
 public sealed class BrokerSecretResolver : IExecSecretResolver
@@ -206,7 +225,12 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
                 var expired = await conn.ExecuteAsync("UPDATE tasks SET status='queued', lease_owner=NULL, lease_until=NULL, waiting_reason='lease_expired', updated_at=now() WHERE status='running' AND lease_until < now()");
                 if (expired > 0) platform.Tasks.Pulse();
                 await ResumeRecoveredComputers(stoppingToken);
-                if (++_tick % 10 == 0) await SampleComputers(stoppingToken);
+                if (++_tick == 1 || _tick % 30 == 0)
+                {
+                    try { await UptimeMonitor.Sweep(platform, stoppingToken); }
+                    catch (Exception ex) { logger.LogDebug("uptime sweep skipped {Message}", OutputRedactor.Redact(ex.Message)); }
+                }
+                if (_tick % 10 == 0) await SampleComputers(stoppingToken);
                 if (_tick % 15 == 0)
                 {
                     await SuspendIdle(conn, stoppingToken);

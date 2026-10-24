@@ -2,9 +2,8 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { StateMessage } from "@/components/state-message";
+import { cardClass, controlClass, PageEmpty, PageError, PageSkeleton, pillClass, SectionTitle } from "@/components/account/chrome";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -144,7 +143,7 @@ export default function SecretsPage() {
       setValue("");
       setTestResult(null);
       if (created.id) setSelectedId(created.id);
-      toast.success("OpenRouter key saved.");
+      toast.success("Platform key saved.");
       await load();
     } catch (caught) {
       setFormError(errorMessage(caught, "Could not save that key."));
@@ -264,35 +263,21 @@ export default function SecretsPage() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-8">
+    <div data-testid="settings-vault" className="flex flex-col gap-8">
       <header>
-        <h2 className="text-sm font-medium">Vault</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Values are write-only. Bots see references such as secret://openrouter/default, never the raw secret.
+        <h2 className="text-xl font-semibold tracking-tight">Vault</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Security keys are write-only. Teammates see a reference, never the raw secret.
         </p>
       </header>
 
-      {loading ? <StateMessage title="Loading secrets…" detail="Checking which keys are already stored." /> : null}
-      {!loading && error ? (
-        <StateMessage
-          tone="error"
-          title="Could not load secrets."
-          detail={error}
-          action={
-            <Button variant="secondary" onClick={() => void load()}>
-              Retry
-            </Button>
-          }
-        />
-      ) : null}
+      {loading ? <PageSkeleton /> : null}
+      {!loading && error ? <PageError title="Could not load secrets." detail={error} onRetry={() => void load()} /> : null}
 
       {!loading && !error && !openRouter ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>OpenRouter API Key</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <form className="flex flex-col gap-4" onSubmit={saveOpenRouter}>
+        <section className={`${cardClass} p-4`}>
+          <SectionTitle>Security keys</SectionTitle>
+            <form className="mt-4 flex flex-col gap-4" onSubmit={saveOpenRouter}>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="secret-value">API key</Label>
                 <Input
@@ -300,12 +285,13 @@ export default function SecretsPage() {
                   data-testid="secret-value"
                   type="password"
                   autoComplete="new-password"
+                  className={`${controlClass} min-h-11`}
                   value={value}
                   onChange={(event) => setValue(event.target.value)}
                   required
                 />
               </div>
-              <p>Used securely by the model gateway. Bots never receive the raw key.</p>
+              <p>Used securely by the platform. Bots never receive the raw key.</p>
               <TestReadout result={testResult} />
               {formError ? (
                 <p role="alert" className="text-sm text-clay">
@@ -313,24 +299,20 @@ export default function SecretsPage() {
                 </p>
               ) : null}
               <div className="flex flex-wrap items-center justify-end gap-2">
-                <Button data-testid="test-connection" type="button" variant="secondary" disabled={busy !== null} onClick={() => void testDraft()}>
+                <Button data-testid="test-connection" type="button" variant="outline" className={pillClass} disabled={busy !== null} onClick={() => void testDraft()}>
                   Test connection
                 </Button>
-                <Button data-testid="save-secret" type="submit" disabled={busy !== null}>
+                <Button data-testid="save-secret" type="submit" className={pillClass} disabled={busy !== null}>
                   Save securely
                 </Button>
               </div>
             </form>
-          </CardContent>
-        </Card>
+        </section>
       ) : null}
 
       {!loading && !error && openRouter ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>OpenRouter</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
+        <section className={`${cardClass} flex flex-col gap-4 p-4`}>
+          <SectionTitle>Platform key</SectionTitle>
             <p data-testid="connected-banner" className="text-sage">Connected ✓</p>
             <p data-testid="masked-suffix">Key ending in: ...{openRouter.maskedSuffix}</p>
             <TestReadout result={testResult} />
@@ -341,28 +323,24 @@ export default function SecretsPage() {
             ) : null}
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap gap-2">
-                <Button type="button" variant="secondary" disabled={busy !== null} onClick={() => void testSaved(openRouter)}>
+                <Button type="button" variant="outline" className={pillClass} disabled={busy !== null} onClick={() => void testSaved(openRouter)}>
                   Test
                 </Button>
-                <Button data-testid="rotate-secret" type="button" variant="secondary" disabled={busy !== null} onClick={() => void rotate(openRouter)}>
+                <Button data-testid="rotate-secret" type="button" variant="outline" className={pillClass} disabled={busy !== null} onClick={() => void rotate(openRouter)}>
                   Rotate
                 </Button>
               </div>
-              <Button data-testid="delete-secret" type="button" variant="destructive" disabled={busy !== null} onClick={() => void remove(openRouter)}>
+              <Button data-testid="delete-secret" type="button" variant="destructive" className={pillClass} disabled={busy !== null} onClick={() => void remove(openRouter)}>
                 Delete
               </Button>
             </div>
-          </CardContent>
-        </Card>
+        </section>
       ) : null}
 
       {!loading && !error ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Add secret</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <form data-testid="add-secret" className="grid gap-3 sm:grid-cols-2" onSubmit={addSecret}>
+        <section className={`${cardClass} p-4`}>
+          <SectionTitle>Add secret</SectionTitle>
+            <form data-testid="add-secret" className="mt-4 grid gap-3 sm:grid-cols-2" onSubmit={addSecret}>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="add-name">Name</Label>
                 <Input id="add-name" name="name" value={addName} onChange={(event) => setAddName(event.target.value)} required />
@@ -378,7 +356,7 @@ export default function SecretsPage() {
                   name="type"
                   value={addType}
                   onChange={(event) => setAddType(event.target.value)}
-                  className="h-10 rounded-md border border-input bg-card px-3 text-sm"
+                  className={`${controlClass} min-h-11 border border-input bg-card px-3 text-sm`}
                 >
                   {SECRET_TYPES.map((type) => (
                     <option key={type} value={type}>
@@ -434,22 +412,21 @@ export default function SecretsPage() {
                 </p>
               ) : null}
               <div className="flex justify-end sm:col-span-2">
-                <Button type="submit" disabled={busy !== null}>
+                <Button type="submit" className={pillClass} disabled={busy !== null}>
                   Add secret
                 </Button>
               </div>
             </form>
-          </CardContent>
-        </Card>
+        </section>
       ) : null}
 
       {!loading && !error ? (
         <section className="flex flex-col gap-3">
-          <h2 className="font-display text-2xl">Stored secrets</h2>
-          {secrets.length === 0 ? <p className="text-sm text-muted-foreground">No secrets stored yet.</p> : null}
+          <SectionTitle>Stored secrets</SectionTitle>
+          {secrets.length === 0 ? <PageEmpty title="No secrets stored yet" detail="Add a key when a teammate needs one." /> : null}
           <ul className="flex flex-col gap-2">
             {secrets.map((secret) => (
-              <li key={secret.id} data-testid="secret-row" data-ref={`secret://${secret.namespace}/${secret.name}`} className="min-w-0 max-w-full rounded-lg border border-line bg-paper px-4 py-3">
+              <li key={secret.id} data-testid="secret-row" data-ref={`secret://${secret.namespace}/${secret.name}`} className={`${controlClass} min-w-0 max-w-full border border-border bg-card px-4 py-3 transition-colors hover:bg-accent/40`}>
                 <button
                   type="button"
                   data-testid="secret-select"
@@ -457,7 +434,7 @@ export default function SecretsPage() {
                   className="w-full text-left"
                 >
                   <p className="break-all font-medium">
-                    secret://{secret.namespace}/{secret.name}
+                    {secret.namespace === "openrouter" ? "Platform key" : `secret://${secret.namespace}/${secret.name}`}
                   </p>
                   <p className="text-sm text-muted-foreground">
                     {secret.type} · {secret.maskedSuffix ? `····${secret.maskedSuffix}` : "••••"} · last used {formatWhen(secret.lastUsedAt)}
@@ -466,11 +443,11 @@ export default function SecretsPage() {
                 </button>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {secret.revokedAt ? null : (
-                    <Button data-testid="secret-revoke" type="button" size="sm" variant="secondary" disabled={busy !== null} onClick={() => void revoke(secret)}>
+                    <Button data-testid="secret-revoke" type="button" size="sm" variant="outline" className={pillClass} disabled={busy !== null} onClick={() => void revoke(secret)}>
                       Revoke
                     </Button>
                   )}
-                  <Button data-testid="secret-row-delete" type="button" size="sm" variant="destructive" disabled={busy !== null} onClick={() => void remove(secret)}>
+                  <Button data-testid="secret-row-delete" type="button" size="sm" variant="destructive" className={pillClass} disabled={busy !== null} onClick={() => void remove(secret)}>
                     Delete
                   </Button>
                 </div>
@@ -480,8 +457,8 @@ export default function SecretsPage() {
         </section>
       ) : null}
 
-      <section data-testid="secret-usage" className="rounded-lg border border-line bg-paper p-4">
-        <h2 className="font-display text-2xl">Usage</h2>
+      <section data-testid="secret-usage" className={`${cardClass} p-4`}>
+        <SectionTitle>Usage</SectionTitle>
         {!selectedId ? <p className="mt-2 text-sm text-muted-foreground">Save a secret to see its usage.</p> : null}
         {usageLoading ? <p className="mt-2 text-sm text-muted-foreground">Loading usage…</p> : null}
         {usageError ? (
@@ -494,7 +471,7 @@ export default function SecretsPage() {
         ) : null}
         <ul className="mt-3 flex flex-col gap-3">
           {usage.map((event) => (
-            <li key={event.id} className="border-b border-line pb-3 text-sm last:border-0">
+            <li key={event.id} className="border-b border-border pb-3 text-sm last:border-0">
               <p className="font-medium">{event.event || "event"}</p>
               <p className="text-muted-foreground">
                 {[event.createdAt ? formatWhen(event.createdAt) : "", event.actor, event.tool, event.destination, event.decision, event.reasonCode]

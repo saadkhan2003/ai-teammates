@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
+import { cardClass, controlClass, focusClass, pillClass, SectionTitle } from "@/components/account/chrome";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -100,62 +100,61 @@ export default function GeneralSettingsPage() {
 
   return (
     <>
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Account</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm font-medium">{username || "Signed in"}</p>
-          {role ? <p className="mt-1 text-xs text-muted-foreground">{role}</p> : null}
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Appearance</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-wrap gap-2">
+      <header>
+        <h2 className="text-xl font-semibold tracking-tight">General</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Appearance, language, and this session.</p>
+      </header>
+      <section className={`${cardClass} flex items-center justify-between gap-4 p-4`}>
+        <div>
+          <SectionTitle>Account</SectionTitle>
+          <p className="mt-1 text-sm font-medium">{username || "Signed in"}</p>
+          {role ? <p className="text-xs capitalize text-muted-foreground">{role}</p> : null}
+        </div>
+        <Button variant="outline" className={pillClass} asChild>
+          <Link href="/account">Open profile</Link>
+        </Button>
+      </section>
+      <section className={`${cardClass} p-4`}>
+        <SectionTitle>Appearance</SectionTitle>
+        <div className="mt-4 flex flex-wrap gap-2">
           {THEMES.map((item) => (
             <Button
               key={item.id}
               type="button"
               data-testid={`theme-${item.id}`}
               variant={mode === item.id ? "default" : "outline"}
-              className="min-h-11"
+              className={cnPill(mode === item.id)}
               onClick={() => choose(item.id)}
             >
               {item.label}
             </Button>
           ))}
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Accent colour</CardTitle>
-        </CardHeader>
-        <CardContent className="flex gap-2">
+        </div>
+      </section>
+      <section className={`${cardClass} p-4`}>
+        <SectionTitle>Accent</SectionTitle>
+        <div className="mt-4 flex gap-2">
           {ACCENTS.map((item) => (
             <button
               key={item.id}
               type="button"
               aria-label={item.id}
               aria-pressed={accent === item.id}
-              className="size-7 rounded-md border border-border"
+              className={`${focusClass} size-10 rounded-full border border-border transition-transform hover:scale-105 ${accent === item.id ? "ring-2 ring-foreground ring-offset-2 ring-offset-background" : ""}`}
               style={{ background: item.swatch }}
               onClick={() => paintAccent(item.id)}
             />
           ))}
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Preferences</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
+        </div>
+      </section>
+      <section className={`${cardClass} p-4`}>
+        <SectionTitle>Preferences</SectionTitle>
+        <div className="mt-4 flex flex-col gap-4">
           <div className="grid gap-4 md:grid-cols-2">
             <div className="flex flex-col gap-2">
               <Label>Language</Label>
               <Select value={locale} onValueChange={chooseLocale}>
-                <SelectTrigger className="min-h-11">
+                <SelectTrigger className={`${controlClass} min-h-11`}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -170,7 +169,7 @@ export default function GeneralSettingsPage() {
             <div className="flex flex-col gap-2">
               <Label>Timezone</Label>
               <Select value={zone} onValueChange={chooseZone}>
-                <SelectTrigger className="min-h-11">
+                <SelectTrigger className={`${controlClass} min-h-11`}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -190,53 +189,30 @@ export default function GeneralSettingsPage() {
             </div>
             <Switch checked={alerts} onCheckedChange={(checked) => void chooseAlerts(checked)} aria-label="Notifications" />
           </div>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Approval rules</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-1 text-sm text-muted-foreground">
-          <p>The server enforces these. They are not switches on this page.</p>
-          <ul className="list-disc space-y-1 pl-4">
-            <li>Shell commands and environment setup are denied.</li>
-            <li>A command that contains a secret reference is denied.</li>
-            <li>Deleting a file asks for approval.</li>
-            <li>Opening a site the account has not seen asks for approval.</li>
-            <li>Typing a secret is allowed only when the reference resolves.</li>
-          </ul>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Security</CardTitle>
-        </CardHeader>
-        <CardContent className="flex min-h-11 items-center justify-between gap-3">
-          <div>
-            <p className="text-sm">Security keys</p>
-            <p className="text-xs text-muted-foreground">API keys and plugin credentials live in the vault.</p>
-          </div>
-          <Button variant="outline" size="sm" asChild>
+        </div>
+      </section>
+      <section className={`${cardClass} p-4`}>
+        <SectionTitle>Security keys</SectionTitle>
+        <p className="mt-1 text-sm text-muted-foreground">API keys and plugin credentials live in the vault.</p>
+        <div className="mt-4 flex justify-end">
+          <Button variant="outline" className={pillClass} asChild>
             <Link href="/settings/secrets">Open vault</Link>
           </Button>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Session</CardTitle>
-        </CardHeader>
-        <CardContent className="flex min-h-11 items-center justify-between gap-3">
-          <div>
-            <p className="text-sm">Sign out</p>
-            <p className="text-xs text-muted-foreground">Ends this browser session.</p>
-          </div>
-          <form onSubmit={signOut}>
-            <Button type="submit" variant="destructive" size="sm">
-              Sign out
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
+      <section className="rounded-[12px] border border-destructive/40 bg-card p-4 shadow-[var(--shadow-card)]">
+        <SectionTitle className="text-destructive">Sign out</SectionTitle>
+        <p className="mt-1 text-sm text-muted-foreground">Ends this browser session.</p>
+        <form className="mt-4 flex justify-end" onSubmit={signOut}>
+          <Button type="submit" variant="destructive" className={pillClass}>
+            Sign out
+          </Button>
+        </form>
+      </section>
     </>
   );
+}
+
+function cnPill(active: boolean) {
+  return `${pillClass} min-h-11 ${active ? "" : "bg-card"}`;
 }

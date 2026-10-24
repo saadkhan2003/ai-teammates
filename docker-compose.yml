@@ -6,12 +6,18 @@ services:
     ports:
       - "18080:80"
       - "18443:443"
+      # Admin site. 18081 stays reserved for the API test publish.
+      - "18082:8081"
+    environment:
+      ADMIN_ALLOWLIST: ${ADMIN_ALLOWLIST:-0.0.0.0/0 ::/0}
     volumes:
       - ${CADDYFILE:-./Caddyfile}:/etc/caddy/Caddyfile:ro
     networks:
       - front
     depends_on:
       web:
+        condition: service_started
+      admin:
         condition: service_started
       api:
         condition: service_healthy
@@ -22,6 +28,20 @@ services:
   web:
     build:
       context: ./apps/web
+    environment:
+      NODE_ENV: production
+    networks:
+      - front
+    depends_on:
+      api:
+        condition: service_healthy
+    mem_limit: 192m
+    cpus: 0.15
+    restart: unless-stopped
+
+  admin:
+    build:
+      context: ./apps/admin
     environment:
       NODE_ENV: production
     networks:

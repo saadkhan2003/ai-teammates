@@ -29,6 +29,9 @@ COPY db/014_avatar.sql /migrations/014_avatar.sql
 COPY db/015_chat_ui.sql /migrations/015_chat_ui.sql
 COPY db/016_coding_job_diff.sql /migrations/016_coding_job_diff.sql
 COPY db/017_theme.sql /migrations/017_theme.sql
+COPY db/018_account.sql /migrations/018_account.sql
+COPY db/019_uptime.sql /migrations/019_uptime.sql
+COPY db/020_admin_console.sql /migrations/020_admin_console.sql
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
     DOTNET_gcServer=0 \
     DOTNET_GCHeapHardLimit=0x10000000

@@ -29,6 +29,9 @@ If containers can resolve each other but connections time out, this host is appl
 browser → Caddy :18080/:18443
             ├─ web (Next.js)
             └─ api (ASP.NET Core 10)  /api, /health, /vnc
+browser → Caddy :18082 (admin.example.com in production)
+            ├─ admin (Next.js)
+            └─ api /api and /health only
                  ├─ SecretBroker + model gateway
                  ├─ policy gate, data checker, login broker
                  ├─ IComputeProvider
@@ -42,7 +45,7 @@ user computer (per bot) → Xvfb, Chromium, x11vnc
 
 Networks:
 
-- `front` — Caddy, web, API
+- `front` — Caddy, web, admin, API
 - `teammates-back` (internal) — API, agent, Postgres, SeaweedFS, mock model
 - `teammates-computers` — user computers. The API (`172.30.28.10`) and the agent (`172.30.28.11`) join it so they can open the desktop API, VNC, and CDP. The network has a route to the internet. `deploy/computer-isolation.sh` rejects new connections from every other address on that subnet to private ranges, so a computer cannot open Postgres, SeaweedFS, the worker, or the API. The `isolation` service shares the host network namespace and reinstalls those rules on startup, because a Docker daemon restart clears `DOCKER-USER`. The API checks the same rules at its own startup and before creating, starting, restarting, restoring, or waking a computer. If the rules cannot be installed it logs `computer isolation alert`, marks admin health down, and refuses the start with `computer_isolation_missing`.
 - `teammates-dockerctl` (internal) — API and the socket proxy only
@@ -58,6 +61,8 @@ Copy `.env.example` to `.env`. Compose interpolates `${VAR}` from that file. It 
 There is no `OPENROUTER_API_KEY` variable. Connect the key in Settings → Secrets. The model gateway resolves `secret://openrouter/default`. The bot and the model see the reference, not the key.
 
 `ENABLE_TEST_HOOKS=true` allows `POST /internal/test/users` and the audit-chain check. Set it to `false` on a VPS. Those paths are not on the public proxy. The worker calls `http://api:8080`. Integration tests publish the API on `127.0.0.1:18081` (`API_URL`). `deploy/Caddyfile.test` is the only Caddyfile that proxies `/internal/*` and `/metrics`, and it is not the default. `deploy/Caddyfile.production` is the Let's Encrypt example. See `docs/SECURITY.md`.
+
+The admin site is `apps/admin`, a separate Next.js app. The user app does not link to it. In dev, `npm run dev` in `apps/admin` listens on `127.0.0.1:13011`. Compose publishes the admin proxy at [http://127.0.0.1:18082](http://127.0.0.1:18082) (Caddy `:8081`). Production uses `admin.example.com`. `ADMIN_ALLOWLIST` is optional space-separated CIDRs; unset allows every address. Sign-in uses the same session API. Owner, admin, support, and read-only roles can open the console. Members get 403. Writes are split: support can note, answer tickets, and publish announcements; admin can suspend, kill, grant credits, and impersonate; only an owner can delete, refund, rotate secrets, or turn on maintenance. Owner and admin writes require an enrolled authenticator. Every change is audit-logged. The model registry is the contract the speed-v1 branch should read for its 12 request-time safety checks.
 
 `COMPUTE_PROVIDER=docker` is the only accepted runtime. `remote` is reserved for a later Go host.
 
@@ -104,7 +109,7 @@ Sign in at [http://127.0.0.1:18080](http://127.0.0.1:18080) as `saad` / `teammat
 5. Files: upload a file into `/workspace`. Download it from the list. Artifacts lists `field-notes.txt`.
 6. Memory shows Helix. On a completed task, Save as skill, then Replay on the Skills tab. The replay's model-call count stays at 0.
 7. Routines: create one. It runs from the scheduler even if you leave the page. Tests move `nextRunAt` into the past with `PATCH /api/routines/{id}` because the form has no "run now" button.
-8. The account button opens Settings. System shows model calls, average planner latency, cost, computer memory, and Chrome process count. Usage shows the per-user report for an owner or admin. General switches Light, Dark, and System. Ctrl/Cmd-K opens the command palette.
+8. The account button opens Settings. System shows model calls, average planner latency, cost, computer memory, and Chrome process count. Usage shows the per-user report for an owner or admin. General switches Light, Dark, and System. Ctrl/Cmd-K opens the command palette. Account, billing, and help live under the account menu. User and credit management is the separate admin site, not a page in this app.
 
 To add a portal password the bot can type, use Add secret with namespace `university`, name `password`, type `PASSWORD`, and allowed domain `http://portal.example.edu:8099`. Then assign `Type the stored password into the login form at http://portal.example.edu:8099/login.html using secret://university/password`.
 
@@ -121,7 +126,7 @@ The script stores or rotates `secret://openrouter/default` through the secrets A
 3. Edit `.env`: owner password, Postgres password, S3 secret, worker token, computer token, metrics token. Set `ENABLE_TEST_HOOKS=false`.
 4. Leave the Chrome seccomp file at `deploy/seccomp-chrome.json`. Compose mounts it into the API.
 5. `sudo docker compose up -d --build`. The `isolation` service installs the computer firewall rules and puts them back after a Docker restart. `make up` also runs `deploy/computer-isolation.sh` once. Recreate each existing computer after a network change so it leaves `teammates-back`.
-6. Put Caddy, or another proxy, on the public ports. Start from `deploy/Caddyfile.production` (hostname, Let's Encrypt, HSTS, the noVNC CSP, 32 MB bodies). Do not publish `/internal/*` or `/metrics`. Do not publish Postgres, SeaweedFS, CDP, VNC, or the Docker proxy. Login attempts are limited in the API.
+6. Put Caddy, or another proxy, on the public ports. Start from `deploy/Caddyfile.production` (hostname, Let's Encrypt, HSTS, the noVNC CSP, 32 MB bodies). Point `admin.example.com` at the same proxy. Set `ADMIN_ALLOWLIST` to the office CIDRs when the admin site should not be open to the internet. Do not publish `/internal/*` or `/metrics`. Do not publish Postgres, SeaweedFS, CDP, VNC, or the Docker proxy. Login attempts are limited in the API.
 
 Defaults fit a 4 GB / 2 vCPU host. With `MAX_COMPUTERS` unset, the API allows 2 computers when MemTotal is under 6 GiB and 3 on an 8 GB machine. Each computer is capped at 640 MB, 0.40 CPU, and 64 MB of shared memory. `bash scripts/low-end.sh` starts Compose with the `lowend` profile inside a 4 GiB / 2 CPU cgroup and updates a computer that was created on an older quota. The measurement and the verdict are in `docs/PERFORMANCE.md`.
 

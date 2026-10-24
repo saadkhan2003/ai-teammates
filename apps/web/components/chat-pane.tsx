@@ -1098,7 +1098,7 @@ function SecureFormCard({ title, fields }: { title: string; fields: FormField[] 
   return (
     <form data-testid="secure-form-card" className="rounded-lg border border-border bg-card p-3 text-card-foreground" onSubmit={onSubmit}>
       <p className="text-sm font-medium">{title}</p>
-      <p className="mt-1 text-xs text-muted-foreground">Secret fields are stored in the vault and are not sent to the model.</p>
+      <p className="mt-1 text-xs text-muted-foreground">Secret fields are stored in the vault and are not shown again.</p>
       <div className="mt-2 flex flex-col gap-2">
         {fields.map((field) => (
           <label key={field.name} className="flex flex-col gap-1 text-xs">
