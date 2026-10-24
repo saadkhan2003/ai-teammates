@@ -1,8 +1,9 @@
 "use client";
 
-import { ArrowUpRight, Box, Check, ChevronRight, Cloud, Eye, GitBranch, GitPullRequest, X } from "lucide-react";
+import { ArrowUpRight, Box, CalendarClock, Check, ChevronRight, Cloud, Code2, Eye, GitBranch, GitPullRequest, X } from "lucide-react";
 import { useState } from "react";
 import { BotAvatar } from "@/components/bot-avatar";
+import { PanelCard, PanelEmpty, PanelSection } from "@/components/panel-section";
 import { LinkPill } from "@/components/link-pill";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
@@ -54,16 +55,16 @@ export function JobMark({ job, accent }: { job: CodingJob; accent: string }) {
 export function JobSubtitle({ job }: { job: CodingJob }) {
   const text = jobSubtitle(job);
   if (!text) return null;
-  if (job.status === "failed") return <span className="text-xs text-destructive">{text}</span>;
+  if (job.status === "failed") return <span className="text-meta text-destructive">{text}</span>;
   if (job.status === "merged") {
     return (
-      <span className="flex items-center gap-1 text-xs text-muted-foreground">
+      <span className="flex items-center gap-1 text-meta text-muted-foreground">
         <Check className="h-3 w-3 text-success" aria-hidden />
         {text}
       </span>
     );
   }
-  return <span className="text-xs text-muted-foreground">{text}</span>;
+  return <span className="text-meta text-muted-foreground">{text}</span>;
 }
 
 export function CodingJobsCard({
@@ -82,18 +83,18 @@ export function CodingJobsCard({
   const open = (job: CodingJob) => (onOpenJob ? onOpenJob(job) : setLocal(job));
   return (
     <>
-      <section data-testid="coding-jobs-card" aria-label="Coding jobs" className="w-full max-w-md rounded-2xl border border-border bg-card px-3 py-3 text-card-foreground shadow-sm" style={{ ["--bot-accent" as string]: accent }}>
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+      <section data-testid="coding-jobs-card" aria-label="Coding jobs" className="w-full max-w-md overflow-hidden rounded-card border border-border bg-card px-3 py-3 text-card-foreground shadow-sm" style={{ ["--bot-accent" as string]: accent }}>
+        <div className="flex items-center gap-2 text-body-sm text-muted-foreground">
           <Cloud className="h-4 w-4" aria-hidden />
           Coding jobs
         </div>
-        <p className="mt-2 text-sm font-semibold">{jobCountLabel(jobs)}</p>
+        <p className="mt-2 text-body-sm font-medium">{jobCountLabel(jobs)}</p>
         <ul className="mt-1">
           {jobs.map((job) => (
             <li key={job.id} data-testid="coding-job-row" data-status={job.status} data-job-id={job.id} className="group flex min-h-11 items-center gap-2 rounded-lg px-1 hover:bg-accent">
               <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" aria-label={job.title} onClick={() => open(job)}>
                 <JobMark job={job} accent={accent} />
-                <span className="truncate text-sm">{job.title}</span>
+                <span className="truncate text-body-sm">{job.title}</span>
               </button>
               <span className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
                 <Tooltip>
@@ -142,25 +143,22 @@ export function CodingPanel({
   onToggleRoutine: (routine: Routine, enabled: boolean) => void;
 }) {
   return (
-    <div className="flex flex-col gap-[var(--space-section)]" style={{ ["--bot-accent" as string]: accent }}>
-      <section data-testid="coding-list" aria-label="Coding">
-        <div className="flex items-baseline justify-between gap-2">
-          <h2 className="text-xs font-medium text-muted-foreground">Coding</h2>
-          {jobs.length > 0 ? (
-            <p data-testid="coding-count" className="text-xs text-muted-foreground">
-              {jobCountLabel(jobs)}
-            </p>
-          ) : null}
-        </div>
-        {jobs.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">No coding jobs yet.</p> : null}
+    <div className="flex flex-col gap-6" style={{ ["--bot-accent" as string]: accent }}>
+      <PanelSection
+        testId="coding-list"
+        title="Coding"
+        extra={jobs.length > 0 ? <p data-testid="coding-count" className="type-caption tabular">{jobCountLabel(jobs)}</p> : null}
+      >
+        {jobs.length === 0 ? <PanelEmpty icon={Code2} title="No coding jobs" detail="Jobs show up here when this teammate opens a branch." /> : null}
         {jobs.length > 0 ? (
-          <ul className="mt-2 rounded-xl bg-card p-1 text-card-foreground">
+          <PanelCard>
+          <ul className="p-1">
             {jobs.map((job) => (
-              <li key={job.id} data-testid="coding-panel-row" data-status={job.status} data-job-id={job.id} className="group relative rounded-lg hover:bg-accent">
+              <li key={job.id} data-testid="coding-panel-row" data-status={job.status} data-job-id={job.id} className="group relative rounded-control transition-colors duration-150 hover:bg-accent">
                 <button type="button" className="flex min-h-11 w-full items-center gap-2 px-2 text-left" aria-label={job.title} onClick={() => onOpenJob(job)}>
                   <JobMark job={job} accent={accent} />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm text-card-foreground">{job.title}</span>
+                    <span className="type-body block truncate font-medium text-card-foreground">{job.title}</span>
                     <JobSubtitle job={job} />
                   </span>
                   <ChevronRight className="size-4 shrink-0 text-muted-foreground group-hover:opacity-0 group-focus-within:opacity-0" aria-hidden />
@@ -186,20 +184,21 @@ export function CodingPanel({
               </li>
             ))}
           </ul>
+          </PanelCard>
         ) : null}
-      </section>
-      <section data-testid="routines-list" aria-label="Routines">
-        <h2 className="text-xs font-medium text-muted-foreground">Routines</h2>
-        {routines.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">No routines yet.</p> : null}
+      </PanelSection>
+      <PanelSection testId="routines-list" title="Routines">
+        {routines.length === 0 ? <PanelEmpty icon={CalendarClock} title="No routines" detail="Schedules you create will land in this card." /> : null}
         {routines.length > 0 ? (
-          <ul className="mt-2 rounded-xl bg-card px-2.5 py-1 text-card-foreground">
+          <PanelCard>
+          <ul className="px-2.5 py-1">
             {routines.map((routine) => {
               const enabled = routine.enabled !== false;
               return (
                 <li key={routine.id} className="flex min-h-11 items-center gap-2">
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm text-card-foreground">{routine.name}</p>
-                    <p className="truncate text-xs text-muted-foreground">{routineSchedule(routine.cron)}</p>
+                    <p className="type-body truncate font-medium text-card-foreground">{routine.name}</p>
+                    <p className="type-caption truncate tabular">{routineSchedule(routine.cron)}</p>
                   </div>
                   <Switch
                     data-testid="routine-toggle"
@@ -212,8 +211,9 @@ export function CodingPanel({
               );
             })}
           </ul>
+          </PanelCard>
         ) : null}
-      </section>
+      </PanelSection>
       <span className="sr-only">
         <BotAvatar botId={botId} shape={avatarShape} color={avatarColor} size={1} />
       </span>
@@ -257,9 +257,9 @@ export function JobDetailDialog({ job, accent, onClose }: { job: CodingJob | nul
               </DialogTitle>
               <DialogDescription>{jobSubtitle(job) ?? liveStepText(job)}</DialogDescription>
             </DialogHeader>
-            <p className="text-sm">{isActiveJob(job.status) ? liveStepText(job) : job.status}</p>
+            <p className="text-body-sm">{isActiveJob(job.status) ? liveStepText(job) : job.status}</p>
             {job.prUrl ? (
-              <a className="text-sm text-brand underline" href={job.prUrl} target="_blank" rel="noopener noreferrer">
+              <a className="text-body-sm text-brand underline" href={job.prUrl} target="_blank" rel="noopener noreferrer">
                 Open pull request
               </a>
             ) : null}
@@ -275,9 +275,9 @@ export function JobResultCard({ job, accent, onOpen }: { job: CodingJob; accent:
   const running = isActiveJob(job.status);
   const prHref = job.prUrl || "";
   return (
-    <article data-testid="job-result-card" data-status={job.status} className="w-full max-w-md rounded-2xl border border-border bg-card p-3 text-card-foreground shadow-sm">
+    <article data-testid="job-result-card" data-status={job.status} className="w-full max-w-md overflow-hidden rounded-card border border-border bg-card p-3 text-card-foreground shadow-sm">
       <button type="button" className="flex w-full items-start gap-3 text-left" aria-label={job.title} onClick={onOpen}>
-        <span className="min-w-0 flex-1 truncate text-base font-semibold">{job.title}</span>
+        <span className="min-w-0 flex-1 truncate text-lead font-medium">{job.title}</span>
         {running ? (
           <span data-testid="job-result-running" className="job-spinner mt-0.5" style={{ ["--bot-accent" as string]: accent }} role="img" aria-label="Running" />
         ) : failed ? (
@@ -295,13 +295,13 @@ export function JobResultCard({ job, accent, onOpen }: { job: CodingJob; accent:
         )}
       </button>
       {job.branch || job.prNumber ? (
-        <button type="button" className="mt-2 flex w-full items-center gap-2 text-left text-sm" onClick={onOpen}>
+        <button type="button" className="mt-2 flex w-full items-center gap-2 text-left text-body-sm" onClick={onOpen}>
           <GitBranch className="size-4 shrink-0 text-sage" aria-hidden />
           <span className="min-w-0 flex-1 truncate text-sage">{job.branch}</span>
           {job.prNumber ? <span className="shrink-0 text-muted-foreground">PR #{job.prNumber}</span> : null}
         </button>
       ) : null}
-      <button type="button" className="mt-1 flex w-full items-center gap-2 text-left text-sm text-muted-foreground" onClick={onOpen}>
+      <button type="button" className="mt-1 flex w-full items-center gap-2 text-left text-body-sm text-muted-foreground" onClick={onOpen}>
         <span aria-hidden>±</span>
         <span>{filesChangedLabel(job.filesChanged)}</span>
         <span className="text-sage">+{job.additions}</span>
@@ -314,12 +314,12 @@ export function JobResultCard({ job, accent, onOpen }: { job: CodingJob; accent:
             href={prHref}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex h-11 min-w-0 flex-1 items-center justify-center rounded-xl bg-primary text-sm font-medium text-primary-foreground"
+            className="inline-flex h-11 min-w-0 flex-1 items-center justify-center rounded-xl bg-primary text-body-sm font-medium text-primary-foreground"
           >
             View PR
           </a>
         ) : (
-          <button type="button" data-testid="job-result-pr" disabled className="inline-flex h-11 min-w-0 flex-1 items-center justify-center rounded-xl bg-primary text-sm font-medium text-primary-foreground opacity-50">
+          <button type="button" data-testid="job-result-pr" disabled className="inline-flex h-11 min-w-0 flex-1 items-center justify-center rounded-xl bg-primary text-body-sm font-medium text-primary-foreground opacity-50">
             View PR
           </button>
         )}
@@ -350,7 +350,7 @@ export function LiveJobStep({
   color?: string;
 }) {
   return (
-    <p data-testid="coding-job-step" className="flex items-center gap-2 text-sm text-muted-foreground">
+    <p data-testid="coding-job-step" className="flex items-center gap-2 text-body-sm text-muted-foreground">
       <BotAvatar botId={botId} shape={shape} color={color} size={16} />
       <span>
         <span className="sr-only">{botName} </span>

@@ -90,13 +90,13 @@ export default function PolicySettingsPage() {
       <form className="flex flex-col gap-4" onSubmit={(event) => void save(event)}>
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Action policy</CardTitle>
+            <CardTitle className="text-body-sm">Action policy</CardTitle>
             <CardDescription>Risky classes ask before the tool runs. A hard deny still wins.</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4 md:grid-cols-2">
             {CLASSES.map((name) => (
               <div key={name} className="flex min-h-11 items-center justify-between gap-3 rounded-lg border border-border px-3">
-                <Label htmlFor={`policy-${name}`} className="text-sm font-normal">
+                <Label htmlFor={`policy-${name}`} className="text-body-sm font-normal">
                   {name}
                 </Label>
                 <Select value={classes[name] ?? "ASK"} onValueChange={(value) => setClasses((current) => ({ ...current, [name]: value }))}>
@@ -115,8 +115,8 @@ export default function PolicySettingsPage() {
             ))}
           <div className="flex min-h-11 items-center justify-between gap-3 border-t border-border pt-4 md:col-span-2">
               <div>
-                <p className="text-sm">Model assist</p>
-                <p className="text-xs text-muted-foreground">Classify plugin tools. Built-in tools stay on the class rules.</p>
+                <p className="text-body-sm">Model assist</p>
+                <p className="text-meta text-muted-foreground">Classify plugin tools. Built-in tools stay on the class rules.</p>
               </div>
               <Switch data-testid="policy-model-assist" checked={assist} onCheckedChange={setAssist} aria-label="Model-assisted classifier for plugin tools" />
             </div>
@@ -129,15 +129,15 @@ export default function PolicySettingsPage() {
       {staff ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Hard deny list</CardTitle>
+            <CardTitle className="text-body-sm">Hard deny list</CardTitle>
             <CardDescription>Admin only. Built-in rules cannot be removed, and approval cannot override them.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <ul className="flex flex-col gap-2" data-testid="deny-list">
               {rules.map((rule) => (
-                <li key={rule.code} className="flex min-h-11 flex-col justify-center rounded-lg border border-border px-3 py-2 text-sm">
+                <li key={rule.code} className="flex min-h-11 flex-col justify-center rounded-lg border border-border px-3 py-2 text-body-sm">
                   <span className="font-medium">{rule.code}</span>
-                  {rule.builtin ? <span className="ml-2 text-xs text-muted-foreground">built-in</span> : null}
+                  {rule.builtin ? <span className="ml-2 text-meta text-muted-foreground">built-in</span> : null}
                   {rule.description ? <p className="text-muted-foreground">{rule.description}</p> : null}
                 </li>
               ))}
@@ -165,7 +165,7 @@ export default function PolicySettingsPage() {
         </Card>
       ) : null}
       {error ? (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="text-body-sm text-destructive">
           {error}
         </p>
       ) : null}

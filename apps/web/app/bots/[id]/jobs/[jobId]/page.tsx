@@ -36,22 +36,22 @@ export default function CodingJobPage() {
   const accent = readableAccent();
   return (
     <main data-testid="coding-job-page" className="mx-auto flex w-full max-w-[var(--content-width)] flex-col gap-[var(--space-section)] px-[var(--space-page)] py-[var(--space-page)]">
-      <Link href={botId ? `/bots/${botId}` : "/"} className="text-sm text-muted-foreground">
+      <Link href={botId ? `/bots/${botId}` : "/"} className="text-body-sm text-muted-foreground">
         Back to chat
       </Link>
       {error ? (
-        <p role="alert" className="rounded-lg border border-border bg-card p-4 text-sm text-destructive">
+        <p role="alert" className="rounded-lg border border-border bg-card p-4 text-body-sm text-destructive">
           {error}
         </p>
       ) : null}
       {job ? (
         <header className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <h1 className="flex items-center gap-2 text-lg font-medium">
+            <h1 className="flex items-center gap-2 text-title font-medium">
               <JobMark job={job} accent={accent} />
               {job.title}
             </h1>
-            <p className="mt-1 text-sm text-muted-foreground">{jobSubtitle(job) ?? liveStepText(job)}</p>
+            <p className="mt-1 text-body-sm text-muted-foreground">{jobSubtitle(job) ?? liveStepText(job)}</p>
           </div>
           {job.prUrl ? (
             <Button asChild>

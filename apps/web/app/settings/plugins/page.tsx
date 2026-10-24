@@ -6,8 +6,8 @@ export default function PluginsSettingsPage() {
   return (
     <div className="flex flex-col gap-[var(--space-section)]">
       <div>
-        <h2 className="text-lg font-medium">Plugins</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <h2 className="text-title font-medium">Plugins</h2>
+        <p className="mt-1 text-body-sm text-muted-foreground">
           One catalog for MCP servers, OpenAPI APIs, and built-ins. Search, install, connect a credential, and enable a plugin per teammate. Nothing runs until a tool is called.
         </p>
       </div>

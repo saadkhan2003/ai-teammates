@@ -44,7 +44,7 @@ export function TasksPane({
   return (
     <div data-testid="task-list">
       {tasks.length === 0 ? (
-        <p className="rounded-lg border border-line bg-paper px-4 py-3 text-sm text-muted-foreground">
+        <p className="rounded-lg border border-line bg-paper px-4 py-3 text-body-sm text-muted-foreground">
           No tasks yet. Send a message in Chat and the status will show up here.
         </p>
       ) : (
@@ -56,8 +56,8 @@ export function TasksPane({
                   <h3 className="font-medium">{task.title || task.instruction || "Untitled task"}</h3>
                   <StatusBadge status={task.status} />
                 </div>
-                {task.title && task.instruction ? <p className="mt-2 text-sm text-muted-foreground">{task.instruction}</p> : null}
-                <dl className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                {task.title && task.instruction ? <p className="mt-2 text-body-sm text-muted-foreground">{task.instruction}</p> : null}
+                <dl className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-meta text-muted-foreground">
                   {task.kind ? (
                     <div>
                       <dt className="inline">Kind </dt>
@@ -71,16 +71,16 @@ export function TasksPane({
                     </div>
                   ) : null}
                 </dl>
-                {task.status === "failed" && task.error ? <p role="alert" data-testid="task-error" className="mt-2 whitespace-pre-wrap text-sm text-destructive">{task.error}</p> : null}
-                {task.waitingReason ? <p className="mt-2 text-sm">{task.waitingReason}</p> : null}
+                {task.status === "failed" && task.error ? <p role="alert" data-testid="task-error" className="mt-2 whitespace-pre-wrap text-body-sm text-destructive">{task.error}</p> : null}
+                {task.waitingReason ? <p className="mt-2 text-body-sm">{task.waitingReason}</p> : null}
                 {task.status === "waiting_resource" && openrouterConnected === false ? (
-                  <p className="mt-2 text-sm">
+                  <p className="mt-2 text-body-sm">
                     <Link href="/settings/secrets" className="font-medium text-copper-deep underline">
                       Connect OpenRouter
                     </Link>
                   </p>
                 ) : null}
-                {task.result ? <p className="mt-3 whitespace-pre-wrap text-sm">{task.result}</p> : null}
+                {task.result ? <p className="mt-3 whitespace-pre-wrap text-body-sm">{task.result}</p> : null}
                 {task.status === "completed" ? (
                   <Button
                     data-testid="save-skill"
@@ -99,7 +99,7 @@ export function TasksPane({
         </ScrollArea>
       )}
       {saveError ? (
-        <p role="alert" className="mt-3 text-sm text-clay">
+        <p role="alert" className="mt-3 text-body-sm text-clay">
           {saveError}
         </p>
       ) : null}

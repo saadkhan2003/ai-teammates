@@ -57,23 +57,23 @@ export function Approvals({ approvals, onChanged }: { approvals: Approval[]; onC
   return (
     <div className="flex flex-col gap-3">
       {settledOnly.map(([id, item]) => (
-        <div key={id} data-testid="approval-card" data-decided="true" className="rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">{item.denied ? "Denied" : "Allowed"} {item.action} {domainOf(item.target) || item.target}</div>
+        <div key={id} data-testid="approval-card" data-decided="true" className="rounded-md border border-border px-3 py-2 text-body-sm text-muted-foreground">{item.denied ? "Denied" : "Allowed"} {item.action} {domainOf(item.target) || item.target}</div>
       ))}
       {approvals.map((approval) => !needsDecision(approval.status) ? (
-        <div key={approval.id} data-testid="approval-card" data-decided="true" className="rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">{["denied", "deny", "rejected"].includes(approval.status ?? "") ? "Denied" : "Allowed"} {approval.action} {domainOf(approval.target) || approval.target}</div>
+        <div key={approval.id} data-testid="approval-card" data-decided="true" className="rounded-md border border-border px-3 py-2 text-body-sm text-muted-foreground">{["denied", "deny", "rejected"].includes(approval.status ?? "") ? "Denied" : "Allowed"} {approval.action} {domainOf(approval.target) || approval.target}</div>
       ) : (
         <Card key={approval.id} data-testid="approval-card" className="min-w-0 max-w-full">
           <CardHeader className="p-4">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <CardTitle className="min-w-0 break-words text-sm">{approval.action || "Approval"}</CardTitle>
-              {approval.status ? <span className="text-xs text-muted-foreground">{approval.status}</span> : null}
+              <CardTitle className="min-w-0 break-words text-body-sm">{approval.action || "Approval"}</CardTitle>
+              {approval.status ? <span className="text-meta text-muted-foreground">{approval.status}</span> : null}
             </div>
           </CardHeader>
           <CardContent className="flex flex-col gap-2 p-4 pt-0">
-            {approval.riskClass ? <p className="text-xs uppercase tracking-wide text-muted-foreground">{approval.riskClass}</p> : null}
-            {approval.summary ? <p data-testid="approval-summary" className="break-words text-sm">{approval.summary}</p> : null}
-            {approval.target ? <p className="break-words text-sm">{approval.target}</p> : null}
-            {approval.reason && approval.reason !== approval.summary ? <p className="break-words text-sm text-muted-foreground">{approval.reason}</p> : null}
+            {approval.riskClass ? <p className="text-meta uppercase tracking-wide text-muted-foreground">{approval.riskClass}</p> : null}
+            {approval.summary ? <p data-testid="approval-summary" className="break-words text-body-sm">{approval.summary}</p> : null}
+            {approval.target ? <p className="break-words text-body-sm">{approval.target}</p> : null}
+            {approval.reason && approval.reason !== approval.summary ? <p className="break-words text-body-sm text-muted-foreground">{approval.reason}</p> : null}
             {needsDecision(approval.status) ? (
               <div className="flex flex-col gap-2 sm:flex-row">
                 <Button
@@ -113,7 +113,7 @@ export function Approvals({ approvals, onChanged }: { approvals: Approval[]; onC
         </Card>
       ))}
       {error ? (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="text-body-sm text-destructive">
           {error}
         </p>
       ) : null}

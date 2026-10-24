@@ -633,15 +633,15 @@ export function ComputerPane({
   const actionLabel = controlActionLabel(mode, needsHelp);
   const fill = fullscreen || nativeFs;
   const controlPill = (
-    <div data-testid="computer-control-pill" className="inline-flex min-h-11 w-fit max-w-full flex-nowrap items-center gap-1.5 rounded-full bg-card px-1.5 py-1 text-xs text-card-foreground shadow-sm">
+    <div data-testid="computer-control-pill" className="inline-flex min-h-11 w-fit max-w-full flex-nowrap items-center gap-1.5 rounded-full bg-card px-1.5 py-1 text-meta text-card-foreground shadow-sm">
       {mode === "view" ? <Eye className="size-4 shrink-0 text-muted-foreground" aria-hidden /> : <MousePointer2 className="size-4 shrink-0 text-muted-foreground" aria-hidden />}
       <span className={cn("whitespace-nowrap", mode === "view" ? "text-muted-foreground" : undefined)}>{mode === "view" ? "Watching" : "You're in control"}</span>
       {mode === "view" ? (
-        <button type="button" data-testid="take-control" className="min-h-9 whitespace-nowrap rounded-full bg-primary px-3 text-xs font-medium text-primary-foreground disabled:opacity-50" disabled={busy !== null} onClick={() => void takeControl()}>
+        <button type="button" data-testid="take-control" className="min-h-9 whitespace-nowrap rounded-full bg-primary px-3 text-meta font-medium text-primary-foreground disabled:opacity-50" disabled={busy !== null} onClick={() => void takeControl()}>
           {actionLabel}
         </button>
       ) : (
-        <button type="button" data-testid="hand-back" className="min-h-9 whitespace-nowrap rounded-full bg-secondary px-3 text-xs font-medium text-secondary-foreground disabled:opacity-50" disabled={busy !== null} onClick={() => void handBack()}>
+        <button type="button" data-testid="hand-back" className="min-h-9 whitespace-nowrap rounded-full bg-secondary px-3 text-meta font-medium text-secondary-foreground disabled:opacity-50" disabled={busy !== null} onClick={() => void handBack()}>
           {actionLabel}
         </button>
       )}
@@ -665,14 +665,14 @@ export function ComputerPane({
           </div>
         ) : (
           <div className="flex shrink-0 flex-col gap-1">
-            <p className="text-sm text-muted-foreground">{holder === "human" ? "You have the computer." : "The agent has the computer."}</p>
-            <p data-testid="vnc-status" className="text-sm font-medium">{statusLabel(vncState)}</p>
+            <p className="text-body-sm text-muted-foreground">{holder === "human" ? "You have the computer." : "The agent has the computer."}</p>
+            <p data-testid="vnc-status" className="text-body-sm font-medium">{statusLabel(vncState)}</p>
             {mode === "view" ? (
-              <p data-testid="watch-only" className="text-sm font-medium md:hidden">
+              <p data-testid="watch-only" className="text-body-sm font-medium md:hidden">
                 Watch only
               </p>
             ) : null}
-            <p className="text-xs text-muted-foreground">{mode === "control" ? "The pointer is yours." : "View only, until you take control."}</p>
+            <p className="text-meta text-muted-foreground">{mode === "control" ? "The pointer is yours." : "View only, until you take control."}</p>
           </div>
         )}
         {asleep ? (
@@ -681,10 +681,10 @@ export function ComputerPane({
               <span className="opacity-50 grayscale">
                 <BotAvatar botId={botId} shape={avatarShape} color={avatarColor} size={40} />
               </span>
-              <span className="pb-1 text-sm tracking-widest text-muted-foreground" aria-hidden>z z</span>
+              <span className="pb-1 text-body-sm tracking-widest text-muted-foreground" aria-hidden>z z</span>
             </span>
-            <span className="text-sm font-medium">Computer is asleep</span>
-            <span data-testid="computer-wake" className="text-xs text-muted-foreground">Tap to wake</span>
+            <span className="text-body-sm font-medium">Computer is asleep</span>
+            <span data-testid="computer-wake" className="text-meta text-muted-foreground">Tap to wake</span>
           </button>
         ) : null}
         <div className={cn("grid w-full place-items-center", asleep && "hidden", fill && "min-h-0 w-full flex-1")}>
@@ -694,7 +694,8 @@ export function ComputerPane({
               data-testid="desktop-frame"
               data-zoom={zoom.toFixed(2)}
               className={cn(
-                "relative touch-none overflow-hidden rounded-lg bg-background",
+                "relative touch-none overflow-hidden bg-background",
+                fullscreen ? "rounded-dialog" : "rounded-control",
                 fill ? "h-full min-h-[12rem] w-full" : "aspect-video w-full",
                 compact && !fullscreen && "cursor-pointer",
               )}
@@ -713,19 +714,19 @@ export function ComputerPane({
               <button
                 type="button"
                 data-testid="computer-open"
-                className="absolute inset-0 z-10 grid place-items-center rounded-lg bg-overlay opacity-0 pointer-events-none transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100"
+                className={cn("absolute inset-0 z-10 grid place-items-center bg-overlay opacity-0 pointer-events-none transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100", fullscreen ? "rounded-dialog" : "rounded-control")}
                 onClick={(event) => {
                   event.stopPropagation();
                   onExpand?.();
                 }}
               >
-                <span className="computer-open-label rounded-full px-3 py-1 text-sm font-medium">↗ Open</span>
+                <span className="computer-open-label rounded-full px-3 py-1 text-body-sm font-medium">↗ Open</span>
               </button>
             ) : null}
           </div>
         </div>
         {!fullscreen && caption ? (
-          <p data-testid="computer-caption" className="text-center text-xs text-muted-foreground">{caption}&apos;s screen</p>
+          <p data-testid="computer-caption" className="text-center text-meta text-muted-foreground">{caption}&apos;s screen</p>
         ) : null}
         <div className={cn("flex justify-center", fullscreen && "pointer-events-none absolute inset-x-0 bottom-4")}>
           <div className={fullscreen ? "pointer-events-auto" : undefined}>{controlPill}</div>
@@ -747,7 +748,7 @@ export function ComputerPane({
           <input
             ref={keyRef}
             data-testid="desktop-keyboard"
-            className="min-h-11 w-full rounded-md border border-border bg-card px-3 text-base"
+            className="min-h-11 w-full rounded-md border border-border bg-card px-3 text-lead"
             enterKeyHint="send"
             autoCapitalize="off"
             autoCorrect="off"
@@ -766,20 +767,20 @@ export function ComputerPane({
         ) : null}
       </div>
       {!fullscreen && error ? (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="text-body-sm text-destructive">
           {error}
         </p>
       ) : null}
       {!fullscreen && waiting.length > 0 ? (
         <div data-testid="attention-banner" role="status" className="rounded-lg border border-border bg-card p-4">
           <p className="font-medium">A task is waiting on you.</p>
-          <p className="mt-1 text-sm">The bot stopped for a human check. Take control, finish it, then hand the computer back.</p>
+          <p className="mt-1 text-body-sm">The bot stopped for a human check. Take control, finish it, then hand the computer back.</p>
           <ul className="mt-3 flex flex-col gap-3">
             {waiting.map((task) => (
               <li key={task.id} className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <p className="text-sm font-medium">{task.title || task.instruction || "Waiting task"}</p>
-                  {task.waitingReason ? <p className="text-sm text-muted-foreground">{task.waitingReason}</p> : null}
+                  <p className="text-body-sm font-medium">{task.title || task.instruction || "Waiting task"}</p>
+                  {task.waitingReason ? <p className="text-body-sm text-muted-foreground">{task.waitingReason}</p> : null}
                 </div>
                 <Button data-testid="resolve-attention" size="sm" disabled={busy !== null} onClick={() => void resolveAttention(task.id)}>
                   Resolve attention
@@ -794,21 +795,21 @@ export function ComputerPane({
               </Button>
             </div>
           ) : (
-            <p className="mt-3 text-xs text-muted-foreground">Take control before sending the human click.</p>
+            <p className="mt-3 text-meta text-muted-foreground">Take control before sending the human click.</p>
           )}
         </div>
       ) : null}
       {!fullscreen ? (
         <section>
-          <h3 className="text-sm font-medium">Open pages</h3>
+          <h3 className="text-body-sm font-medium">Open pages</h3>
           {pages.length === 0 ? (
-            <p className="mt-2 text-sm text-muted-foreground">No browser pages open.</p>
+            <p className="mt-2 text-body-sm text-muted-foreground">No browser pages open.</p>
           ) : (
             <ul className="mt-2 flex flex-col gap-2">
               {pages.map((page) => (
                 <li key={page.targetId} data-testid="browser-page" className="rounded-lg border border-border bg-card px-3 py-2">
-                  <p className="text-sm font-medium">{page.title || "Untitled page"}</p>
-                  <p className="truncate text-xs text-muted-foreground">{page.url}</p>
+                  <p className="text-body-sm font-medium">{page.title || "Untitled page"}</p>
+                  <p className="truncate text-meta text-muted-foreground">{page.url}</p>
                 </li>
               ))}
             </ul>

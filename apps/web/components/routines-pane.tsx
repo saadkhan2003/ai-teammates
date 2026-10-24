@@ -94,7 +94,7 @@ export function RoutinesPane({
             onChange={(event) => setWatchRef(event.target.value)}
             placeholder="https://example.com/status"
           />
-          <p className="text-xs text-muted-foreground">Leave empty to run on every cron tick. A URL runs the model only when the page changes.</p>
+          <p className="text-meta text-muted-foreground">Leave empty to run on every cron tick. A URL runs the model only when the page changes.</p>
         </div>
         <div className="flex flex-col gap-2">
           <Label htmlFor="routine-instruction">Instruction</Label>
@@ -108,7 +108,7 @@ export function RoutinesPane({
           />
         </div>
         {formError ? (
-          <p role="alert" className="text-sm text-clay">
+          <p role="alert" className="text-body-sm text-clay">
             {formError}
           </p>
         ) : null}
@@ -119,21 +119,21 @@ export function RoutinesPane({
       <div className="rounded-lg border border-line bg-paper p-4">
         {!loaded ? <Skeleton className="h-20 w-full" /> : null}
         {loaded && error ? (
-          <div className="space-y-2"><p role="alert" className="text-sm text-clay">
+          <div className="space-y-2"><p role="alert" className="text-body-sm text-clay">
             Could not load routines. {error}
           </p><Button variant="outline" size="sm" onClick={onChanged}>Retry</Button></div>
         ) : null}
         {loaded && !error && routines.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No routines scheduled. A routine runs on its cron even when this page is closed.</p>
+          <p className="text-body-sm text-muted-foreground">No routines scheduled. A routine runs on its cron even when this page is closed.</p>
         ) : null}
         <ul className="flex flex-col gap-3">
           {routines.map((routine) => (
             <li key={routine.id} className="border-b border-line pb-3 last:border-0">
               <p className="font-medium">{routine.name}</p>
-              <p className="font-mono text-xs text-muted-foreground">{routine.cron}</p>
-              {routine.instruction ? <p className="mt-1 text-sm">{routine.instruction}</p> : null}
-              {routine.watchRef ? <p className="mt-1 text-xs text-muted-foreground">Watches {routine.watchRef}</p> : null}
-              {routine.nextRunAt ? <p className="mt-1 text-xs text-muted-foreground">Next run {formatWhen(routine.nextRunAt)}</p> : null}
+              <p className="font-mono text-meta text-muted-foreground">{routine.cron}</p>
+              {routine.instruction ? <p className="mt-1 text-body-sm">{routine.instruction}</p> : null}
+              {routine.watchRef ? <p className="mt-1 text-meta text-muted-foreground">Watches {routine.watchRef}</p> : null}
+              {routine.nextRunAt ? <p className="mt-1 text-meta text-muted-foreground">Next run {formatWhen(routine.nextRunAt)}</p> : null}
             </li>
           ))}
         </ul>

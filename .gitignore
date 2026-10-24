@@ -15,4 +15,5 @@ backups/
 docs/evidence/*.webm
 docs/evidence/playwright/
 *.log
+.trivy-reports/
 .DS_Store

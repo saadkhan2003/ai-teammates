@@ -91,7 +91,8 @@ export function normalizeFiles(data: unknown) {
     const name = text(record.name) || path.split("/").filter(Boolean).pop() || path;
     const directory = record.directory === true || record.isDir === true || record.kind === "dir";
     const size = typeof record.size === "number" ? record.size : undefined;
-    return { path, name, directory, size };
+    const updatedAt = text(record.updatedAt ?? record.updated_at ?? record.modifiedAt ?? record.mtime ?? record.createdAt ?? record.created_at) || undefined;
+    return { path, name, directory, size, updatedAt };
   });
 }
 
@@ -135,16 +136,22 @@ export function normalizeRoutines(data: unknown) {
 }
 
 export function normalizeArtifacts(data: unknown) {
-  return asList(data, ["artifacts", "items"]).map((entry, index) => {
+  return asList(data, ["artifacts", "items"]).flatMap((entry, index) => {
     const record = (entry ?? {}) as Record<string, unknown>;
-    const name = text(record.name ?? record.filename) || "Artifact";
-    return {
+    const mime = text(record.mime ?? record.contentType ?? record.content_type);
+    const createdAt = text(record.createdAt ?? record.created_at);
+    const filename = text(record.filename ?? record.name);
+    const rosterShaped = Boolean(record.role || record.section || record.status) && !mime && !createdAt && !record.filename;
+    if (rosterShaped || !filename) return [];
+    const name = filename || "Artifact";
+    return [{
       id: text(record.id) || `artifact-${index + 1}`,
       name,
       title: text(record.title) || undefined,
-      mime: text(record.mime ?? record.contentType ?? record.content_type) || undefined,
-      createdAt: text(record.createdAt ?? record.created_at) || undefined,
-    };
+      mime: mime || undefined,
+      size: Number(record.sizeBytes ?? record.size_bytes ?? record.size) || undefined,
+      createdAt: createdAt || undefined,
+    }];
   });
 }
 

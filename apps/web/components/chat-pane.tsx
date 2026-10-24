@@ -1,9 +1,12 @@
 "use client";
 
 import { FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { FileCard } from "@/components/file-card";
+import { ImageGrid } from "@/components/image-grid";
+import type { GalleryImage } from "@/components/image-lightbox";
 import { Markdown } from "@/components/markdown";
 import type { AgentEvent } from "@/lib/events";
-import { ArrowDown, ArrowUp, AudioLines, MessageSquareQuote, Mic, MoreHorizontal, Notebook, Plus, Reply, Smile } from "lucide-react";
+import { ArrowDown, ArrowUp, AudioLines, MessageCircle, MessageSquareQuote, Mic, MoreHorizontal, Notebook, Plus, Reply, Smile } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -327,12 +330,15 @@ export function ChatPane({
           }
         }}
       >
-        <div className="mx-auto flex w-full max-w-[var(--content-width)] flex-col gap-2 px-4 py-4">
+        <div className="mx-auto flex w-full max-w-[var(--content-width)] flex-col gap-1.5 px-4 py-4">
           {extras}
           {messages.length === 0 ? (
-            <div data-testid="chat-empty" className="py-12 text-center">
-              <p className="font-medium">Start a conversation with {botName}</p>
-              <p className="mt-2 text-sm text-muted-foreground">Ask a question, share an idea, or assign some work.</p>
+            <div data-testid="chat-empty" className="mx-auto flex max-w-sm flex-col items-center px-4 py-16 text-center">
+              <span className="grid size-10 place-items-center rounded-card bg-muted text-muted-foreground">
+                <MessageCircle className="size-5" strokeWidth={1.5} aria-hidden />
+              </span>
+              <p className="type-title mt-3">Start a conversation with {botName}</p>
+              <p className="type-caption mt-1">Ask a question, share an idea, or hand over some work.</p>
             </div>
           ) : null}
           {messages.map((message) => {
@@ -353,7 +359,7 @@ export function ChatPane({
               return (
                 <article key={message.id} id={`message-${message.id}`} data-testid="message-item" data-role={message.role} className="group mr-auto w-full max-w-md">
                   <MemoryNotice action={only.action} text={only.text} />
-                  <time className="mt-1 block px-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{formatWhen(message.createdAt)}</time>
+                  <time className="mt-1 block px-1 text-micro text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{formatWhen(message.createdAt)}</time>
                 </article>
               );
             }
@@ -380,7 +386,7 @@ export function ChatPane({
                     onReact={(emoji) => void react(message.id, emoji)}
                     onReply={() => setReply(message)}
                   />
-                  <time className="mt-1 block px-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{formatWhen(message.createdAt)}</time>
+                  <time className="mt-1 block px-1 text-micro text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{formatWhen(message.createdAt)}</time>
                 </article>
               );
             }
@@ -389,22 +395,23 @@ export function ChatPane({
             const quoted = message.replyToId ? byId.get(message.replyToId) : undefined;
             const placement = quotePlacement(message.role);
             const media = blocks.filter((block) => block.kind === "image" || block.kind === "video" || block.kind === "file");
-            const body = blocks.filter((block) => block.kind !== "image" && block.kind !== "video" && block.kind !== "file");
+            const body = blocks.filter((block) => block.kind !== "image" && block.kind !== "video" && block.kind !== "file").filter((block) => block.kind !== "text" || block.text.trim().length > 0);
             const singleLine = mine && media.length === 0 && body.length === 1 && body[0].kind === "text" && !body[0].text.includes("\n") && body[0].text.trim().length < 80;
-            const showBubble = body.length > 0 || (Boolean(message.replyToId) && placement === "inside");
+            const showBubble = body.length > 0 || (Boolean(message.replyToId) && placement === "inside" && Boolean(replySnippet(quoted?.content ?? "").trim()));
+            if (!showBubble && media.length === 0 && reactions.length === 0) return null;
             return (
               <article
                 key={message.id}
                 id={`message-${message.id}`}
                 data-testid="message-item"
                 data-role={message.role}
-                className={cn("group relative flex w-fit min-w-0 max-w-[85%] flex-col sm:max-w-[70%]", mine ? "ml-auto items-end" : "mr-auto items-start")}
+                className={cn("group relative flex w-fit min-w-0 max-w-[85%] flex-col sm:max-w-[62%]", mine ? "ml-auto items-end" : "mr-auto items-start")}
               >
                 {message.replyToId && placement === "above" ? (
                   <button
                     type="button"
                     data-testid="reply-quote"
-                    className="mb-1 max-w-full truncate rounded-full bg-muted px-3 py-1 text-left text-xs text-muted-foreground"
+                    className="mb-1 max-w-full truncate rounded-full bg-muted px-3 py-1 text-left text-meta text-muted-foreground"
                     onClick={() => focusMessage(message.replyToId!)}
                   >
                     {replySnippet(quoted?.content ?? "")}
@@ -414,7 +421,7 @@ export function ChatPane({
                   <div
                     data-testid="message-bubble"
                     className={cn(
-                      "relative space-y-2 px-3.5 py-2 text-sm",
+                      "relative space-y-2 px-3.5 py-2 text-body",
                       mine ? "bg-[var(--bot-accent)] text-on-accent" : "bg-assistant-bubble text-assistant-bubble-foreground",
                       singleLine ? "rounded-full" : mine ? "rounded-2xl" : "rounded-xl",
                       reactions.length ? "mb-3" : "",
@@ -424,7 +431,7 @@ export function ChatPane({
                       <button
                         type="button"
                         data-testid="reply-quote"
-                        className="flex w-full min-w-0 items-center gap-1.5 text-left text-xs text-muted-foreground"
+                        className="flex w-full min-w-0 items-center gap-1.5 text-left text-meta text-muted-foreground"
                         onClick={() => focusMessage(message.replyToId!)}
                       >
                         <MessageSquareQuote className="size-3.5 shrink-0" aria-hidden />
@@ -447,22 +454,32 @@ export function ChatPane({
                   </div>
                 ) : null}
                 {media.length > 0 ? (
-                  <div className={cn("relative flex w-full flex-col gap-1", showBubble ? "mt-1" : "", !showBubble && reactions.length ? "mb-3" : "")} data-testid={showBubble ? undefined : "message-bubble"}>
-                    {media.map((block, index) => (
-                      <MessageBlockView
-                        key={`${message.id}-media-${index}`}
-                        block={block}
-                        jobs={codingJobs}
-                        accent={paint}
-                        mine={mine}
-                        botId={botId}
-                        onOpenJob={onOpenJob}
-                        onReply={() => setReply(message)}
-                      />
-                    ))}
+                  <div className={cn("relative", showBubble ? "mt-1 w-0 min-w-full" : "w-[360px] max-w-full", !showBubble && reactions.length ? "mb-3" : "")}>
+                    <MediaRow
+                      media={media}
+                      jobs={codingJobs}
+                      accent={paint}
+                      mine={mine}
+                      botId={botId}
+                      onOpenJob={onOpenJob}
+                      onReply={() => setReply(message)}
+                    />
                     {showBubble ? null : <ReactionCluster reactions={reactions} botName={botName} userName={userName} onToggle={(emoji) => void react(message.id, emoji)} />}
+                    <MessageToolbar
+                      messageId={message.id}
+                      content={message.content}
+                      mine={mine}
+                      align="center"
+                      picker={picker?.id === message.id ? picker : null}
+                      customEmoji={customEmoji}
+                      onCustomEmoji={setCustomEmoji}
+                      onToggle={(anchor) => togglePicker(message.id, anchor)}
+                      onExpand={() => setPicker((current) => (current ? { ...current, full: true } : current))}
+                      onReact={(emoji) => void react(message.id, emoji)}
+                      onReply={() => setReply(message)}
+                    />
                   </div>
-                ) : null}
+                ) : (
                 <MessageToolbar
                   messageId={message.id}
                   content={message.content}
@@ -475,7 +492,8 @@ export function ChatPane({
                   onReact={(emoji) => void react(message.id, emoji)}
                   onReply={() => setReply(message)}
                 />
-                <time className="mt-1 block px-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{formatWhen(message.createdAt)}</time>
+                )}
+                <time className="mt-1 block px-1 text-micro text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{formatWhen(message.createdAt)}</time>
               </article>
             );
           })}
@@ -488,8 +506,8 @@ export function ChatPane({
           {events.filter((event) => !["delta", "message.delta", "text_delta"].includes(event.type)).map((event, i) => (
             <EventCard key={`${conversationId}-${i}`} event={event} />
           ))}
-          {working && events.some((event) => ["delta", "message.delta", "text_delta"].includes(event.type)) ? (
-            <div data-testid="streaming-text" className="rounded-md bg-assistant-bubble p-3 text-sm">
+          {working && events.some((event) => ["delta", "message.delta", "text_delta"].includes(event.type)) && events.filter((event) => ["delta", "message.delta", "text_delta"].includes(event.type)).map((event) => String(event.delta ?? event.text ?? "")).join("").trim() ? (
+            <div data-testid="streaming-text" className="rounded-bubble bg-assistant-bubble p-3 text-body">
               <Markdown text={events.filter((event) => ["delta", "message.delta", "text_delta"].includes(event.type)).map((event) => String(event.delta ?? event.text ?? "")).join("")} />
               <span aria-hidden className="inline-block h-4 w-1 animate-pulse bg-foreground" />
             </div>
@@ -500,7 +518,7 @@ export function ChatPane({
       {scrolledUp ? (
         <div className="pointer-events-none absolute inset-x-0 bottom-28 z-30 flex justify-center">
           {fresh > 0 && !dismissedFresh ? (
-            <div data-testid="new-messages" className="pointer-events-auto flex items-center gap-1 rounded-full bg-[var(--bot-accent)] px-3 py-1 text-sm text-on-accent shadow-sm">
+            <div data-testid="new-messages" className="pointer-events-auto flex items-center gap-1 rounded-full bg-[var(--bot-accent)] px-3 py-1 text-body-sm text-on-accent shadow-sm">
               <button type="button" onClick={jump}>
                 {newMessagesLabel(fresh)}
               </button>
@@ -523,7 +541,7 @@ export function ChatPane({
       <form data-testid="composer-bar" className="mx-auto flex w-full max-w-[var(--content-width)] flex-col px-4 pb-4" onSubmit={onSubmit}>
         <div data-testid="composer-stack" className="flex flex-col">
         {reply ? (
-          <div data-testid="reply-chip" className="mb-2 flex w-fit max-w-full items-center gap-2 rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">
+          <div data-testid="reply-chip" className="mb-2 flex w-fit max-w-full items-center gap-2 rounded-full bg-muted px-3 py-1 text-meta text-muted-foreground">
             <span className="min-w-0 flex-1 truncate">{replySnippet(reply.content)}</span>
             <button type="button" aria-label="Cancel reply" onClick={() => setReply(null)}>
               ×
@@ -534,7 +552,7 @@ export function ChatPane({
           data-testid="composer-pill"
           data-multiline={composerLines > 1 ? "true" : "false"}
           className="border border-[var(--composer-border)] bg-[var(--composer)] text-card-foreground shadow-[var(--composer-shadow)] transition-colors focus-within:border-[var(--composer-border-focus)]"
-          style={{ borderRadius: composerLines > 1 || uploads.length > 0 ? 20 : 9999 }}
+          style={{ borderRadius: "var(--radius-pill)" }}
         >
           {uploads.length > 0 ? (
             <div className="flex flex-wrap gap-1.5 px-3 pt-2">
@@ -572,7 +590,7 @@ export function ChatPane({
               onChange={(event) => setContent(event.target.value)}
               placeholder={`Message ${botName}`}
               rows={1}
-              className="max-h-[120px] min-h-5 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-0 text-[13px] leading-5 text-foreground shadow-none outline-none placeholder:text-[var(--composer-placeholder)] focus-visible:outline-none focus-visible:ring-0 disabled:opacity-50"
+              className="max-h-[120px] min-h-5 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-0 text-ui text-foreground shadow-none outline-none placeholder:text-[var(--composer-placeholder)] focus-visible:outline-none focus-visible:ring-0 disabled:opacity-50"
               onKeyDown={(event) => {
                 if (event.key === "Escape") {
                   setError(null);
@@ -609,7 +627,7 @@ export function ChatPane({
           </div>
         ) : null}
         {error ? (
-          <p role="alert" data-testid={dlp ? "dlp-block" : undefined} className="text-sm text-destructive">
+          <p role="alert" data-testid={dlp ? "dlp-block" : undefined} className="text-body-sm text-destructive">
             {error}
           </p>
         ) : null}
@@ -626,7 +644,7 @@ function UploadCard({ item }: { item: PendingUpload }) {
   const [ready, setReady] = useState(false);
   const media = item.mime.startsWith("image/") || item.mime.startsWith("video/");
   return (
-    <div data-testid="upload-card" data-status={item.status} className="flex max-w-full items-center gap-2 rounded-full border border-border bg-muted px-2 py-1 text-xs text-foreground">
+    <div data-testid="upload-card" data-status={item.status} className="flex max-w-full items-center gap-2 rounded-full border border-border bg-muted px-2 py-1 text-meta text-foreground">
       {media ? (
         <span className="relative size-5 overflow-hidden rounded-full">
           {!ready ? <span data-testid="media-skeleton" className="media-shimmer absolute inset-0" /> : null}
@@ -712,9 +730,9 @@ function QuestionCard({
 
   if (answered) {
     return (
-      <div data-testid="question-card" data-answered="true" className="rounded-2xl border border-border bg-card px-4 py-3 text-card-foreground shadow-sm">
+      <div data-testid="question-card" data-answered="true" className="overflow-hidden rounded-card border border-border bg-card px-4 py-3 text-card-foreground shadow-sm">
         <div data-testid="question-answered">
-          <p className="text-sm text-muted-foreground">{prompt}</p>
+          <p className="text-body-sm text-muted-foreground">{prompt}</p>
           <div className="mt-2 flex flex-col gap-1">
             {chosen.map((label) => {
               const index = options.findIndex((option) => option.label === label);
@@ -722,11 +740,11 @@ function QuestionCard({
               return (
                 <div key={label} className="flex items-center gap-2 py-1">
                   {letter ? (
-                    <span data-testid="option-letter" className="grid size-5 shrink-0 place-items-center rounded-md bg-[var(--bot-accent)] text-[11px] font-medium text-on-accent" aria-hidden>
+                    <span data-testid="option-letter" className="grid size-5 shrink-0 place-items-center rounded-md bg-[var(--bot-accent)] text-micro font-medium text-on-accent" aria-hidden>
                       {letter}
                     </span>
                   ) : null}
-                  <span className="min-w-0 text-sm text-foreground">{label}</span>
+                  <span className="min-w-0 text-body-sm text-foreground">{label}</span>
                 </div>
               );
             })}
@@ -737,9 +755,9 @@ function QuestionCard({
   }
 
   return (
-    <div data-testid="question-card" data-answered="false" className="rounded-2xl border border-border bg-card px-4 py-3 text-card-foreground shadow-sm">
-      <p className="text-sm font-semibold">{prompt}</p>
-      {multiple ? <p className="mt-0.5 text-xs text-muted-foreground">Choose all that apply</p> : null}
+    <div data-testid="question-card" data-answered="false" className="overflow-hidden rounded-card border border-border bg-card px-4 py-3 text-card-foreground shadow-sm">
+      <p className="text-body-sm font-semibold">{prompt}</p>
+      {multiple ? <p className="mt-0.5 text-meta text-muted-foreground">Choose all that apply</p> : null}
       <div className="mt-2 flex flex-col">
         {options.map((option, index) => {
           const letter = optionLetter(index);
@@ -752,14 +770,14 @@ function QuestionCard({
               data-style={option.style}
               data-letter={letter}
               disabled={pending}
-              className="flex min-h-11 w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-muted disabled:opacity-60"
+              className="flex min-h-11 w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-body-sm hover:bg-muted disabled:opacity-60"
               onClick={() => void choose(option.label)}
             >
               <span
                 aria-hidden
                 data-testid="option-letter"
                 className={cn(
-                  "grid size-5 shrink-0 place-items-center rounded-md text-[11px] font-medium",
+                  "grid size-5 shrink-0 place-items-center rounded-md text-micro font-medium",
                   selected ? "bg-[var(--bot-accent)] text-on-accent" : "bg-muted text-muted-foreground",
                 )}
               >
@@ -824,7 +842,7 @@ function ReactionCluster({
                 data-emoji={reaction.emoji}
                 data-actor={reaction.actorType}
                 aria-label={reactionTooltip(reaction.actorType, who, reaction.emoji)}
-                className="rounded-full border border-border bg-card px-1.5 py-0 text-sm leading-5 text-card-foreground shadow-sm"
+                className="rounded-full border border-border bg-card px-1.5 py-0 text-body-sm leading-5 text-card-foreground shadow-sm"
                 onClick={() => {
                   if (reaction.actorType === "user") onToggle(reaction.emoji);
                 }}
@@ -853,10 +871,12 @@ function MessageToolbar({
   onExpand,
   onReact,
   onReply,
+  align = "start",
 }: {
   messageId: string;
   content: string;
   mine: boolean;
+  align?: "start" | "center";
   picker: { id: string; side: "above" | "below"; full: boolean } | null;
   customEmoji: string;
   onCustomEmoji: (value: string) => void;
@@ -868,7 +888,7 @@ function MessageToolbar({
   const side = picker?.side ?? "below";
   const place = cn("absolute z-30", mine ? "right-0" : "left-0", side === "above" ? "bottom-full mb-1" : "top-full mt-1");
   return (
-    <div className={cn("absolute top-0 z-20", mine ? "right-full mr-1.5" : "left-full ml-1.5")}>
+    <div className={cn("absolute z-20", align === "center" ? "top-1/2 -translate-y-1/2" : "top-0", mine ? "right-full mr-1.5" : "left-full ml-1.5")}>
       <div
         data-testid="message-toolbar"
         className={cn(
@@ -903,10 +923,10 @@ function MessageToolbar({
         </DropdownMenu>
       </div>
       {picker?.full ? (
-        <div data-testid="emoji-picker" data-side={side} className={cn(place, "w-52 rounded-2xl border border-border bg-popover p-2 text-popover-foreground shadow-md")}>
+        <div data-testid="emoji-picker" data-side={side} className={cn(place, "w-52 overflow-hidden rounded-menu border border-border bg-popover p-2 text-popover-foreground shadow-md")}>
           <div className="grid grid-cols-6 gap-0.5">
             {[...QUICK_REACTIONS, ...EXTRA_EMOJIS].map((emoji) => (
-              <button key={emoji} type="button" className="grid size-8 place-items-center rounded-md text-base hover:bg-accent" onClick={() => onReact(emoji)}>
+              <button key={emoji} type="button" className="grid size-8 place-items-center rounded-md text-lead hover:bg-accent" onClick={() => onReact(emoji)}>
                 {emoji}
               </button>
             ))}
@@ -923,13 +943,13 @@ function MessageToolbar({
             }}
             placeholder="Emoji"
             aria-label="Custom emoji"
-            className="mt-1 w-full rounded-full border border-border bg-card px-2 py-1 text-xs text-foreground"
+            className="mt-1 w-full rounded-full border border-border bg-card px-2 py-1 text-meta text-foreground"
           />
         </div>
       ) : picker ? (
         <div data-testid="reaction-picker" data-side={side} className={cn(place, "flex max-w-[13.5rem] items-center gap-0.5 rounded-full border border-border bg-popover px-1 py-0.5 text-popover-foreground shadow-md")}>
           {QUICK_REACTIONS.map((emoji) => (
-            <button key={emoji} type="button" className="grid size-7 place-items-center rounded-full text-base hover:bg-accent" onClick={() => onReact(emoji)}>
+            <button key={emoji} type="button" className="grid size-7 place-items-center rounded-full text-lead hover:bg-accent" onClick={() => onReact(emoji)}>
               {emoji}
             </button>
           ))}
@@ -946,11 +966,11 @@ function MemoryNotice({ action, text }: { action: "saved" | "forgot"; text: stri
   const label = action === "forgot" ? "Forgot a note" : "Saved to notes";
   return (
     <Collapsible>
-      <CollapsibleTrigger data-testid="memory-notice" data-action={action} className="inline-flex min-h-11 items-center gap-2 rounded-md px-1 text-sm text-muted-foreground hover:text-foreground">
+      <CollapsibleTrigger data-testid="memory-notice" data-action={action} className="inline-flex min-h-11 items-center gap-2 rounded-md px-1 text-body-sm text-muted-foreground hover:text-foreground">
         <Notebook className="h-3.5 w-3.5" aria-hidden />
         {label}
       </CollapsibleTrigger>
-      <CollapsibleContent data-testid="memory-fact" className="px-6 pb-1 text-sm text-muted-foreground">
+      <CollapsibleContent data-testid="memory-fact" className="px-6 pb-1 text-body-sm text-muted-foreground">
         {text}
       </CollapsibleContent>
     </Collapsible>
@@ -978,18 +998,11 @@ function MessageBlockView({
   if (block.kind === "text") return <RichText text={block.text} jobs={jobs} accent={accent} botId={botId} onOpenJob={onOpenJob} />;
   if (block.kind === "question" || block.kind === "memory" || block.kind === "coding-jobs") return null;
   if (block.kind === "form") return <SecureFormCard title={block.title} fields={block.fields} />;
-  if (block.kind === "image" || block.kind === "video") {
-    return <MediaAttachment name={block.name} url={block.url} video={block.kind === "video"} side={side} onReply={onReply} />;
+  if (block.kind === "image") return <ImageGrid images={[{ src: block.url, alt: block.name }]} />;
+  if (block.kind === "video") {
+    return <MediaAttachment name={block.name} url={block.url} video side={side} onReply={onReply} />;
   }
-  return (
-    <div data-testid="attachment-card" className="group/file relative w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-card-foreground">
-      <a href={block.url || "#"} className="flex min-h-11 items-center gap-2">
-        <span className="truncate font-medium">{block.name}</span>
-        {block.mime ? <span className="text-xs text-muted-foreground">{block.mime}</span> : null}
-      </a>
-      <AttachmentActions name={block.name} url={block.url} side={side} onReply={onReply} />
-    </div>
-  );
+  return <FileCard name={block.name} url={block.url} mime={block.mime} size={block.size} onReply={onReply} />;
 }
 
 function RichText({ text, jobs, accent, botId, onOpenJob }: { text: string; jobs: CodingJob[]; accent: string; botId?: string; onOpenJob?: (job: CodingJob) => void }) {
@@ -1006,6 +1019,54 @@ function RichText({ text, jobs, accent, botId, onOpenJob }: { text: string; jobs
   );
 }
 
+function MediaRow({
+  media,
+  jobs,
+  accent,
+  mine,
+  botId,
+  onOpenJob,
+  onReply,
+}: {
+  media: MessageBlock[];
+  jobs: CodingJob[];
+  accent: string;
+  mine: boolean;
+  botId?: string;
+  onOpenJob?: (job: CodingJob) => void;
+  onReply: () => void;
+}) {
+  const nodes: ReactNode[] = [];
+  let images: GalleryImage[] = [];
+  const flush = () => {
+    if (images.length === 0) return;
+    const batch = images;
+    nodes.push(<ImageGrid key={`images-${nodes.length}-${batch[0]?.src}`} images={batch} />);
+    images = [];
+  };
+  media.forEach((block, index) => {
+    if (block.kind === "image") {
+      images.push({ src: block.url, alt: block.name });
+      return;
+    }
+    flush();
+    nodes.push(
+      <MessageBlockView
+        key={`media-${index}`}
+        block={block}
+        jobs={jobs}
+        accent={accent}
+        mine={mine}
+        botId={botId}
+        onOpenJob={onOpenJob}
+        onReply={onReply}
+      />,
+    );
+  });
+  flush();
+  return <div className="flex w-full flex-col gap-1">{nodes}</div>;
+}
+
 function MediaAttachment({ name, url, video, side, onReply }: { name: string; url: string; video: boolean; side: "start" | "end"; onReply: () => void }) {
   const [ready, setReady] = useState(false);
   return (
@@ -1018,7 +1079,7 @@ function MediaAttachment({ name, url, video, side, onReply }: { name: string; ur
           <img src={url} alt={name} className={cn("max-h-64 w-full object-contain transition-opacity", ready ? "opacity-100" : "opacity-0")} onLoad={() => setReady(true)} />
         )}
       </div>
-      <figcaption className="px-2 py-1 text-xs text-muted-foreground">{name}</figcaption>
+      <figcaption className="px-2 py-1 text-meta text-muted-foreground">{name}</figcaption>
       <AttachmentActions name={name} url={url} side={side} onReply={onReply} />
     </figure>
   );
@@ -1097,11 +1158,11 @@ function SecureFormCard({ title, fields }: { title: string; fields: FormField[] 
 
   return (
     <form data-testid="secure-form-card" className="rounded-lg border border-border bg-card p-3 text-card-foreground" onSubmit={onSubmit}>
-      <p className="text-sm font-medium">{title}</p>
-      <p className="mt-1 text-xs text-muted-foreground">Secret fields are stored in the vault and are not sent to the model.</p>
+      <p className="text-body-sm font-medium">{title}</p>
+      <p className="mt-1 text-meta text-muted-foreground">Secret fields are stored in the vault and are not sent to the model.</p>
       <div className="mt-2 flex flex-col gap-2">
         {fields.map((field) => (
-          <label key={field.name} className="flex flex-col gap-1 text-xs">
+          <label key={field.name} className="flex flex-col gap-1 text-meta">
             {field.label}
             <Input
               type={field.secret ? "password" : "text"}
@@ -1125,7 +1186,7 @@ function EventCard({ event }: { event: AgentEvent }) {
     const removed = Number(event.removed ?? event.removedLinks);
     if (!Number.isFinite(verified) || !Number.isFinite(removed)) return null;
     return (
-      <p data-testid="grounding-notice" role="status" className="text-xs text-muted-foreground">
+      <p data-testid="grounding-notice" role="status" className="text-meta text-muted-foreground">
         Verified {verified} links, removed {removed}
       </p>
     );
@@ -1134,7 +1195,7 @@ function EventCard({ event }: { event: AgentEvent }) {
   const tool = String(event.tool ?? event.name ?? "Tool");
   const args = typeof event.args === "object" && event.args ? JSON.stringify(event.args) : String(event.args ?? "");
   return (
-    <Collapsible data-testid="tool-call-card" className="rounded-md border border-border text-xs">
+    <Collapsible data-testid="tool-call-card" className="rounded-md border border-border text-meta">
       <CollapsibleTrigger className="flex min-h-10 w-full items-center gap-2 px-3 text-left">
         <span aria-hidden>⌘</span>
         <span className="font-medium">{tool}</span>

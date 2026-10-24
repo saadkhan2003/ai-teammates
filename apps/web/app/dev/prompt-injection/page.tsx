@@ -4,9 +4,9 @@ const INJECTION =
 export default function PromptInjectionPage() {
   return (
     <main data-testid="prompt-injection-page" className="mx-auto max-w-2xl px-4 py-8">
-      <h1 className="text-xl font-semibold">Team notes</h1>
-      <p className="mt-4 text-sm">{INJECTION}</p>
-      <p className="mt-4 text-sm text-muted-foreground">The injection fixture is shown as text. Nothing on this page runs a script.</p>
+      <h1 className="text-h2 font-semibold">Team notes</h1>
+      <p className="mt-4 text-body-sm">{INJECTION}</p>
+      <p className="mt-4 text-body-sm text-muted-foreground">The injection fixture is shown as text. Nothing on this page runs a script.</p>
     </main>
   );
 }

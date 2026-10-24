@@ -41,20 +41,20 @@ export function SkillsPane({
     <div data-testid="skill-list" className="rounded-lg border border-line bg-paper p-4">
       {!loaded ? <Skeleton className="h-20 w-full" /> : null}
       {loaded && error ? (
-        <div className="space-y-2"><p role="alert" className="text-sm text-clay">
+        <div className="space-y-2"><p role="alert" className="text-body-sm text-clay">
           Could not load skills. {error}
         </p><Button variant="outline" size="sm" onClick={onChanged}>Retry</Button></div>
       ) : null}
       {loaded && !error && skills.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No skills yet. Workflows this bot learns will appear here for replay.</p>
+        <p className="text-body-sm text-muted-foreground">No skills yet. Workflows this bot learns will appear here for replay.</p>
       ) : null}
       <ul className="flex flex-col gap-3">
         {skills.map((skill) => (
           <li key={skill.id} className="flex flex-col gap-2 border-b border-line py-3 last:border-0 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="font-medium">{skill.name}</p>
-              {skill.description ? <p className="text-sm text-muted-foreground">{skill.description}</p> : null}
-              {skill.version != null ? <p className="text-xs text-muted-foreground">Version {skill.version}</p> : null}
+              {skill.description ? <p className="text-body-sm text-muted-foreground">{skill.description}</p> : null}
+              {skill.version != null ? <p className="text-meta text-muted-foreground">Version {skill.version}</p> : null}
             </div>
             <Button data-testid="skill-replay" size="sm" disabled={pendingId === skill.id} onClick={() => void replay(skill.id)}>
               Replay
@@ -63,7 +63,7 @@ export function SkillsPane({
         ))}
       </ul>
       {formError ? (
-        <p role="alert" className="mt-3 text-sm text-clay">
+        <p role="alert" className="mt-3 text-body-sm text-clay">
           {formError}
         </p>
       ) : null}

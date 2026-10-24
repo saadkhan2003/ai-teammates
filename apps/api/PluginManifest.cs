@@ -831,6 +831,7 @@ public static class PluginManifestJson
         risk = manifest.Risk,
         trust = manifest.Trust,
         label = manifest.Label,
+        summary = manifest.Summary,
         tools = manifest.Tools,
         remoteUrl = manifest.RemoteUrl,
         packageRef = manifest.PackageRef,

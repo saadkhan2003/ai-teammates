@@ -21,7 +21,7 @@ export function StateMessage({
       )}
     >
       <p className="font-medium">{title}</p>
-      {detail ? <p className="mt-1 text-sm text-muted-foreground">{detail}</p> : null}
+      {detail ? <p className="mt-1 text-body-sm text-muted-foreground">{detail}</p> : null}
       {action ? <div className="mt-3">{action}</div> : null}
     </div>
   );

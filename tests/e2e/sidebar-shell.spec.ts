@@ -144,7 +144,7 @@ test("sidebar, composer, and floating header follow light and dark", async ({ pa
   await page.getByTestId("sidebar-footer").screenshot({ path: `${dir}/hover-frame-2-mid.png` });
   await page.waitForTimeout(200);
   await page.getByTestId("sidebar-footer").screenshot({ path: `${dir}/hover-frame-3-expanded.png` });
-  await expect(apps).toContainText("Connect apps");
+  await expect(apps).toHaveAccessibleName("Connect apps");
   await expect(page.getByTestId("account-button")).toBeVisible();
   await shot(page, "light-sidebar");
   await page.getByTestId("sidebar").screenshot({ path: `${dir}/light-sidebar-footer.png` });
@@ -176,7 +176,7 @@ test("sidebar, composer, and floating header follow light and dark", async ({ pa
   await page.getByTestId("sidebar-footer").screenshot({ path: `${dir}/dark-hover-frame-2-mid.png` });
   await page.waitForTimeout(200);
   await page.getByTestId("sidebar-footer").screenshot({ path: `${dir}/dark-hover-frame-3-expanded.png` });
-  await expect(page.getByTestId("open-plugins")).toContainText("Connect apps");
+  await expect(page.getByTestId("open-plugins")).toHaveAccessibleName("Connect apps");
   await page.mouse.move(640, 280);
   await page.waitForTimeout(250);
 

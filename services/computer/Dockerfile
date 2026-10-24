@@ -44,13 +44,12 @@ RUN curl -fsSL -o /tmp/s6-noarch.tar.xz \
     && tar -C / -Jxpf /tmp/s6-arch.tar.xz \
     && rm -f /tmp/s6-noarch.tar.xz /tmp/s6-arch.tar.xz
 
+COPY requirements.txt /tmp/computer-requirements.txt
 RUN groupadd --system desk \
     && useradd --system --gid desk --create-home --home-dir /data/home/desk --shell /usr/sbin/nologin desk \
     && python3 -m venv /opt/desk/venv \
-    && /opt/desk/venv/bin/pip install --no-cache-dir \
-        fastapi==0.115.6 \
-        uvicorn==0.34.0 \
-        playwright==1.49.1
+    && /opt/desk/venv/bin/pip install --no-cache-dir --upgrade pip==26.2.2 \
+    && /opt/desk/venv/bin/pip install --no-cache-dir -r /tmp/computer-requirements.txt
 
 COPY s6/s6-rc.d/ /etc/s6-overlay/s6-rc.d/
 COPY s6/user-bundles.d/ /etc/s6-overlay/user-bundles.d/

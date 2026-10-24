@@ -140,6 +140,7 @@ test("composer, coding jobs, replies, and the side panel stay in sync", async ({
   await expect(page.locator("#message-m1")).toHaveAttribute("data-highlight", "true");
   await shot(page, "03-reply-quote");
 
+  if (!(await page.getByTestId("info-pane").isVisible().catch(() => false))) await page.getByTestId("bot-name-button").click();
   await expect(page.getByTestId("connect-apps")).toBeVisible();
   await expect(page.getByTestId("connect-apps")).not.toContainText("Catalog");
 });
@@ -178,8 +179,8 @@ test("upload card shows a moving bar and a media skeleton", async ({ page }) => 
   await shot(page, "04-upload-bar");
   await expect(page.getByTestId("upload-card")).toHaveAttribute("data-status", "done");
   await page.getByTestId("attachment-card").hover();
-  await expect(page.getByTestId("attachment-reply")).toBeVisible();
-  await expect(page.getByTestId("attachment-more")).toBeVisible();
+  await expect(page.getByTestId("message-reply")).toBeVisible();
+  await expect(page.getByTestId("message-more")).toBeVisible();
   await shot(page, "07-attachment-actions");
 });
 
@@ -215,6 +216,7 @@ test("asleep computer offers a wake action", async ({ page }) => {
   await page.route(`**/api/bots/${bot}/computer/power`, (route) => route.fulfill({ json: { status: "hibernated" } }));
   await page.route("**/api/events", (route) => route.fulfill({ status: 200, headers: { "content-type": "text/event-stream" }, body: ": connected\n\n" }));
   await page.goto(`/bots/${bot}`);
+  if (!(await page.getByTestId("info-pane").isVisible().catch(() => false))) await page.getByTestId("bot-name-button").click();
   await page.getByRole("tab", { name: "Computer", exact: true }).click();
   await expect(page.getByTestId("computer-asleep")).toBeVisible();
   await expect(page.getByTestId("computer-wake")).toBeVisible();

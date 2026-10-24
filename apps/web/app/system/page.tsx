@@ -104,8 +104,8 @@ export default function SystemPage() {
     <SettingsFrame>
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-sm font-medium">System</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <h2 className="text-body-sm font-medium">System</h2>
+          <p className="mt-1 text-body-sm text-muted-foreground">
             Health, invitations, and model calls. Prompts are shown without credentials or raw request bodies.
           </p>
         </div>
@@ -114,7 +114,7 @@ export default function SystemPage() {
         </Button>
       </header>
       {health?.computerIsolation === false ? (
-        <p role="alert" data-testid="isolation-alert" className="rounded-lg border border-border bg-card p-4 text-sm text-destructive">
+        <p role="alert" data-testid="isolation-alert" className="rounded-lg border border-border bg-card p-4 text-body-sm text-destructive">
           Computer isolation rules are missing. Computers will not start until the rules are installed again.
         </p>
       ) : null}
@@ -128,8 +128,8 @@ export default function SystemPage() {
             ["Stuck tasks", String(health.stuckTasks ?? "—")],
           ].map(([label, value]) => (
             <article key={label} className="rounded-lg border border-border bg-card p-4">
-              <p className="text-xs text-muted-foreground">{label}</p>
-              <p className="text-2xl font-semibold">{value}</p>
+              <p className="text-meta text-muted-foreground">{label}</p>
+              <p className="text-h1 font-semibold">{value}</p>
             </article>
           ))}
         </section>
@@ -137,8 +137,8 @@ export default function SystemPage() {
       {health ? (
         <form className="flex flex-col gap-4 rounded-lg border border-border bg-card p-4" onSubmit={invite}>
           <div>
-            <h2 className="text-sm font-medium">Invite a teammate</h2>
-            <p className="mt-1 text-sm text-muted-foreground">The token is shown once.</p>
+            <h2 className="text-body-sm font-medium">Invite a teammate</h2>
+            <p className="mt-1 text-body-sm text-muted-foreground">The token is shown once.</p>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-2">
@@ -158,65 +158,65 @@ export default function SystemPage() {
               </Select>
             </div>
           </div>
-          {inviteToken ? <p className="text-xs text-muted-foreground">Token (shown once): {inviteToken}</p> : null}
-          {inviteError ? <p className="text-sm text-destructive">{inviteError}</p> : null}
+          {inviteToken ? <p className="text-meta text-muted-foreground">Token (shown once): {inviteToken}</p> : null}
+          {inviteError ? <p className="text-body-sm text-destructive">{inviteError}</p> : null}
           <div className="flex justify-end">
             <Button type="submit">Invite</Button>
           </div>
         </form>
       ) : null}
       <section data-testid="outbound-actions" className="rounded-lg border border-border bg-card p-4">
-        <h2 className="mb-2 text-sm font-medium">Outbound actions</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Sends, posts, purchases, and plugin writes. A retry replays the stored result.</p>
-        {outbound.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">No outbound actions recorded yet.</p> : null}
+        <h2 className="mb-2 text-body-sm font-medium">Outbound actions</h2>
+        <p className="mt-1 text-body-sm text-muted-foreground">Sends, posts, purchases, and plugin writes. A retry replays the stored result.</p>
+        {outbound.length === 0 ? <p className="mt-2 text-body-sm text-muted-foreground">No outbound actions recorded yet.</p> : null}
         <ul className="mt-3 flex flex-col gap-2">
           {outbound.map((row, index) => (
-            <li key={String(row.id ?? index)} className="flex min-h-11 items-center text-sm">
+            <li key={String(row.id ?? index)} className="flex min-h-11 items-center text-body-sm">
               {String(row.kind ?? "action")} · {String(row.tool ?? "")} · {String(row.status ?? "")}
             </li>
           ))}
         </ul>
       </section>
       {loading ? <StateMessage title="Loading system metrics…" detail="Reading usage and recorded model requests." /> : null}
-      {provider ? <p className="text-sm">Provider: {provider}</p> : null}
-      {mock ? <p className="text-sm">Provider is mock. These calls stayed on this server and were not sent to OpenRouter.</p> : null}
+      {provider ? <p className="text-body-sm">Provider: {provider}</p> : null}
+      {mock ? <p className="text-body-sm">Provider is mock. These calls stayed on this server and were not sent to OpenRouter.</p> : null}
       <section data-testid="metrics-model-calls" className="rounded-lg border border-border bg-card p-4">
-        <p className="text-sm text-muted-foreground">Model calls</p>
-        <p className="text-2xl font-medium">{modelCalls == null ? "—" : modelCalls}</p>
-        <p data-testid="metrics-cost" className="mt-3 text-sm">
+        <p className="text-body-sm text-muted-foreground">Model calls</p>
+        <p className="text-h1 font-medium">{modelCalls == null ? "—" : modelCalls}</p>
+        <p data-testid="metrics-cost" className="mt-3 text-body-sm">
           Cost {costUsd == null ? "—" : `$${costUsd.toFixed(4)}`}
         </p>
-        <p data-testid="metrics-latency" className="text-sm">
+        <p data-testid="metrics-latency" className="text-body-sm">
           Latency {latencyMs == null ? "—" : `${Math.round(latencyMs)} ms`}
         </p>
-        <p data-testid="metrics-memory" className="text-sm">
+        <p data-testid="metrics-memory" className="text-body-sm">
           Computer memory {memoryBytes == null ? "—" : `${Math.round(memoryBytes / (1024 * 1024))} MB`}
         </p>
-        <p data-testid="metrics-chrome" className="text-sm">
+        <p data-testid="metrics-chrome" className="text-body-sm">
           Chrome processes {chromeProcesses == null ? "—" : chromeProcesses}
         </p>
         {usageError ? (
-          <p role="alert" className="mt-2 text-sm text-clay">
+          <p role="alert" className="mt-2 text-body-sm text-clay">
             Could not load usage. {usageError}
           </p>
         ) : null}
       </section>
       <section className="rounded-lg border border-border bg-card p-4">
-        <h2 className="mb-2 text-sm font-medium">Prompts</h2>
+        <h2 className="mb-2 text-body-sm font-medium">Prompts</h2>
         {requestError ? (
-          <p role="alert" className="mt-2 text-sm text-clay">
+          <p role="alert" className="mt-2 text-body-sm text-clay">
             Could not load model requests. {requestError}
           </p>
         ) : null}
         {!loading && !requestError && prompts.length === 0 ? (
-          <p className="mt-2 text-sm text-muted-foreground">No model requests recorded yet.</p>
+          <p className="mt-2 text-body-sm text-muted-foreground">No model requests recorded yet.</p>
         ) : null}
         <ScrollArea className="mt-3 h-[min(50dvh,520px)]">
           <ol className="flex flex-col gap-3">
             {prompts.map((row) => (
               <li key={row.id} className="flex min-h-11 flex-col justify-center rounded-lg border border-border px-3 py-2">
-                <p className="text-xs text-muted-foreground">{[row.model, row.when ? formatWhen(row.when) : ""].filter(Boolean).join(" · ") || "Prompt"}</p>
-                <p className="mt-1 whitespace-pre-wrap break-words text-sm">{row.prompt || "This request did not include a prompt."}</p>
+                <p className="text-meta text-muted-foreground">{[row.model, row.when ? formatWhen(row.when) : ""].filter(Boolean).join(" · ") || "Prompt"}</p>
+                <p className="mt-1 whitespace-pre-wrap break-words text-body-sm">{row.prompt || "This request did not include a prompt."}</p>
               </li>
             ))}
           </ol>

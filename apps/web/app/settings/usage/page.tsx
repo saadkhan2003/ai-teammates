@@ -66,30 +66,30 @@ export default function UsagePage() {
   return (
     <>
       <header>
-        <h2 className="text-sm font-medium">Usage and billing</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Model calls, cost, and the quota for this account.</p>
+        <h2 className="text-body-sm font-medium">Usage and billing</h2>
+        <p className="mt-1 text-body-sm text-muted-foreground">Model calls, cost, and the quota for this account.</p>
       </header>
       {loading ? <StateMessage title="Loading usage…" detail="Reading model calls, cost, and the quota for this account." /> : null}
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {error ? <p className="text-body-sm text-destructive">{error}</p> : null}
       {usage ? (
         <section className="grid gap-[var(--space-card)] sm:grid-cols-3">
           <article className="rounded-lg border border-border bg-card p-4">
-            <p className="text-sm text-muted-foreground">Model calls</p>
-            <p className="text-xl font-medium">{usage.modelCalls ?? 0}</p>
+            <p className="text-body-sm text-muted-foreground">Model calls</p>
+            <p className="text-h2 font-medium">{usage.modelCalls ?? 0}</p>
           </article>
           <article className="rounded-lg border border-border bg-card p-4">
-            <p className="text-sm text-muted-foreground">Cost</p>
-            <p className="text-xl font-medium">${Number(usage.costUsd ?? 0).toFixed(4)}</p>
+            <p className="text-body-sm text-muted-foreground">Cost</p>
+            <p className="text-h2 font-medium">${Number(usage.costUsd ?? 0).toFixed(4)}</p>
           </article>
           <article className="rounded-lg border border-border bg-card p-4">
-            <p className="text-sm text-muted-foreground">Latency</p>
-            <p className="text-xl font-medium">{Math.round(Number(usage.latencyMs ?? 0))} ms</p>
+            <p className="text-body-sm text-muted-foreground">Latency</p>
+            <p className="text-h2 font-medium">{Math.round(Number(usage.latencyMs ?? 0))} ms</p>
           </article>
         </section>
       ) : null}
       {quota ? (
-        <section className="rounded-lg border border-border bg-card p-4 text-sm">
-          <h2 className="mb-2 text-sm font-medium">Quota</h2>
+        <section className="rounded-lg border border-border bg-card p-4 text-body-sm">
+          <h2 className="mb-2 text-body-sm font-medium">Quota</h2>
           <p className="text-muted-foreground">
             Bots {quota.bots ?? 0}/{quota.maxBots ?? "—"} · Secrets {quota.secrets ?? 0}/{quota.maxSecrets ?? "—"} · Computers {quota.computers ?? 0}/{quota.maxComputers ?? "—"}
           </p>
@@ -101,14 +101,14 @@ export default function UsagePage() {
       {rows ? (
         <section data-testid="usage-report" className="rounded-lg border border-border bg-card p-4">
           <div className="flex items-center justify-between gap-3">
-            <h2 className="text-sm font-medium">Per-user report</h2>
+            <h2 className="text-body-sm font-medium">Per-user report</h2>
             <Button variant="secondary" size="sm" onClick={() => void load()}>
               Refresh
             </Button>
           </div>
           <div className="mt-3 flex flex-col md:hidden">
             {rows.map((row) => (
-              <article key={row.id || row.username} className="flex min-h-11 flex-col justify-center border-t border-border py-2 text-sm">
+              <article key={row.id || row.username} className="flex min-h-11 flex-col justify-center border-t border-border py-2 text-body-sm">
                 <p className="break-words font-medium">{row.username}</p>
                 <p className="text-muted-foreground">
                   {row.role} · {row.modelCalls ?? 0} calls · ${Number(row.costUsd ?? 0).toFixed(4)} · {Math.round(Number(row.latencyMs ?? 0))} ms
@@ -117,7 +117,7 @@ export default function UsagePage() {
             ))}
           </div>
           <div className="mt-3 hidden min-w-0 md:block">
-            <table className="w-full table-fixed text-left text-sm">
+            <table className="w-full table-fixed text-left text-body-sm">
               <thead className="text-muted-foreground">
                 <tr>
                   <th className="py-2 pr-3 font-medium">User</th>

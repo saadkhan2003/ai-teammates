@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.402-alpine3.24 AS build
 WORKDIR /src
 COPY global.json ./
 COPY src/Compute.Domain/ src/Compute.Domain/
@@ -8,8 +8,7 @@ COPY services/computer/src/workspace.py services/computer/src/workspace.py
 COPY services/agent/workspace_shell.py services/agent/workspace_shell.py
 RUN dotnet publish apps/api/Teammates.Api.csproj -c Release -o /out
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0
-RUN apt-get update && apt-get install -y --no-install-recommends curl tzdata && rm -rf /var/lib/apt/lists/*
+FROM mcr.microsoft.com/dotnet/aspnet:10.0.13-alpine3.24
 WORKDIR /app
 COPY --from=build /out .
 COPY db/001_init.sql /migrations/001_init.sql
@@ -29,6 +28,7 @@ COPY db/014_avatar.sql /migrations/014_avatar.sql
 COPY db/015_chat_ui.sql /migrations/015_chat_ui.sql
 COPY db/016_coding_job_diff.sql /migrations/016_coding_job_diff.sql
 COPY db/017_theme.sql /migrations/017_theme.sql
+COPY db/018_recommended_apps.sql /migrations/018_recommended_apps.sql
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
     DOTNET_gcServer=0 \
     DOTNET_GCHeapHardLimit=0x10000000

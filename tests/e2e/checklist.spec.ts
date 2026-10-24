@@ -136,9 +136,9 @@ test("reactions toggle off, reply quote highlight, answered question, attachment
 
   const attachment = page.getByTestId("attachment-card");
   await attachment.hover();
-  await expect(attachment.getByTestId("attachment-reply")).toBeVisible();
-  await attachment.getByTestId("attachment-more").click();
-  await expect(page.getByRole("menuitem", { name: "Copy link" })).toBeVisible();
+  await expect(page.getByTestId("message-reply")).toBeVisible();
+  await page.getByTestId("message-more").click();
+  await expect(page.getByRole("menuitem", { name: "Copy text" })).toBeVisible();
   await shot(page, "08-attachment-actions");
   await page.getByRole("menuitem", { name: "Copy link" }).click();
 
@@ -161,8 +161,9 @@ test("reactions toggle off, reply quote highlight, answered question, attachment
   await expect(page.getByTestId("routine-toggle")).toBeVisible();
   await routines.screenshot({ path: `${dir}/09-routines-toggle-close.png` });
   await shot(page, "09-routines-toggle");
+  if (!(await page.getByTestId("info-pane").isVisible().catch(() => false))) await page.getByTestId("bot-name-button").click();
   await page.getByTestId("connect-apps").getByRole("button", { name: "Connect apps" }).click();
-  await expect(page.getByTestId("catalog-row")).toContainText("GitHub");
+  await expect(page.getByTestId("plugins-modal")).toBeVisible();
   await page.getByTestId("connect-apps").screenshot({ path: `${dir}/08-connect-apps-close.png` });
   await shot(page, "08-connect-apps");
 });
@@ -292,6 +293,7 @@ test("asleep computer card offers wake", async ({ page }) => {
   );
   await page.route(`**/api/bots/${bot}/computer/power`, (route) => route.fulfill({ json: { status: "hibernated" } }));
   await page.goto(`/bots/${bot}`);
+  if (!(await page.getByTestId("info-pane").isVisible().catch(() => false))) await page.getByTestId("bot-name-button").click();
   await page.getByRole("tab", { name: "Computer", exact: true }).click();
   await expect(page.getByTestId("computer-asleep")).toContainText("Computer is asleep");
   await expect(page.getByTestId("computer-wake")).toBeVisible();

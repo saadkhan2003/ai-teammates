@@ -208,8 +208,11 @@ async function run() {
           await pluginsButton.click();
           await page.getByTestId("plugins-modal").waitFor();
           await shot(page, `${prefix}-plugins-modal`, rows);
-          await page.getByTestId("plugins-tab").first().click();
-          await shot(page, `${prefix}-plugins-marketplace`, rows);
+          const manage = page.getByTestId("connect-manage");
+          if (await manage.isVisible().catch(() => false)) {
+            await manage.click();
+            await shot(page, `${prefix}-plugins-marketplace`, rows);
+          }
           await page.keyboard.press("Escape");
         }
 
@@ -220,7 +223,7 @@ async function run() {
 
         const pane = await openPane(page, narrow);
         await shot(page, `${prefix}-info-pane`, rows);
-        for (const tab of ["Overview", "Computer", "Routines", "Files/Media", "Skills", "Memory", "Tasks", "Plugins"]) {
+        for (const tab of ["Overview", "Computer", "Routines", "Files", "Skills", "Memory", "Tasks", "Plugins"]) {
           const trigger = pane.getByRole("tab", { name: tab, exact: true });
           await trigger.scrollIntoViewIfNeeded();
           await trigger.click();

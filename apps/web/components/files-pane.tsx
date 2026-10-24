@@ -1,34 +1,24 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-
+import { Plus } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { ApiError, apiFetch } from "@/lib/api";
-import type { FileEntry } from "@/lib/types";
-import { errorMessage, formatBytes } from "@/lib/utils";
+import { cn, errorMessage } from "@/lib/utils";
 
 export function FilesPane({
   botId,
-  files,
-  error,
-  loaded,
   onChanged,
 }: {
   botId: string;
-  files: FileEntry[];
-  error: string | null;
-  loaded: boolean;
   onChanged: () => void;
 }) {
-  const [path, setPath] = useState("");
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [over, setOver] = useState(false);
 
-  async function upload(file: File, targetPath: string) {
+  async function upload(file: File) {
+    const targetPath = file.name;
     setUploading(true);
     setUploadError(null);
     try {
@@ -38,10 +28,8 @@ export function FilesPane({
         body: file,
       });
       if (response.status === 401) throw new ApiError(401, "Sign in required.");
-      if (!response.ok) {
-        throw new ApiError(response.status, `Upload failed (${response.status}).`);
-      }
-      toast.success(`Uploaded ${targetPath}.`);
+      if (!response.ok) throw new ApiError(response.status, `Upload failed (${response.status}).`);
+      toast.success(`Uploaded ${file.name}.`);
       onChanged();
     } catch (caught) {
       setUploadError(errorMessage(caught, "Could not upload that file."));
@@ -51,75 +39,40 @@ export function FilesPane({
   }
 
   return (
-    <div className="flex flex-col gap-6 lg:grid lg:grid-cols-2">
-      <form
-        className="flex flex-col gap-3 rounded-lg border border-line bg-paper p-4"
-        onSubmit={(event) => event.preventDefault()}
-      >
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="file-path">Workspace path</Label>
-          <Input
-            id="file-path"
-            value={path}
-            onChange={(event) => setPath(event.target.value)}
-            placeholder="notes.txt"
-          />
-          <p className="text-xs text-muted-foreground">The file is sent as the raw body with this path in the x-path header.</p>
-        </div>
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="file-upload">File</Label>
-          <Input
-            id="file-upload"
-            data-testid="file-upload"
-            type="file"
-            disabled={uploading}
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              event.target.value = "";
-              if (!file) return;
-              const target = path.trim() || file.name;
-              setPath(target);
-              void upload(file, target);
-            }}
-          />
-        </div>
-        {uploading ? <p className="text-sm text-muted-foreground">Uploading…</p> : null}
-        {uploadError ? (
-          <p role="alert" className="text-sm text-clay">
-            {uploadError}
-          </p>
-        ) : null}
-      </form>
-      <div data-testid="file-list" className="rounded-lg border border-line bg-paper p-4">
-        {!loaded ? <Skeleton className="h-20 w-full" /> : null}
-        {loaded && error ? (
-          <div className="space-y-2"><p role="alert" className="text-sm text-clay">
-            Could not load files. {error}
-          </p><Button variant="outline" size="sm" onClick={onChanged}>Retry</Button></div>
-        ) : null}
-        {loaded && !error && files.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No files in this workspace yet. Upload one the bot can read.</p>
-        ) : null}
-        <ul className="flex flex-col gap-2">
-          {files.map((file) => (
-            <li key={file.path} className="flex flex-wrap items-center justify-between gap-2 border-b border-line py-2 last:border-0">
-              <div>
-                <p className="text-sm font-medium">{file.name}</p>
-                <p className="text-xs text-muted-foreground">
-                  {file.path}
-                  {file.size != null ? ` · ${formatBytes(file.size)}` : ""}
-                  {file.directory ? " · folder" : ""}
-                </p>
-              </div>
-              {file.directory ? null : (
-                <a className="text-sm font-medium text-copper-deep underline" href={`/api/bots/${botId}/files/raw?path=${encodeURIComponent(file.path)}`}>
-                  Download
-                </a>
-              )}
-            </li>
-          ))}
-        </ul>
-      </div>
+    <div
+      data-testid="file-drop"
+      className={cn(
+        "mt-3 flex h-9 items-center justify-center rounded-lg border border-dashed border-border text-ui text-muted-foreground",
+        over && "bg-accent text-foreground",
+      )}
+      onDragOver={(event) => {
+        event.preventDefault();
+        setOver(true);
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(event) => {
+        event.preventDefault();
+        setOver(false);
+        const file = event.dataTransfer.files?.[0];
+        if (file) void upload(file);
+      }}
+    >
+      <label className="flex h-full w-full cursor-pointer items-center justify-center gap-1.5">
+        <Plus className="size-3.5" aria-hidden />
+        {uploading ? "Uploading…" : "Add a file"}
+        <input
+          data-testid="file-upload"
+          type="file"
+          className="sr-only"
+          disabled={uploading}
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            if (file) void upload(file);
+          }}
+        />
+      </label>
+      {uploadError ? <p role="alert" className="sr-only">{uploadError}</p> : null}
     </div>
   );
 }

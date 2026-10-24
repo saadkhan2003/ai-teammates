@@ -943,7 +943,10 @@ public static class PluginCatalog
             new { needle, like, category, label });
         var rows = await conn.QueryAsync(
             """
-            SELECT id, name, publisher, source_url, version, kind, transport, auth_type, category, risk, trust, label, check_status, check_detail, blocked, health_status, health_detail
+            SELECT id, name, publisher, source_url, version, kind, transport, auth_type, category, risk, trust, label, check_status, check_detail, blocked, health_status, health_detail,
+                   coalesce(nullif(manifest->>'summary', ''), nullif(tools#>>'{0,description}', ''), nullif(tools#>>'{0,Description}', ''), '') AS description,
+                   coalesce(nullif(manifest->>'iconUrl', ''), nullif(manifest->>'icon', ''), nullif(manifest->>'logo', ''), '') AS icon_url,
+                   CASE WHEN jsonb_typeof(tools) = 'array' THEN jsonb_array_length(tools) ELSE 0 END AS tool_count
             FROM plugin_catalog
             WHERE (@needle = '' OR name ILIKE @like OR publisher ILIKE @like OR id ILIKE @like)
               AND (@category = '' OR category ILIKE @category)

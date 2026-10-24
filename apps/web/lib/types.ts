@@ -115,6 +115,7 @@ export type FileEntry = {
   name: string;
   size?: number;
   directory?: boolean;
+  updatedAt?: string;
 };
 
 export type MemoryItem = {
@@ -146,6 +147,7 @@ export type Artifact = {
   name: string;
   title?: string;
   mime?: string;
+  size?: number;
   createdAt?: string;
 };
 

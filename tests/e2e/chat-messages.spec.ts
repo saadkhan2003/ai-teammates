@@ -226,12 +226,11 @@ async function runTheme(page: Page, theme: "light" | "dark") {
   await page.mouse.move(8, 8);
   await shotCard.scrollIntoViewIfNeeded();
   await page.mouse.move(8, 8);
-  const attachmentReply = shotCard.getByTestId("attachment-reply");
-  const attachmentOpacity = (node: HTMLElement) => getComputedStyle(node.parentElement ?? node).opacity;
-  await expect.poll(async () => attachmentReply.evaluate(attachmentOpacity)).toBe("0");
+  const toolbar = shotCard.getByTestId("message-toolbar");
+  await expect.poll(async () => toolbar.evaluate((node) => getComputedStyle(node).opacity)).toBe("0");
   await shotCard.getByTestId("attachment-card").hover();
-  await expect.poll(async () => attachmentReply.evaluate(attachmentOpacity)).toBe("1");
-  await expect(shotCard.getByTestId("attachment-more")).toBeVisible();
+  await expect.poll(async () => toolbar.evaluate((node) => getComputedStyle(node).opacity)).toBe("1");
+  await expect(shotCard.getByTestId("message-more")).toBeVisible();
   await shot(page, `08-attachment-hover-${theme}`);
 
   const openCard = page.getByTestId("question-card").filter({ hasText: "Which format should I use?" });

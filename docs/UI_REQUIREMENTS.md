@@ -61,6 +61,23 @@ Tokens live in `apps/web/styles/theme-tokens.css` (`:root` and `html.light` shar
 
 Placement: a page header keeps the title and subtitle on the left and the primary action on the right. A form or dialog puts the primary action at the bottom right. Destructive actions sit apart from secondary actions. Related settings share one titled card. The chat composer keeps a 16px side inset so the pill lines up with the message column; that inset is `--space-inset`, and the column width is still `--content-width`.
 
+## Corner radius
+
+Tokens live in `apps/web/styles/theme-tokens.css` for both themes. Surfaces use the Tailwind names `rounded-card`, `rounded-menu`, `rounded-dialog`, `rounded-control`, `rounded-pill` / `rounded-full`, `rounded-chip`, `rounded-bubble`, and `rounded-avatar`. Borders on those surfaces are 1px.
+
+| Token | Value | Use |
+| --- | --- | --- |
+| `--radius-card` | 12px | Cards, settings groups, right-panel cards, job cards, link hover cards |
+| `--radius-menu` | 10px | Menus, dropdowns, popovers, tooltips, select lists |
+| `--radius-dialog` | 16px | Dialogs, sheets, the command palette, the full computer view |
+| `--radius-control` | 8px | Inputs, search, selects, sidebar rows, list rows, thumbnails, code, tables |
+| `--radius-pill` | 9999px | Buttons, pills, chips, tabs, toggles, badges, the composer, header and footer pills |
+| `--radius-chip` | 6px | Small title and tag chips |
+| `--radius-bubble` | 12px | Bot bubbles. A one-line user bubble uses `--radius-pill`; a multiline user bubble uses `--radius-bubble-user` (16px) |
+| `--radius-avatar` | 8px | Avatar squares |
+
+Rounded containers that clip images, table headers, or row hovers set `overflow-hidden`.
+
 ## What this branch builds
 
 Items 13, 14, 20, 21, and 23, plus the grey row and ⋯ button from item 4, Light/Dark/System, and removal of Assign work. The send and voice buttons use the bot colour. Avatar motion (items 1–3, 5, and the row morph in item 4) is the avatar agent. Chat message items 6–12, 18, 19, and 22's in-chat card are the chat agent. The right panel, computer view, and item 22's panel rows are the right-panel agent. The notifications bell is a round button in the sidebar header so the footer stays the two pills in the reference.

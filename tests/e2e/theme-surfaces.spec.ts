@@ -111,6 +111,7 @@ async function openChat(page: Page, mode: "light" | "dark" | "system", saved: { 
   await expect(page.getByTestId("job-result-card")).toBeVisible();
   await expect(page.getByTestId("attachment-card")).toBeVisible();
   await expect(page.getByTestId("question-card")).toBeVisible();
+  if (!(await page.getByTestId("info-pane").isVisible().catch(() => false))) await page.getByTestId("bot-name-button").click();
   await page.getByRole("tab", { name: "Computer", exact: true }).click();
   await expect(page.getByTestId("computer-asleep")).toBeVisible();
   await page.getByTestId("reaction-pill").hover();
@@ -138,9 +139,10 @@ test("chat surfaces follow light, dark, and both system schemes", async ({ page 
   await page.emulateMedia({ colorScheme: "light" });
   await openChat(page, "system", saved);
   await expect(page.locator("html")).toHaveClass(/light/);
-  await page.getByTestId("attachment-card").hover();
-  await page.getByTestId("attachment-more").click();
-  await expect(page.getByRole("menuitem", { name: "Copy link" })).toBeVisible();
+  const attachment = page.getByTestId("message-item").filter({ has: page.getByTestId("attachment-card") });
+  await attachment.hover();
+  await attachment.getByTestId("message-more").click();
+  await expect(page.getByRole("menuitem", { name: "Copy text" })).toBeVisible();
   await shot(page, "system-os-light");
 
   await page.keyboard.press("Escape");

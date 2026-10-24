@@ -17,6 +17,7 @@ import {
   spinDegrees,
 } from "./avatar-motion";
 import { avatarPreviewFor, publishAvatarPreview, subscribeAvatarPreview } from "./avatar-preview";
+import { avatarShades, mixHex } from "./avatar-gloss";
 
 test("spin is a 40s clockwise loop that matches at the same time", () => {
   assert.equal(spinDegrees(0), 0);
@@ -81,6 +82,16 @@ test("eyes look toward the pointer and stay inside the face", () => {
   assert.ok(left.x < 0);
   assert.ok(Math.abs(right.y) <= 3.1);
   assert.ok(Math.abs(left.y) <= 3.1);
+});
+
+test("gloss shades keep a lighter highlight and a darker core", () => {
+  const red = avatarShades("#ff3045");
+  assert.equal(mixHex("#000000", "#ffffff", 1), "#ffffff");
+  assert.notEqual(red.highlight, red.core);
+  assert.ok(red.highlight.toLowerCase() !== "#ff3045");
+  const white = avatarShades("#ffffff");
+  assert.ok(white.core !== "#ffffff");
+  assert.match(white.highlight, /^#[0-9a-f]{6}$/);
 });
 
 test("appearance stays on our avatar shapes", () => {
