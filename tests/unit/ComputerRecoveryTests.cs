@@ -83,6 +83,20 @@ public sealed class ComputerRecoveryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Finishing_a_rebuild_never_overrides_a_stop()
+    {
+        if (_data is null) return;
+        await using var c = await _data.OpenConnectionAsync();
+        var (_, recovering) = await Seed(c, "recovering");
+        var (_, stopped) = await Seed(c, "stopped");
+        Assert.Equal("running", await Teammates.Api.Platform.FinishComputerRecovery(c, recovering));
+        Assert.Equal("running", await Status(c, recovering));
+        Assert.Equal("stopped", await Teammates.Api.Platform.FinishComputerRecovery(c, stopped));
+        Assert.Equal("stopped", await Status(c, stopped));
+        Assert.Null(await Teammates.Api.Platform.FinishComputerRecovery(c, Guid.NewGuid()));
+    }
+
+    [Fact]
     public void Wiring_keeps_restore_behind_the_status_guard()
     {
         var root = MigrationManifestTests.Root();
@@ -91,6 +105,7 @@ public sealed class ComputerRecoveryTests : IAsyncLifetime
         begin = begin[..begin.IndexOf("public static Task<Guid?> ClaimComputerRecovery", StringComparison.Ordinal)];
         Assert.True(begin.IndexOf("ClaimComputerRecovery", StringComparison.Ordinal) < begin.IndexOf("RestoreComputerAsync", StringComparison.Ordinal));
         Assert.DoesNotContain("SET status='recovering' WHERE computer_id=@id\"", begin);
+        Assert.DoesNotContain("SET status='running' WHERE computer_id=@id\"", platform);
         var beta = File.ReadAllText(Path.Combine(root, "apps", "api", "Beta.cs"));
         Assert.Equal(2, beta.Split("Platform.WantComputer(").Length - 1);
         var stop = beta[beta.IndexOf("\"/api/computer/stop\"", StringComparison.Ordinal)..];

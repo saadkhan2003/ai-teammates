@@ -514,8 +514,36 @@ public sealed class Platform
               )
             """,
             new { id = computerId });
-        await conn.ExecuteAsync("UPDATE user_computers SET status='running' WHERE computer_id=@id", new { id = computerId });
+        // Only a rebuild that is still wanted becomes running. When the owner
+        // stopped it while it was being rebuilt, put it back to sleep.
+        if (await FinishComputerRecovery(conn, computerId) == "stopped")
+            _ = StopAfterRestore(id);
         if (resumed > 0) Tasks.Pulse();
+    }
+
+    /// <summary>Flips a recovering computer to running and returns the resulting status (null when there is no row).</summary>
+    public static Task<string?> FinishComputerRecovery(NpgsqlConnection conn, Guid computerId) =>
+        conn.ExecuteScalarAsync<string?>(
+            """
+            WITH done AS (UPDATE user_computers SET status='running' WHERE computer_id=@id AND status='recovering' RETURNING status)
+            SELECT COALESCE((SELECT status FROM done), (SELECT status FROM user_computers WHERE computer_id=@id))
+            """,
+            new { id = computerId });
+
+    private async Task StopAfterRestore(ComputerId id)
+    {
+        // The restore still holds the lifecycle gate while this callback runs.
+        for (var attempt = 0; attempt < 30; attempt++)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(1));
+            try
+            {
+                await Compute.StopComputerAsync(id, new StopOptions(false, TimeSpan.FromSeconds(10)), IdempotencyKey.Require("stop-restored-" + Guid.NewGuid().ToString("n")), CancellationToken.None);
+                return;
+            }
+            catch (ComputeException ex) when (ex.Code == ComputeErrorCode.Conflict) { }
+            catch (Exception) { return; }
+        }
     }
 
     private static async Task ObserveRestore(Task restore)

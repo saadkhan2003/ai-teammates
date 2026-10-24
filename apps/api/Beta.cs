@@ -276,6 +276,10 @@ public static class Beta
             {
                 state = "stopped"; // the container is already gone
             }
+            catch (ComputeException ex) when (ex.Code == ComputeErrorCode.Conflict && platform.Compute.IsComputerRestoring(new ComputerId(id.Value.ToString())))
+            {
+                state = "stopping"; // the rebuild finishes, sees the stop and puts it back to sleep
+            }
             await platform.Audit(user.Value.ToString(), "computer.stopped", null, null, new { computerId = id });
             return Results.Json(new { ok = true, status = state });
         });

@@ -193,6 +193,16 @@ def test_removed_stopped_computer_stays_stopped_until_asked(bot_factory):
             time.sleep(1)
         assert _psql(f"SELECT status FROM user_computers WHERE computer_id='{computer_id}'") == "stopped"
 
+        # A stop that lands while an owner-requested rebuild runs wins.
+        client.call("POST", "/api/computer/restart", {})
+        status, stopping = client.call("POST", "/api/computer/stop", {})
+        assert status == 200 and stopping["status"] in ("stopped", "stopping"), stopping
+        deadline = time.time() + 120
+        while time.time() < deadline and (_state(name) == "running" or _psql(f"SELECT status FROM user_computers WHERE computer_id='{computer_id}'") != "stopped"):
+            time.sleep(1)
+        assert _state(name) != "running", _state(name)
+        assert _psql(f"SELECT status FROM user_computers WHERE computer_id='{computer_id}'") == "stopped"
+
         # An explicit request from the owner may rebuild it.
         _bring_up(client, name)
         assert _psql(f"SELECT status FROM user_computers WHERE computer_id='{computer_id}'") in {"running", "recovering"}
