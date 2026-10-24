@@ -42,7 +42,7 @@ function depthOf(value: unknown, depth = 0): number {
 }
 export function validateWidget(value: unknown): Widget {
   const encoded = JSON.stringify(value);
-  if (encoded.length > WIDGET_MAX_BYTES) throw new Error("Widget exceeds the maximum size");
+  if (new TextEncoder().encode(encoded).length > WIDGET_MAX_BYTES) throw new Error("Widget exceeds the maximum size");
   if (depthOf(value) > WIDGET_MAX_DEPTH) throw new Error("Widget exceeds the maximum nesting depth");
   return WidgetSchema.parse(value);
 }

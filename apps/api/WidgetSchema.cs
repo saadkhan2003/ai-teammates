@@ -32,13 +32,13 @@ public static class WidgetSchema
             "badges" => Shape(value, ["items"]) && Array(value, "items", 0, 40) && value.GetProperty("items").EnumerateArray().All(Badge),
             "key-value" => Shape(value, ["items"]) && Array(value, "items", 0, 60) && value.GetProperty("items").EnumerateArray().All(KeyValue),
             "progress" => Shape(value, ["value"], ["label"]) && Number(value, "value", 0, 100) && OptionalText(value, "label", 160),
-            "image-grid" => Shape(value, ["images"]) && Array(value, "images", 0, 24) && value.GetProperty("images").EnumerateArray().All(Image),
+            "image-grid" => Shape(value, ["images"]) && Array(value, "images", 0, 24) && Images(value.GetProperty("images")),
             "chart" => Shape(value, ["chart", "data"], ["xKey", "yKey"]) && StringEnum(value, "chart", ["bar", "line", "area", "pie"]) && OptionalText(value, "xKey", 80) && OptionalText(value, "yKey", 80) && Array(value, "data", 0, 200) && value.GetProperty("data").EnumerateArray().All(Point),
             "flow" => Shape(value, ["nodes", "edges"]) && Array(value, "nodes", 0, 80) && value.GetProperty("nodes").EnumerateArray().All(Node) && Array(value, "edges", 0, 160) && value.GetProperty("edges").EnumerateArray().All(Edge),
             "code" => Shape(value, ["language", "code"], ["original", "filename"]) && TextProperty(value, "language", 40) && TextProperty(value, "code", 24000) && OptionalText(value, "original", 24000) && OptionalText(value, "filename", 240),
             _ => false
         };
-        return valid ? null : "invalid_" + type?.Replace('-', '_');
+        return valid ? null : type == "image-grid" ? "unsafe_image_url" : "invalid_" + type?.Replace('-', '_');
     }
 
     private static bool Shape(JsonElement obj, string[] required, string[]? optional = null)
@@ -65,6 +65,7 @@ public static class WidgetSchema
     private static bool Number(JsonElement obj, string name, double min, double max) => obj.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number) && double.IsFinite(number) && number >= min && number <= max;
     private static bool StringEnum(JsonElement obj, string name, string[] values) => obj.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String && values.Contains(value.GetString());
     private static bool Image(JsonElement image) => image.ValueKind == JsonValueKind.Object && Shape(image, ["url", "alt"], ["caption"]) && TextProperty(image, "url", 2048) && SafeImage(image.GetProperty("url").GetString() ?? "") && TextProperty(image, "alt", 240) && OptionalText(image, "caption", 240);
+    private static bool Images(JsonElement images) => images.EnumerateArray().All(Image);
     private static bool Point(JsonElement point) => point.ValueKind == JsonValueKind.Object && Shape(point, ["label", "value"], ["series"]) && TextProperty(point, "label", 160) && Number(point, "value", double.MinValue, double.MaxValue) && OptionalText(point, "series", 80);
     private static bool Node(JsonElement node) => node.ValueKind == JsonValueKind.Object && Shape(node, ["id", "label", "x", "y"]) && TextProperty(node, "id", 120) && IdPattern.IsMatch(node.GetProperty("id").GetString() ?? "") && TextProperty(node, "label", 160) && Number(node, "x", -10000, 10000) && Number(node, "y", -10000, 10000);
     private static bool Edge(JsonElement edge) => edge.ValueKind == JsonValueKind.Object && Shape(edge, ["source", "target"], ["label"]) && TextProperty(edge, "source", 120) && IdPattern.IsMatch(edge.GetProperty("source").GetString() ?? "") && TextProperty(edge, "target", 120) && IdPattern.IsMatch(edge.GetProperty("target").GetString() ?? "") && OptionalText(edge, "label", 120);

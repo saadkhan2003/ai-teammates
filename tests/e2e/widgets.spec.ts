@@ -29,7 +29,7 @@ test("renders every structured widget and keeps heavy widgets lazy", async ({ pa
   for (const theme of ["light", "dark"] as const) {
     await setTheme(page, theme);
     await expect(page.getByTestId("widgets-gallery")).toBeVisible();
-    await page.screenshot({ path: `${shots}/01-widgets-${theme}.png`, fullPage: true });
+    await page.screenshot({ path: `${shots}/01-widgets-${theme}.png` });
   }
 });
 
@@ -45,7 +45,7 @@ test("admin analytics chart loads on the usage page", async ({ page }) => {
     await expect(page.getByText("Usage", { exact: true }).first()).toBeVisible();
     const chart = page.getByTestId("admin-analytics-chart");
     await expect(chart).toBeVisible();
-    await page.screenshot({ path: `${shots}/02-admin-analytics-${theme}.png`, fullPage: true });
+    await page.screenshot({ path: `${shots}/02-admin-analytics-${theme}.png` });
   }
 });
 
@@ -73,12 +73,13 @@ test("mock bot streams all widget types and gates widget actions", async ({ page
     }
     await page.goto(`/bots/${bot.id}`);
     for (const type of types.filter(t => t !== "approval")) await expect(page.getByTestId(`widget-${type}`).last()).toBeVisible();
-    await page.getByTestId("widget-buttons").last().getByRole("button", { name: "Continue" }).click();
+    await page.locator('[data-widget-id="demo-buttons"]').getByRole("button", { name: "Continue" }).click();
     await expect.poll(async () => (await page.request.get(`/api/bots/${bot.id}/tasks`).then(r => r.json()) as Array<{ title?: string; status: string }>).filter(t => t.title?.includes("Widget action") && t.status === "completed").length >= 1, { timeout: 90_000 }).toBeTruthy();
-    await page.getByTestId("widget-form").last().getByLabel("Note").fill("E2E form submission");
-    await page.getByTestId("widget-form").last().getByRole("button", { name: "Save" }).click();
+    await expect(page.getByText("Widget action received.")).toBeVisible();
+    await page.locator('[data-widget-id="demo-form"]').getByLabel("Note").fill("E2E form submission");
+    await page.locator('[data-widget-id="demo-form"]').getByRole("button", { name: "Save" }).click();
     await expect.poll(async () => (await page.request.get(`/api/bots/${bot.id}/tasks`).then(r => r.json()) as Array<{ title?: string; status: string }>).filter(t => t.title?.includes("Widget action") && t.status === "completed").length >= 2, { timeout: 90_000 }).toBeTruthy();
-    await page.getByTestId("widget-approval").getByRole("button", { name: "Approve delete" }).click();
+    await page.locator('[data-widget-id="demo-approval"]').getByRole("button", { name: "Approve delete" }).click();
     await expect.poll(async () => {
       const data = await page.request.get(`/api/bots/${bot.id}/workspace`).then(r => r.json()) as { approvals: Array<{ action: string; status: string }> };
       return data.approvals.some(a => a.action === "widget_action" && a.status === "pending");

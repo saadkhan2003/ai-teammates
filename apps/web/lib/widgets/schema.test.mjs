@@ -20,6 +20,7 @@ test('rejects oversized/deep widgets and malicious image urls', () => {
   assert.equal(m.isSafeImageUrl('https://example.com/a.png'), true);
   assert.equal(m.isSafeImageUrl('data:image/png;base64,YQ=='), true);
   assert.equal(m.validateWidget({ version: 1, id: 'data-image', type: 'image-grid', images: [{ url: 'data:image/png;base64,YQ==', alt: 'pixel' }] }).type, 'image-grid');
+  assert.throws(() => m.validateWidget({ version: 1, id: 'unicode', type: 'card', body: '界'.repeat(16000) }));
 });
 test('rejects malformed widget fields', () => { assert.throws(() => m.validateWidget({ ...sample, actions: [{ id: 'a', label: 'x', action: 'x', unexpected: true }] })); });
 test('renderer escapes text through React and never invokes HTML injection APIs', () => {
