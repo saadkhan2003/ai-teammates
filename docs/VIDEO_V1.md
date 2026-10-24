@@ -1,0 +1,9 @@
+# Video analysis (V1 implementation notes)
+
+`services/agent/video_analysis.py` contains bounded preprocessing primitives. It accepts local files only; it deliberately does not download URLs. Defaults are 1 GB and 60 minutes at the caller boundary, 2 second uniform samples plus ffmpeg scene-change detection (0.3), at most 30 samples/minute, 768 px JPEGs, and 5 minute transcription chunks. Every subprocess has a timeout and temporary audio chunks are removed by `TemporaryDirectory`.
+
+Audio classification uses no-track, mean-volume, and speech-band-energy decisions. The music-only decision is intentionally a cheap heuristic and should be calibrated with fixtures before production use; music with prominent vocals can be misclassified. STT defaults to `openai/whisper-large-v3-turbo` at `/audio/transcriptions`, DeepInfra, and 48 kbps mono MP3 chunks capped below 25 MB. Model/provider are configurable with `VIDEO_STT_MODEL` and `VIDEO_STT_PROVIDER`.
+
+The OpenRouter audio endpoint documents provider routing preferences, but does not guarantee `order` / `allow_fallbacks` are honored; upstream timeout is about 60 seconds and upload limit is 25 MB. This remains an open issue. The helper accepts an authorized HTTP client; it must be supplied by a gateway that resolves `secret://openrouter/default` and audits use. Never place the key in worker environment or logs.
+
+The repository's API keeps the model key in SecretBroker and file bytes in the isolated computer/S3 library. A production `watch_video` feature still needs an owner-scoped API bridge that streams a permitted library/workspace source to the Python worker, invokes the model gateway for vision/STT, stores owner-scoped cache records, and returns chat message parts. This worktree change only establishes tested Python preprocessing primitives; it does not register worker tools, add cache migrations, UI, mock endpoints, or the requested mock-stack integration test.
