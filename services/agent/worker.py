@@ -411,6 +411,8 @@ class Worker:
         name = call["name"]
         args = _bind_target(task, call["arguments"])
         log.info("tool name=%s task=%s", name, _task_id(task))
+        if name in {"load_skill", "write_skill"}:
+            return await self._skill_tool(task, name, args, authorize)
         if name in BROWSER_TOOLS:
             if authorize:
                 gate = await self._authorize(task, name, args)
@@ -429,6 +431,42 @@ class Worker:
                     return None
             return output
         return await self._execute_api(task, name, args)
+
+    async def _skill_tool(self, task: dict, name: str, args: dict, authorize: bool) -> dict | None:
+        bot_id = _bot_id(task)
+        if name == "load_skill":
+            skill_name = str(args.get("name") or "")
+            try:
+                result = await self.request_json("GET", f"/internal/skills/{bot_id}/{skill_name}")
+                return {"ok": True, **result} if isinstance(result, dict) else {"ok": False, "error": "invalid_skill_response"}
+            except httpx.HTTPStatusError as exc:
+                try:
+                    detail = exc.response.json()
+                except (json.JSONDecodeError, ValueError):
+                    detail = {}
+                return {"ok": False, **(detail if isinstance(detail, dict) else {}), "error": (detail.get("error") if isinstance(detail, dict) else None) or "unknown_skill"}
+
+        if authorize:
+            gate = await self._authorize(task, name, args)
+            if gate is None:
+                return None
+            if gate is not _ALLOW:
+                return gate
+        payload = {
+            "name": str(args.get("name") or ""),
+            "title": str(args.get("title") or ""),
+            "when_to_use": str(args.get("when_to_use") or ""),
+            "body": str(args.get("body") or ""),
+        }
+        try:
+            result = await self.request_json("POST", f"/internal/skills/{bot_id}/write", payload)
+            return {"ok": True, **(result if isinstance(result, dict) else {})}
+        except httpx.HTTPStatusError as exc:
+            try:
+                detail = exc.response.json()
+            except (json.JSONDecodeError, ValueError):
+                detail = {}
+            return {"ok": False, **(detail if isinstance(detail, dict) else {}), "status": exc.response.status_code}
 
     async def _authorize(self, task: dict, tool: str, args: dict):
         body = await self.request_json(
