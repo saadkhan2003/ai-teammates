@@ -496,11 +496,16 @@ def test_acceptance_suite():
     assert code["status"] == "completed", code
     assert "passed" in result_text(code).lower()
     # Hidden reaction feedback is consumed by the first model turn after the reaction; later tasks guarantee one ran.
+    # Since briefs' approval signals, a positive reaction arrives as "[The user reacted ...]"; old bot_feedback rows keep "Hidden feedback".
     feedback_deadline = time.time() + 20
-    while time.time() < feedback_deadline and int(_psql("SELECT count(*) FROM task_transcript WHERE content LIKE '%Hidden feedback%'")) < 1:
+    while time.time() < feedback_deadline and int(_psql("SELECT count(*) FROM task_transcript WHERE content LIKE '%Hidden feedback%' OR content LIKE '%[The user reacted %'")) < 1:
         time.sleep(0.5)
-    assert int(_psql("SELECT count(*) FROM task_transcript WHERE content LIKE '%Hidden feedback%'")) >= 1
-    assert int(_psql("SELECT count(*) FROM bot_feedback WHERE consumed_at IS NOT NULL")) >= 1
+    assert int(_psql("SELECT count(*) FROM task_transcript WHERE content LIKE '%Hidden feedback%' OR content LIKE '%[The user reacted %'")) >= 1
+    consumed_sql = "SELECT (SELECT count(*) FROM bot_feedback WHERE consumed_at IS NOT NULL) + (SELECT count(*) FROM approval_signals WHERE consumed_at IS NOT NULL)"
+    consumed_deadline = time.time() + 20
+    while time.time() < consumed_deadline and int(_psql(consumed_sql)) < 1:
+        time.sleep(0.5)
+    assert int(_psql(consumed_sql)) >= 1
 
     delete_id = submit(client, conversation, "Delete the file /workspace/secret.txt")
     approval = None
