@@ -63,10 +63,25 @@ def computer_slug(client: Client, bot_id: str) -> str:
     return "tm" + str(computer_id).replace("-", "").lower()
 
 
+_OWNER_COOKIE: str | None = None
+
+
 def login() -> Client:
+    """Owner session, reused across tests while it stays valid.
+
+    The API allows 30 login attempts per IP per 10 minutes. A full suite run
+    signs in far more often than that, so tests share one session instead.
+    """
+    global _OWNER_COOKIE
+    if _OWNER_COOKIE:
+        client = Client()
+        client.cookie = _OWNER_COOKIE
+        if client.call("GET", "/api/auth/me")[0] == 200:
+            return client
     client = Client()
     status, body = client.call("POST", "/api/auth/login", {"username": OWNER, "password": PASSWORD}, auth=False)
     assert status == 200, body
+    _OWNER_COOKIE = client.cookie
     return client
 
 
@@ -515,6 +530,8 @@ def test_acceptance_suite():
     assert cleared["status"] == "completed", cleared
     assert "captcha" not in result_text(cleared).lower()
 
+    # A domain grant from an earlier run would skip the approval card. Start clean (test stack DB only).
+    _psql("DELETE FROM credential_domain_grants WHERE domain='portal.example.edu'")
     typed_id = submit(client, conversation, "Type the stored password into the login form at http://portal.example.edu:8099/login.html using secret://university/password")
     approve(client, bot_id, "type_secret", "allow_domain")
     typed = wait_task(client, bot_id, typed_id, timeout=150)

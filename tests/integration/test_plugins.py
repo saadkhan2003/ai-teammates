@@ -42,6 +42,13 @@ class Client:
 
 
 def login(username: str, password: str) -> Client:
+    if username == OWNER and password == PASSWORD:
+        # Share the owner session with the other suites (login is rate limited).
+        from test_acceptance import login as owner_login
+
+        client = Client()
+        client.cookie = owner_login().cookie
+        return client
     client = Client()
     status, body = client.call("POST", "/api/auth/login", {"username": username, "password": password}, auth=False)
     assert status == 200, body
