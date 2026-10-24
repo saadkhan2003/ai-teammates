@@ -5,28 +5,37 @@ import { login } from "./helpers";
 const BOT = "11111111-1111-4111-8111-111111111111";
 const TASK = "22222222-2222-4222-8222-222222222222";
 const CONVERSATION = "33333333-3333-4333-8333-333333333333";
+const VIDEO_QUESTION = "What happens in the attached video?";
+const attachment = "[attached: /workspace/uploads/video-watch.mp4]";
 const bot = { id: BOT, name: "ATLAS", role: "Chief of staff", section: "Teammates", avatar: "", avatarShape: "blob1", avatarColor: "#ff3045", isPrimary: true, bio: "Runs the day", attention: false };
 
 async function openVideoChat(page: Page, theme: "light" | "dark") {
   await page.addInitScript((value) => localStorage.setItem("teammates-theme", value), theme);
   await page.route("**/api/bots", route => route.fulfill({ json: { bots: [bot] } }));
   await page.route("**/api/system/llm-status", route => route.fulfill({ json: { hasKey: true } }));
-  const messages: Array<Record<string, unknown>> = [{ id: "video-answer", role: "assistant", createdAt: "2026-10-25T08:00:00Z",
-    content: JSON.stringify({ summary: "A person demonstrates a test scene.", timeline: [{ timestamp: 1, summary: "A test scene is visible." }] }) }];
+  await page.route(`**/api/computers/${BOT}/**`, route => route.fulfill({ json: { state: "off", online: false, holder: null } }));
+  await page.route(`**/api/computers/${BOT}/vnc-ticket**`, route => route.fulfill({ json: { token: "e2e-idle-desktop", mode: "view", epoch: 1 } }));
+  page.routeWebSocket("**/vnc/websockify**", socket => socket.close());
+
+  const messages: Array<Record<string, unknown>> = [];
+  let messageNo = 0;
   await page.route(`**/api/conversations/${CONVERSATION}/messages`, async route => {
     const body = route.request().postDataJSON() as { content?: string };
     const content = body.content ?? "";
-    messages.push({ id: `user-${messages.length}`, role: "user", createdAt: "2026-10-25T08:01:00Z", content });
-    if (messages.filter(message => message.role === "user").length > 1)
-      messages.push({ id: `followup-${messages.length}`, role: "assistant", createdAt: "2026-10-25T08:02:00Z", content: "It ends with the test scene." });
+    const at = (minute: number) => `2026-10-25T08:${String(minute).padStart(2, "0")}:00Z`;
+    messages.push({ id: `user-${++messageNo}`, role: "user", createdAt: at(messageNo * 2), content });
+    if (messageNo === 1) {
+      messages.push({ id: "video-analysis", role: "assistant", createdAt: at(3), content: JSON.stringify({ summary: "A person demonstrates a test scene.", timeline: [{ timestamp: 1, summary: "A test scene is visible." }] }) });
+      messages.push({ id: "video-answer", role: "assistant", createdAt: at(4), content: "The video shows a person demonstrating a test scene." });
+    } else {
+      messages.push({ id: "video-followup", role: "assistant", createdAt: at(6), content: "It ends with the test scene." });
+    }
     await route.fulfill({ json: { ok: true } });
   });
   await page.route(`**/api/bots/${BOT}/**`, route => route.fulfill({ json: [] }));
-  await page.route(`**/api/computers/${BOT}/**`, route => route.fulfill({ json: { state: "ready", holder: "agent" } }));
   await page.route(`**/api/bots/${BOT}/workspace`, route => route.fulfill({ json: {
     bot, conversationId: CONVERSATION, tasks: [{ id: TASK, title: "Watch attached video", status: "running" }],
-    messages,
-    messagesHasMore: false, approvals: [], pages: [], holder: "agent", openrouterConnected: true,
+    messages, messagesHasMore: false, approvals: [], pages: [], holder: "agent", openrouterConnected: true,
   } }));
   await page.route("**/api/events", route => route.fulfill({
     status: 200,
@@ -36,31 +45,65 @@ async function openVideoChat(page: Page, theme: "light" | "dark") {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`/bots/${BOT}`);
   await expect(page.getByTestId("video-progress")).toContainText("Watching part 1/1");
-  await expect(page.getByTestId("video-analysis-card")).toContainText("A person demonstrates a test scene.");
+  await expect(page.getByText("The desktop session did not include a token.")).toHaveCount(0);
 }
 
-test("video progress and answer are clear in light and dark chat", async ({ page }) => {
-  await login(page);
-  await openVideoChat(page, "light");
+async function sendVideoQuestion(page: Page) {
   await page.getByTestId("composer-file").setInputFiles(path.join(__dirname, "fixtures", "video-watch.mp4"));
-  const attachment = "[attached: /workspace/uploads/video-watch.mp4]";
   await expect(page.getByTestId("composer")).toHaveValue(attachment);
-  await page.getByTestId("composer").fill(`${attachment}\nWhat happens in the attached video?`);
+  await page.getByTestId("composer").fill(`${attachment}\n${VIDEO_QUESTION}`);
   await page.getByTestId("send-chat").click();
-  await expect(page.getByTestId("video-progress")).toContainText("Watching part 1/1");
+}
+
+async function captureAnswerState(page: Page, theme: "light" | "dark") {
   await expect(page.getByTestId("video-analysis-card")).toContainText("A person demonstrates a test scene.");
-  await page.screenshot({ path: "/workspace/shots-video-v1/01-chat-video-watch-light.png" });
-  await page.getByTestId("composer").fill("What happens at the end?");
-  await page.getByTestId("send-chat").click();
-  await expect(page.getByText("It ends with the test scene.")).toBeVisible();
-  await openVideoChat(page, "dark");
-  await page.getByTestId("composer-file").setInputFiles(path.join(__dirname, "fixtures", "video-watch.mp4"));
-  await page.getByTestId("composer").fill(`${attachment}\nWhat happens in the attached video?`);
-  await page.getByTestId("send-chat").click();
-  await expect(page.getByTestId("video-progress")).toContainText("Watching part 1/1");
-  await expect(page.getByTestId("video-analysis-card")).toContainText("A person demonstrates a test scene.");
-  await page.screenshot({ path: "/workspace/shots-video-v1/01-chat-video-watch-dark.png" });
-  await page.getByTestId("composer").fill("What happens at the end?");
-  await page.getByTestId("send-chat").click();
-  await expect(page.getByText("It ends with the test scene.")).toBeVisible();
+  await expect(page.getByText("The video shows a person demonstrating a test scene.")).toBeVisible();
+  const rows = page.getByTestId("message-item");
+  const contents = await rows.allTextContents();
+  const userIndex = contents.findIndex(text => text.includes(VIDEO_QUESTION));
+  const analysisIndex = contents.findIndex(text => text.includes("Video analysis"));
+  const answerIndex = contents.findIndex(text => text.includes("The video shows a person demonstrating a test scene."));
+  expect(userIndex).toBeGreaterThanOrEqual(0);
+  expect(analysisIndex).toBeGreaterThan(userIndex);
+  expect(answerIndex).toBeGreaterThan(analysisIndex);
+  await page.screenshot({ path: `/workspace/shots-video-v1/02-answer-${theme}.png` });
+}
+
+for (const theme of ["light", "dark"] as const) {
+  test(`video progress, answer, and follow-up in ${theme} theme`, async ({ page }) => {
+    await login(page);
+    await openVideoChat(page, theme);
+    await sendVideoQuestion(page);
+    await expect(page.getByTestId("message-item").filter({ hasText: VIDEO_QUESTION })).toBeVisible();
+    await expect(page.getByTestId("video-progress")).toContainText("Watching part 1/1");
+    await page.screenshot({ path: `/workspace/shots-video-v1/01-progress-${theme}.png` });
+    await captureAnswerState(page, theme);
+
+    await page.getByTestId("composer").fill("What happens at the end?");
+    await page.getByTestId("send-chat").click();
+    await expect(page.getByText("It ends with the test scene.")).toBeVisible();
+    await page.screenshot({ path: `/workspace/shots-video-v1/03-followup-${theme}.png` });
+  });
+}
+
+test("staff can view video settings and members cannot", async ({ page }) => {
+  await login(page);
+  await page.addInitScript(() => localStorage.setItem("teammates-theme", "light"));
+  await page.route("**/api/auth/me", route => route.fulfill({ json: { role: "owner" } }));
+  await page.route("**/api/admin/config/video", route => route.fulfill({ json: { visionModel: "vision-test", transcriptionModel: "transcription-test", transcriptionProvider: "DeepInfra", allowFallbacks: false } }));
+  await page.goto("/settings/admin-config/video");
+  await expect(page.getByLabel("Video vision model")).toHaveValue("vision-test");
+  await expect(page.getByLabel("Transcription model")).toHaveValue("transcription-test");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.screenshot({ path: "/workspace/shots-video-v1/04-admin-video-settings-light.png" });
+
+  await page.addInitScript(() => localStorage.setItem("teammates-theme", "dark"));
+  await page.reload();
+  await expect(page.getByLabel("Video vision model")).toHaveValue("vision-test");
+  await page.screenshot({ path: "/workspace/shots-video-v1/04-admin-video-settings-dark.png" });
+
+  await page.route("**/api/auth/me", route => route.fulfill({ json: { role: "member" } }));
+  await page.reload();
+  await expect(page.getByText("Admin access required")).toBeVisible();
+  await expect(page.getByLabel("Video vision model")).toHaveCount(0);
 });
