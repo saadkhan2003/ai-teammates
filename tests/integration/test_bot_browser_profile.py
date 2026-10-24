@@ -39,6 +39,8 @@ def test_deleted_desk_bot_chrome_profile_is_wiped(bot_factory):
     assert status == 200, computer
     name = computer_container(computer["computerId"])
     try:
+        # Computers start headless; watching the desktop starts it and the bot's Chrome.
+        assert client.call("POST", f"/api/computers/{first}/vnc-ticket?role=watch", headers={"X-Desktop-Tab": "itest-profile"})[0] == 200
         deadline = time.time() + 120
         while time.time() < deadline and not _profiles(name):
             time.sleep(1)
