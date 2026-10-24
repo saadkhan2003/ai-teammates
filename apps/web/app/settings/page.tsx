@@ -13,10 +13,10 @@ import { EDITORS, type EditorId, readEnabledEditors, writeEnabledEditors } from 
 import { applyTheme, readTheme, type ThemeMode } from "@/lib/theme";
 
 const ACCENTS = [
-  { id: "blue", dark: "#8eb6ff", light: "#3b6fd8" },
-  { id: "sage", dark: "#8fd0a8", light: "#1f7a45" },
-  { id: "sand", dark: "#e6c27a", light: "#8a5a12" },
-  { id: "clay", dark: "#f0a8a0", light: "#9f2d2d" },
+  { id: "blue", dark: "var(--accent-blue-dark)", light: "var(--accent-blue-light)" },
+  { id: "sage", dark: "var(--accent-sage-dark)", light: "var(--accent-sage-light)" },
+  { id: "sand", dark: "var(--accent-sand-dark)", light: "var(--accent-sand-light)" },
+  { id: "clay", dark: "var(--accent-clay-dark)", light: "var(--accent-clay-light)" },
 ];
 
 const LOCALES = [
