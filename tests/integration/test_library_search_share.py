@@ -91,3 +91,18 @@ def test_search_filters_and_share_expiry_revoke_and_owner_scope(bot_factory):
         _cleanup(owner, second_bot)
         if other_bot:
             _cleanup(other, other_bot)
+        _release_other(other)
+
+
+def _release_other(other):
+    """library-share-other is reused across runs: drop any bot an earlier run left and always stop its computer."""
+    if not other.cookie:
+        return
+    status, leftover = other.call("GET", "/api/bots")
+    assert status == 200
+    for bot in leftover:
+        assert other.call("DELETE", f"/api/bots/{bot['id']}")[0] in (204, 404)
+    status, _ = other.call("POST", "/api/computer/stop", {})
+    assert status in (200, 204), f"library-share-other computer stop failed: HTTP {status}"
+    status, computer = other.call("GET", "/api/computer")
+    assert status == 200 and computer["status"] in ("stopped", "absent"), computer
