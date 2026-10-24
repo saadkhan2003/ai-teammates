@@ -365,8 +365,8 @@ export function PluginsPane({ mode = "installed" }: { mode?: "both" | "catalog" 
   return (
     <div data-testid="plugins-pane" className="flex flex-col gap-3">
       <p data-testid="plugin-stats" className="text-xs text-muted-foreground">
-        Imported {stats.imported} · Auto-checked {stats.autoChecked} · Needs auth {stats.needsAuth} · Failed {stats.failed}
-        {stats.countsTowardTarget !== stats.autoChecked ? ` · Toward target ${stats.countsTowardTarget}` : ""}
+        Imported {stats.imported}, auto-checked {stats.autoChecked}, needs auth {stats.needsAuth}, failed {stats.failed}
+        {stats.countsTowardTarget !== stats.autoChecked ? `, toward target ${stats.countsTowardTarget}` : ""}
       </p>
       <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search plugins" aria-label="Search plugins" />
       <div className="flex flex-wrap gap-1.5">
@@ -554,13 +554,13 @@ export function PluginsPane({ mode = "installed" }: { mode?: "both" | "catalog" 
           <p className="text-xs text-muted-foreground">Saves a registry row only. It does not start a server.</p>
           <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Name" aria-label="Plugin name" required />
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <select aria-label="Plugin kind" value={kind} onChange={(event) => setKind(event.target.value)} className="h-10 rounded-md border border-input bg-card px-2 text-sm">
+            <select aria-label="Plugin kind" value={kind} onChange={(event) => setKind(event.target.value)} className="h-10 rounded-md border border-input px-2 text-sm">
               <option value="mcp">MCP</option>
               <option value="openapi">OpenAPI</option>
               <option value="builtin">Built-in</option>
               <option value="oauth">OAuth app</option>
             </select>
-            <select aria-label="Plugin auth" value={authType} onChange={(event) => setAuthType(event.target.value)} className="h-10 rounded-md border border-input bg-card px-2 text-sm">
+            <select aria-label="Plugin auth" value={authType} onChange={(event) => setAuthType(event.target.value)} className="h-10 rounded-md border border-input px-2 text-sm">
               <option value="none">No auth</option>
               <option value="api_key">API key</option>
               <option value="oauth">OAuth</option>

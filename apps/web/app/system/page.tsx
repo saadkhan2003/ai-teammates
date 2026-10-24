@@ -194,7 +194,7 @@ export default function SystemPage() {
           <ol className="flex flex-col gap-3">
             {prompts.map((row) => (
               <li key={row.id} className="rounded-lg border border-line px-3 py-2">
-                <p className="text-xs text-muted-foreground">{row.when ? formatWhen(row.when) : "Prompt"}</p>
+                <p className="text-xs text-muted-foreground">{row.when ? formatWhen(row.when) : "Request"}</p>
                 <p className="mt-1 whitespace-pre-wrap break-words text-sm">{row.prompt || "This request did not include a prompt."}</p>
               </li>
             ))}

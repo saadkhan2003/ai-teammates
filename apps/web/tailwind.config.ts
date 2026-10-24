@@ -13,6 +13,20 @@ const config: Config = {
         paper: "var(--card)",
         line: "var(--border)",
         clay: "var(--destructive)",
+        "danger-soft": "var(--danger-soft)",
+        warning: "var(--warning)",
+        terminal: {
+          background: "var(--terminal-background)",
+          foreground: "var(--terminal-foreground)",
+        },
+        success: "var(--success)",
+        overlay: "var(--overlay)",
+        computer: {
+          background: "var(--computer-background)",
+          foreground: "var(--computer-foreground)",
+          muted: "var(--computer-muted)",
+          surface: "var(--computer-surface)",
+        },
         bot: {
           DEFAULT: "var(--bot-accent)",
           foreground: "var(--bot-accent-fg)",
