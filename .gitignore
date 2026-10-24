@@ -19,3 +19,6 @@ docs/evidence/playwright/
 .trivy-reports/
 .DS_Store
 .stack-*.yml
+
+# Impeccable platform binary (21 MB) is not vendored; install Impeccable v4.7.0 to get it
+.agents/skills/impeccable/scripts/bin/
