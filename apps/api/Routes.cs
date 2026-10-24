@@ -461,10 +461,12 @@ public static class Routes
             if (!Guid.TryParse(placement.Computer.Value, out var computerId)) return Results.Conflict(new { error = "computer unavailable" });
             var current = await DesktopLeaseRepository.StateAsync(conn, computerId, 1, ct);
             if (current == null) return Results.Conflict(new { error = "lease missing" });
-            var agentLease = await DesktopLeaseRepository.ResumeAgentAsync(conn, computerId, 1, user.Value, current.Epoch, ct);
-            if (agentLease == null) return Results.Conflict(new { error = "lease changed" });
-            await conn.ExecuteAsync("UPDATE control_locks SET holder='agent', epoch=@epoch, updated_at=now() WHERE bot_id=@id", new { id, epoch = agentLease.Epoch });
-            await platform.Compute.SetHolderAsync(placement.Computer, "agent", (ulong)agentLease.Epoch, ct);
+            var agentEpoch = current.HolderKind == "agent" && current.ExpiresAt > DateTime.UtcNow
+                ? current.Epoch
+                : (await DesktopLeaseRepository.ResumeAgentAsync(conn, computerId, 1, user.Value, current.Epoch, ct))?.Epoch;
+            if (agentEpoch == null) return Results.Conflict(new { error = "lease changed" });
+            await conn.ExecuteAsync("UPDATE control_locks SET holder='agent', epoch=@epoch, updated_at=now() WHERE bot_id=@id", new { id, epoch = agentEpoch.Value });
+            await platform.Compute.SetHolderAsync(placement.Computer, "agent", (ulong)agentEpoch.Value, ct);
             var resumed = await conn.ExecuteAsync("UPDATE tasks SET status='queued', waiting_reason=NULL, lease_epoch=lease_epoch+1, updated_at=now() WHERE bot_id IN (SELECT id FROM bots WHERE owner_id=@owner) AND status='waiting_human' AND waiting_reason='await_continue'", new { owner = user.Value });
             await platform.Audit(user.Value.ToString(), "desktop.lease.continue", id, null, new { resumed });
             if (resumed > 0) platform.Tasks.Pulse();

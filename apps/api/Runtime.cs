@@ -369,6 +369,23 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
             FROM user_computers WHERE computer_id=@computerId
             ON CONFLICT (computer_id, display) DO NOTHING
             """, new { computerId }, cancellationToken: ct));
+        var current = await DesktopLeaseRepository.StateAsync(conn, computerId, 1, ct);
+        if (current?.HolderKind == "none")
+        {
+            var owner = await conn.ExecuteScalarAsync<Guid?>(new CommandDefinition(
+                "SELECT user_id FROM user_computers WHERE computer_id=@computerId", new { computerId }, cancellationToken: ct));
+            if (owner == null) return null;
+            var agentLease = await DesktopLeaseRepository.ResumeAgentAsync(conn, computerId, 1, owner.Value, current.Epoch, ct);
+            if (agentLease != null)
+            {
+                await conn.ExecuteAsync(new CommandDefinition(
+                    "UPDATE control_locks SET holder='agent', epoch=@epoch, updated_at=now() WHERE bot_id=@botId",
+                    new { botId, epoch = agentLease.Epoch }, cancellationToken: ct));
+                await platform.Compute.SetHolderAsync(placement.Computer, "agent", (ulong)agentLease.Epoch, ct);
+                await platform.Audit(owner.Value.ToString(), "desktop.lease.agent_claim", botId, null, new { });
+                return agentLease.Epoch;
+            }
+        }
         return await conn.ExecuteScalarAsync<long?>(new CommandDefinition("""
             SELECT epoch FROM desktop_lease
             WHERE computer_id=@computerId AND display=1 AND holder_kind='agent'
