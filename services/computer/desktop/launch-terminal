@@ -1,14 +1,17 @@
 #!/bin/sh
+# Opens in the folder of the bot that owns this display, never another bot's.
 export DISPLAY="${DISPLAY:-:1}"
 if [ -z "${BOT_ROOT:-}" ]; then
-  for script in /run/service/wm-*/run; do
-    [ -r "$script" ] || continue
+  script="${DESK_SERVICE_DIR:-/run/service}/wm-${DISPLAY#:}/run"
+  if [ -r "$script" ]; then
     BOT_ROOT=$(sed -n 's/^export BOT_ROOT=//p' "$script" | head -1)
     HOME=$(sed -n 's/^export HOME=//p' "$script" | head -1)
-    [ -n "$BOT_ROOT" ] && break
-  done
+    export HOME
+  fi
 fi
-if [ -n "${BOT_ROOT:-}" ] && [ -d "$BOT_ROOT" ]; then
-  cd "$BOT_ROOT"
+if [ -z "${BOT_ROOT:-}" ] || [ ! -d "$BOT_ROOT" ]; then
+  echo "bot workspace is not available" >&2
+  exit 1
 fi
+cd "$BOT_ROOT" || exit 1
 exec xfce4-terminal --disable-server --title=Terminal
