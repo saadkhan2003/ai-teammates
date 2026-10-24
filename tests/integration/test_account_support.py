@@ -2,7 +2,14 @@
 from __future__ import annotations
 
 import time
+import base64
+import hashlib
+import hmac
+import json
+import urllib.error
+import urllib.request
 
+from stack import BASE
 from test_v02 import OWNER, PASSWORD, Client, login
 
 
@@ -13,7 +20,31 @@ def invite_member(owner: Client, suffix: str) -> Client:
     member = Client()
     status, result = member.call("POST", "/api/invitations/accept", {"token": invite["token"], "username": name, "password": "member-password-1"}, auth=False)
     assert status == 200, result
+    member.username = name
     return member
+
+
+def raw_call(method: str, path: str, body=None, cookie: str = ""):
+    request = urllib.request.Request(BASE + path, data=None if body is None else json.dumps(body).encode(), method=method)
+    if body is not None:
+        request.add_header("Content-Type", "application/json")
+    if cookie:
+        request.add_header("Cookie", cookie)
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            raw = response.read().decode()
+            return response.status, json.loads(raw) if raw else {}, response.headers.get_all("Set-Cookie") or []
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode() or "{}"), exc.headers.get_all("Set-Cookie") or []
+
+
+def totp_code(secret: str) -> str:
+    key = base64.b32decode(secret + "=" * ((8 - len(secret) % 8) % 8))
+    counter = int(time.time()) // 30
+    digest = hmac.new(key, counter.to_bytes(8, "big"), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0f
+    number = (int.from_bytes(digest[offset:offset + 4], "big") & 0x7fffffff) % 1_000_000
+    return f"{number:06d}"
 
 
 def test_profile_ticket_owner_scope_and_staff_support():
@@ -65,3 +96,26 @@ def test_password_change_and_immediate_account_deletion():
     assert status == 200 and deleted["policy"] == "immediate", deleted
     status, gone = account.call("GET", "/api/account")
     assert status == 401, gone
+
+
+def test_totp_is_required_at_login_and_recovery_codes_are_issued_once():
+    owner = login(OWNER, PASSWORD)
+    account = invite_member(owner, "otp")
+    status, setup = account.call("POST", "/api/account/totp/setup", {})
+    assert status == 200 and setup.get("otpauth"), setup
+    status, enabled = account.call("POST", "/api/account/totp/verify", {"code": totp_code(setup["secret"])})
+    assert status == 200 and len(enabled["recoveryCodes"]) == 8, enabled
+    status, logout = account.call("POST", "/api/auth/logout", {})
+    assert status == 200, logout
+
+    status, prompt, cookies = raw_call("POST", "/api/auth/login", {"username": account.username, "password": "member-password-1"})
+    assert status == 200 and prompt.get("totpRequired") is True, prompt
+    challenge_cookie = next((part.split(";", 1)[0] for part in cookies if part.startswith("teammates_login_challenge=")), "")
+    assert challenge_cookie
+    status, verified, cookies = raw_call("POST", "/api/auth/login/totp", {"code": totp_code(setup["secret"])}, challenge_cookie)
+    assert status == 200, verified
+    session_cookie = next((part.split(";", 1)[0] for part in cookies if part.startswith("teammates_session=")), "")
+    assert session_cookie
+    account.cookie = session_cookie
+    status, account_row = account.call("GET", "/api/account")
+    assert status == 200 and account_row["totpEnabled"] is True, account_row

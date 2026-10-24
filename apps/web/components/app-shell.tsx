@@ -127,7 +127,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     try {
       const [botData, me, noteData] = await Promise.all([
         api<unknown>("/api/bots"),
-        api<{ username?: string; displayName?: string }>("/api/auth/me").catch(() => ({ username: "Account" })),
+        api<{ username?: string; displayName?: string }>("/api/auth/me").catch(() => ({ username: "Account", displayName: "Account" })),
         api<unknown>("/api/notifications").catch(() => []),
       ]);
       setBots(readBots(botData));

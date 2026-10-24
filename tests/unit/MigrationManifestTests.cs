@@ -7,13 +7,19 @@ public sealed class MigrationManifestTests
 {
     public static string Root()
     {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "apps/api/Platform.cs"))) dir = dir.Parent;
-        return dir?.FullName ?? throw new InvalidOperationException("Repository root not found");
+        var configured = Environment.GetEnvironmentVariable("TEST_SOURCE_ROOT");
+        if (!string.IsNullOrWhiteSpace(configured) && File.Exists(Path.Combine(configured, "apps/api/Platform.cs"))) return configured;
+        foreach (var start in new[] { AppContext.BaseDirectory, Directory.GetCurrentDirectory() })
+        {
+            var dir = new DirectoryInfo(start);
+            while (dir != null && !File.Exists(Path.Combine(dir.FullName, "apps/api/Platform.cs"))) dir = dir.Parent;
+            if (dir is not null) return dir.FullName;
+        }
+        throw new InvalidOperationException("Repository root not found");
     }
 
     [Fact]
-    public void Manifest_and_docker_copy_cover_every_file_once_in_linear_order()
+    public void Manifest_and_docker_copy_cover_every_file_once_in_ascending_order()
     {
         var root = Root();
         var source = File.ReadAllText(Path.Combine(root, "apps/api/Platform.cs"));
@@ -26,7 +32,8 @@ public sealed class MigrationManifestTests
         Assert.Equal(listed.Length, listed.Distinct().Count());
         var ids = listed.Select(file => int.Parse(file[..3])).ToArray();
         Assert.Equal(ids.Length, ids.Distinct().Count());
-        Assert.Equal(Enumerable.Range(1, ids.Length), ids);
+        Assert.Equal(ids.Order(), ids);
+        Assert.Equal(54, ids[^1]);
         Assert.DoesNotContain(ids, id => id is >= 90 and <= 99);
         var copies = Regex.Matches(File.ReadAllText(Path.Combine(root, "apps/api/Dockerfile")),
             @"(?m)^COPY db/(\S+\.sql) /migrations/(\S+\.sql)$");

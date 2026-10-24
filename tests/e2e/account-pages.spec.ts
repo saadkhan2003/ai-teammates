@@ -43,7 +43,11 @@ test("account, support, legal, status, changelog and pricing pages", async ({ pa
   await capture(page, "/legal/terms", "10-terms", () => expect(page.getByRole("heading", { name: "Terms" })).toBeVisible());
   await capture(page, "/legal/privacy", "11-privacy", () => expect(page.getByRole("heading", { name: "Privacy" })).toBeVisible());
   await capture(page, "/legal/acceptable-use", "12-aup", () => expect(page.getByRole("heading", { name: "Acceptable use" })).toBeVisible());
-  await capture(page, "/status", "13-status", () => expect(page.getByTestId("status-page")).toBeVisible());
+  await capture(page, "/status", "13-status", async () => {
+    await expect(page.getByTestId("status-page")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "API", exact: true })).toBeVisible();
+  });
   await capture(page, "/changelog", "14-changelog", () => expect(page.getByTestId("changelog-page")).toBeVisible());
   await capture(page, "/pricing", "15-pricing-pkr", () => expect(page.getByTestId("pricing-page")).toBeVisible());
+  await capture(page, "/settings/incidents", "16-admin-incidents", () => expect(page.getByTestId("incidents-admin")).toBeVisible());
 });

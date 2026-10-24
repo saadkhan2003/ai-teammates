@@ -380,13 +380,13 @@ export function Workspace({ botId }: { botId: string }) {
           working={(workspace.tasks ?? []).some((task) => ["running", "planning", "queued"].includes((task.status ?? "").toLowerCase()))}
           extras={
             <>
-              {provider.toLowerCase() === "mock" ? <p className="text-sm text-muted-foreground">Provider is mock. This teammate is not calling OpenRouter.</p> : null}
+              {provider.toLowerCase() === "mock" ? <p className="text-sm text-muted-foreground">This teammate is using a local test connection.</p> : null}
               {(llmConnected ?? workspace.openrouterConnected) === false ? (
                 <p data-testid="llm-key-banner" className="rounded-md border border-border bg-card px-3 py-2 text-sm">
                   <Link href="/settings/secrets" className="font-medium text-brand">
-                    Connect OpenRouter in Settings → Vault
+                    Connect a service in Settings → Vault
                   </Link>
-                  <span className="text-muted-foreground"> — model tasks wait until a key is saved.</span>
+                  <span className="text-muted-foreground"> — work waits until a service is connected.</span>
                 </p>
               ) : null}
               <Approvals approvals={workspace.approvals ?? []} onChanged={() => void loadWorkspace()} />
@@ -554,8 +554,7 @@ export function Workspace({ botId }: { botId: string }) {
                     <div className="flex flex-col gap-2 text-sm">
                       <p>{bot?.role || "No title yet."}</p>
                       <p className="text-muted-foreground">{bot?.instructions || "No description yet."}</p>
-                      <p className="text-muted-foreground">Provider: {provider || "unknown"}</p>
-                      {provider.toLowerCase() === "mock" ? <p>Provider is mock. This teammate is not calling OpenRouter.</p> : null}
+                      {provider.toLowerCase() === "mock" ? <p className="text-muted-foreground">This teammate is using a local test connection.</p> : null}
                     </div>
                   </TabsContent>
                   <TabsContent value="computer">
@@ -698,8 +697,6 @@ function BotSettings({
       <Input id="settings-title" value={draft.role} onChange={(event) => setDraft({ ...draft, role: event.target.value })} />
       <Label htmlFor="settings-description">Description</Label>
       <Textarea id="settings-description" value={draft.instructions} onChange={(event) => setDraft({ ...draft, instructions: event.target.value })} />
-      <Label htmlFor="settings-model">Model</Label>
-      <Input id="settings-model" value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="anthropic/claude-haiku-5.5" />
       <div className="flex items-center justify-between gap-3 text-sm">
         <Label htmlFor="settings-notifications">Notifications</Label>
         <Switch

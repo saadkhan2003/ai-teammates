@@ -11,6 +11,7 @@ public static class AccountRoutes
     private static readonly AccountRateLimiter Limits = new();
     private const int AvatarLimit = 2 * 1024 * 1024;
     private const int AttachmentLimit = 2 * 1024 * 1024;
+    private static readonly HttpClient WorkerHealth = new() { Timeout = TimeSpan.FromSeconds(2) };
 
     public static void Map(WebApplication app, Platform platform)
     {
@@ -74,7 +75,7 @@ public static class AccountRoutes
             if (next.Length < 12 || next.Length > 256 || !next.Any(char.IsLetter) || !next.Any(char.IsDigit)) return Results.BadRequest(new { error = "weak_password" });
             await using var db = await platform.Data.OpenConnectionAsync();
             var hash = await db.ExecuteScalarAsync<string>("SELECT password_hash FROM users WHERE id=@user", new { user });
-            if (!Passwords.Verify(current, hash)) return Results.Json(new { error = "invalid_credentials" }, statusCode: 401);
+            if (!Passwords.Verify(current, hash ?? "")) return Results.Json(new { error = "invalid_credentials" }, statusCode: 401);
             await db.ExecuteAsync("UPDATE users SET password_hash=@hash WHERE id=@user", new { user, hash = Passwords.Hash(next) });
             await platform.Audit(user.Value.ToString(), "account.password_changed", null, null, new { });
             return Results.Json(new { ok = true });
@@ -128,7 +129,7 @@ public static class AccountRoutes
         {
             var user = await User(ctx, platform); if (user is null) return Results.Unauthorized(); if (!SameOrigin(ctx)) return Results.StatusCode(403);
             await using var db = await platform.Data.OpenConnectionAsync(); var hash = await db.ExecuteScalarAsync<string>("SELECT password_hash FROM users WHERE id=@user", new { user });
-            if (!Passwords.Verify(Text(body, "password"), hash)) return Results.Json(new { error = "invalid_credentials" }, statusCode: 401);
+            if (!Passwords.Verify(Text(body, "password"), hash ?? "")) return Results.Json(new { error = "invalid_credentials" }, statusCode: 401);
             await db.ExecuteAsync("UPDATE users SET totp_secret=NULL,totp_nonce=NULL,totp_enabled=false,recovery_code_hashes='{}' WHERE id=@user", new { user });
             await platform.Audit(user.Value.ToString(), "account.totp_disabled", null, null, new { }); return Results.Json(new { ok = true });
         });
@@ -164,7 +165,7 @@ public static class AccountRoutes
             var user = await User(ctx, platform); if (user is null) return Results.Unauthorized(); if (!SameOrigin(ctx)) return Results.StatusCode(403);
             if (!AccountSecurityPolicy.HasDeleteConfirmation(Text(body, "confirmation"))) return Results.BadRequest(new { error = "confirmation_mismatch" });
             await using var db = await platform.Data.OpenConnectionAsync(); var hash = await db.ExecuteScalarAsync<string>("SELECT password_hash FROM users WHERE id=@user", new { user });
-            if (!Passwords.Verify(Text(body, "password"), hash)) return Results.Json(new { error = "invalid_credentials" }, statusCode: 401);
+            if (!Passwords.Verify(Text(body, "password"), hash ?? "")) return Results.Json(new { error = "invalid_credentials" }, statusCode: 401);
             await platform.Audit(user.Value.ToString(), "account.deleted", null, null, new { policy = "immediate" }); await db.ExecuteAsync("DELETE FROM users WHERE id=@user", new { user });
             ctx.Response.Cookies.Delete("teammates_session"); return Results.Json(new { ok = true, policy = "immediate" });
         });
@@ -213,18 +214,24 @@ public static class AccountRoutes
             var n = await db.ExecuteAsync("UPDATE support_tickets SET status=@status,updated_at=now() WHERE id=@id", new { id, status }); if (n == 0) return Results.NotFound(); await platform.Audit(user!.Value.ToString(), "support.ticket_status_changed", null, null, new { ticketId = id, status }); return Results.Json(new { ok = true });
         });
         app.MapGet("/api/status/incidents", async () => { await using var db = await platform.Data.OpenConnectionAsync(); return Results.Json(await db.QueryAsync("SELECT id,title,status,details,created_at,updated_at FROM status_incidents ORDER BY created_at DESC LIMIT 100")); });
-        app.MapGet("/api/status", async () =>
+        app.MapGet("/api/status", async (HttpContext ctx) =>
         {
             var database = false; var computers = false; var worker = false; var computerCount = 0;
             try
             {
                 await using var db = await platform.Data.OpenConnectionAsync(); database = await db.ExecuteScalarAsync<int>("SELECT 1") == 1;
                 computerCount = await db.ExecuteScalarAsync<int>("SELECT count(*) FROM user_computers");
-                worker = await db.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM tasks WHERE status='running' AND updated_at>now()-interval '2 minutes')");
-                computers = platform.Compute.ComputerIsolationHealthy;
             }
             catch { }
-            return Results.Json(new { components = new object[] { new { name = "API", status = "operational" }, new { name = "Database", status = database ? "operational" : "outage" }, new { name = "Computers", status = computers ? "operational" : "degraded", available = computerCount }, new { name = "Worker", status = worker ? "operational" : "no_recent_activity" } } });
+            try { computers = (await platform.Compute.HealthCheckAsync(CancellationToken.None)).Healthy && platform.Compute.ComputerIsolationHealthy; } catch { computers = false; }
+            try
+            {
+                var workerHealthUrl = platform.Configuration["WORKER_HEALTH_URL"] ?? "http://agent:7710/health";
+                using var response = await WorkerHealth.GetAsync(workerHealthUrl, ctx.RequestAborted);
+                worker = response.IsSuccessStatusCode;
+            }
+            catch { worker = false; }
+            return Results.Json(new { components = new object[] { new { name = "API", status = "operational" }, new { name = "Database", status = database ? "operational" : "outage" }, new { name = "Computers", status = computers ? "operational" : "degraded", available = computerCount }, new { name = "Worker", status = worker ? "operational" : "outage" } } });
         });
         app.MapPost("/api/admin/status/incidents", async (HttpContext ctx, JsonElement body) =>
         {
