@@ -101,7 +101,7 @@ public static class SkillLibraryRoutes
             await SeedBuiltins(c, owner.Value);
             var rows = await c.QueryAsync("""
                 SELECT id,name,title,when_to_use AS "whenToUse",kind,source,version,allow_bot_edit AS "allowBotEdit",created_by AS "createdBy",created_at AS "createdAt",updated_at AS "updatedAt",bot_id AS "botId"
-                FROM skill_library WHERE owner_id=@owner AND archived_at IS NULL
+                FROM skill_library WHERE owner_id=@owner AND archived_at IS NULL AND (bot_id IS NULL OR bot_id=@id)
                 ORDER BY CASE source WHEN 'builtin' THEN 0 WHEN 'user' THEN 1 ELSE 2 END, name LIMIT 60
                 """, new { owner, id });
             return Results.Json(rows);
@@ -137,7 +137,7 @@ public static class SkillLibraryRoutes
                 await using var c = await platform.Data.OpenConnectionAsync(); await using var tx = await c.BeginTransactionAsync();
                 var sid = await c.ExecuteScalarAsync<Guid>("""
                     INSERT INTO skill_library(owner_id,tenant_id,bot_id,name,title,when_to_use,body,files,source,created_by,allow_bot_edit)
-                    VALUES(@owner,NULL,NULL,@name,@title,@hint,@body,@files::jsonb,'user',@actor,@allowBotEdit) RETURNING id
+                    VALUES(@owner,NULL,@bot,@name,@title,@hint,@body,@files::jsonb,'user',@actor,@allowBotEdit) RETURNING id
                     """, new { owner = owner.Value, bot, name, title, hint, body, files = FilesJson(files), actor = owner.Value.ToString(), allowBotEdit }, tx);
                 await c.ExecuteAsync("INSERT INTO skill_revisions(skill_id,version,body,files,title,when_to_use,author,reason) VALUES(@sid,0,'','{}',@title,@hint,@author,'initial creation')", new { sid, title, hint, author = owner.Value.ToString() }, tx);
                 await tx.CommitAsync();
@@ -225,7 +225,7 @@ public static class SkillLibraryRoutes
             if (owner is null) return Results.NotFound();
             await SeedBuiltins(c, owner.Value);
             var rows = await c.QueryAsync<(string Name, string WhenToUse, string Source)>("""
-                SELECT name,when_to_use AS "WhenToUse",source FROM skill_library s WHERE owner_id=@owner AND archived_at IS NULL
+                SELECT name,when_to_use AS "WhenToUse",source FROM skill_library s WHERE owner_id=@owner AND archived_at IS NULL AND (bot_id IS NULL OR bot_id=@bot)
                 ORDER BY CASE source WHEN 'builtin' THEN 0 WHEN 'user' THEN 1 ELSE 2 END,name LIMIT 60
                 """, new { owner, bot });
             return Results.Json(new { catalog = FormatCatalog(rows).Select(line => line).ToArray() });
@@ -267,13 +267,13 @@ public static class SkillLibraryRoutes
         await using var c = await platform.Data.OpenConnectionAsync(ct);
         await SeedBuiltins(c, owner);
         var rows = (await c.QueryAsync<(string Name, string Title, string Body, int Version, string Files)>("""
-            SELECT name,title,body,version,files::text AS "Files" FROM skill_library WHERE owner_id=@owner AND name=@name AND archived_at IS NULL
-            ORDER BY CASE source WHEN 'builtin' THEN 0 WHEN 'user' THEN 1 ELSE 2 END LIMIT 1
+            SELECT name,title,body,version,files::text AS "Files" FROM skill_library WHERE owner_id=@owner AND name=@name AND archived_at IS NULL AND (bot_id IS NULL OR bot_id=@bot)
+            ORDER BY (bot_id IS NULL), CASE source WHEN 'builtin' THEN 0 WHEN 'user' THEN 1 ELSE 2 END LIMIT 1
             """, new { owner, bot, name })).ToArray();
         var row = rows.FirstOrDefault();
         if (row.Name is null)
         {
-            var matches = await c.QueryAsync<string>("SELECT DISTINCT name FROM skill_library WHERE owner_id=@owner AND archived_at IS NULL ORDER BY name", new { owner });
+            var matches = await c.QueryAsync<string>("SELECT DISTINCT name FROM skill_library WHERE owner_id=@owner AND archived_at IS NULL AND (bot_id IS NULL OR bot_id=@bot) ORDER BY name", new { owner, bot });
             var close = matches.Select(n => (Name: n, Distance: EditDistance(name, n))).Where(x => x.Distance <= Math.Max(2, name.Length / 3)).OrderBy(x => x.Distance).ThenBy(x => x.Name).Take(3).Select(x => x.Name);
             throw new ToolHalt("unknown_skill", close.Any() ? "Unknown skill. Close matches: " + string.Join(", ", close) : "Unknown skill. No close matches.");
         }
@@ -286,12 +286,12 @@ public static class SkillLibraryRoutes
             throw new ToolHalt("invalid_skill_file", "Invalid helper file path.");
         await using var c = await platform.Data.OpenConnectionAsync(ct);
         var row = await c.QuerySingleOrDefaultAsync<(string Name, string Files)>("""
-            SELECT name,files::text AS "Files" FROM skill_library WHERE owner_id=@owner AND name=@name AND archived_at IS NULL
-            ORDER BY CASE source WHEN 'builtin' THEN 0 WHEN 'user' THEN 1 ELSE 2 END LIMIT 1
+            SELECT name,files::text AS "Files" FROM skill_library WHERE owner_id=@owner AND name=@name AND archived_at IS NULL AND (bot_id IS NULL OR bot_id=@bot)
+            ORDER BY (bot_id IS NULL), CASE source WHEN 'builtin' THEN 0 WHEN 'user' THEN 1 ELSE 2 END LIMIT 1
             """, new { owner, bot, name });
         if (row.Name is null)
         {
-            var names = await c.QueryAsync<string>("SELECT DISTINCT name FROM skill_library WHERE owner_id=@owner AND archived_at IS NULL", new { owner });
+            var names = await c.QueryAsync<string>("SELECT DISTINCT name FROM skill_library WHERE owner_id=@owner AND archived_at IS NULL AND (bot_id IS NULL OR bot_id=@bot)", new { owner, bot });
             var close = names.Select(candidate => (Name: candidate, Distance: EditDistance(name, candidate))).Where(x => x.Distance <= Math.Max(2, name.Length / 3)).OrderBy(x => x.Distance).Take(3).Select(x => x.Name);
             throw new ToolHalt("unknown_skill", close.Any() ? "Unknown skill. Close matches: " + string.Join(", ", close) : "Unknown skill. No close matches.");
         }
@@ -308,12 +308,12 @@ public static class SkillLibraryRoutes
         await using var c = await platform.Data.OpenConnectionAsync(ct);
         var row = await c.QuerySingleOrDefaultAsync<(Guid Id, string Source)>("""
             UPDATE skill_library SET archived_at=now(),updated_at=now()
-            WHERE id=(SELECT id FROM skill_library WHERE owner_id=@owner AND name=@name AND source<>'builtin' AND archived_at IS NULL ORDER BY CASE source WHEN 'builtin' THEN 0 WHEN 'user' THEN 1 ELSE 2 END LIMIT 1)
+            WHERE id=(SELECT id FROM skill_library WHERE owner_id=@owner AND name=@name AND source<>'builtin' AND archived_at IS NULL AND (bot_id IS NULL OR bot_id=@bot) ORDER BY (bot_id IS NULL), CASE source WHEN 'builtin' THEN 0 WHEN 'user' THEN 1 ELSE 2 END LIMIT 1)
             RETURNING id,source
             """, new { owner, bot, name });
         if (row.Id == Guid.Empty)
         {
-            var matches = await c.QueryAsync<string>("SELECT DISTINCT name FROM skill_library WHERE owner_id=@owner AND archived_at IS NULL", new { owner });
+            var matches = await c.QueryAsync<string>("SELECT DISTINCT name FROM skill_library WHERE owner_id=@owner AND archived_at IS NULL AND (bot_id IS NULL OR bot_id=@bot)", new { owner, bot });
             var close = matches.Select(n => (Name: n, Distance: EditDistance(name, n))).Where(x => x.Distance <= Math.Max(2, name.Length / 3)).OrderBy(x => x.Distance).ThenBy(x => x.Name).Take(3).Select(x => x.Name);
             throw new ToolHalt("unknown_skill", close.Any() ? "Unknown or read-only skill. Close matches: " + string.Join(", ", close) : "Unknown or read-only skill.");
         }
@@ -331,8 +331,8 @@ public static class SkillLibraryRoutes
         body = OutputRedactor.Redact(body);
         await using var c = await platform.Data.OpenConnectionAsync(ct); await using var tx = await c.BeginTransactionAsync(ct);
         var old = await c.QuerySingleOrDefaultAsync<(Guid Id, int Version, string Body, string Source, bool AllowBotEdit)>("""
-            SELECT id,version,body,source,allow_bot_edit FROM skill_library WHERE owner_id=@owner AND name=@name AND archived_at IS NULL
-            ORDER BY CASE source WHEN 'builtin' THEN 0 WHEN 'user' THEN 1 ELSE 2 END LIMIT 1 FOR UPDATE
+            SELECT id,version,body,source,allow_bot_edit FROM skill_library WHERE owner_id=@owner AND name=@name AND archived_at IS NULL AND (bot_id IS NULL OR bot_id=@bot)
+            ORDER BY (bot_id IS NULL), CASE source WHEN 'builtin' THEN 0 WHEN 'user' THEN 1 ELSE 2 END LIMIT 1 FOR UPDATE
             """, new { owner, bot, name }, tx);
         Guid sid;
         if (old.Id == Guid.Empty)
