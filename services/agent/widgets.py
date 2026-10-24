@@ -44,3 +44,8 @@ def form(widget_id: str, fields: list[dict[str, Any]], submit: dict[str, Any], *
 def chart(widget_id: str, chart_type: str, data: list[dict[str, Any]], **kw: Any) -> dict[str, Any]: return build("chart", widget_id, chart=chart_type, data=data, **kw)
 def flow(widget_id: str, nodes: list[dict[str, Any]], edges: list[dict[str, Any]], **kw: Any) -> dict[str, Any]: return build("flow", widget_id, nodes=nodes, edges=edges, **kw)
 def code(widget_id: str, language: str, source: str, **kw: Any) -> dict[str, Any]: return build("code", widget_id, language=language, code=source, **kw)
+
+def badges(widget_id: str, items: list[dict[str, Any]], **kw: Any) -> dict[str, Any]: return build("badges", widget_id, items=items, **kw)
+def key_value(widget_id: str, items: list[dict[str, Any]], **kw: Any) -> dict[str, Any]: return build("key-value", widget_id, items=items, **kw)
+def progress(widget_id: str, value: float, **kw: Any) -> dict[str, Any]: return build("progress", widget_id, value=value, **kw)
+def image_grid(widget_id: str, images: list[dict[str, Any]], **kw: Any) -> dict[str, Any]: return build("image-grid", widget_id, images=images, **kw)

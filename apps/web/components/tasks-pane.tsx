@@ -13,12 +13,12 @@ import { errorMessage } from "@/lib/utils";
 export function TasksPane({
   botId,
   tasks,
-  openrouterConnected,
+  providerConnected,
   onChanged,
 }: {
   botId: string;
   tasks: Task[];
-  openrouterConnected: boolean;
+  providerConnected: boolean;
   onChanged?: () => void;
 }) {
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -73,10 +73,10 @@ export function TasksPane({
                 </dl>
                 {task.status === "failed" && task.error ? <p role="alert" data-testid="task-error" className="mt-2 whitespace-pre-wrap text-sm text-destructive">{task.error}</p> : null}
                 {task.waitingReason ? <p className="mt-2 text-sm">{task.waitingReason}</p> : null}
-                {task.status === "waiting_resource" && openrouterConnected === false ? (
+                {task.status === "waiting_resource" && providerConnected === false ? (
                   <p className="mt-2 text-sm">
                     <Link href="/settings/secrets" className="font-medium text-copper-deep underline">
-                      Connect OpenRouter
+                      Connect a model service
                     </Link>
                   </p>
                 ) : null}

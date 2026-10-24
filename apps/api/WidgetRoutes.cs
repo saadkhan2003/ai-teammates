@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Dapper;
 using Npgsql;
 
@@ -30,15 +31,17 @@ public static class WidgetRoutes
             var widget = doc.RootElement;
             if (WidgetSchema.Validate(widget) is { } invalid) return Results.BadRequest(new { error = invalid });
             if (!TryFindAction(widget, actionName, out var selected)) return Results.BadRequest(new { error = "action_not_in_widget" });
+            if (!TryValidateActionPayload(widget, selected, payload, out var validatedPayload)) return Results.BadRequest(new { error = "invalid_widget_action_payload" });
             var requiresApproval = RequiresApproval(selected);
-            var content = "Widget action: " + actionName + "\nPayload: " + Dlp.Redact(payload.GetRawText());
+            var payloadText = Dlp.Redact(validatedPayload.GetRawText());
+            var content = "Widget action: " + actionName + "\nPayload: " + payloadText;
             var message = await conn.ExecuteScalarAsync<Guid>("INSERT INTO messages(conversation_id,role,content) VALUES(@conversation,'user',@content) RETURNING id", new { conversation = bot.ConversationId, content });
-            var instruction = "The user submitted an action in an interactive chat widget. Perform the requested action only after following the normal safety and approval rules. Action: " + actionName + "\nPayload: " + Dlp.Redact(payload.GetRawText());
+            var instruction = "The user submitted an action in an interactive chat widget. Perform the requested action only after following the normal safety and approval rules. Action: " + actionName + "\nPayload: " + payloadText;
             var task = await conn.ExecuteScalarAsync<Guid>("INSERT INTO tasks(bot_id,conversation_id,title,instruction,kind,priority,status,waiting_reason,source_message_id) VALUES(@id,@conversation,@title,@instruction,'chat',10,@status,@reason,@message) RETURNING id", new { id, conversation = bot.ConversationId, title = "Widget action: " + actionName, instruction, status = requiresApproval ? "waiting_approval" : "queued", reason = requiresApproval ? "widget_action_approval" : null, message });
             Guid? approvalId = null;
             if (requiresApproval)
             {
-                approvalId = await conn.ExecuteScalarAsync<Guid>("INSERT INTO approvals(bot_id,task_id,action,target,proposed,reason,evidence,risk_class,summary) VALUES(@id,@task,'widget_action',@target,@proposed::jsonb,'A widget action requires your approval.','',@risk,@summary) RETURNING id", new { id, task, target = actionName, proposed = payload.GetRawText(), risk = ActionClasses.BotManage, summary = "Approve widget action: " + actionName });
+                approvalId = await conn.ExecuteScalarAsync<Guid>("INSERT INTO approvals(bot_id,task_id,action,target,proposed,reason,evidence,risk_class,summary) VALUES(@id,@task,'widget_action',@target,@proposed::jsonb,'A widget action requires your approval.','',@risk,@summary) RETURNING id", new { id, task, target = actionName, proposed = payloadText, risk = ActionClasses.BotManage, summary = "Approve widget action: " + actionName });
                 await platform.Notify(owner.Value, "approval", "Approval needed", "Widget action: " + actionName);
             }
             await platform.Audit(owner.Value.ToString(), "widget.action_requested", id, task, new { widgetId, action = actionName, requiresApproval });
@@ -61,6 +64,46 @@ public static class WidgetRoutes
     }
 
     public static bool RequiresApproval(JsonElement action) => action.ValueKind == JsonValueKind.Object && action.TryGetProperty("requires_approval", out var flag) && flag.ValueKind == JsonValueKind.True;
+
+
+    public static bool TryValidateActionPayload(JsonElement widget, JsonElement action, JsonElement supplied, out JsonElement validated)
+    {
+        validated = default;
+        if (supplied.ValueKind != JsonValueKind.Object || Encoding.UTF8.GetByteCount(supplied.GetRawText()) > WidgetSchema.MaxBytes) return false;
+        var declared = action.TryGetProperty("payload", out var configured) && configured.ValueKind == JsonValueKind.Object ? configured : default;
+        var isForm = widget.TryGetProperty("type", out var type) && type.GetString() == "form";
+        JsonElement values = default;
+        if (isForm && (!supplied.TryGetProperty("values", out values) || values.ValueKind != JsonValueKind.Object)) return false;
+        foreach (var property in supplied.EnumerateObject())
+        {
+            if (isForm && property.Name == "values") continue;
+            if (declared.ValueKind != JsonValueKind.Object || !declared.TryGetProperty(property.Name, out var expected) || expected.ValueKind != property.Value.ValueKind || expected.GetRawText() != property.Value.GetRawText()) return false;
+        }
+        if (declared.ValueKind == JsonValueKind.Object && declared.EnumerateObject().Any(p => !supplied.TryGetProperty(p.Name, out _))) return false;
+        if (isForm)
+        {
+            var fields = widget.GetProperty("fields").EnumerateArray().ToArray();
+            var known = fields.Select(f => f.GetProperty("name").GetString() ?? "").ToHashSet(StringComparer.Ordinal);
+            if (values.EnumerateObject().Any(p => !known.Contains(p.Name) || p.Value.ValueKind != JsonValueKind.String)) return false;
+            foreach (var field in fields)
+            {
+                var name = field.GetProperty("name").GetString() ?? "";
+                var present = values.TryGetProperty(name, out var value);
+                var raw = present ? value.GetString() ?? "" : "";
+                if (field.TryGetProperty("required", out var required) && required.ValueKind == JsonValueKind.True && string.IsNullOrWhiteSpace(raw)) return false;
+                if (!present || raw.Length == 0) continue;
+                var fieldType = field.GetProperty("type").GetString();
+                if (fieldType == "email" && !Regex.IsMatch(raw, @"^[^\s@]+@[^\s@]+\.[^\s@]+$")) return false;
+                if (fieldType == "number")
+                {
+                    if (!double.TryParse(raw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var numberValue) || !double.IsFinite(numberValue)) return false;
+                }
+                if (fieldType == "select" && (!field.TryGetProperty("options", out var options) || !options.EnumerateArray().Any(o => o.GetString() == raw))) return false;
+            }
+        }
+        validated = supplied.Clone();
+        return true;
+    }
 
     public static async Task<object> SendFromBot(Platform platform, Guid botId, Guid taskId, JsonElement args, CancellationToken ct)
     {

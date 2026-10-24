@@ -165,6 +165,33 @@ def present_tool(name: str, args: dict | None, result):
     return result
 
 
+def widget_invalid_reason(args) -> str | None:
+    """Bound widget tool payloads before transport; the API performs the full mirror-schema check."""
+    if not isinstance(args, dict) or not isinstance(args.get("widget"), dict):
+        return "send_widget requires a widget object"
+    widget = args["widget"]
+    try:
+        raw = json.dumps(widget, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    except (TypeError, ValueError):
+        return "send_widget widget must be JSON"
+    if len(raw) > 48_000:
+        return "widget_too_large"
+    def depth(value, level=0):
+        if isinstance(value, dict): return max([level] + [depth(item, level + 1) for item in value.values()])
+        if isinstance(value, list): return max([level] + [depth(item, level + 1) for item in value])
+        return level
+    if depth(widget) > 8: return "widget_too_deep"
+    if widget.get("version") != 1: return "unsupported_widget_version"
+    if widget.get("type") not in {"card", "list", "table", "form", "buttons", "badges", "key-value", "progress", "image-grid", "chart", "flow", "code"}:
+        return "unknown_widget_type"
+    if widget.get("type") == "image-grid":
+        for image in widget.get("images", []) if isinstance(widget.get("images", []), list) else []:
+            url = image.get("url", "") if isinstance(image, dict) else ""
+            if not (isinstance(url, str) and (url.startswith("https://") or re.match(r"^data:image/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+=*$", url, re.I))):
+                return "unsafe_image_url"
+    return None
+
+
 def invalid_reason(result) -> str | None:
     if not isinstance(result, dict):
         return None

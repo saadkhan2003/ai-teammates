@@ -14,7 +14,7 @@ import httpx
 
 from browser import BrowserHub
 from web_bot_auth import CURRENT_AUTH_CONFIG, fingerprint_browser_settings, geo_browser_settings
-from guard import invalid_reason, login_result, present_tool, scrub, should_halt, stamp_actor, strip_text
+from guard import invalid_reason, login_result, present_tool, scrub, should_halt, stamp_actor, strip_text, widget_invalid_reason
 from plugins import call_allowed, enabled_names
 from run_guard import RunGuard
 from grounding import check_answer, observed_urls
@@ -488,7 +488,8 @@ class Worker:
                 task["_toolTimeoutSeconds"] = 600 if pending.get("name") == "watch_video" else 120
                 task["_callSlot"] = _call_slot(messages, pending)
                 try:
-                    result = await self._invoke(task, pending, authorize=True)
+                    widget_error = widget_invalid_reason(pending_args) if pending_name == "send_widget" else None
+                    result = {"status": "invalid", "reason": widget_error} if widget_error else await self._invoke(task, pending, authorize=True)
                 finally:
                     task.pop("_toolInFlightSince", None)
                     task.pop("_callSlot", None)
@@ -593,7 +594,8 @@ class Worker:
                 else:
                     await self._fail(task, "step_budget" if "step" in blocked else "time_budget" if "time" in blocked else blocked)
                 return
-            result = await self._invoke(task, {"name": name, "arguments": args}, authorize=True)
+            widget_error = widget_invalid_reason(args) if name == "send_widget" else None
+            result = {"status": "invalid", "reason": widget_error} if widget_error else await self._invoke(task, {"name": name, "arguments": args}, authorize=True)
             if result is None or lost.is_set():
                 return
             invalid = invalid_reason(result)

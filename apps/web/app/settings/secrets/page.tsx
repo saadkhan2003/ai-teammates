@@ -145,7 +145,7 @@ export default function SecretsPage() {
       setValue("");
       setTestResult(null);
       if (created.id) setSelectedId(created.id);
-      toast.success("OpenRouter key saved.");
+      toast.success("Model service key saved.");
       await load();
     } catch (caught) {
       setFormError(errorMessage(caught, "Could not save that key."));
@@ -269,7 +269,7 @@ export default function SecretsPage() {
       <header>
         <h2 className="text-sm font-medium">Vault</h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          Values are write-only. Bots see references such as secret://openrouter/default, never the raw secret.
+          Values are write-only. Teammates never receive raw secret values.
         </p>
       </header>
 
@@ -290,7 +290,7 @@ export default function SecretsPage() {
       {!loading && !error && !openRouter ? (
         <Card>
           <CardHeader>
-            <CardTitle>OpenRouter API Key</CardTitle>
+            <CardTitle>Model Service Key</CardTitle>
           </CardHeader>
           <CardContent>
             <form className="flex flex-col gap-4" onSubmit={saveOpenRouter}>
@@ -306,7 +306,7 @@ export default function SecretsPage() {
                   required
                 />
               </div>
-              <p>Used securely by the model gateway. Bots never receive the raw key.</p>
+              <p>Used securely for teammate requests. Teammates never receive the raw key.</p>
               <TestReadout result={testResult} />
               {formError ? (
                 <p role="alert" className="text-sm text-clay">
@@ -329,7 +329,7 @@ export default function SecretsPage() {
       {!loading && !error && openRouter ? (
         <Card>
           <CardHeader>
-            <CardTitle>OpenRouter</CardTitle>
+            <CardTitle>Model service</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <p data-testid="connected-banner" className="text-sage">Connected ✓</p>

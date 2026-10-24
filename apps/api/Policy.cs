@@ -185,7 +185,7 @@ public static class ActionClassifier
         "request_secret", "request_login", "react_to_message", "send_message", "external_post", "sign",
         "search_tools", "load_tool", "load_skill", "write_skill", "watch_video", "ask_video",
         "list_bots", "message_bot", "reply_to_bot", "thread_status", "create_bot", "update_bot", "list_routines", "create_routine", "get_routine", "update_routine", "pause_routine", "resume_routine", "delete_routine",
-        "plan_set", "plan_update", "git_status", "git_diff", "git_commit", "run_tests", "create_pr", "watch_ci", "spawn_child_task", "child_status"
+        "send_widget", "plan_set", "plan_update", "git_status", "git_diff", "git_commit", "run_tests", "create_pr", "watch_ci", "spawn_child_task", "child_status"
     };
 
     public static bool IsBuiltIn(string tool) => BuiltInTools.Contains(tool);
