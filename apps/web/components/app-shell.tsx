@@ -56,9 +56,11 @@ import { subscribeEvents } from "@/lib/events";
 import { applyTheme, type ThemeMode } from "@/lib/theme";
 import { cn, errorMessage } from "@/lib/utils";
 import { matchShortcut } from "@/lib/shortcuts";
-import { defaultBotAvatar } from "@/lib/avatars";
+import { BOT_COLORS, defaultBotAvatar } from "@/lib/avatars";
 import { applyAccent } from "@/lib/accent";
 import { TemplateImport } from "@/components/template-import";
+
+const DEFAULT_AVATAR_COLOR = BOT_COLORS.find((color) => color.name === "Red")!.hex;
 
 type RosterBot = {
   id: string;
@@ -376,7 +378,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         {groups.map(([section, items]) => (
           <Collapsible key={section} defaultOpen className="motion-fade">
             {compact ? null : (
-              <CollapsibleTrigger className="flex w-full items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground hover:bg-sidebar-accent [&[data-state=open]>svg]:rotate-90">
+              <CollapsibleTrigger className="flex w-full items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-sidebar-accent [&[data-state=open]>svg]:rotate-90">
                 <ChevronRight className="h-3 w-3 transition-transform duration-fast ease-out" />
                 {section}
               </CollapsibleTrigger>
@@ -666,7 +668,7 @@ function CreateTeammateDialog({
   const [bio, setBio] = useState("");
   const [instructions, setInstructions] = useState("");
   const [avatarShape, setAvatarShape] = useState("blob3");
-  const [avatarColor, setAvatarColor] = useState("#ff3045");
+  const [avatarColor, setAvatarColor] = useState<string>(DEFAULT_AVATAR_COLOR);
   const [creating, setCreating] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -680,7 +682,7 @@ function CreateTeammateDialog({
     setRole(typeof template.role === "string" ? template.role : "");
     setInstructions(typeof template.instructions === "string" ? template.instructions : "");
     setAvatarShape(typeof template.avatarShape === "string" ? template.avatarShape : "blob3");
-    setAvatarColor(typeof template.avatarColor === "string" ? template.avatarColor : "#ff3045");
+    setAvatarColor(typeof template.avatarColor === "string" ? template.avatarColor : DEFAULT_AVATAR_COLOR);
     setFormError(null);
   }
 
@@ -712,7 +714,7 @@ function CreateTeammateDialog({
       setBio("");
       setInstructions("");
       setAvatarShape("blob3");
-      setAvatarColor("#ff3045");
+      setAvatarColor(DEFAULT_AVATAR_COLOR);
       onOpenChange(false);
       toast.success(`Created ${name}.`);
       window.dispatchEvent(new Event("teammates-bots-changed"));

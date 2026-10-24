@@ -96,7 +96,7 @@ export function RoutinesSection({
 
   return (
     <section data-testid="routines-section" className="border-b border-border px-3 py-3">
-      <div><h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Routines</h2></div>
+      <div><h2 className="text-xs font-medium text-muted-foreground">Routines</h2></div>
       <div className="mt-2 overflow-hidden rounded-2xl border border-border bg-card">
         {!loaded ? <div role="status" aria-busy="true" data-testid="routines-skeleton" className="divide-y divide-border"><span className="sr-only">Loading routines</span>{[0, 1].map((row) => <div key={row} aria-hidden className="flex items-center gap-3 px-3 py-3"><div className="min-w-0 flex-1 space-y-1.5"><Skeleton className="h-3.5 w-2/3" /><Skeleton className="h-3 w-1/2" /></div><Skeleton className="h-5 w-9 rounded-full" /></div>)}</div> : null}
         {loaded && error ? <div data-testid="routines-error" className="flex items-center justify-between gap-2 px-3 py-3"><p role="alert" className="text-sm text-destructive">Couldn&apos;t load routines.</p><Button type="button" variant="outline" size="sm" data-testid="routines-retry" onClick={onRetry}>Try again</Button></div> : null}
@@ -119,9 +119,9 @@ export function RoutinesSection({
             <SheetHeader className="pr-8 text-left"><SheetTitle>{selectedRow.name}</SheetTitle><SheetDescription>{selectedRow.kind === "once" && selectedRow.runAt ? `${dateTime(selectedRow.runAt, selectedRow.timezone)} · ${selectedRow.timezone || "UTC"}` : `${cronToWords(selectedRow.cron)} · ${selectedRow.timezone || "UTC"}`}</SheetDescription></SheetHeader>
             <div className="mt-5 space-y-4">
               <p data-testid="routine-status" className="text-sm text-muted-foreground">{selectedRow.enabled ? nextWords(selectedRow) : pausedText[selectedRow.pausedReason ?? ""] ?? "Paused"}</p>
-              <section><h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Instructions</h3><p className="mt-1 whitespace-pre-wrap break-words text-sm">{selectedRow.instruction || "No instruction available."}</p></section>
-              {selectedRow.quietRule ? <section><h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Quiet rule</h3><p className="mt-1 whitespace-pre-wrap break-words text-sm">{selectedRow.quietRule}</p></section> : null}
-              <section><h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Run history</h3>
+              <section><h3 className="text-xs font-medium text-muted-foreground">Instructions</h3><p className="mt-1 whitespace-pre-wrap break-words text-sm">{selectedRow.instruction || "No instruction available."}</p></section>
+              {selectedRow.quietRule ? <section><h3 className="text-xs font-medium text-muted-foreground">Quiet rule</h3><p className="mt-1 whitespace-pre-wrap break-words text-sm">{selectedRow.quietRule}</p></section> : null}
+              <section><h3 className="mb-2 text-xs font-medium text-muted-foreground">Run history</h3>
                 {historyLoading ? <div data-testid="routine-history-skeleton" role="status" aria-busy="true" className="space-y-2">{[0, 1, 2].map((n) => <Skeleton key={n} className="h-12 w-full" />)}</div> : null}
                 {!historyLoading && historyError ? <div data-testid="routine-history-error" className="text-sm text-destructive"><p>{historyError}</p><Button variant="outline" size="sm" className="mt-2" onClick={() => void refreshHistory(selectedRow)}>Try again</Button></div> : null}
                 {!historyLoading && !historyError && history.length === 0 ? <p className="text-sm text-muted-foreground">No runs yet.</p> : null}

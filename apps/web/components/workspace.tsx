@@ -72,7 +72,6 @@ function normalizeWorkspace(data: WorkspaceData): WorkspaceData {
     loginRequests: data.loginRequests ?? [],
     pages: data.pages ?? [],
     holder: data.holder === "human" ? "human" : "agent",
-    llmProvider: data.llmProvider ?? "",
     openrouterConnected: data.openrouterConnected,
   };
 }
@@ -339,7 +338,7 @@ export function Workspace({ botId }: { botId: string }) {
             aria-expanded={pane}
             aria-controls="info-pane"
             aria-label={`${bot?.name || "Teammate"} details`}
-            className="pointer-events-auto inline-flex max-w-[70%] items-center gap-2 rounded-full border border-white/5 bg-black/75 px-3.5 py-1.5 text-sm font-medium shadow-md backdrop-blur focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="pointer-events-auto inline-flex max-w-[70%] items-center gap-2 rounded-full border border-border bg-background px-3.5 py-1.5 text-sm font-medium shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onClick={() => togglePane()}
           >
             <BotAvatar animated botId={bot?.id} shape={bot?.avatarShape} color={bot?.avatarColor} size={20} primary={bot?.isPrimary} />
@@ -385,7 +384,7 @@ export function Workspace({ botId }: { botId: string }) {
                   <Link href="/settings/secrets" className="font-medium text-brand">
                     Connect an account in Settings → Vault
                   </Link>
-                  <span className="text-muted-foreground"> — model tasks wait until a key is saved.</span>
+                  <span className="text-muted-foreground">. Tasks wait until a key is saved.</span>
                 </p>
               ) : null}
               <Approvals approvals={workspace.approvals ?? []} onChanged={() => void loadWorkspace()} />
@@ -439,7 +438,7 @@ export function Workspace({ botId }: { botId: string }) {
         />
       </section>
       <PageCanvasHost botId={botId} onOpen={() => { setPaneRaw(false); setSettingsOpen(false); }} />
-      <div className={cn("contents md:block md:shrink-0 md:overflow-hidden md:transition-[width] md:duration-200 motion-reduce:md:transition-none", pane ? "md:w-[min(380px,42vw)]" : "md:w-0")}>
+      <div className={cn("contents md:block md:shrink-0 md:overflow-hidden", pane ? "md:w-[min(380px,42vw)]" : "md:w-0")}>
       {paneMounted ? (
         <aside
           id="info-pane"
@@ -530,11 +529,11 @@ export function Workspace({ botId }: { botId: string }) {
               />
               <CodingSection botId={botId} />
               <section data-testid="channels" className="border-b border-border px-3 py-3">
-                <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Channels</h2>
+                <h2 className="text-xs font-medium text-muted-foreground">Channels</h2>
                 <p className="mt-2 text-sm text-muted-foreground">No channels. Group chats will list them here.</p>
               </section>
               <section data-testid="members" className="border-b border-border px-3 py-3">
-                <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Members</h2>
+                <h2 className="text-xs font-medium text-muted-foreground">Members</h2>
                 <p className="mt-2 text-sm text-muted-foreground">Just you and {bot?.name || "this teammate"}.</p>
               </section>
               <Tabs value={detailTab} onValueChange={setDetailTab} className="flex flex-col">
@@ -567,7 +566,7 @@ export function Workspace({ botId }: { botId: string }) {
                   <TabsContent value="library">
                     <LibraryPane botId={botId} botName={bot?.name || "Teammate"} botShape={bot?.avatarShape} botColor={bot?.avatarColor} />
                     <div className="mt-5 border-t border-border pt-4">
-                      <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Manage files</h3>
+                      <h3 className="mb-2 text-xs font-medium text-muted-foreground">Manage files</h3>
                       <FilesPane botId={botId} files={files.items} error={files.error} loaded={files.loaded} onChanged={() => void loadAux(["files"])} />
                       <ArtifactsPane artifacts={artifacts.items} error={artifacts.error} loaded={artifacts.loaded} onRetry={() => void loadAux(["artifacts"])} />
                     </div>
@@ -697,7 +696,7 @@ function BotSettings({
       <Label htmlFor="settings-description">Description</Label>
       <Textarea id="settings-description" value={draft.instructions} onChange={(event) => setDraft({ ...draft, instructions: event.target.value })} />
       <Label htmlFor="settings-model">Model</Label>
-      <Input id="settings-model" value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="Default model" />
+      <Input id="settings-model" value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="Model identifier" />
       <div className="flex items-center justify-between gap-3 text-sm">
         <Label htmlFor="settings-notifications">Notifications</Label>
         <Switch
@@ -718,7 +717,7 @@ function BotSettings({
       <section className="grid gap-3 border-t border-border pt-3" aria-labelledby="work-budget-heading">
         <div>
           <h3 id="work-budget-heading" className="text-sm font-medium">Long-running work</h3>
-          <p className="text-xs text-muted-foreground">Limits apply to each task. Steps: 4–1,000 · Minutes: 1–360.</p>
+          <p className="text-xs text-muted-foreground">Limits apply to each task. Steps range from 4 to 1,000. Minutes range from 1 to 360.</p>
         </div>
         <Label htmlFor="work-budget-steps">Max steps</Label>
         <Input id="work-budget-steps" data-testid="work-budget-steps" type="number" min={WORK_BUDGET_LIMITS.steps.min} max={WORK_BUDGET_LIMITS.steps.max} step={1} value={budgetSteps} onChange={event => setBudgetSteps(Number(event.target.value))} />
