@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
 
+// A bot this spec had to create (none existed); deleted after each test so runs leave nothing behind.
+const createdBots: string[] = [];
+test.afterEach(async ({ page }) => {
+  for (const id of createdBots.splice(0)) await page.request.delete(`/api/bots/${id}`).catch(() => undefined);
+});
+
 async function firstBot(page: import("@playwright/test").Page) {
   const response = await page.request.get("/api/bots");
   expect(response.ok()).toBeTruthy();
@@ -11,6 +17,7 @@ async function firstBot(page: import("@playwright/test").Page) {
     expect(made.ok()).toBeTruthy();
     const body = await made.json();
     bot = (body.bot ?? body) as { id: string; name: string };
+    createdBots.push(bot.id);
   }
   expect(bot?.id).toBeTruthy();
   return bot as { id: string; name: string };
