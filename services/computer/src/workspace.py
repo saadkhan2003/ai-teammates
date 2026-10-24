@@ -92,6 +92,22 @@ def _state_file() -> Path:
     return base / "bot-uids.json"
 
 
+class WorkspaceDeleted(PermissionError):
+    """The bot was deleted. Its folder must never be recreated or written again."""
+
+
+def _tombstone(safe: str) -> Path:
+    return Path(os.environ.get("STATE_ROOT", "/data/state")) / "deleted-bots" / safe
+
+
+def is_deleted(bot_id: str) -> bool:
+    try:
+        safe = safe_id(bot_id)
+    except ValueError:
+        return False  # not a bot id; prepare() rejects it on its own
+    return _tombstone(safe).exists()
+
+
 def _assign_uid(bot_id: str) -> int:
     import fcntl
 
@@ -200,6 +216,8 @@ def dev_env(uid: int) -> dict[str, str]:
 
 def ensure(bot_id: str) -> int:
     safe = safe_id(bot_id)
+    if _tombstone(safe).exists():
+        raise WorkspaceDeleted("workspace_deleted")
     root = workspace_base() / "bots" / safe
     root.mkdir(parents=True, exist_ok=True)
     home = home_for(safe)
@@ -229,6 +247,21 @@ def prepare(bot_id: str) -> tuple[int, Path, Path]:
     return uid, root_for(bot_id), home_for(bot_id)
 
 
+def desktop_scratch_id(bot_id: str) -> str:
+    """A folder no bot owns, for a shared desktop whose bot was deleted."""
+    return hashlib.sha256(("desktop-scratch:" + safe_id(bot_id)).encode()).hexdigest()[:32]
+
+
+def desktop_identity(bot_id: str) -> tuple[int, Path, Path]:
+    """uid, root and home for the processes of a desktop (window manager, panels,
+    Chrome, native input). The shared per-owner desktop keeps running after its
+    bot is deleted, so it then runs in a scratch folder of its own and never
+    writes into the deleted bot's folder."""
+    if is_deleted(bot_id):
+        return prepare(desktop_scratch_id(bot_id))
+    return prepare(bot_id)
+
+
 _PRIV = threading.Lock()
 
 
@@ -251,6 +284,10 @@ def call_as(uid: int, fn):
 
 def wipe(bot_id: str) -> None:
     safe = safe_id(bot_id)
+    # Tombstone first so nothing can recreate the folder while it is being removed.
+    stone = _tombstone(safe)
+    stone.parent.mkdir(parents=True, exist_ok=True)
+    stone.touch()
     root = workspace_base() / "bots" / safe
     home = home_for(safe)
     if root.exists():
@@ -274,7 +311,9 @@ def wipe(bot_id: str) -> None:
         except json.JSONDecodeError:
             mapping = {}
         if isinstance(mapping, dict) and safe in mapping:
-            mapping.pop(safe, None)
+            # Keep the uid reserved: processes still running as the deleted bot
+            # must never gain access to a new bot that reused its uid.
+            mapping["retired:" + safe] = mapping.pop(safe, None)
             handle.seek(0)
             handle.truncate()
             handle.write(json.dumps(mapping))

@@ -262,13 +262,13 @@ class DesktopManager:
             self.save()
 
     def _prepare_workspace(self, bot_id: str) -> None:
-        workspace.prepare(bot_id)
+        workspace.desktop_identity(bot_id)
 
     async def _spawn_display(self, desk: Desktop) -> None:
         width, height = geometry()
         bits = depth()
         n = desk.display
-        uid, root, home = workspace.prepare(desk.bot_id)
+        uid, root, home = workspace.desktop_identity(desk.bot_id)
         ident = _as_bot(uid)
         _write_service(
             f"xvfb-{n}",
@@ -280,7 +280,7 @@ class DesktopManager:
         _write_service(
             f"wm-{n}",
             "#!/bin/sh\nexec 2>&1\n"
-            f"export DISPLAY=:{n}\nexport HOME={home}\nexport BOT_ROOT={root}\nexport BOT_ID={workspace.safe_id(desk.bot_id)}\n"
+            f"export DISPLAY=:{n}\nexport HOME={home}\nexport BOT_ROOT={root}\nexport BOT_ID={root.name}\n"
             "export MALLOC_ARENA_MAX=2\n"
             "i=0\nwhile [ \"$i\" -lt 100 ]; do\n"
             "  xdpyinfo -display \"$DISPLAY\" >/dev/null 2>&1 && break\n"
@@ -292,7 +292,7 @@ class DesktopManager:
         _write_service(
             f"panels-{n}",
             "#!/bin/sh\nexec 2>&1\n"
-            f"export DISPLAY=:{n}\nexport HOME={home}\nexport BOT_ROOT={root}\nexport BOT_ID={workspace.safe_id(desk.bot_id)}\n"
+            f"export DISPLAY=:{n}\nexport HOME={home}\nexport BOT_ROOT={root}\nexport BOT_ID={root.name}\n"
             "export MALLOC_ARENA_MAX=2\n"
             "i=0\nwhile [ \"$i\" -lt 100 ]; do\n"
             "  xdpyinfo -display \"$DISPLAY\" >/dev/null 2>&1 && break\n"
@@ -334,8 +334,10 @@ class DesktopManager:
         n = desk.display
         profile = Path("/data/profiles") / desk.bot_id
         profile.mkdir(parents=True, exist_ok=True)
-        uid, root, home = workspace.prepare(desk.bot_id)
+        uid, root, home = workspace.desktop_identity(desk.bot_id)
         if os.geteuid() == 0:
+            if profile.stat().st_uid != uid:
+                workspace._own(profile, uid)
             os.chown(profile, uid, uid)
             os.chmod(profile, 0o700)
         for stale in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
@@ -348,7 +350,7 @@ class DesktopManager:
         _write_service(
             f"chrome-{n}",
             "#!/bin/sh\nexec 2>&1\n"
-            f"export DISPLAY=:{n}\nexport HOME={home}\nexport BOT_ROOT={root}\nexport BOT_ID={workspace.safe_id(desk.bot_id)}\n"
+            f"export DISPLAY=:{n}\nexport HOME={home}\nexport BOT_ROOT={root}\nexport BOT_ID={root.name}\n"
             "i=0\nwhile [ \"$i\" -lt 100 ]; do\n"
             "  xdpyinfo -display \"$DISPLAY\" >/dev/null 2>&1 && break\n"
             "  i=$((i+1)); sleep 0.1\n"
@@ -492,7 +494,7 @@ class DesktopManager:
             raise StaleDesktopEpoch(desk.holder, desk.epoch)
         if actor_id is None and desk.holder not in {"agent", "human"}:
             raise PermissionError("desktop is fenced")
-        uid, _root, home = workspace.prepare(bot_id)
+        uid, _root, home = workspace.desktop_identity(bot_id)
         proc = await asyncio.create_subprocess_exec(
             *shlex.split(_as_bot(uid)), *argv,
             env={"DISPLAY": f":{desk.display}", "HOME": str(home), "PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"},
@@ -610,7 +612,7 @@ class DesktopManager:
 
     async def _raw_input(self, desk: Desktop, argv: list[str]) -> None:
         import shlex
-        uid, _root, home = workspace.prepare(desk.bot_id)
+        uid, _root, home = workspace.desktop_identity(desk.bot_id)
         proc = await asyncio.create_subprocess_exec(
             *shlex.split(_as_bot(uid)), *argv,
             env={"DISPLAY": f":{desk.display}", "HOME": str(home), "PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"},
