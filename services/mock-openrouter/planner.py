@@ -33,7 +33,7 @@ def plan(messages: list) -> dict:
 
 def _plan(messages: list) -> dict:
     transcript = [item for item in messages or [] if isinstance(item, dict)]
-    if any("[compaction-summary-request]" in _content_text(item.get("content")) for item in transcript):
+    if transcript and _content_text(transcript[-1].get("content")).startswith("[compaction-summary-request]"):
         return _final(json.dumps(_compaction_summary(transcript), ensure_ascii=False, sort_keys=True))
     long_run = re.search(r"LONG RUN DEMO\s+(\d+)", _first_user(transcript), re.IGNORECASE)
     if long_run:
@@ -55,7 +55,7 @@ def _compaction_summary(messages: list) -> dict:
     text = "\n".join(_content_text(item.get("content")) for item in messages)
     paths = sorted(set(re.findall(r"/workspace/[A-Za-z0-9_./-]+", text)))[:100]
     return {
-        "goal": _first_user(messages)[:500], "decisions": [], "files_touched": paths,
+        "goal": (re.search(r"LONG RUN DEMO\s+\d+[^\n\"]*", text).group(0) if re.search(r"LONG RUN DEMO\s+\d+", text) else "Continue the task.")[:500], "decisions": [], "files_touched": paths,
         "commits": [], "commands_and_outcomes": [], "errors_and_fixes": [],
         "completed_long_run_steps": _long_run_progress(messages),
         "open_issues": [], "next_step": "Continue with the next numbered long-run step.",

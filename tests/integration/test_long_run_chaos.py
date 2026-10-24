@@ -94,7 +94,7 @@ def test_real_docker_kill_resumes_once():
             f"SELECT count(*) FROM task_run_events WHERE task_id='{task}' AND type='resumed'"
         ) == "1"
         assert int(_psql(
-            f"SELECT count(*) FROM messages WHERE task_id='{task}' AND kind='text' AND content::jsonb->>'type'='resume'"
+            f"SELECT count(*) FROM messages WHERE task_id='{task}' AND kind='text' AND content::jsonb->>'type'='resume' AND content::jsonb->>'event'='resumed'"
         )) <= 1
         writes = int(_psql(f"SELECT count(*) FROM task_steps WHERE task_id='{task}' AND tool='write_file'"))
         assert writes == 30, f"expected one write per scripted step; found {writes}"
