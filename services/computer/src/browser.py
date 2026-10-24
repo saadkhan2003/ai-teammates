@@ -313,31 +313,21 @@ class BrowserHub:
         if desk.holder != "human":
             return {"ok": False, "reason": "not_holder"}
         page = self._page(bot_id, target_id)
-        # The click is a real X event at screen coordinates, so the target tab has to be the
-        # visible one; otherwise it lands on whichever tab is in front (e.g. a later task's page).
+        # Show the target tab to the person, then click in viewport coordinates over CDP.
+        # Mapping to X screen coordinates via screenX/outerHeight is unreliable here: a
+        # background tab reports stale metrics, and the foreground tab reports the X frame
+        # (shadow included), so an xdotool click missed the button by tens of pixels.
         try:
             await page.bring_to_front()
-            await page.wait_for_timeout(150)
         except Exception:
             pass
         box = await page.locator(selector).first.bounding_box(timeout=5000)
         if not box:
             return {"ok": False, "reason": "element_invalid"}
-        meta = await page.evaluate(
-            """() => ({
-                sx: window.screenX || 0,
-                sy: window.screenY || 0,
-                chrome: Math.max((window.outerHeight || 0) - (window.innerHeight || 0), 0)
-            })"""
-        )
-        x = int(meta["sx"] + box["x"] + box["width"] / 2)
-        y = int(meta["sy"] + meta["chrome"] + box["y"] + box["height"] / 2)
-        proc = await asyncio.create_subprocess_exec(
-            "xdotool", "mousemove", "--screen", "0", str(x), str(y), "click", "1",
-            env={"DISPLAY": f":{desk.display}", "HOME": "/data/home/desk", "PATH": "/usr/bin:/bin"},
-        )
-        code = await proc.wait()
-        return {"ok": code == 0, "x": x, "y": y}
+        x = box["x"] + box["width"] / 2
+        y = box["y"] + box["height"] / 2
+        await page.mouse.click(x, y)
+        return {"ok": True, "x": int(x), "y": int(y)}
 
     async def screenshot(self, bot_id: str, target_id: str | None) -> bytes:
         page = await self._resolve_page(bot_id, target_id)
