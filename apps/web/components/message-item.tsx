@@ -11,7 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { PopoverLite } from "@/components/ui/popover-lite";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { api } from "@/lib/api";
-import { CLAMP_MAX_PX, EXPANDED, LONG_PRESS_MS, cancelsLongPress, flatten, needsClamp } from "@/lib/chat-parts";
+import { CLAMP_MAX_PX, EXPANDED, LONG_PRESS_MS, cancelsLongPress, flatten, needsClamp, parseAttachmentMarkers } from "@/lib/chat-parts";
 import { readVideoAnalysis } from "@/lib/video-analysis";
 import { VideoAnalysisCard } from "@/components/video-analysis-card";
 import { QUICK_REACTIONS, searchEmoji } from "@/lib/emoji";
@@ -151,7 +151,7 @@ export function MessageItem(props: MessageItemProps) {
       data-testid="message-item"
       data-role={message.role}
       tabIndex={0}
-      aria-label={`${mine ? "You" : botName}: ${plainTextOf(message).slice(0, 80)}`}
+      aria-label={`${mine ? "You" : botName}: ${parseAttachmentMarkers(plainTextOf(message)).text.slice(0, 80)}`}
       onKeyDown={onKeyDown}
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
@@ -273,7 +273,7 @@ function EmojiPicker({ onPick, current }: { onPick: (emoji: string) => void; cur
 }
 
 /** The body of a message: ordered parts (quotes, replies, text) in the sent bubble, with the 20-line clamp. */
-export function MessageBody({ message, mine, byId, onJump, fallback }: { message: ChatMessage; mine: boolean; byId: Map<string, ChatMessage>; onJump: (id: string) => void; fallback: ReactNode }) {
+export function MessageBody({ message, mine, byId, onJump, fallback, displayAttachments }: { message: ChatMessage; mine: boolean; byId: Map<string, ChatMessage>; onJump: (id: string) => void; fallback: ReactNode; displayAttachments?: Array<{ path?: string; name: string }> }) {
   const parts = message.parts ?? null;
   const videoAnalysis = !parts?.length ? message.videoAnalysis ?? readVideoAnalysis(message.content) : null;
   const box = useRef<HTMLDivElement>(null);
@@ -310,8 +310,8 @@ export function MessageBody({ message, mine, byId, onJump, fallback }: { message
     {message.skill ? <span data-testid="skill-chip" className="mb-1.5 inline-flex items-center gap-1 rounded-full border border-current/25 bg-black/10 px-2 py-0.5 text-xs font-medium"><Sparkles className="h-3 w-3" aria-hidden />{message.skill.label}</span> : null}
     <div ref={box} id={`body-${message.id}`} style={clampStyle}
       className={cn("motion-clamp", clampable && clamped && !expanded && "[mask-image:linear-gradient(to_bottom,black_85%,transparent)]")}>
+      {(displayAttachments ?? message.attachments ?? []).length ? <div className="mb-2 space-y-1">{(displayAttachments ?? message.attachments ?? []).map((item, index) => <div key={item.path ?? `${item.name}-${index}`} data-testid="recording-attachment" className="flex min-h-9 max-w-sm items-center gap-2 rounded-md border border-current/20 bg-black/10 px-2.5 py-1.5 text-xs"><Video className="h-4 w-4 shrink-0" aria-hidden /><span className="truncate">{item.name}</span></div>)}</div> : null}
       {inner ?? (videoAnalysis ? <VideoAnalysisCard analysis={videoAnalysis} /> : <div data-testid="message-text" className="space-y-2">{fallback}</div>)}
-      {message.attachments?.length ? <div className="mt-2 space-y-1">{message.attachments.map(item => <div key={item.path} data-testid="recording-attachment" className="flex min-h-9 items-center gap-2 rounded-lg border border-current/20 bg-black/10 px-2.5 py-1.5 text-xs"><Video className="h-4 w-4 shrink-0" aria-hidden /><span className="truncate" title={item.path}>{item.name}</span></div>)}</div> : null}
     </div>
     {clampable && (clamped || expanded) ? <button type="button" data-testid="bubble-toggle" aria-expanded={expanded} aria-controls={`body-${message.id}`} onClick={toggle}
       className="mt-1 inline-flex min-h-6 items-center gap-1 text-xs font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -320,7 +320,7 @@ export function MessageBody({ message, mine, byId, onJump, fallback }: { message
 }
 
 function PartView({ part, byId, expanded, onJump }: { part: MessagePartView; byId: Map<string, ChatMessage>; expanded: boolean; onJump: (id: string) => void }) {
-  if (part.type === "text") return <Markdown text={part.text} />;
+  if (part.type === "text") return <Markdown text={parseAttachmentMarkers(part.text).text} />;
   if (part.type === "quote") {
     return <blockquote data-testid="quote-block" className={cn("border-l-2 border-current/40 bg-black/10 px-2 py-1 text-[13px] opacity-75 [overflow-wrap:anywhere] whitespace-pre-wrap", !expanded && "line-clamp-4")}>
       <span className="sr-only">Quoted text: </span>{part.text}</blockquote>;

@@ -59,6 +59,8 @@ async function sendVideoQuestion(page: Page) {
 }
 
 async function captureAnswerState(page: Page, theme: "light" | "dark") {
+  await expect(page.getByTestId("recording-attachment")).toContainText("video-watch.mp4");
+  await expect(page.locator("body")).not.toContainText("/workspace/uploads");
   await expect(page.getByTestId("video-analysis-card")).toContainText("A person demonstrates a test scene.");
   await expect(page.getByText("The video shows a person demonstrating a test scene.")).toBeVisible();
   const rows = page.getByTestId("message-item");
@@ -102,11 +104,13 @@ test("staff can view video settings and members cannot", async ({ page }) => {
   await expect(page.getByText("Transcription uses a single fixed service with no fallback.")).toBeVisible();
   await expect(page.getByText("DeepInfra")).toHaveCount(0);
   await page.setViewportSize({ width: 1440, height: 900 });
+  await page.evaluate(async () => Promise.all(document.getAnimations().filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => undefined))));
   await page.screenshot({ path: "/workspace/shots-video-v1/04-admin-video-settings-light.png" });
 
   await page.addInitScript(() => localStorage.setItem("teammates-theme", "dark"));
   await page.reload();
   await expect(page.getByLabel("Video vision model")).toHaveValue("vision-test");
+  await page.evaluate(async () => Promise.all(document.getAnimations().filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => undefined))));
   await page.screenshot({ path: "/workspace/shots-video-v1/04-admin-video-settings-dark.png" });
 
   await page.route("**/api/auth/me", route => route.fulfill({ json: { role: "member" } }));

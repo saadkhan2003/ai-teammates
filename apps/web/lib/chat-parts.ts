@@ -11,6 +11,20 @@ export const MAX_QUOTE_CHARS = 4000;
 export const MAX_QUOTE_TOTAL = 12000;
 export const CLAMP_MAX_PX = 448; // 28rem
 
+export type DisplayAttachment = { key: string; name: string };
+
+/** Remove internal attachment markers from display text while retaining safe filenames for chips. */
+export function parseAttachmentMarkers(raw: string): { text: string; attachments: DisplayAttachment[] } {
+  const attachments: DisplayAttachment[] = [];
+  const text = raw.replace(/^[\t ]*\[attached:[\t ]*([^\]\r\n]+)\][\t ]*/gm, (_marker, target: string) => {
+    const path = target.trim();
+    const name = path.split(/[\\/]/).filter(Boolean).pop() || "Attachment";
+    attachments.push({ key: `${attachments.length}:${path}`, name });
+    return "";
+  }).replace(/^[\t ]+|[\t ]+$/gm, "").replace(/\n{3,}/g, "\n\n").trim();
+  return { text, attachments };
+}
+
 let counter = 0;
 export const partId = () => `p${Date.now().toString(36)}${(counter++).toString(36)}`;
 export const emptyText = (): TextPart => ({ type: "text", id: partId(), text: "" });

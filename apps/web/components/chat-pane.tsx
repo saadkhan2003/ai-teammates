@@ -13,7 +13,7 @@ import { parseBotRow, type BotThreadView } from "@/lib/bot-thread";
 import { MessageBody, MessageItem, plainTextOf } from "@/components/message-item";
 import { ShimmerText, workingStatus } from "@/components/shimmer-text";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { type ComposerPart, addQuote, canSend, hasBlocks, initialParts, normalizeSelection, pillPosition, removePart, setReply, toPayload } from "@/lib/chat-parts";
+import { type ComposerPart, addQuote, canSend, hasBlocks, initialParts, normalizeSelection, parseAttachmentMarkers, pillPosition, removePart, setReply, toPayload } from "@/lib/chat-parts";
 import { setAvatarMode } from "@/lib/avatar-motion";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -381,7 +381,8 @@ export function ChatPane({
           {extras}
           {messages.length === 0 ? <div data-testid="chat-empty" className="py-12 text-center"><p className="font-medium">Start a conversation with {botName}</p><p className="mt-2 text-sm text-muted-foreground">Ask a question, share an idea, or assign some work.</p></div> : null}
           {messages.map((message) => {
-            const blocks = messageBlocks(message.content);
+            const display = parseAttachmentMarkers(message.content);
+            const blocks = messageBlocks(display.text);
             const only = blocks.length === 1 ? blocks[0] : null;
             if (only?.kind === "memory") {
               return (
@@ -436,6 +437,7 @@ export function ChatPane({
               >
                 <MessageBody
                   message={message}
+                  displayAttachments={message.attachments?.length ? message.attachments : display.attachments}
                   mine={mine}
                   byId={byId}
                   onJump={jumpTo}
