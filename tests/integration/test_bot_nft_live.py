@@ -1,6 +1,6 @@
 """Live check: per-bot nftables rules are applied inside a real computer container.
 
-Needs `sudo docker` and the computer image (COMPUTER_IMAGE, default teammates-computer:gaps).
+Needs `sudo docker` and the computer image (COMPUTER_IMAGE, default <COMPOSE_PROJECT>-computer:dev).
 The container is a throwaway (never the stack's computers) with the same cap-drop-all
 baseline as the compute provider plus NET_ADMIN for root, so root can load the rules.
 """
@@ -11,11 +11,12 @@ import os
 import subprocess
 import uuid
 from pathlib import Path
+from stack import PROJECT
 
 import pytest
 
 HERE = Path(__file__).resolve().parent
-IMAGE = os.environ.get("COMPUTER_IMAGE", "teammates-computer:gaps")
+IMAGE = os.environ.get("COMPUTER_IMAGE", f"{PROJECT}-computer:dev")
 CAPS = ["CHOWN", "SETUID", "SETGID", "DAC_OVERRIDE", "FOWNER", "KILL"]
 
 
@@ -38,7 +39,7 @@ def container():
     names = []
 
     def start(mode: str, net_admin: bool = True):
-        name = f"nftlive-{uuid.uuid4().hex[:8]}"
+        name = f"{PROJECT}-nftlive-{uuid.uuid4().hex[:8]}"
         args = ["run", "-d", "--name", name, "--entrypoint", "sleep", "--cap-drop", "ALL"]
         for cap in CAPS + (["NET_ADMIN"] if net_admin else []):
             args += ["--cap-add", cap]

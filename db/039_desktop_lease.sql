@@ -1,6 +1,6 @@
 -- Durable, per-computer display lease. All expiry decisions use PostgreSQL time.
 -- API mutations are single-statement compare-and-swap updates with `WHERE epoch = @expectedEpoch`.
-CREATE TABLE desktop_lease (
+CREATE TABLE IF NOT EXISTS desktop_lease (
     computer_id uuid NOT NULL,
     display integer NOT NULL CHECK (display BETWEEN 1 AND 2),
     holder_kind text NOT NULL DEFAULT 'none' CHECK (holder_kind IN ('none', 'agent', 'human')),
@@ -14,7 +14,7 @@ CREATE TABLE desktop_lease (
         OR (holder_kind <> 'none' AND holder_user_id IS NOT NULL))
 );
 
-CREATE INDEX desktop_lease_expiry_idx ON desktop_lease (expires_at)
+CREATE INDEX IF NOT EXISTS desktop_lease_expiry_idx ON desktop_lease (expires_at)
     WHERE holder_kind <> 'none';
 
 -- Start existing desktops with a reconciliable agent lease at the current provider epoch.

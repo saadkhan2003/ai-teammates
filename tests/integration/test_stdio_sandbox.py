@@ -2,12 +2,9 @@
 from __future__ import annotations
 
 import json
-import os
 
 from test_plugin_catalog import login
-from stack import API
-
-WORKER = os.environ.get("WORKER_TOKEN", "dev-worker-token-change-me")
+from stack import worker_request
 
 
 def test_stdio_server_lists_and_stays_inside_caps():
@@ -35,12 +32,7 @@ def test_stdio_server_lists_and_stays_inside_caps():
     bot_id = bots[0]["id"]
     status, enabled = owner.call("PUT", f"/api/plugins/{installed['id']}/bots/{bot_id}", {"enabled": True})
     assert status == 200, enabled
-    status, tools = owner.call(
-        "GET",
-        f"/internal/bots/{bot_id}/plugin-tools",
-        base=API,
-        headers={"Authorization": "Bearer " + WORKER},
-    )
+    status, tools = worker_request("GET", f"/internal/bots/{bot_id}/plugin-tools")
     assert status == 200, tools
     prefix = "plugin_" + installed["id"].replace("-", "")[:8] + "_"
     names = [item["name"] for item in tools["tools"] if item["name"].startswith(prefix)]

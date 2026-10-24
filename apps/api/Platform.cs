@@ -90,82 +90,65 @@ public sealed class Platform
         finally { await lockConn.ExecuteAsync("SELECT pg_advisory_unlock(840020)"); }
     }
 
+    public static readonly string[] MigrationFiles =
+    [
+        "001_init.sql",
+        "002_reactions.sql",
+        "003_v02.sql",
+        "004_resources.sql",
+        "005_plugins.sql",
+        "006_security.sql",
+        "007_credential_grants.sql",
+        "008_plugin_catalog.sql",
+        "009_v03.sql",
+        "010_provider.sql",
+        "011_devices.sql",
+        "012_reliability.sql",
+        "013_feedback.sql",
+        "014_avatar.sql",
+        "015_bot_messaging.sql",
+        "016_chat_actions.sql",
+        "017_primary.sql",
+        "018_bio.sql",
+        "019_coding_work.sql",
+        "020_coding_items.sql",
+        "021_routine_timezone.sql",
+        "022_routines_v2.sql",
+        "023_routine_test.sql",
+        "024_library.sql",
+        "025_library_actions.sql",
+        "026_library_shares.sql",
+        "027_memory_notes.sql",
+        "028_long_run_resume.sql",
+        "029_resume_timing.sql",
+        "030_tool_dedupe.sql",
+        "031_pause_on_budget.sql",
+        "032_transcript_archive.sql",
+        "033_watchdog.sql",
+        "034_approval_rules.sql",
+        "035_approval_rules_upgrade.sql",
+        "036_rule_scope.sql",
+        "037_device_commands.sql",
+        "038_computer_windows.sql",
+        "039_desktop_lease.sql",
+        "040_tickets_state.sql",
+    ];
+
     private async Task MigrateAndSeedLocked(string ownerUser, string ownerPassword)
     {
-        var sql = await File.ReadAllTextAsync("/migrations/001_init.sql");
+        var sql = await File.ReadAllTextAsync("/migrations/" + MigrationFiles[0]);
         await using var conn = await Data.OpenConnectionAsync();
         var applied = await conn.ExecuteScalarAsync<bool>("SELECT to_regclass('public.schema_migrations') IS NOT NULL");
         if (!applied) await conn.ExecuteAsync(sql);
         await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('001') ON CONFLICT DO NOTHING");
-        var hasReactions = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id='002'");
-        if (hasReactions == 0)
+        foreach (var file in MigrationFiles.Skip(1))
         {
-            var reactions = await File.ReadAllTextAsync("/migrations/002_reactions.sql");
-            await conn.ExecuteAsync(reactions);
-            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('002') ON CONFLICT DO NOTHING");
-        }
-        var hasBeta = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id='003'");
-        if (hasBeta == 0)
-        {
-            var beta = await File.ReadAllTextAsync("/migrations/003_v02.sql");
-            await conn.ExecuteAsync(beta);
-            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('003') ON CONFLICT DO NOTHING");
-        }
-        var hasResources = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id='004'");
-        if (hasResources == 0)
-        {
-            var resources = await File.ReadAllTextAsync("/migrations/004_resources.sql");
-            await conn.ExecuteAsync(resources);
-            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('004') ON CONFLICT DO NOTHING");
-        }
-        var hasPlugins = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id='005'");
-        if (hasPlugins == 0)
-        {
-            var plugins = await File.ReadAllTextAsync("/migrations/005_plugins.sql");
-            await conn.ExecuteAsync(plugins);
-            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('005') ON CONFLICT DO NOTHING");
-        }
-        var hasSecurity = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id='006'");
-        if (hasSecurity == 0)
-        {
-            var security = await File.ReadAllTextAsync("/migrations/006_security.sql");
-            await conn.ExecuteAsync(security);
-            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('006') ON CONFLICT DO NOTHING");
-        }
-        var hasGrants = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id='007'");
-        if (hasGrants == 0)
-        {
-            var grants = await File.ReadAllTextAsync("/migrations/007_credential_grants.sql");
-            await conn.ExecuteAsync(grants);
-            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('007') ON CONFLICT DO NOTHING");
-        }
-        var hasCatalog = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id='008'");
-        if (hasCatalog == 0)
-        {
-            var catalog = await File.ReadAllTextAsync("/migrations/008_plugin_catalog.sql");
-            await conn.ExecuteAsync(catalog);
-            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('008') ON CONFLICT DO NOTHING");
-        }
-        var hasV03 = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id='009'");
-        if (hasV03 == 0)
-        {
-            var v03 = await File.ReadAllTextAsync("/migrations/009_v03.sql");
-            await conn.ExecuteAsync(v03);
-            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('009') ON CONFLICT DO NOTHING");
-        }
-        var hasProvider = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id='010'");
-        if (hasProvider == 0)
-        {
-            var provider = await File.ReadAllTextAsync("/migrations/010_provider.sql");
-            await conn.ExecuteAsync(provider);
-            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('010') ON CONFLICT DO NOTHING");
-        }
-        foreach (var (mid, file) in new[] { ("011", "011_devices.sql"), ("012", "012_reliability.sql"), ("013", "013_feedback.sql"), ("014", "014_avatar.sql"), ("015", "015_bot_messaging.sql"), ("016", "016_chat_actions.sql"), ("017", "017_primary.sql"), ("018", "018_bio.sql"), ("019", "019_coding_work.sql"), ("020", "020_coding_items.sql"), ("021", "021_routine_timezone.sql"), ("022", "022_routines_v2.sql"), ("023", "023_routine_test.sql"), ("024", "024_library.sql"), ("025", "025_library_actions.sql"), ("026", "026_library_shares.sql"), ("027", "027_memory_notes.sql"), ("028", "028_long_run_resume.sql"), ("029", "029_resume_timing.sql"), ("030", "030_tool_dedupe.sql"), ("031", "031_pause_on_budget.sql"), ("032", "032_transcript_archive.sql"), ("033", "033_watchdog.sql"), ("020", "020_approval_rules.sql"), ("030", "030_approval_rules.sql"), ("031", "031_rule_scope.sql"), ("032", "032_device_commands.sql"), ("019", "019_computer_windows.sql"), ("021", "021_desktop_lease.sql"), ("022", "022_tickets_state.sql") })
-
-        {
+            var mid = file[..3];
             if (await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id=@mid", new { mid }) != 0) continue;
-            await conn.ExecuteAsync(await File.ReadAllTextAsync("/migrations/" + file));
-            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES (@mid) ON CONFLICT DO NOTHING", new { mid });
+            await using var tx = await conn.BeginTransactionAsync();
+            await conn.ExecuteAsync(await File.ReadAllTextAsync("/migrations/" + file), transaction: tx);
+            await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES (@mid) ON CONFLICT DO NOTHING", new { mid }, tx);
+            await tx.CommitAsync();
         }
         var count = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM users");
         if (count == 0)
@@ -210,7 +193,8 @@ public sealed class Platform
     {
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(ip.Length <= 128 ? ip : ip[..128]));
         await using var conn = await Data.OpenConnectionAsync();
-        return await conn.ExecuteScalarAsync<bool>("SELECT count(*) FILTER (WHERE failed) >= @failures OR count(*) >= @attempts FROM login_rate_events WHERE ip_hash=@hash AND created_at > clock_timestamp() - interval '10 minutes'", new { hash, failures = LoginRateLimiter.MaxFailures, attempts = LoginRateLimiter.MaxAttempts });
+        var limits = LoginRateLimiter.LimitsFor(TestHooks);
+        return await conn.ExecuteScalarAsync<bool>("SELECT count(*) FILTER (WHERE failed) >= @failures OR count(*) >= @attempts FROM login_rate_events WHERE ip_hash=@hash AND created_at > clock_timestamp() - interval '10 minutes'", new { hash, failures = limits.Failures, attempts = limits.Attempts });
     }
 
     public async Task<long> NoteLoginAttempt(string ip)

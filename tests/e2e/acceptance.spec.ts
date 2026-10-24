@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { autoAllowBrowserOpens, login } from "./helpers";
-import { PG_CONTAINER, AGENT_CONTAINER, API_CONTAINER, MOCK_CONTAINER } from "./containers";
+import { PG_CONTAINER, AGENT_CONTAINER, API_CONTAINER, MOCK_CONTAINER, computerContainer } from "./containers";
 
 const STACK = process.env.STACK!;
 const OPENROUTER = "sk-or-v1-CANARYOPENROUTERKEY8Kx2";
@@ -170,7 +170,7 @@ async function computerSlug(page: Page, botId: string) {
   expect(response.ok()).toBeTruthy();
   const body = (await response.json()) as { computerId?: string };
   const id = body.computerId || botId;
-  return `tm${id.replace(/-/g, "").toLowerCase()}`;
+  return computerContainer(id);
 }
 
 async function assignTracked(page: Page, botId: string, text: string, asTask = true) {

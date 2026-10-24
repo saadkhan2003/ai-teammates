@@ -64,9 +64,13 @@ services:
       ISOLATION_TOKEN: ${ISOLATION_TOKEN:-dev-isolation-token-change-me}
       COMPUTE_IMAGE: teammates-computer:dev
       COMPUTE_PROVIDER: docker
+      COMPUTE_STACK: ${COMPUTE_STACK:-}
       SECCOMP_PROFILE: /var/lib/teammates/seccomp-chrome.json
       SNAPSHOT_DIR: /var/lib/teammates/snapshots
       MAX_COMPUTERS: ${MAX_COMPUTERS:-}
+      COMPUTER_CPU_GUARANTEE: ${COMPUTER_CPU_GUARANTEE:-2}
+      COMPUTER_CPU_BURST: ${COMPUTER_CPU_BURST:-4}
+      COMPUTER_NO_CPU_LIMITS: ${COMPUTER_NO_CPU_LIMITS:-false}
       CGROUP_PARENT: ${CGROUP_PARENT:-}
       DISPLAY_GEOMETRY: ${DISPLAY_GEOMETRY:-1920x1200}
       DISPLAY_DEPTH: ${DISPLAY_DEPTH:-24}
@@ -85,7 +89,7 @@ services:
       MODEL_PLANNER: ${MODEL_PLANNER:-mock/planner}
       MODEL_EMBEDDING: local-hash-64
       SECRETS_MASTER_KEY_FILE: /run/secrets/secrets_master_key
-      ENABLE_TEST_HOOKS: ${ENABLE_TEST_HOOKS:-true}
+      ENABLE_TEST_HOOKS: ${ENABLE_TEST_HOOKS:-false}
       MAX_PARALLEL_TASKS_PER_USER: ${MAX_PARALLEL_TASKS_PER_USER:-6}
     secrets:
       - secrets_master_key

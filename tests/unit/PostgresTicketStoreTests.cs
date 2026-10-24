@@ -53,6 +53,28 @@ public sealed class PostgresTicketStoreTests : IAsyncLifetime
     }
 
     [PostgresFact]
+    public async Task Feedback_survives_transcript_saves_and_stale_completion_then_consumes_on_success()
+    {
+        await using var conn = await _dataA!.OpenConnectionAsync();
+        var owner = await conn.ExecuteScalarAsync<Guid>("INSERT INTO users(username,password_hash) VALUES (@name,'unused') RETURNING id", new { name = Guid.NewGuid().ToString() });
+        var bot = await conn.ExecuteScalarAsync<Guid>("INSERT INTO bots(owner_id,name,token_hash) VALUES (@owner,'feedback','unused') RETURNING id", new { owner });
+        var conversation = await conn.ExecuteScalarAsync<Guid>("INSERT INTO conversations(bot_id) VALUES (@bot) RETURNING id", new { bot });
+        var message = await conn.ExecuteScalarAsync<Guid>("INSERT INTO messages(conversation_id,role,content) VALUES (@conversation,'assistant','answer') RETURNING id", new { conversation });
+        var id = await conn.ExecuteScalarAsync<Guid>("INSERT INTO tasks(bot_id,conversation_id,title,instruction,status,lease_epoch) VALUES (@bot,@conversation,'test','test','running',3) RETURNING id", new { bot, conversation });
+        await conn.ExecuteAsync("INSERT INTO bot_feedback(bot_id,message_id,emoji,action,task_id) VALUES (@bot,@message,'+1','reacted',@id)", new { bot, message, id });
+        var note = $"Hidden feedback, not chat and no reply expected: the user reacted +1 on message {message}.";
+        await conn.ExecuteAsync("INSERT INTO task_transcript(task_id,seq,role,content) VALUES (@id,0,'system',@note)", new { id, note });
+        Assert.Equal(1, await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM bot_feedback WHERE task_id=@id AND consumed_at IS NULL", new { id }));
+        Assert.Empty(await conn.QueryAsync(FeedbackDelivery.CompleteSql, new { id, result = "{}", epoch = 2 }));
+        Assert.Equal(1, await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM bot_feedback WHERE task_id=@id AND consumed_at IS NULL", new { id }));
+        await conn.ExecuteAsync("UPDATE tasks SET status='waiting_resource' WHERE id=@id", new { id });
+        Assert.Empty(await conn.QueryAsync(FeedbackDelivery.CompleteSql, new { id, result = "{}", epoch = 3 }));
+        await conn.ExecuteAsync("UPDATE tasks SET status='running',lease_epoch=4 WHERE id=@id", new { id });
+        Assert.Single(await conn.QueryAsync(FeedbackDelivery.CompleteSql, new { id, result = "{}", epoch = 4 }));
+        Assert.Equal(0, await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM bot_feedback WHERE task_id=@id AND consumed_at IS NULL", new { id }));
+    }
+
+    [PostgresFact]
     public async Task Two_instances_consume_once_and_concurrent_replay_has_one_winner()
     {
         var storeA = new PostgresOneTimeTicketStore(_dataA!);

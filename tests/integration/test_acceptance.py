@@ -12,7 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from stack import AGENT_CONTAINER, API, API_CONTAINER, BASE, MOCK_CONTAINER, PG
+from stack import AGENT_CONTAINER, API, API_CONTAINER, BASE, MOCK_CONTAINER, PG, computer_container
 
 OWNER = os.environ.get("OWNER_USERNAME", "saad")
 PASSWORD = os.environ.get("OWNER_PASSWORD", "teammates-dev")
@@ -60,7 +60,7 @@ def computer_slug(client: Client, bot_id: str) -> str:
     status, body = client.call("GET", "/api/computer")
     assert status == 200, body
     computer_id = (body or {}).get("computerId") or bot_id
-    return "tm" + str(computer_id).replace("-", "").lower()
+    return computer_container(computer_id)
 
 
 _OWNER_COOKIE: str | None = None

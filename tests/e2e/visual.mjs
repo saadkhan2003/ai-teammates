@@ -4,10 +4,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { chromium } from "./node_modules/playwright/index.mjs";
 
-for (const name of ["STACK", "BASE_URL"]) {
-  if (!process.env[name]) throw new Error(`${name} is required to run e2e visual capture`);
+const projects = [...new Set([process.env.E2E_COMPOSE_PROJECT, process.env.COMPOSE_PROJECT, process.env.STACK, process.env.COMPUTE_STACK].filter(Boolean))];
+if (projects.length !== 1 || projects[0] === "teammates" || !/^[a-z0-9][a-z0-9_-]*$/.test(projects[0])) {
+  throw new Error("Set one consistent isolated compose project name");
 }
+process.env.STACK = projects[0];
 const base = process.env.BASE_URL;
+if (!base) throw new Error("BASE_URL is required");
 const owner = process.env.OWNER_USERNAME || "saad";
 const password = process.env.OWNER_PASSWORD || "teammates-dev";
 const outDir = path.resolve("docs/evidence/visual");

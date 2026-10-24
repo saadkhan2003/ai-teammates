@@ -154,9 +154,10 @@ public static class Routes
             {
                 if (shared == null)
                 {
-            var cpu = quota.Cpu == 0 ? 400u : (uint)quota.Cpu;
-            var memory = quota.Memory <= 0 ? 640UL * 1024 * 1024 : (ulong)quota.Memory;
-            var disk = (ulong)(quota.Disk <= 0 ? (long)DiskQuota.DefaultBytes : quota.Disk);
+                    // Legacy 400m is the old default; use the configurable provider CPU budget.
+                    var cpu = quota.Cpu is 0 or 400 ? 0u : (uint)quota.Cpu;
+                    var memory = quota.Memory <= 0 ? 640UL * 1024 * 1024 : (ulong)quota.Memory;
+                    var disk = (ulong)(quota.Disk <= 0 ? (long)DiskQuota.DefaultBytes : quota.Disk);
                     var computerId = new ComputerId(id.ToString());
                     await platform.Compute.CreateComputerAsync(new CreateComputerSpec(computerId, "local", user.Value.ToString(), Environment.GetEnvironmentVariable("COMPUTE_IMAGE") ?? "teammates-computer:dev", IsolationClass.Docker, new ResourceLimits(cpu, memory, disk, 256), "", new Dictionary<string, string> { ["name"] = name }), IdempotencyKey.Require("create-" + id.ToString("n")), ct);
                     await conn.ExecuteAsync(
@@ -1624,7 +1625,7 @@ public static class Routes
                         SELECT f.id FROM bot_feedback f
                         WHERE f.bot_id=@bot AND f.consumed_at IS NULL
                           AND (f.task_id IS NULL OR f.task_id=@task
-                               OR NOT EXISTS (SELECT 1 FROM tasks o WHERE o.id=f.task_id AND o.status IN ('queued','running')))
+                               OR NOT EXISTS (SELECT 1 FROM tasks o WHERE o.id=f.task_id AND o.status NOT IN ('completed','failed','cancelled')))
                         ORDER BY f.created_at FOR UPDATE)
                     RETURNING message_id, emoji, action
                     """,
@@ -1784,8 +1785,6 @@ public static class Routes
                         toolCallId = message.ToolCallId, name = message.Name
                     }, tx);
             }
-            // Feedback is consumed only once the note is durable in the transcript, so a retry re-delivers it.
-            await conn.ExecuteAsync("UPDATE bot_feedback SET consumed_at=now() WHERE task_id=@id AND consumed_at IS NULL", new { id }, tx);
             await tx.CommitAsync();
             if (hasEpoch)
                 await conn.ExecuteAsync("UPDATE tasks SET last_progress_at=now(),blocked_reason=NULL WHERE id=@id AND status='running' AND lease_epoch=@epoch", new { id, epoch });
@@ -1866,7 +1865,9 @@ public static class Routes
             var gate = await conn.QuerySingleOrDefaultAsync<(bool Required, DateTimeOffset? Passed, bool Override)>("SELECT coalesce(t.require_tests,b.require_tests,false),t.tests_passed_at,t.tests_override FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE t.id=@id", new { id });
             if (!TestGate.Check(gate.Required, gate.Passed, gate.Override)) return Results.Json(new { error = "tests_required" }, statusCode: 422);
             var attempt = await conn.QuerySingleOrDefaultAsync<(string? Checkpoint, int Number, int Steps, string? Worker)>("SELECT checkpoint::text,attempt,(SELECT count(*)::int FROM task_steps WHERE task_id=@id),lease_owner FROM tasks WHERE id=@id AND status='running' AND lease_epoch=@epoch", new { id, epoch });
-            var completed = await conn.QuerySingleOrDefaultAsync<(Guid? ConversationId, int Applied)>("UPDATE tasks SET status='completed', result=@result::jsonb, finished_at=now(), lease_owner=NULL, lease_until=NULL, updated_at=now() WHERE id=@id AND status='running' AND lease_epoch=@epoch RETURNING conversation_id, 1 AS applied", new { id, result = JsonSerializer.Serialize(new { text }), epoch });
+            // Completion and feedback consumption share one statement and the same epoch fence.
+            var completed = await conn.QuerySingleOrDefaultAsync<(Guid? ConversationId, int Applied)>(FeedbackDelivery.CompleteSql,
+                new { id, result = JsonSerializer.Serialize(new { text }), epoch });
             if (completed.Applied == 0) return Results.StatusCode(409);
             if (attempt.Checkpoint != null)
             {

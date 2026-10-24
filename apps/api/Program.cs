@@ -47,7 +47,7 @@ var compute = new DockerComputeProvider(new DockerComputeOptions
     ImageRef = config["COMPUTE_IMAGE"] ?? "teammates-computer:dev",
     NetworkName = string.IsNullOrWhiteSpace(config["COMPUTE_NETWORK"]) ? null : config["COMPUTE_NETWORK"],
     SeccompPath = config["SECCOMP_PROFILE"],
-    Stack = string.IsNullOrWhiteSpace(config["COMPUTE_STACK"]) ? null : config["COMPUTE_STACK"],
+    Stack = string.IsNullOrWhiteSpace(config["COMPUTE_STACK"]) ? config["COMPOSE_PROJECT"] : config["COMPUTE_STACK"],
     MaxComputers = HostBudget.MaxComputers(HostBudget.ReadMemTotalBytes(), config["MAX_COMPUTERS"]),
     ComputerToken = config["COMPUTER_TOKEN"] ?? "",
     DisplayGeometry = config["DISPLAY_GEOMETRY"] ?? "1920x1200",
@@ -61,7 +61,8 @@ var compute = new DockerComputeProvider(new DockerComputeOptions
     IdleSuspend = int.TryParse(config["IDLE_SUSPEND_MINUTES"], out var suspendMinutes) && suspendMinutes >= 0 ? TimeSpan.FromMinutes(suspendMinutes) : TimeSpan.FromMinutes(10),
     IdleHibernate = int.TryParse(config["IDLE_HIBERNATE_MINUTES"], out var hibernateMinutes) && hibernateMinutes > 0 ? TimeSpan.FromMinutes(hibernateMinutes) : TimeSpan.FromMinutes(30),
     ResumeTarget = int.TryParse(config["IDLE_RESUME_TARGET_SECONDS"], out var resumeSeconds) && resumeSeconds > 0 ? TimeSpan.FromSeconds(resumeSeconds) : TimeSpan.FromSeconds(15)
-}, secrets, snapshots, computeLog.CreateLogger<DockerComputeProvider>());
+}.WithCpuBudget(config["COMPUTER_CPU_GUARANTEE"], config["COMPUTER_CPU_BURST"],
+    string.Equals(config["COMPUTER_NO_CPU_LIMITS"], "true", StringComparison.OrdinalIgnoreCase)), secrets, snapshots, computeLog.CreateLogger<DockerComputeProvider>());
 
 var s3 = new AmazonS3Client(new BasicAWSCredentials(config["S3_ACCESS_KEY"] ?? "agent", config["S3_SECRET_KEY"] ?? "teammates-dev-s3"), new AmazonS3Config
 {

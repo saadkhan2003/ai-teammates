@@ -12,6 +12,10 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0
 RUN apt-get update && apt-get install -y --no-install-recommends curl tzdata && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /out .
+ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
+    DOTNET_gcServer=0 \
+    DOTNET_GCHeapHardLimit=0x10000000
+EXPOSE 8080
 COPY db/001_init.sql /migrations/001_init.sql
 COPY db/002_reactions.sql /migrations/002_reactions.sql
 COPY db/003_v02.sql /migrations/003_v02.sql
@@ -45,15 +49,11 @@ COPY db/030_tool_dedupe.sql /migrations/030_tool_dedupe.sql
 COPY db/031_pause_on_budget.sql /migrations/031_pause_on_budget.sql
 COPY db/032_transcript_archive.sql /migrations/032_transcript_archive.sql
 COPY db/033_watchdog.sql /migrations/033_watchdog.sql
-COPY db/030_approval_rules.sql /migrations/030_approval_rules.sql
-COPY db/031_rule_scope.sql /migrations/031_rule_scope.sql
-COPY db/032_device_commands.sql /migrations/032_device_commands.sql
-COPY db/019_computer_windows.sql /migrations/019_computer_windows.sql
-COPY db/020_approval_rules.sql /migrations/020_approval_rules.sql
-COPY db/021_desktop_lease.sql /migrations/021_desktop_lease.sql
-COPY db/022_tickets_state.sql /migrations/022_tickets_state.sql
-ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
-    DOTNET_gcServer=0 \
-    DOTNET_GCHeapHardLimit=0x10000000
-EXPOSE 8080
+COPY db/034_approval_rules.sql /migrations/034_approval_rules.sql
+COPY db/035_approval_rules_upgrade.sql /migrations/035_approval_rules_upgrade.sql
+COPY db/036_rule_scope.sql /migrations/036_rule_scope.sql
+COPY db/037_device_commands.sql /migrations/037_device_commands.sql
+COPY db/038_computer_windows.sql /migrations/038_computer_windows.sql
+COPY db/039_desktop_lease.sql /migrations/039_desktop_lease.sql
+COPY db/040_tickets_state.sql /migrations/040_tickets_state.sql
 ENTRYPOINT ["dotnet", "Teammates.Api.dll"]

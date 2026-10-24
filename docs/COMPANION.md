@@ -30,4 +30,4 @@ The companion keeps one outbound WebSocket at `GET /api/devices/{id}/connect`, a
 
 Command execution is available only when the device permission is `ask` or `always` and the device is connected. A device in `off` mode or an offline device returns 409. Command text is limited to 4,000 characters, working directories must be absolute paths or null, and timeout values are clamped to 1–600 seconds (default 60). A disconnect fails in-flight work after the 90-second reconnect grace. Revocation closes a connection when the next frame is handled; the v0.4 device deletion handler has not yet been wired to close the socket immediately.
 
-The migration is `db/032_device_commands.sql`. The API migration runner in `Platform.MigrateAndSeed` must include migration 032 when integrating this chunk; that file is outside the server-side edit allowlist for this worktree task.
+The migration is `db/037_device_commands.sql`. The API migration runner in `Platform.MigrateAndSeed` includes migration 037 in the merged v0.4 manifest.

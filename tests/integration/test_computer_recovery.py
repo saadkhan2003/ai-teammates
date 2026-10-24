@@ -6,7 +6,7 @@ import time
 
 import threading
 from test_acceptance import BASE, auto_allow_browser_opens, login, result_text, submit, wait_task
-from stack import API_CONTAINER
+from stack import API_CONTAINER, COMPUTER_STACK_FILTER, computer_container
 
 MARKER = "/workspace/notes/restore-marker.txt"
 MARKER_BODY = b"kept-across-restore\n"
@@ -18,7 +18,7 @@ def _docker(*args: str) -> str:
 
 
 def _container(computer_id: str) -> str:
-    return "tm" + computer_id.replace("-", "").lower()
+    return computer_container(computer_id)
 
 
 def _wait_health(timeout: float = 90) -> None:
@@ -88,7 +88,7 @@ def test_deleted_container_recovers_on_the_next_tool_call():
 
 def _restore_if_missing(client, name: str) -> None:
     try:
-        listed = _docker("ps", "-a", "--filter", f"name=^{name}$", "--format", "{{.Names}}")
+        listed = _docker("ps", "-a", "--filter", f"name=^{name}$", "--filter", COMPUTER_STACK_FILTER, "--format", "{{.Names}}")
     except subprocess.CalledProcessError:
         return
     if name in listed.split():
@@ -142,7 +142,7 @@ def _run(client, bot_id: str, computer_id: str, name: str) -> None:
     assert computer_after.get("computerId") == computer_id
     status, marker = client.call("GET", f"/api/bots/{bot_id}/files/raw?path={MARKER}")
     assert status == 200 and "kept-across-restore" in str(marker), marker
-    running = _docker("ps", "--filter", f"name=^{name}$", "--format", "{{.Names}}")
+    running = _docker("ps", "--filter", f"name=^{name}$", "--filter", COMPUTER_STACK_FILTER, "--format", "{{.Names}}")
     assert name in running.split()
 
     _docker("rm", "-f", name)

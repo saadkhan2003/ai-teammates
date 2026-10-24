@@ -9,7 +9,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from stack import SUBNET, CHAIN, BASE, COMPUTER_NETWORK_FILTER, COMPUTERS_NETWORK, OBJECT_STORE_CONTAINER, PG, PROJECT_FILTER
+from stack import SUBNET, CHAIN, BASE, ISOLATION_SOCKET, COMPUTER_NETWORK_FILTER, COMPUTERS_NETWORK, OBJECT_STORE_CONTAINER, PG, PROJECT_FILTER
 
 if not SUBNET or not CHAIN or CHAIN == "TEAMS-ISO":
     raise RuntimeError("STACK_SUBNET and a private ISOLATION_CHAIN are required for network tests")
@@ -185,7 +185,7 @@ def _api(method: str, path: str, cookie: str, body: dict | None = None, timeout:
 def _wait_rules(timeout: float = 20) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if os.path.exists("/run/teammates/isolation.sock") and _rules_present():
+        if os.path.exists(ISOLATION_SOCKET) and _rules_present():
             return
         time.sleep(0.25)
     raise AssertionError("isolation rules did not return")
@@ -208,11 +208,11 @@ def test_flushed_chain_refuses_start_until_rules_return():
     subprocess.check_call(["sudo", "env", f"ISOLATION_CHAIN={CHAIN}", f"ISOLATION_SUBNET={SUBNET}", "bash", str(ROOT / "deploy/computer-isolation.sh")])
     assert _rules_present()
     guard = _isolation_name()
-    status, login, cookie = _api("POST", "/api/auth/login", "", {"username": "saad", "password": os.environ.get("OWNER_PASSWORD", "teammates-dev")})
+    status, login, cookie = _api("POST", "/api/auth/login", "", {"username": os.environ.get("OWNER_USERNAME", "saad"), "password": os.environ.get("OWNER_PASSWORD", "teammates-dev")})
     assert status == 200, login
     status, computer, cookie = _api("GET", "/api/computer", cookie)
     assert status == 200 and computer.get("computerId"), computer
-    owned = _docker("ps", "-a", "--filter", f"label=teammates.computer_id={computer['computerId']}", "--format", "{{.Names}}")
+    owned = _docker("ps", "-a", "--filter", f"label=teammates.computer_id={computer['computerId']}", "--filter", COMPUTER_NETWORK_FILTER, "--format", "{{.Names}}")
     assert owned, computer
     cookie = _bring_owned_up(cookie, owned)
     names = _alive(_computers())

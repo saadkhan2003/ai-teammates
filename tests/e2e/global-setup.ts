@@ -4,9 +4,8 @@ import path from "node:path";
 import { request } from "@playwright/test";
 import { PG_CONTAINER } from "./containers";
 
-// The product default for a user's computer is 0.4 CPU (db/004_resources.sql). Under the full suite that
-// container is throttled most periods, CDP and docker exec stall for minutes, and security/acceptance/delete
-// calls time out (small CFS quotas also get stuck throttled on this host). Give the test owner's computer E2E_COMPUTER_CPU_MILLIS (default 4000) on the isolated stack.
+// Existing isolated test DBs may still contain the legacy 400m default.
+// A quota-free stack ignores this explicit override as well as provider defaults.
 function raiseTestComputerCpu(username: string) {
   const stack = process.env.STACK;
   if (!stack) throw new Error("STACK is required");

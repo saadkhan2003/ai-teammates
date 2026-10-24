@@ -21,7 +21,7 @@ test("library search, filters, share menu and keyboard work at phone and desktop
       ] } });
     });
     await page.route(shares, route => route.request().method() === "POST"
-      ? route.fulfill({ json: { url: "http://127.0.0.1:18080/s/" + "a".repeat(64) } })
+      ? route.fulfill({ json: { url: (process.env.BASE_URL! + "/s/") + "a".repeat(64) } })
       : route.fulfill({ json: { shares: [{ id: "share-1", expiresAt: new Date(Date.now() + 86400000).toISOString(), revokedAt: null }] } }));
     await page.route(`${shares}/**`, route => route.fulfill({ json: { ok: true } }));
     await page.route("**/api/public/library/**", route => route.request().url().endsWith("/content")

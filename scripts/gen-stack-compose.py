@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import os
 import pathlib
 import re
 
@@ -34,7 +35,13 @@ def main() -> None:
     ap.add_argument("--out", required=True)
     ap.add_argument("--no-cpu-limits", action="store_true",
                     help="drop cpus: quotas (test stacks; small CFS quotas get stuck throttled on this host, see docs/ARCH_G3_STATUS.md)")
+    ap.add_argument("--max-computers", type=int, default=int(os.environ.get("MAX_COMPUTERS") or "5"),
+                    help="computer cap for this test stack (default 5; MAX_COMPUTERS overrides)")
     a = ap.parse_args()
+    if a.max_computers < 1:
+        ap.error("--max-computers must be positive")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", a.name) or a.name == "teammates":
+        ap.error("name must be an isolated compose project, never teammates")
     name, chain = a.name, a.chain or (a.name.upper() + "-ISO")
     text = (ROOT / "docker-compose.yml").read_text()
     text = text.replace("172.30.28", a.subnet).replace("/run/teammates", f"/run/{name}")
@@ -46,6 +53,8 @@ def main() -> None:
     doc["services"]["caddy"]["ports"] = [f"127.0.0.1:{a.http}:80"] + ([f"127.0.0.1:{a.https}:443"] if a.https else [])
     doc["services"]["api"]["ports"] = [f"127.0.0.1:{a.api}:8080"]
     doc["services"]["api"]["environment"]["COMPUTE_STACK"] = name
+    doc["services"]["api"]["environment"]["MAX_COMPUTERS"] = str(a.max_computers)
+    doc["services"]["api"]["environment"]["ENABLE_TEST_HOOKS"] = "true"
     iso = doc["services"]["isolation"]["environment"]
     iso["ISOLATION_SUBNET"] = a.subnet
     iso["ISOLATION_CHAIN"] = chain
@@ -56,6 +65,7 @@ def main() -> None:
         if svc.get("restart") == "unless-stopped":
             svc["restart"] = "no"
     if a.no_cpu_limits:
+        doc["services"]["api"]["environment"]["COMPUTER_NO_CPU_LIMITS"] = "true"
         for svc in doc["services"].values():
             svc.pop("cpus", None)
     if a.api2:

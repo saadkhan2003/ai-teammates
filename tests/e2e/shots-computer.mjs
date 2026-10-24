@@ -1,7 +1,13 @@
 // Screenshots of a bot's real desktop (via the computer service) and the web fullscreen view.
 //   BASE_URL=... OWNER_PASSWORD=... node tests/e2e/shots-computer.mjs
 import { chromium } from "./node_modules/playwright/index.mjs";
-const base = process.env.BASE_URL || "http://127.0.0.1:18080";
+const projects = [...new Set([process.env.E2E_COMPOSE_PROJECT, process.env.COMPOSE_PROJECT, process.env.STACK, process.env.COMPUTE_STACK].filter(Boolean))];
+if (projects.length !== 1 || projects[0] === "teammates" || !/^[a-z0-9][a-z0-9_-]*$/.test(projects[0])) {
+  throw new Error("Set one consistent isolated compose project name");
+}
+process.env.STACK = projects[0];
+const base = process.env.BASE_URL;
+if (!base) throw new Error("BASE_URL is required");
 const out = process.env.SHOT_DIR || "../../shots";
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 1024, height: 576 } });

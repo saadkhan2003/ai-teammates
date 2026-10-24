@@ -53,7 +53,7 @@ def test_owner_changes_increase_epoch_and_rollback_keeps_state():
 
 
 def test_migration_has_db_clock_cas_fields_and_epoch():
-    sql = (ROOT / "db/021_desktop_lease.sql").read_text().lower()
+    sql = (ROOT / "db/039_desktop_lease.sql").read_text().lower()
     for field in ("computer_id", "display", "holder_kind", "holder_user_id", "tab_id", "epoch", "expires_at", "updated_at"):
         assert re.search(rf"\b{field}\b", sql)
     assert "bigint" in sql and "clock_timestamp()" in sql

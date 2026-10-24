@@ -68,7 +68,7 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
         var configuration = new DockerClientConfiguration(new Uri(options.DockerHost), null!, TimeSpan.FromMinutes(2), TimeSpan.FromSeconds(15), null);
         _client = configuration.CreateClient(new System.Version(1, 44));
         _isolationHealthy = string.IsNullOrWhiteSpace(options.IsolationSocket) ? 1 : 0;
-        _disks = new LoopDisk(_client, options.ImageRef, options.CgroupParent);
+        _disks = new LoopDisk(_client, options.ImageRef, options.CgroupParent, options.DisableCpuLimits);
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", options.ComputerToken);
         try { Reload(); }
         catch (Exception ex) { _logger.LogWarning("compute inventory not loaded yet: {Message}", ex.Message); }
@@ -122,6 +122,8 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
                 if (!started) throw ComputeException.Internal("docker did not start the computer");
                 var computer = Record(spec.Id, spec.TenantId, spec.OwnerId, spec.ImageRef, ComputerState.Running, created.ID, [workspace, profile], labels, name);
                 NoteDisk(computer.Id, loop, quota);
+                await WaitUntilUsable(created.ID, ct);
+                MarkReady(spec.Id);
                 _logger.LogInformation("computer created {ComputerId} container {Name}", spec.Id.Value, name);
                 _idempotency.Remember(key, hash, computer);
                 return computer;
@@ -130,6 +132,7 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
             {
                 if (loop) await _disks.UnmountAsync(workspace, profile, CancellationToken.None);
                 await DiscardPartial(containerId, workspace, profile, ct);
+                if (containerId != null) Forget(spec.Id);
                 if (ex is ComputeException) throw;
                 if (ex is DockerApiException api && api.Message.Contains("No such image", StringComparison.OrdinalIgnoreCase))
                     throw ComputeException.Unavailable("computer image is not present on the docker host");
@@ -900,7 +903,8 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
                 "portal.example.edu.evil.test:127.0.0.1"
             },
             Memory = spec.Limits.MemoryBytes > 0 ? (long)spec.Limits.MemoryBytes : _options.MemoryBytes,
-            NanoCPUs = spec.Limits.VcpuMillis > 0 ? spec.Limits.VcpuMillis * 1_000_000L : _options.NanoCpus
+            CPUShares = _options.CpuShares,
+            NanoCPUs = _options.DisableCpuLimits ? 0 : spec.Limits.VcpuMillis > 0 ? spec.Limits.VcpuMillis * 1_000_000L : _options.NanoCpus
         };
         if (!security.Contains("no-new-privileges:true")) security.Add("no-new-privileges:true");
         host.MemorySwap = host.Memory;
@@ -1371,6 +1375,7 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
                 try
                 {
                     var existing = await _client.Containers.InspectContainerAsync(name, ct);
+                    RequireOwned(existing.Config.Labels);
                     if (existing.State.Running || existing.State.Paused)
                     {
                         var adopted = Record(id, row?.Computer.TenantId ?? "local", ownerId, image, existing.State.Paused ? ComputerState.Hibernated : ComputerState.Running, existing.ID, [workspace, profile], labels, name, epoch);
@@ -1387,6 +1392,7 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
                                 }
                             }
                         }
+                        if (!existing.State.Paused) await WaitUntilUsable(existing.ID, ct);
                         MarkReady(id);
                         _logger.LogInformation("computer still present {ComputerId} container {Name}", id.Value, name);
                         return adopted;
@@ -1427,7 +1433,7 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
         {
             try
             {
-                var (code, _, _) = await Capture(containerId, ["python3", "-c", "import os; assert os.path.isdir('/workspace'); print('ready')"], TimeSpan.FromSeconds(4), ct);
+                var (code, _, _) = await Capture(containerId, ["python3", "-c", ComputerReadiness.ProbeScript], TimeSpan.FromSeconds(4), ct);
                 if (code == 0) return;
             }
             catch (Exception ex) { last = ex; }
@@ -1469,7 +1475,9 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
             if (string.IsNullOrWhiteSpace(target)) continue;
             try
             {
-                await _client.Containers.RemoveContainerAsync(target, new ContainerRemoveParameters { Force = true, RemoveVolumes = false }, ct);
+                var existing = await _client.Containers.InspectContainerAsync(target, ct);
+                RequireOwned(existing.Config.Labels);
+                await _client.Containers.RemoveContainerAsync(existing.ID, new ContainerRemoveParameters { Force = true, RemoveVolumes = false }, ct);
             }
             catch (DockerApiException ex) when ((int)ex.StatusCode == 404)
             {
@@ -1623,6 +1631,11 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
     {
         labels.TryGetValue(StackLabel, out var stack);
         return string.Equals(stack ?? "", _options.Stack ?? "", StringComparison.Ordinal);
+    }
+
+    private void RequireOwned(IDictionary<string, string> labels)
+    {
+        if (!OwnedByThisStack(labels)) throw ComputeException.PermissionDenied("computer belongs to another stack");
     }
 
     public static string ContainerName(ComputerId id) => "tm" + Slug(id.Value);

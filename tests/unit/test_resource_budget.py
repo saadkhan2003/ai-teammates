@@ -23,7 +23,7 @@ ROUTES = (ROOT / "apps/api/Routes.cs").read_text()
 HOST_MEMORY_MIB = 3600
 HOST_CPUS = 2.0
 COMPUTER_MEMORY_MIB = 640
-COMPUTER_CPUS = 0.40
+COMPUTER_CPU_BURST = 4.0
 COMPUTERS = 2
 
 
@@ -90,10 +90,9 @@ def totals(blocks: dict[str, str]) -> tuple[int, float]:
     return memory, cpus
 
 
-def test_caps_fit_a_4gb_two_core_host():
+def test_memory_caps_fit_a_4gb_host_and_infrastructure_cpu_is_bounded():
     memory, cpus = totals(always_on(service_blocks(COMPOSE)))
     memory += COMPUTERS * COMPUTER_MEMORY_MIB
-    cpus += COMPUTERS * COMPUTER_CPUS
     assert memory <= HOST_MEMORY_MIB, memory
     assert cpus <= HOST_CPUS, cpus
 
@@ -101,7 +100,6 @@ def test_caps_fit_a_4gb_two_core_host():
 def test_three_computers_fit_an_8gb_host():
     memory, cpus = totals(always_on(service_blocks(COMPOSE)))
     memory += 3 * COMPUTER_MEMORY_MIB
-    cpus += 3 * COMPUTER_CPUS
     assert memory <= 7000, memory
     assert cpus <= 4.0, cpus
 
@@ -117,7 +115,11 @@ def test_platform_defaults_are_right_sized():
     assert "jit=off" in COMPOSE
     assert "GOMEMLIMIT:" in COMPOSE
     assert "640L * 1024 * 1024" in OPTIONS
-    assert "400_000_000" in OPTIONS
+    # Computer weights share the available CPUs; burst ceilings are not reservations.
+    assert "CpuShares { get; init; } = 2048" in OPTIONS
+    assert "NanoCpus { get; init; } = 4_000_000_000" in OPTIONS
+    assert "COMPUTER_CPU_GUARANTEE: ${COMPUTER_CPU_GUARANTEE:-2}" in COMPOSE
+    assert "COMPUTER_CPU_BURST: ${COMPUTER_CPU_BURST:-4}" in COMPOSE
     assert "ShmSize = 64L * 1024 * 1024" in PROVIDER
     assert "MemorySwap = host.Memory" in PROVIDER
     assert '["/tmp"] = "rw,nosuid,nodev,size=64m"' in PROVIDER

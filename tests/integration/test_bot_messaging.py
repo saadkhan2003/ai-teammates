@@ -29,12 +29,22 @@ def _until(fn, timeout=90, what="condition"):
 
 
 def _approval(client, bot, action):
-    return _until(lambda: next((a for a in _workspace(client, bot).get("approvals") or [] if a.get("action") == action and a.get("status") in (None, "pending")), None), what=f"{action} approval")
+    def pending():
+        ws = _workspace(client, bot)
+        match = next((a for a in ws.get("approvals") or [] if a.get("action") == action and a.get("status") in (None, "pending")), None)
+        if match:
+            return match
+        failed = [t for t in ws.get("tasks") or [] if t.get("status") == "failed"]
+        assert not failed, f"Task failed before {action} approval: {failed}"
+        return None
+    return _until(pending, what=f"{action} approval")
 
 
 def _pair():
     client = login()
     assert client.call("POST", "/api/secrets", {"namespace": "openrouter", "name": "default", "type": "API_KEY", "value": OPENROUTER})[0] == 200
+    status, policy = client.call("PUT", "/api/policy", {"classes": {"bot_message": "ASK", "bot_manage": "ASK"}, "modelAssist": False})
+    assert status == 200, policy
     tag = uuid.uuid4().hex[:5]
     a = _bot(client, "Alpha" + tag)
     b = _bot(client, "Beta" + tag)

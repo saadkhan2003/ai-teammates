@@ -37,12 +37,14 @@ sealed class LoopDisk
     private readonly string _image;
     private readonly string? _cgroupParent;
     private int _mkfsOk;
+    private readonly bool _disableCpuLimits;
 
-    public LoopDisk(DockerClient client, string image, string? cgroupParent)
+    public LoopDisk(DockerClient client, string image, string? cgroupParent, bool disableCpuLimits = false)
     {
         _client = client;
         _image = image;
         _cgroupParent = cgroupParent;
+        _disableCpuLimits = disableCpuLimits;
     }
 
     public async Task EnsureMkfsAsync(CancellationToken ct)
@@ -170,7 +172,7 @@ sealed class LoopDisk
             PidMode = pidHost ? "host" : null,
             NetworkMode = "none",
             Memory = 128L * 1024 * 1024,
-            NanoCPUs = 200_000_000,
+            NanoCPUs = _disableCpuLimits ? 0 : 200_000_000,
             CgroupParent = string.IsNullOrWhiteSpace(_cgroupParent) ? null : _cgroupParent
         };
         if (binds is { Count: > 0 }) host.Binds = binds.ToList();

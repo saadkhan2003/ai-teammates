@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import { autoAllowBrowserOpens, login } from "./helpers";
-import { PG_CONTAINER, AGENT_CONTAINER, API_CONTAINER, MOCK_CONTAINER } from "./containers";
+import { PG_CONTAINER, AGENT_CONTAINER, API_CONTAINER, MOCK_CONTAINER, computerContainer } from "./containers";
 
 const STACK = process.env.STACK!;
 const LOGIN_CANARY = "CanaryLoginPassword9911";
@@ -128,7 +128,7 @@ test("policy card, data-policy block, and login form", async ({ page }) => {
   const computer = await page.request.get("/api/computer");
   expect(computer.ok()).toBeTruthy();
   const computerBody = (await computer.json()) as { computerId?: string };
-  const slug = `tm${(computerBody.computerId || botId).replace(/-/g, "").toLowerCase()}`;
+  const slug = computerContainer(computerBody.computerId || botId);
   const pageText = capture([
     "docker",
     "exec",
