@@ -313,6 +313,13 @@ class BrowserHub:
         if desk.holder != "human":
             return {"ok": False, "reason": "not_holder"}
         page = self._page(bot_id, target_id)
+        # The click is a real X event at screen coordinates, so the target tab has to be the
+        # visible one; otherwise it lands on whichever tab is in front (e.g. a later task's page).
+        try:
+            await page.bring_to_front()
+            await page.wait_for_timeout(150)
+        except Exception:
+            pass
         box = await page.locator(selector).first.bounding_box(timeout=5000)
         if not box:
             return {"ok": False, "reason": "element_invalid"}
