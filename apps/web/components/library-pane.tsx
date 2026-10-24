@@ -132,10 +132,12 @@ export function LibraryPane({ botId, botName, botShape, botColor }: { botId: str
 
   if (!loaded) return <LibrarySkeleton />;
   const populated = data.pinned.length > 0 || data.groups.some(group => group.items.length > 0);
+  if (activeType === "Pages") return <div className="space-y-4"><Button variant="ghost" size="sm" onClick={() => setActiveType("All")}>← All library items</Button><PagesLibrary botId={botId} /></div>;
   if (!populated && !error) return <div className="py-8 text-center">
     <div className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-lg border border-border bg-card text-muted-foreground"><FileText className="h-5 w-5" /></div>
     <p className="text-sm font-medium">Nothing here yet</p>
     <p className="mx-auto mt-1 max-w-64 text-xs text-muted-foreground">Files you send and files your teammate shares will show up here.</p>
+    <Button variant="outline" size="sm" className="mt-4" onClick={() => setActiveType("Pages")}>Pages</Button>
   </div>;
 
   const visibleGroups = data.groups.filter(group => group.items.length > 0);
@@ -212,8 +214,6 @@ export function LibraryPane({ botId, botName, botShape, botColor }: { botId: str
     if (event.key === "Enter" && !["BUTTON", "A"].includes((event.target as HTMLElement).tagName)) { event.preventDefault(); const item = [...(searchItems ?? []), ...allItems].find(candidate => candidate.id === row.dataset.libraryItem); if (item) setPreview(item); }
     if (event.key === "Delete") { event.preventDefault(); const item = [...(searchItems ?? []), ...allItems].find(candidate => candidate.id === row.dataset.libraryItem); if (item) setDeleteTarget(item); }
   };
-
-  if (activeType === "Pages") return <div className="space-y-4"><Button variant="ghost" size="sm" onClick={() => setActiveType("All")}>← All library items</Button><PagesLibrary botId={botId} /></div>;
 
   return <div className="space-y-4" onKeyDown={keyNav}>
     <div className="space-y-2">
