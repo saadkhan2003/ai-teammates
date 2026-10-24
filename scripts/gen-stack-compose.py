@@ -32,6 +32,8 @@ def main() -> None:
     ap.add_argument("--api2", type=int, help="publish a second API instance on this port")
     ap.add_argument("--chain", help="iptables chain, default <NAME>-ISO upper-case")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--no-cpu-limits", action="store_true",
+                    help="drop cpus: quotas (test stacks; small CFS quotas get stuck throttled on this host, see docs/ARCH_G3_STATUS.md)")
     a = ap.parse_args()
     name, chain = a.name, a.chain or (a.name.upper() + "-ISO")
     text = (ROOT / "docker-compose.yml").read_text()
@@ -53,6 +55,9 @@ def main() -> None:
     for svc in doc["services"].values():
         if svc.get("restart") == "unless-stopped":
             svc["restart"] = "no"
+    if a.no_cpu_limits:
+        for svc in doc["services"].values():
+            svc.pop("cpus", None)
     if a.api2:
         api2 = copy.deepcopy(doc["services"]["api"])
         api2["ports"] = [f"127.0.0.1:{a.api2}:8080"]
