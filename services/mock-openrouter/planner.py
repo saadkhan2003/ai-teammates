@@ -45,6 +45,9 @@ def _plan(messages: list) -> dict:
     instruction = _first_user(transcript).lower()
     if "make a page" in instruction or "update the page" in instruction:
         if any(item.get("role") == "tool" for item in transcript):
+            last = next((item for item in reversed(transcript) if item.get("role") == "tool"), {})
+            if '"ok": false' in str(last.get("content", "")).lower():
+                return _final("I couldn't save the page just now. Please try again in a minute.")
             return _final("Your page is ready.")
         if "update the page" in instruction:
             return _tool("edit_page", {"edits": [{"find": "Quarterly overview", "replace": "Updated quarterly overview"}], "summary": "Updated the quarterly heading"})

@@ -61,4 +61,15 @@ public class PagesToolPolicyTests
         Assert.True(PagesRateLimit.Allow(key, 2)); Assert.True(PagesRateLimit.Allow(key, 2)); Assert.False(PagesRateLimit.Allow(key, 2));
         Assert.True(PagesRateLimit.Allow(Guid.NewGuid(), 2));
     }
+
+    [Fact]
+    public void TeammatePageToolsDoNotShareTheOwnersReadBucket()
+    {
+        var owner = Guid.NewGuid();
+        Assert.NotEqual(owner, PagesRateLimit.ToolKey(owner));
+        Assert.Equal(PagesRateLimit.ToolKey(owner), PagesRateLimit.ToolKey(owner));
+        for (var i = 0; i < 3; i++) PagesRateLimit.Allow(owner, 3);
+        Assert.False(PagesRateLimit.Allow(owner, 3));
+        Assert.True(PagesRateLimit.Allow(PagesRateLimit.ToolKey(owner), 3));
+    }
 }

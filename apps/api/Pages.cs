@@ -275,7 +275,7 @@ public static class PagesRoutes
 
     public static async Task<object> Tool(Platform platform, Guid owner, Guid bot, Guid task, string tool, JsonElement args)
     {
-        if (!PagesRateLimit.Allow(owner, 60)) throw new ToolHalt("denied", "page_rate_limited");
+        if (!PagesRateLimit.Allow(PagesRateLimit.ToolKey(owner), 60)) throw new ToolHalt("denied", "page_rate_limited");
         await using var c = await platform.Data.OpenConnectionAsync();
         var context = await c.QuerySingleOrDefaultAsync<(Guid Id, Guid? Chat, Guid? Origin)>("SELECT id,conversation_id AS chat,origin_thread_id AS origin FROM tasks WHERE id=@task AND bot_id=@bot", new { task, bot });
         if (context.Id == Guid.Empty || context.Origin != null) throw new ToolHalt("denied", "page_requires_owner_chat");
@@ -315,6 +315,8 @@ public static class PagesRateLimit
 {
     private sealed class Bucket { public readonly object Gate = new(); public DateTime Start = DateTime.UtcNow; public int Hits; }
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, Bucket> Buckets = new();
+    // Teammate page tools get their own bucket so the owner's canvas and library reads cannot starve them.
+    public static Guid ToolKey(Guid owner) => new(SHA256.HashData(Encoding.UTF8.GetBytes("pages-tool:" + owner)).AsSpan(0, 16));
     public static bool Allow(Guid key, int limit)
     {
         if (Buckets.Count > 10000)
