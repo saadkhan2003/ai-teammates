@@ -147,7 +147,8 @@ test("phone layout, events, and live desktop", async ({ page }, testInfo) => {
 
   const botId = new URL(page.url()).pathname.split("/").pop() ?? "";
   expect(botId).toMatch(/^[0-9a-f-]{36}$/i);
-  psql(`INSERT INTO approvals (bot_id, action, target, reason, status) VALUES ('${botId}', 'send_email', 'ada@example.com', 'Mobile layout check', 'pending');`);
+  // Product approvals always belong to a task (the approvals list joins tasks), so seed both.
+  psql(`WITH t AS (INSERT INTO tasks (bot_id, title, instruction, status) VALUES ('${botId}', 'Mobile layout check', 'Mobile layout check', 'waiting_approval') RETURNING id) INSERT INTO approvals (bot_id, task_id, action, target, reason, status) SELECT '${botId}', id, 'send_email', 'ada@example.com', 'Mobile layout check', 'pending' FROM t;`);
   await page.reload();
   const approvalCard = page.getByTestId("approval-card").filter({ hasText: "send_email" });
   await expect(approvalCard).toBeVisible();
@@ -155,7 +156,7 @@ test("phone layout, events, and live desktop", async ({ page }, testInfo) => {
   expect(approval!.width).toBeGreaterThan((page.viewportSize()?.width ?? 0) * 0.7);
   await noHorizontalScroll(page);
   await shot("approval");
-  psql("DELETE FROM approvals WHERE reason = 'Mobile layout check';");
+  psql("DELETE FROM approvals WHERE reason = 'Mobile layout check'; DELETE FROM tasks WHERE title = 'Mobile layout check' AND status = 'waiting_approval';");
 
   for (const path of pages) {
     await page.goto(path);
