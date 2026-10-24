@@ -7,6 +7,33 @@ const shots = "/workspace/shots-account-v1";
 async function capture(page: Page, route: string, name: string, ready: () => Promise<unknown>) {
   await page.goto(route);
   await ready();
+  if (route === "/settings") {
+    const layers = await page.getByTestId("settings-modal").evaluate((panel) => {
+      const describe = (element: Element) => {
+        const style = getComputedStyle(element);
+        return {
+          element: `${element.tagName.toLowerCase()}${element.id ? `#${element.id}` : ""}${element.getAttribute("data-testid") ? `[data-testid=${element.getAttribute("data-testid")}]` : ""}`,
+          opacity: style.opacity,
+          filter: style.filter,
+          backdropFilter: style.backdropFilter,
+          zIndex: style.zIndex,
+          isDialogOverlay: element.hasAttribute("data-radix-dialog-overlay"),
+        };
+      };
+      const ancestors: Element[] = [];
+      for (let node: Element | null = panel; node; node = node.parentElement) ancestors.push(node);
+      const siblings = Array.from(panel.parentElement?.children ?? []).filter((node) => node !== panel).map(describe);
+      const rect = panel.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return { ancestors: ancestors.map(describe), siblings, centerInsidePanel: !!hit && panel.contains(hit) };
+    });
+    console.log("Settings modal layer diagnostics", JSON.stringify(layers));
+    expect(layers.ancestors.every((node) => node.opacity === "1"), "settings panel and ancestors must be fully opaque").toBe(true);
+    expect(layers.centerInsidePanel, "the settings panel must be above the overlay at its center").toBe(true);
+    const overlay = layers.siblings.find((node) => node.isDialogOverlay);
+    const panel = layers.ancestors[0];
+    if (overlay && Number(overlay.zIndex) >= Number(panel.zIndex)) throw new Error("Dialog overlay is at or above the settings panel");
+  }
   for (const theme of ["light", "dark"] as const) {
     await page.evaluate((value) => {
       localStorage.setItem("teammates-theme", value);

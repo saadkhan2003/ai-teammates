@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ListSkeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
+import { SettingsBillingTabs } from "@/components/settings-billing-tabs";
 
 type Billing = {
   plan: string | null;
@@ -45,7 +46,8 @@ export default function BillingPage() {
   }
 
   return <main className="flex flex-col gap-5" data-testid="billing-page">
-    <header><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Account</p><h2 className="mt-1 text-xl font-semibold">Billing overview</h2><p className="mt-1 text-sm text-muted-foreground">Review this month’s activity, plan and receipts.</p></header>
+    <header><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Account</p><h2 className="mt-1 text-xl font-semibold">Billing</h2><p className="mt-1 text-sm text-muted-foreground">Review this month’s activity, plan and receipts.</p></header>
+    <SettingsBillingTabs />
     {error ? <p role="alert" className="rounded-md border border-destructive/30 p-3 text-sm">{error}</p> : null}
     {!billing && !error ? <ListSkeleton label="Loading billing" rows={3} /> : null}
     {billing ? <>

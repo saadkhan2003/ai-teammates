@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { StateMessage } from "@/components/state-message";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/utils";
+import { SettingsBillingTabs } from "@/components/settings-billing-tabs";
 
 type Usage = {
   modelCalls?: number;
@@ -66,6 +67,8 @@ export default function UsagePage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <header><h2 className="text-xl font-semibold">Usage details</h2><p className="text-sm text-muted-foreground">Review activity and account limits.</p></header>
+      <SettingsBillingTabs />
       {loading ? <ListSkeleton label="Loading usage" rows={3} /> : null}
       {error ? <p className="text-sm text-clay">{error}</p> : null}
       {usage ? (
