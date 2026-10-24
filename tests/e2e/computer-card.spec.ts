@@ -3,6 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 const owner = process.env.OWNER_USERNAME ?? "saad";
 const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
 const SHOTS = "/workspace/ai-teammates-live/shots";
+const watchTicket = /\/api\/computers\/[^/]+\/vnc-ticket\?role=watch(?:&|$)/;
 
 async function makeBot(page: Page) {
   const login = await page.request.post("/api/auth/login", { data: { username: owner, password } });
@@ -26,7 +27,7 @@ test("computer card: waking, error with retry, sleeping, offline, click-through"
     // Waking: the token request hangs, so the card says it is connecting.
     let release: (() => void) | undefined;
     const held = new Promise<void>((resolve) => { release = resolve; });
-    await page.route("**/computer/view-token", async (route) => { await held; await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "down" }) }); });
+    await page.route(watchTicket, async (route) => { await held; await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "down" }) }); });
     await open(page, bot.id);
     const frame = page.getByTestId("desktop-frame");
     await expect(frame).toHaveAttribute("data-phase", "connecting");
@@ -45,8 +46,8 @@ test("computer card: waking, error with retry, sleeping, offline, click-through"
     await expect(page.getByTestId("computer-state-title")).toHaveText("Couldn't connect");
     await page.screenshot({ path: `${SHOTS}/12-computer-error.png` });
     let asked = 0;
-    await page.unroute("**/computer/view-token");
-    await page.route("**/computer/view-token", async (route) => { asked += 1; await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "still down" }) }); });
+    await page.unroute(watchTicket);
+    await page.route(watchTicket, async (route) => { asked += 1; await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "still down" }) }); });
     await page.getByTestId("computer-retry").click();
     await expect.poll(() => asked).toBeGreaterThan(0);
     // The retry button must not open the full view.
@@ -58,7 +59,7 @@ test("computer card: waking, error with retry, sleeping, offline, click-through"
     await expect(page.getByTestId("computer-state-title")).toHaveText("You're offline");
     await page.screenshot({ path: `${SHOTS}/12-computer-offline.png` });
     await context.setOffline(false);
-    await page.unroute("**/computer/view-token");
+    await page.unroute(watchTicket);
   } finally {
     await context.setOffline(false);
     await page.request.delete(`/api/bots/${bot.id}`);
@@ -88,7 +89,7 @@ test("computer card respects reduced motion", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   const bot = await makeBot(page);
   try {
-    await page.route("**/computer/view-token", async () => { /* never answers */ });
+    await page.route(watchTicket, async () => { /* never answers */ });
     await open(page, bot.id);
     await expect(page.getByTestId("desktop-frame")).toHaveAttribute("data-phase", "connecting");
     const names = await page.getByTestId("computer-state").locator("div.animate-pulse").evaluateAll((els) => els.map((el) => getComputedStyle(el).animationName));
