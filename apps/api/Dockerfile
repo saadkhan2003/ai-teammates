@@ -38,12 +38,15 @@ COPY db/023_routine_test.sql /migrations/023_routine_test.sql
 COPY db/024_library.sql /migrations/024_library.sql
 COPY db/025_library_actions.sql /migrations/025_library_actions.sql
 COPY db/026_library_shares.sql /migrations/026_library_shares.sql
+COPY db/027_memory_notes.sql /migrations/027_memory_notes.sql
 COPY db/028_long_run_resume.sql /migrations/028_long_run_resume.sql
 COPY db/029_resume_timing.sql /migrations/029_resume_timing.sql
 COPY db/030_tool_dedupe.sql /migrations/030_tool_dedupe.sql
 COPY db/031_pause_on_budget.sql /migrations/031_pause_on_budget.sql
 COPY db/032_transcript_archive.sql /migrations/032_transcript_archive.sql
 COPY db/033_watchdog.sql /migrations/033_watchdog.sql
+COPY db/030_approval_rules.sql /migrations/030_approval_rules.sql
+COPY db/031_rule_scope.sql /migrations/031_rule_scope.sql
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
     DOTNET_gcServer=0 \
     DOTNET_GCHeapHardLimit=0x10000000

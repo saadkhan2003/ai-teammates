@@ -143,6 +143,7 @@ export function Workspace({ botId }: { botId: string }) {
   const [routineEditRequest, setRoutineEditRequest] = useState<{ key: number; text: string } | undefined>();
   const [artifacts, setArtifacts] = useState<ListState<Artifact>>(emptyList);
   const [detailTab, setDetailTab] = useState("overview");
+  const [memoryFocusId, setMemoryFocusId] = useState<string | undefined>();
   const [finishedLogins, setFinishedLogins] = useState<LoginRequest[]>([]);
   const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
   const [llmConnected, setLlmConnected] = useState<boolean | null>(null);
@@ -232,6 +233,7 @@ export function Workspace({ botId }: { botId: string }) {
           setAgentEvents(current => mergeAgentEvent(current, { ...event, ...detail, type: event.type }));
         }
       }
+      if (type === "memory" && (event?.botId === botId || (typeof event?.taskId === "string" && taskIds.current.has(event.taskId)))) void loadAux(["memories"]);
       schedule();
       if (type !== "task" && type !== "artifact") return;
       const extra: Array<"files" | "memories" | "skills" | "routines" | "artifacts"> = ["artifacts", "routines"];
@@ -350,6 +352,8 @@ export function Workspace({ botId }: { botId: string }) {
           </p>
         ) : null}
         <ChatPane
+          onEditMemory={(id) => { setMemoryFocusId(id); setDetailTab("memory"); setPaneRaw(true); }}
+          onMemoryChanged={() => void loadAux(["memories"])}
           editRequest={routineEditRequest}
           conversationId={workspace.conversationId}
           messages={mergeHistory(older.botId === botId ? older.items : [], workspace.messages ?? [])}
@@ -574,7 +578,7 @@ export function Workspace({ botId }: { botId: string }) {
                     <SkillsPane skills={skills.items} error={skills.error} loaded={skills.loaded} onChanged={() => void loadAux(["skills"])} />
                   </TabsContent>
                   <TabsContent value="memory">
-                    <MemoryPane botId={botId} memories={memories.items} error={memories.error} loaded={memories.loaded} onChanged={() => void loadAux(["memories"])} />
+                    <MemoryPane botId={botId} memories={memories.items} error={memories.error} loaded={memories.loaded} onChanged={() => void loadAux(["memories"])} focusMemoryId={memoryFocusId} onFocused={() => setMemoryFocusId(undefined)} />
                   </TabsContent>
                   <TabsContent value="tasks">
                     <TasksPane botId={botId} tasks={workspace.tasks ?? []} openrouterConnected={workspace.openrouterConnected !== false} onChanged={() => void loadWorkspace()} />

@@ -527,7 +527,8 @@ public static class Routes
         app.MapGet("/api/bots/{id:guid}/tasks", async (HttpContext ctx, Guid id) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             await using var conn = await platform.Data.OpenConnectionAsync();
             var rows = await conn.QueryAsync("SELECT id, title, instruction, status, kind, model_calls, waiting_reason, error, error_code, result::text AS result, created_at FROM tasks WHERE bot_id=@id ORDER BY created_at DESC", new { id });
             return Results.Json(rows.Select(Platform.ToDict));
@@ -565,16 +566,98 @@ public static class Routes
             return Results.Json(new { ok = n > 0 });
         });
 
+        app.MapGet("/api/approval-rules", async (HttpContext ctx) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            var rows = await conn.QueryAsync("""
+                SELECT r.id, r.bot_id AS "botId", b.name AS "botName", r.action_class AS "actionClass", r.tool,
+                       r.matcher::text AS matcher, r.created_at AS "createdAt", r.last_used_at AS "lastUsedAt", r.use_count AS "useCount"
+                FROM approval_rules r LEFT JOIN bots b ON b.id=r.bot_id
+                WHERE r.owner_id=@owner AND r.revoked_at IS NULL ORDER BY r.created_at DESC
+                """, new { owner = user });
+            var result = new List<Dictionary<string, object?>>();
+            foreach (var row in rows)
+            {
+                var item = Platform.ToDict((object)row);
+                if (item.TryGetValue("matcher", out object? raw) && raw is string json) item["matcher"] = JsonSerializer.Deserialize<JsonElement>(json);
+                result.Add(item.ToDictionary(pair => pair.Key, pair => (object?)pair.Value, StringComparer.Ordinal));
+            }
+            return Results.Json(result);
+        });
+
+        app.MapPatch("/api/approval-rules/{id:guid}", async (HttpContext ctx, Guid id, JsonElement body) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            var existing = await conn.QuerySingleOrDefaultAsync<(string ActionClass, string Tool, string Matcher, Guid? BotId)>("SELECT action_class, tool, matcher::text, bot_id FROM approval_rules WHERE id=@id AND owner_id=@owner AND revoked_at IS NULL", new { id, owner = user });
+            if (existing.Tool == null) return Results.NotFound();
+            Guid? bot = existing.BotId;
+            if (body.TryGetProperty("botId", out var botNode))
+            {
+                bot = botNode.ValueKind == JsonValueKind.String ? botNode.GetGuid() : null;
+            }
+            if (bot != null && !await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM bots WHERE id=@bot AND owner_id=@owner)", new { bot, owner = user })) return Results.NotFound();
+            var matcher = existing.Matcher;
+            if (body.TryGetProperty("matcher", out var newMatcher) && newMatcher.ValueKind == JsonValueKind.Object)
+            {
+                matcher = newMatcher.GetRawText();
+                if (!ApprovalRules.IsNarrowerOrEqual(existing.ActionClass, existing.Tool, existing.Matcher, matcher))
+                    return Results.Json(new { error = "scope_must_be_narrower_or_equal" }, statusCode: 400);
+            }
+            if (!ApprovalRules.AllowedClass(existing.ActionClass, existing.Tool)) return Results.Json(new { error = "not_allowed_for_class" }, statusCode: 400);
+            var n = await conn.ExecuteAsync("UPDATE approval_rules SET bot_id=@bot, matcher=@matcher::jsonb WHERE id=@id AND owner_id=@owner AND revoked_at IS NULL", new { bot, matcher, id, owner = user });
+            if (n == 0) return Results.NotFound();
+            await platform.Audit(user.Value.ToString(), "approval_rule.edited", null, null, new { id, actionClass = existing.ActionClass, tool = existing.Tool, changedScope = true, changedMatcher = matcher != existing.Matcher });
+            return Results.Json(new { ok = true });
+        });
+
+        app.MapDelete("/api/approval-rules/{id:guid}", async (HttpContext ctx, Guid id) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            var row = await conn.QuerySingleOrDefaultAsync<(string ActionClass, string Tool)>("UPDATE approval_rules SET revoked_at=now() WHERE id=@id AND owner_id=@owner AND revoked_at IS NULL RETURNING action_class, tool", new { id, owner = user });
+            if (row.Tool == null) return Results.NotFound();
+            await platform.Audit(user.Value.ToString(), "approval_rule.revoked", null, null, new { id, actionClass = row.ActionClass, tool = row.Tool });
+            return Results.Json(new { ok = true });
+        });
+
         app.MapPost("/api/approvals/{id:guid}/decide", async (HttpContext ctx, Guid id, JsonElement body) =>
         {
             var user = await RequireUser(ctx, platform);
             if (user == null) return Results.Unauthorized();
             var decision = body.GetProperty("decision").GetString();
             await using var conn = await platform.Data.OpenConnectionAsync();
-            var taskId = await conn.ExecuteScalarAsync<Guid?>("SELECT a.task_id FROM approvals a JOIN bots b ON b.id=a.bot_id WHERE a.id=@id AND b.owner_id=@owner AND a.status='pending'", new { id, owner = user });
+            var approval = await conn.QuerySingleOrDefaultAsync<(Guid? TaskId, Guid BotId, string Action, string RiskClass, string Proposed)>("SELECT a.task_id, a.bot_id, a.action, a.risk_class, a.proposed::text FROM approvals a JOIN bots b ON b.id=a.bot_id WHERE a.id=@id AND b.owner_id=@owner AND a.status='pending'", new { id, owner = user });
+            var taskId = approval.TaskId;
             if (taskId == null) return Results.NotFound();
-            if (decision is "allow_once" or "allow_domain")
+            if (decision is "allow_once" or "allow_domain" or "allow_always")
             {
+                if (decision == "allow_always")
+                {
+                    if (!ApprovalRules.AllowedClass(approval.RiskClass, approval.Action))
+                        return Results.Json(new { error = "not_allowed_for_class" }, statusCode: 400);
+                    if (string.IsNullOrWhiteSpace(approval.Proposed)) return Results.Json(new { error = "not_allowed_for_class" }, statusCode: 400);
+                    var peer = await conn.ExecuteScalarAsync<bool>("SELECT (origin_thread_id IS NOT NULL OR origin_depth > 0 OR kind IN ('peer','peer_reply','peer_notice')) FROM tasks WHERE id=@task", new { task = taskId });
+                    if (peer) return Results.Json(new { error = "not_allowed_for_class" }, statusCode: 400);
+                    JsonDocument proposed;
+                    try { proposed = JsonDocument.Parse(approval.Proposed); }
+                    catch (JsonException) { return Results.Json(new { error = "not_allowed_for_class" }, statusCode: 400); }
+                    using (proposed)
+                    {
+                    var taskInstruction = await conn.ExecuteScalarAsync<string>("SELECT instruction FROM tasks WHERE id=@task", new { task = taskId }) ?? "";
+                    if (HardDeny.Match(approval.Action, approval.Action + " " + proposed.RootElement.GetRawText(), await SecurityRoutes.DenyRules(platform)) != null ||
+                        Dlp.AssessArgs(approval.Action, proposed.RootElement, taskInstruction, approval.RiskClass).Block)
+                        return Results.Json(new { error = "not_allowed_for_class" }, statusCode: 400);
+                    var built = ApprovalRules.Build(approval.RiskClass, approval.Action, proposed.RootElement);
+                    if (built == null) return Results.Json(new { error = "not_allowed_for_class" }, statusCode: 400);
+                    var ruleId = await conn.ExecuteScalarAsync<Guid>("INSERT INTO approval_rules(owner_id,bot_id,action_class,tool,matcher,created_from_approval_id) VALUES(@owner,@bot,@class,@tool,@matcher::jsonb,@approval) RETURNING id", new { owner = user, bot = approval.BotId, @class = built.Value.Class, tool = built.Value.Tool, matcher = built.Value.Matcher, approval = id });
+                    await platform.Audit(user.Value.ToString(), "approval_rule.created", approval.BotId, taskId, new { id = ruleId, actionClass = approval.RiskClass, tool = approval.Action, scope = Dlp.Redact(built.Value.Display) });
+                    }
+                }
                 if (decision == "allow_domain")
                 {
                     var row = await conn.QuerySingleOrDefaultAsync<(string Target, string RiskClass)>("SELECT target, risk_class FROM approvals WHERE id=@id", new { id });
@@ -679,21 +762,228 @@ public static class Routes
         app.MapGet("/api/bots/{id:guid}/memories", async (HttpContext ctx, Guid id) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             await using var conn = await platform.Data.OpenConnectionAsync();
-            var rows = await conn.QueryAsync("SELECT id, content, source, created_at FROM memories WHERE bot_id=@id ORDER BY created_at DESC", new { id });
-            return Results.Json(rows.Select(Platform.ToDict));
+            var limit = int.TryParse(ctx.Request.Query["limit"], out var requested) ? Math.Clamp(requested, 1, 100) : 50;
+            var kind = ctx.Request.Query["kind"].ToString();
+            var status = ctx.Request.Query["status"].ToString();
+            var visibility = ctx.Request.Query["visibility"].ToString();
+            var query = ctx.Request.Query["q"].ToString();
+            var cursor = Guid.TryParse(ctx.Request.Query["cursor"], out var parsedCursor) ? parsedCursor : (Guid?)null;
+            var rows = (await conn.QueryAsync("""
+                SELECT id, bot_id, content, source, kind, visibility, status, author, sensitive, pinned,
+                       source_message_id, source_task_id, supersedes_id, created_at, updated_at, last_confirmed_at, deleted_at
+                FROM memories WHERE owner_id=@owner AND (bot_id=@id OR visibility='owner')
+                  AND status IN ('active','pending') AND deleted_at IS NULL
+                  AND (@kind='' OR kind=@kind) AND (@status='' OR status=@status)
+                  AND (@visibility='' OR visibility=@visibility) AND (@q='' OR content ILIKE @contains)
+                  AND (@cursor::uuid IS NULL OR (created_at,id)<(SELECT created_at,id FROM memories WHERE id=@cursor))
+                ORDER BY created_at DESC,id DESC LIMIT @limitPlusOne
+                """, new { owner = user, id, kind, status, visibility, q = query, contains = "%" + query + "%", cursor, limitPlusOne = limit + 1 })).ToList();
+            var next = rows.Count > limit ? rows[limit - 1].id.ToString() : null;
+            if (rows.Count > limit) rows.RemoveAt(limit);
+            var counts = await conn.QuerySingleAsync("""
+                SELECT count(*) FILTER(WHERE kind='profile') profile, count(*) FILTER(WHERE kind='journal') journal,
+                       count(*) FILTER(WHERE kind='rule') rule, count(*) FILTER(WHERE kind='fact') fact,
+                       count(*) FILTER(WHERE status='pending') pending, count(*) total
+                FROM memories WHERE owner_id=@owner AND (bot_id=@id OR visibility='owner') AND status IN ('active','pending')
+                """, new { owner = user, id });
+            return Results.Json(new { items = rows.Select(Platform.ToDict), nextCursor = next, counts = Platform.ToDict(counts) });
         });
 
         app.MapPost("/api/bots/{id:guid}/memories", async (HttpContext ctx, Guid id, JsonElement body) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
-            var content = body.GetProperty("content").GetString() ?? "";
-            if (Dlp.HasStrict(content)) return Results.BadRequest(new { error = "credential shaped" });
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
+            if (!MemoryWriteLimits.Allow(user.Value)) return Results.StatusCode(429);
+            var content = body.TryGetProperty("content", out var contentEl) ? contentEl.GetString() ?? "" : "";
+            var kind = body.TryGetProperty("kind", out var kindEl) ? kindEl.GetString() ?? "profile" : "profile";
+            var visibility = body.TryGetProperty("visibility", out var visibilityEl) ? visibilityEl.GetString() ?? "" : "";
+            var ruleScope = body.TryGetProperty("scope", out var scopeEl) && scopeEl.ValueKind == JsonValueKind.String ? scopeEl.GetString() : null;
+            var result = await new MemoryStore(platform).Save(id, user.Value, null, content, kind, "user", visibility, content, explicitRequest: true, maxChars: 1000, notice: false, ruleScope: ruleScope);
+            var encoded = JsonSerializer.SerializeToElement(result);
+            if (encoded.TryGetProperty("saved", out var saved) && saved.ValueKind == JsonValueKind.True || encoded.TryGetProperty("duplicate", out var duplicate) && duplicate.ValueKind == JsonValueKind.True) return Results.Json(result);
+            return Results.Json(new { error = encoded.TryGetProperty("reason", out var reason) ? reason.GetString() : "not_saved" }, statusCode: 400);
+        });
+
+        app.MapPatch("/api/bots/{id:guid}/memories/{mid:guid}", async (HttpContext ctx, Guid id, Guid mid, JsonElement body) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
+            if (!MemoryWriteLimits.Allow(user.Value)) return Results.StatusCode(429);
             await using var conn = await platform.Data.OpenConnectionAsync();
-            var memoryId = await conn.ExecuteScalarAsync<Guid>("INSERT INTO memories (bot_id, content, source, embedding) VALUES (@id, @content, 'user', @emb::vector) RETURNING id", new { id, content, emb = Embedder.VectorLiteral(content) });
-            return Results.Json(new { id = memoryId });
+            var row = await conn.QuerySingleOrDefaultAsync<(string Content, string Kind, string Visibility, string Status, Guid? ConversationId, string? Scope)>("SELECT content,kind,visibility,status,conversation_id, rule_scope AS scope FROM memories WHERE id=@mid AND bot_id=@id AND owner_id=@owner", new { mid, id, owner = user });
+            if (row.Content == null || row.Status is "deleted" or "superseded") return Results.NotFound();
+            if (body.TryGetProperty("content", out var contentEl))
+            {
+                var content = contentEl.GetString() ?? "";
+                var kind = body.TryGetProperty("kind", out var kindEl) ? kindEl.GetString() ?? row.Kind : row.Kind;
+                var visibility = body.TryGetProperty("visibility", out var visibilityEl) ? visibilityEl.GetString() ?? row.Visibility : row.Visibility;
+                var result = await new MemoryStore(platform).Save(id, user.Value, null, content, kind, "user", visibility, content, explicitRequest: true, maxChars: 1000, supersedesId: mid, notice: false, conversationId: row.ConversationId, ruleScope: row.Scope);
+                var encoded = JsonSerializer.SerializeToElement(result);
+                if ((!encoded.TryGetProperty("saved", out var saved) || saved.ValueKind != JsonValueKind.True) && (!encoded.TryGetProperty("duplicate", out var duplicate) || duplicate.ValueKind != JsonValueKind.True))
+                    return Results.Json(new { error = encoded.TryGetProperty("reason", out var reason) ? reason.GetString() : "not_saved" }, statusCode: 400);
+                return Results.Json(result);
+            }
+            if (body.TryGetProperty("pinned", out var pinned)) await conn.ExecuteAsync("UPDATE memories SET pinned=@value WHERE id=@mid AND bot_id=@id AND owner_id=@owner", new { value = pinned.GetBoolean(), mid, id, owner = user });
+            if (body.TryGetProperty("visibility", out var visibilityOnly))
+            {
+                var visibility = visibilityOnly.GetString() ?? "bot";
+                if (row.Kind == "rule") visibility = "bot";
+                if (visibility is not ("bot" or "owner")) return Results.BadRequest(new { error = "invalid_visibility" });
+                if (visibility == "owner" && row.Kind != "profile") visibility = "bot";
+                var sharing = await conn.ExecuteScalarAsync<bool?>("SELECT share_owner FROM bot_memory_settings WHERE bot_id=@id", new { id });
+                if (visibility == "owner" && sharing == false) visibility = "bot";
+                await conn.ExecuteAsync("UPDATE memories SET visibility=@visibility WHERE id=@mid AND bot_id=@id AND owner_id=@owner", new { visibility, mid, id, owner = user });
+                await platform.Audit("memory", "memory.visibility_changed", id, null, new { memoryId = mid, visibility });
+            }
+            var updated = await conn.QuerySingleAsync("SELECT id,content,kind,visibility,status,pinned,updated_at FROM memories WHERE id=@mid", new { mid });
+            return Results.Json(Platform.ToDict(updated));
+        });
+
+        app.MapDelete("/api/bots/{id:guid}/memories/{mid:guid}", async (HttpContext ctx, Guid id, Guid mid) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
+            if (!MemoryWriteLimits.Allow(user.Value)) return Results.StatusCode(429);
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            var row = await conn.QuerySingleOrDefaultAsync<(string Kind, string Hash)>("UPDATE memories SET status='deleted',deleted_at=now() WHERE id=@mid AND bot_id=@id AND owner_id=@owner AND status IN ('active','pending') RETURNING kind,content_hash", new { mid, id, owner = user });
+            if (row.Kind == null) return Results.NotFound();
+            await conn.ExecuteAsync("INSERT INTO memory_events(memory_id,bot_id,owner_id,actor,action,before_hash) VALUES(@mid,@id,@owner,'user','delete',@hash)", new { mid, id, owner = user, hash = row.Hash });
+            await platform.Audit("memory", "memory.deleted", id, null, new { id = mid, kind = row.Kind, hash = row.Hash });
+            return Results.Json(new { ok = true, id = mid, undoUntil = DateTimeOffset.UtcNow.AddMinutes(10) });
+        });
+
+        app.MapPost("/api/bots/{id:guid}/memories/{mid:guid}/restore", async (HttpContext ctx, Guid id, Guid mid) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
+            if (!MemoryWriteLimits.Allow(user.Value)) return Results.StatusCode(429);
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            var restored = await conn.ExecuteAsync("UPDATE memories SET status='active',deleted_at=NULL WHERE id=@mid AND bot_id=@id AND owner_id=@owner AND status='deleted' AND deleted_at>now()-interval '10 minutes'", new { mid, id, owner = user });
+            if (restored == 0) return Results.NotFound();
+            await conn.ExecuteAsync("INSERT INTO memory_events(memory_id,bot_id,owner_id,actor,action) VALUES(@mid,@id,@owner,'user','restore')", new { mid, id, owner = user });
+            return Results.Json(new { ok = true, id = mid });
+        });
+
+        app.MapPost("/api/bots/{id:guid}/memories/{mid:guid}/accept", async (HttpContext ctx, Guid id, Guid mid) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
+            if (!MemoryWriteLimits.Allow(user.Value)) return Results.StatusCode(429);
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            var changed = await conn.ExecuteAsync("UPDATE memories SET status='active',author='user',last_confirmed_at=now() WHERE id=@mid AND bot_id=@id AND owner_id=@owner AND status='pending'", new { mid, id, owner = user });
+            if (changed == 0) return Results.NotFound();
+            await conn.ExecuteAsync("INSERT INTO memory_events(memory_id,bot_id,owner_id,actor,action) VALUES(@mid,@id,@owner,'user','accept')", new { mid, id, owner = user });
+            return Results.Json(new { ok = true, id = mid });
+        });
+
+        app.MapPost("/api/bots/{id:guid}/memories/{mid:guid}/dismiss", async (HttpContext ctx, Guid id, Guid mid) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
+            if (!MemoryWriteLimits.Allow(user.Value)) return Results.StatusCode(429);
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            var changed = await conn.ExecuteAsync("UPDATE memories SET status='deleted',deleted_at=now() WHERE id=@mid AND bot_id=@id AND owner_id=@owner AND status='pending'", new { mid, id, owner = user });
+            if (changed == 0) return Results.NotFound();
+            await conn.ExecuteAsync("INSERT INTO memory_events(memory_id,bot_id,owner_id,actor,action) VALUES(@mid,@id,@owner,'user','dismiss')", new { mid, id, owner = user });
+            return Results.Json(new { ok = true, id = mid });
+        });
+
+        app.MapGet("/api/bots/{id:guid}/memories/{mid:guid}/history", async (HttpContext ctx, Guid id, Guid mid) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            var rows = await conn.QueryAsync("SELECT m.id,m.content,m.kind,m.status,m.author,m.created_at,e.at,e.action,e.before_hash,e.after_hash FROM memories m LEFT JOIN memory_events e ON e.memory_id=m.id WHERE m.id=@mid AND m.bot_id=@id AND m.owner_id=@owner ORDER BY e.at", new { mid, id, owner = user });
+            return Results.Json(rows.Select(Platform.ToDict));
+        });
+
+        app.MapGet("/api/bots/{id:guid}/memory-settings", async (HttpContext ctx, Guid id) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            var settings = await conn.QuerySingleOrDefaultAsync<(string Mode, bool ShareOwner)>("SELECT mode,share_owner FROM bot_memory_settings WHERE bot_id=@id", new { id });
+            return Results.Json(new { mode = settings.Mode ?? "auto", shareOwner = settings.Mode == null || settings.ShareOwner });
+        });
+
+        app.MapPut("/api/bots/{id:guid}/memory-settings", async (HttpContext ctx, Guid id, JsonElement body) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
+            if (!MemoryWriteLimits.Allow(user.Value)) return Results.StatusCode(429);
+            var mode = body.TryGetProperty("mode", out var modeEl) ? modeEl.GetString() ?? "auto" : "auto";
+            if (mode is not ("auto" or "ask" or "off")) return Results.BadRequest(new { error = "invalid_mode" });
+            var shareOwner = !body.TryGetProperty("shareOwner", out var shareEl) || shareEl.GetBoolean();
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            await conn.ExecuteAsync("INSERT INTO bot_memory_settings(bot_id,mode,share_owner) VALUES(@id,@mode,@share) ON CONFLICT(bot_id) DO UPDATE SET mode=EXCLUDED.mode,share_owner=EXCLUDED.share_owner,updated_at=now()", new { id, mode, share = shareOwner });
+            await platform.Audit("memory", "memory.settings_changed", id, null, new { mode, shareOwner });
+            return Results.Json(new { mode, shareOwner });
+        });
+
+        app.MapGet("/api/bots/{id:guid}/memories/export", async (HttpContext ctx, Guid id) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            var rows = await conn.QueryAsync("SELECT id,content,kind,visibility,status,author,sensitive,pinned,created_at,updated_at FROM memories WHERE owner_id=@owner AND (bot_id=@id OR visibility='owner') AND status IN ('active','pending') ORDER BY created_at", new { owner = user, id });
+            await platform.Audit("memory", "memory.exported", id, null, new { count = rows.Count() });
+            return Results.Json(new { items = rows.Select(Platform.ToDict) });
+        });
+
+        app.MapPost("/api/bots/{id:guid}/memories/forget-all", async (HttpContext ctx, Guid id, JsonElement body) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
+            if (!MemoryWriteLimits.Allow(user.Value)) return Results.StatusCode(429);
+            if (!body.TryGetProperty("confirm", out var confirm) || confirm.GetString() != "forget all") return Results.BadRequest(new { error = "confirmation_required" });
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            var count = await conn.ExecuteAsync("""
+                WITH deleted AS (
+                    UPDATE memories SET status='deleted',deleted_at=now()
+                    WHERE bot_id=@id AND owner_id=@owner AND status IN ('active','pending')
+                    RETURNING id,bot_id,owner_id,content_hash
+                )
+                INSERT INTO memory_events(memory_id,bot_id,owner_id,actor,action,before_hash)
+                SELECT id,bot_id,owner_id,'user','forget_all',content_hash FROM deleted
+                """, new { id, owner = user });
+            await platform.Audit("memory", "memory.forget_all", id, null, new { count });
+            return Results.Json(new { ok = true, count });
+        });
+
+        app.MapPost("/api/bots/{id:guid}/memories/undo-task", async (HttpContext ctx, Guid id, JsonElement body) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
+            if (!MemoryWriteLimits.Allow(user.Value)) return Results.StatusCode(429);
+            if (!body.TryGetProperty("taskId", out var taskEl) || !Guid.TryParse(taskEl.GetString(), out var taskId)) return Results.BadRequest(new { error = "invalid_task" });
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            await using var tx = await conn.BeginTransactionAsync();
+            var created = await conn.QueryAsync<(Guid Id, Guid? SupersedesId, string Hash)>("SELECT id,supersedes_id,content_hash FROM memories WHERE bot_id=@id AND owner_id=@owner AND source_task_id=@task AND status IN ('active','pending') AND created_at>now()-interval '10 minutes' FOR UPDATE", new { id, owner = user, task = taskId }, tx);
+            foreach (var item in created)
+            {
+                await conn.ExecuteAsync("UPDATE memories SET status='deleted',deleted_at=now() WHERE id=@id", new { id = item.Id }, tx);
+                if (item.SupersedesId is { } previous)
+                    await conn.ExecuteAsync("UPDATE memories SET status='active',deleted_at=NULL WHERE id=@id AND bot_id=@bot AND owner_id=@owner AND status='superseded'", new { id = previous, bot = id, owner = user }, tx);
+                await conn.ExecuteAsync("INSERT INTO memory_events(memory_id,bot_id,owner_id,actor,action,before_hash) VALUES(@memory,@bot,@owner,'user','undo_task',@hash)", new { memory = item.Id, bot = id, owner = user, hash = item.Hash }, tx);
+            }
+            await tx.CommitAsync();
+            await platform.Audit("memory", "memory.undo_task", id, taskId, new { count = created.Count() });
+            return Results.Json(new { ok = true, count = created.Count() });
         });
 
         app.MapPost("/api/bots/{id:guid}/skills/from-task", async (HttpContext ctx, Guid id, JsonElement body) =>
@@ -1190,6 +1480,18 @@ public static class Routes
                 var checkpointJson = TaskCheckpoint.Bounded(ledger);
                 await conn.ExecuteAsync("UPDATE tasks SET checkpoint=@checkpoint::jsonb WHERE id=@id AND lease_epoch=@epoch", new { id, checkpoint = checkpointJson, epoch = task.Epoch }, tx);
                 if (previousReason is "lease_expired" or "computer_recovered" or "network_interrupted" or "attempt_limit" or "stalled") resumedEvents.Add((id, task.Attempt, previousReason, priorSteps));
+                var botPrompt = await conn.QuerySingleAsync<(string Role, string Instructions)>("SELECT role, instructions FROM bots WHERE id=@id", new { id = task.BotId }, tx);
+                var memoryMode = await conn.ExecuteScalarAsync<string?>("SELECT mode FROM bot_memory_settings WHERE bot_id=@bot", new { bot = task.BotId }, tx) ?? "auto";
+                var notesFlag = (platform.Configuration["MEMORY_NOTES"] ?? platform.Configuration["Memory:Notes"] ?? "shadow").ToLowerInvariant();
+                var rules = notesFlag != "off" && memoryMode != "off"
+                    ? (await conn.QueryAsync<(Guid Id, string Content)>("SELECT id, content FROM memories WHERE bot_id=@bot AND owner_id=(SELECT owner_id FROM bots WHERE id=@bot) AND kind='rule' AND rule_scope IS NULL AND status='active' AND deleted_at IS NULL AND sensitive=false AND author NOT IN ('peer','routine') AND (conversation_id IS NULL OR conversation_id=@conversation) ORDER BY created_at DESC", new { bot = task.BotId, conversation = task.ConversationId }, tx)).Select(r => new { id = r.Id, content = r.Content }).ToArray()
+                    : [];
+                if (rules.Length > 0) await conn.ExecuteAsync("UPDATE memories SET last_used_at=now(),use_count=use_count+1 WHERE id=ANY(@ids)", new { ids = rules.Select(rule => rule.id).ToArray() }, tx);
+                var ruleTokens = int.TryParse(platform.Configuration["Memory:RuleTokens"], out var configuredRuleTokens) ? Math.Clamp(configuredRuleTokens, 1, 6000) : 600;
+                var scopedRules = notesFlag != "off" && memoryMode != "off"
+                    ? (await conn.QueryAsync<(Guid Id, string Scope, string Content)>("SELECT id, rule_scope AS scope, content FROM memories WHERE bot_id=@bot AND owner_id=(SELECT owner_id FROM bots WHERE id=@bot) AND kind='rule' AND rule_scope IS NOT NULL AND status='active' AND deleted_at IS NULL AND sensitive=false AND author NOT IN ('peer','routine') AND (conversation_id IS NULL OR conversation_id=@conversation) ORDER BY created_at DESC", new { bot = task.BotId, conversation = task.ConversationId }, tx)).Select(r => new { id = r.Id, scope = r.Scope, content = r.Content }).ToArray()
+                    : [];
+                var injectRole = bool.TryParse(platform.Configuration["Memory:InjectRole"], out var configuredInjectRole) ? configuredInjectRole : true;
                 var feedback = (await conn.QueryAsync<(Guid MessageId, string Emoji, string Action)>(
                     """
                     UPDATE bot_feedback SET consumed_at=now(), task_id=@task
@@ -1219,7 +1521,7 @@ public static class Routes
                         (string?)ledger["snapshotRef"], (string?)ledger["snapshotAt"]);
                     resume = new { brief, interrupted = previousReason is "lease_expired" or "computer_recovered" or "network_interrupted" or "stalled" };
                 }
-                rows.Add(new { id = task.Id, botId = task.BotId, computerId = placement.Computer.Value, cdpUrl = $"http://{dns}:9222", instruction = task.Instruction, kind = task.Kind, attempt = task.Attempt, epoch = task.Epoch, checkpoint = checkpointJson, force_compact = task.ForceCompact, conversationId = task.ConversationId, messageId = task.SourceMessageId, feedback, skill = skillJson, resume, budget = new { maxSteps = resolvedBudget.MaxSteps, maxSeconds = resolvedBudget.MaxSeconds, maxAttemptSteps = Math.Min(400, resolvedBudget.MaxSteps), maxAttemptSeconds = Math.Min(1800, resolvedBudget.MaxSeconds), maxRounds = task.Kind == "coding" ? platform.CodingRounds : platform.ChatRounds, maxRoundsCumulative = maxRounds, pauseOnBudget, label = resolvedBudget.Label } });
+                rows.Add(new { id = task.Id, botId = task.BotId, computerId = placement.Computer.Value, cdpUrl = $"http://{dns}:9222", instruction = task.Instruction, kind = task.Kind, attempt = task.Attempt, epoch = task.Epoch, checkpoint = checkpointJson, force_compact = task.ForceCompact, conversationId = task.ConversationId, messageId = task.SourceMessageId, role = injectRole ? botPrompt.Role : "", botInstructions = injectRole ? botPrompt.Instructions : "", memoryMode = notesFlag, botMemoryMode = memoryMode, standingRules = rules, scopedRules, ruleTokens, feedback, skill = skillJson, resume, budget = new { maxSteps = resolvedBudget.MaxSteps, maxSeconds = resolvedBudget.MaxSeconds, maxAttemptSteps = Math.Min(400, resolvedBudget.MaxSteps), maxAttemptSeconds = Math.Min(1800, resolvedBudget.MaxSeconds), maxRounds = task.Kind == "coding" ? platform.CodingRounds : platform.ChatRounds, maxRoundsCumulative = maxRounds, pauseOnBudget, label = resolvedBudget.Label } });
                 wake.Add(placement.Computer.Value);
             }
             await tx.CommitAsync();

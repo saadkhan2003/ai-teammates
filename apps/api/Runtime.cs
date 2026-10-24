@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Amazon.S3.Model;
 using Dapper;
 using Npgsql;
@@ -13,6 +14,7 @@ namespace Teammates.Api;
 public sealed class Runtime(Platform platform, LoginFlow logins)
 {
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(90) };
+    private readonly MemoryStore _memory = new(platform);
 
     public async Task<IResult> Model(JsonElement body, CancellationToken ct)
     {
@@ -386,11 +388,13 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
             case "ask_user":
                 return await AskUser(botId, taskId, args);
             case "save_memory":
-                return await SaveMemory(botId, taskId, Arg(args, "content"), Arg(args, "source"));
+                return await SaveMemory(botId, owner, taskId, args);
+            case "update_memory":
+                return await UpdateMemory(botId, owner, taskId, args);
             case "forget_memory":
-                return await ForgetMemory(botId, taskId, Arg(args, "content"));
+                return await ForgetMemory(botId, owner, taskId, args);
             case "search_memory":
-                return await SearchMemory(botId, Arg(args, "query"));
+                return await SearchMemory(botId, owner, taskId, args);
             case "save_artifact":
                 return await SaveArtifact(botId, taskId, computer, Arg(args, "name"), Arg(args, "path"), ct);
             case "request_secret":
@@ -471,50 +475,69 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         return new { ok = true };
     }
 
-    private async Task<object> SaveMemory(Guid botId, Guid taskId, string content, string source)
+    private async Task<object> SaveMemory(Guid botId, Guid owner, Guid taskId, JsonElement args)
     {
-        if (Dlp.HasStrict(content) || content.Contains("secret://", StringComparison.Ordinal))
-            throw new ToolHalt("denied", "credential_shaped_memory");
-        var vector = Embedder.VectorLiteral(content);
-        await using var conn = await platform.Data.OpenConnectionAsync();
-        var id = await conn.ExecuteScalarAsync<Guid>(
-            "INSERT INTO memories (bot_id, content, source, importance, embedding) VALUES (@bot, @content, @source, 0.6, @emb::vector) RETURNING id",
-            new { bot = botId, content, source = await MemoryProvenance(conn, taskId, source), emb = vector });
-        await PostNotice(botId, taskId, "saved", content);
-        return new { id, saved = true };
+        var content = Arg(args, "content");
+        var context = await MemoryTaskContext(taskId);
+        var kind = Arg(args, "kind");
+        if (string.IsNullOrWhiteSpace(kind)) kind = IsStandingRule(content) ? "rule" : "profile";
+        var explicitRequest = IsExplicitMemoryRequest(context.UserText) || IsStandingRule(context.UserText);
+        if (kind == "rule" && !IsStandingRule(context.UserText))
+            return new { saved = false, reason = "rule_requires_user_statement", userMessage = "I can save a standing rule only when you state it directly." };
+        if (context.Peer && kind != "rule") return new { saved = false, reason = "peer_limited" };
+        var visibility = Arg(args, "visibility");
+        if (visibility.Length > 0 && visibility is not ("owner" or "bot")) return new { saved = false, reason = "invalid_visibility" };
+        var actor = context.Peer ? "peer" : context.Routine ? "routine" : "agent";
+        var memoryScope = Arg(args, "memory_scope");
+        var ruleScope = Arg(args, "scope");
+        var result = await _memory.Save(botId, owner, taskId, content, kind, actor, visibility, context.UserText, explicitRequest, context.Peer, context.Routine, conversationId: memoryScope == "conversation" ? context.ConversationId : null, ruleScope: ruleScope.Length == 0 ? null : ruleScope);
+        if (result is not null)
+        {
+            var json = JsonSerializer.SerializeToElement(result);
+            if (json.TryGetProperty("reason", out var reason) && reason.GetString() == "unsafe_rule")
+                return new { saved = false, reason = "unsafe_rule", userMessage = "I can’t save a rule that changes approvals, security checks, or access permissions." };
+        }
+        return result ?? (object)new { saved = false, reason = "not_saved" };
     }
 
-    /// <summary>Where a remembered fact came from: the user's chat message or the peer thread message, else the agent itself.</summary>
-    private static async Task<string> MemoryProvenance(Npgsql.NpgsqlConnection conn, Guid taskId, string claimed)
+    private async Task<object> UpdateMemory(Guid botId, Guid owner, Guid taskId, JsonElement args)
     {
-        var peer = await conn.ExecuteScalarAsync<Guid?>("SELECT id FROM bot_thread_messages WHERE delivered_task_id=@t ORDER BY seq LIMIT 1", new { t = taskId });
-        if (peer != null) return "message:" + peer.Value;
-        var message = await conn.ExecuteScalarAsync<Guid?>("SELECT source_message_id FROM tasks WHERE id=@t", new { t = taskId });
-        if (message != null) return "message:" + message.Value;
-        return string.IsNullOrWhiteSpace(claimed) ? "agent" : claimed;
+        if (!Guid.TryParse(Arg(args, "id"), out var id)) return new { saved = false, reason = "invalid_id" };
+        var context = await MemoryTaskContext(taskId);
+        return await _memory.Update(botId, owner, taskId, id, Arg(args, "content"), context.UserText, IsExplicitMemoryRequest(context.UserText) || IsStandingRule(context.UserText));
     }
 
-    private async Task<object> ForgetMemory(Guid botId, Guid taskId, string content)
+    private async Task<object> ForgetMemory(Guid botId, Guid owner, Guid taskId, JsonElement args)
     {
-        if (string.IsNullOrWhiteSpace(content)) throw new ToolHalt("denied", "forget_memory needs the fact");
-        await using var conn = await platform.Data.OpenConnectionAsync();
-        var removed = await conn.ExecuteAsync("DELETE FROM memories WHERE bot_id=@bot AND content=@content", new { bot = botId, content });
-        if (removed == 0) throw new ToolHalt("denied", "memory not found");
-        await PostNotice(botId, taskId, "forgot", content);
-        return new { ok = true, forgotten = true };
+        if (Guid.TryParse(Arg(args, "id"), out var id)) return await _memory.Forget(botId, owner, taskId, id);
+        var query = Arg(args, "query");
+        if (query.Length == 0) query = Arg(args, "content");
+        if (string.IsNullOrWhiteSpace(query)) return new { ok = false, reason = "missing_target" };
+        return await _memory.ForgetText(botId, owner, taskId, query);
     }
 
-    private async Task PostNotice(Guid botId, Guid taskId, string action, string content)
+    private async Task<object> SearchMemory(Guid botId, Guid owner, Guid taskId, JsonElement args)
+    {
+        var context = await MemoryTaskContext(taskId);
+        var limit = args.TryGetProperty("limit", out var l) && l.TryGetInt32(out var requested) ? requested : 8;
+        var kind = Arg(args, "kind");
+        return await _memory.Search(botId, owner, Arg(args, "query"), limit, string.IsNullOrWhiteSpace(kind) ? null : kind, context.Peer, context.ConversationId);
+    }
+
+    private async Task<(string UserText, bool Peer, bool Routine, Guid? ConversationId)> MemoryTaskContext(Guid taskId)
     {
         await using var conn = await platform.Data.OpenConnectionAsync();
-        var conversation = await conn.ExecuteScalarAsync<Guid?>("SELECT conversation_id FROM tasks WHERE id=@id", new { id = taskId });
-        if (conversation == null) return;
-        var body = JsonSerializer.Serialize(new { type = "memory", action, content });
-        await conn.ExecuteAsync(
-            "INSERT INTO messages (conversation_id, role, kind, content, task_id) VALUES (@conversation, 'assistant', 'memory', @content, @task)",
-            new { conversation, content = body, task = taskId });
-        await platform.Publish(new { type = "task", taskId, botId });
+        var row = await conn.QuerySingleOrDefaultAsync<(Guid? SourceMessage, Guid? OriginThread, Guid? RoutineId, string Kind, Guid? ConversationId)>("SELECT source_message_id, origin_thread_id, routine_id, kind, conversation_id FROM tasks WHERE id=@id", new { id = taskId });
+        var userText = row.SourceMessage is { } message
+            ? await conn.ExecuteScalarAsync<string>("SELECT content FROM messages WHERE id=@id AND deleted_at IS NULL", new { id = message }) ?? ""
+            : "";
+        if (row.OriginThread is { } thread)
+            userText = await conn.ExecuteScalarAsync<string>("SELECT content FROM bot_thread_messages WHERE thread_id=@id AND kind='request' ORDER BY seq LIMIT 1", new { id = thread }) ?? "";
+        return (userText, row.OriginThread != null, row.RoutineId != null || row.Kind == "routine", row.ConversationId);
     }
+
+    private static bool IsStandingRule(string text) => Regex.IsMatch(text, @"\b(always|never|from now on|whenever)\b", RegexOptions.IgnoreCase);
+    private static bool IsExplicitMemoryRequest(string text) => Regex.IsMatch(text, @"\b(remember|save this|keep in mind|from now on|always|never|whenever)\b", RegexOptions.IgnoreCase);
 
     private async Task<object> AskUser(Guid botId, Guid taskId, JsonElement args)
     {
@@ -718,22 +741,6 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         return false;
     }
 
-    private async Task<object> SearchMemory(Guid botId, string query)
-    {
-        var vector = Embedder.VectorLiteral(query);
-        await using var conn = await platform.Data.OpenConnectionAsync();
-        var rows = await conn.QueryAsync(
-            """
-            SELECT content FROM memories
-            WHERE bot_id=@bot
-            ORDER BY ts_rank(to_tsvector('english', content), plainto_tsquery('english', @q)) DESC,
-                     embedding <=> @emb::vector
-            LIMIT 5
-            """,
-            new { bot = botId, q = query, emb = vector });
-        return new { matches = rows.Select(row => (string)((IDictionary<string, object>)row)["content"]).ToArray() };
-    }
-
     private async Task<object> SaveArtifact(Guid botId, Guid taskId, ComputerId computer, string name, string path, CancellationToken ct)
     {
         var (code, stdout, _) = await Run(computer, botId, ["python3", "-c", BotFs.Script("read_artifact(sys.argv[1])"), path], null, ct);
@@ -797,10 +804,25 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         var decision = PolicyGate.Evaluate(tool, args, seen, policy, rules, instruction, approved, grants, hint, peerOrigin);
         if (decision.Decision != PolicyEngine.Deny && await TypeSecretOffDomain(conn, owner, tool, args))
             decision = decision with { Decision = PolicyEngine.Deny, Reason = "domain_not_allowed" };
-        if (!policy.ModelAssist || ActionClassifier.IsBuiltIn(tool) || decision.HardDeny || decision.Decision == PolicyEngine.Deny)
-            return decision;
-        var label = await ClassifyWithModel(owner, botId, taskId, tool, args, ct);
-        return PolicyGate.WithModelLabel(decision, label, policy);
+        if (policy.ModelAssist && !ActionClassifier.IsBuiltIn(tool) && !decision.HardDeny && decision.Decision != PolicyEngine.Deny)
+        {
+            var label = await ClassifyWithModel(owner, botId, taskId, tool, args, ct);
+            decision = PolicyGate.WithModelLabel(decision, label, policy);
+        }
+        // Persistent approval rules are consulted only after the complete policy path,
+        // including model labels and every hard/legacy/user/DLP denial above.
+        if (decision.Decision != PolicyEngine.Ask) return decision;
+        if (await conn.ExecuteScalarAsync<bool>("SELECT (t.origin_thread_id IS NOT NULL OR t.origin_depth > 0 OR t.kind IN ('peer','peer_reply','peer_notice')) FROM tasks t WHERE t.id=@task", new { task = taskId })) return decision;
+        if (!ApprovalRules.AllowedClass(decision.RiskClass, tool)) return decision;
+        var active = await conn.QueryAsync<(Guid Id, string Matcher)>("SELECT id, matcher::text FROM approval_rules WHERE owner_id=@owner AND revoked_at IS NULL AND (bot_id IS NULL OR bot_id=@bot) AND action_class=@class AND tool=@tool", new { owner, bot = botId, @class = decision.RiskClass, tool });
+        foreach (var rule in active)
+        {
+            if (!ApprovalRules.Matches(decision.RiskClass, tool, rule.Matcher, args)) continue;
+            await conn.ExecuteAsync("UPDATE approval_rules SET last_used_at=now(), use_count=use_count+1 WHERE id=@id", new { rule.Id });
+            await platform.Audit("approval_rule", "approval_rule.used", botId, taskId, new { id = rule.Id, actionClass = decision.RiskClass, tool });
+            return decision with { Decision = PolicyEngine.Allow, Reason = "approval_rule" };
+        }
+        return decision;
     }
 
     private static async Task<bool> TypeSecretOffDomain(System.Data.IDbConnection conn, Guid owner, string tool, JsonElement args)

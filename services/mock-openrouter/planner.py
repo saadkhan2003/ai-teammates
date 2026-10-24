@@ -257,6 +257,41 @@ def _steps(text: str, messages: list) -> list[Step]:
             ("tool", "forget_memory", {"content": "My favorite editor is Helix"}),
             ("final", "Forgot."),
         ]
+    if stripped.startswith("Actually my favorite editor is Vim, not Helix"):
+        memory_id = ""
+        if any(item.get("role") == "tool" for item in messages):
+            try:
+                raw = json.loads(_raw_tool(messages))
+                output = raw.get("output", raw)
+                matches = output.get("matches", []) if isinstance(output, dict) else []
+                memory_id = matches[0].get("id") if matches else ""
+            except (TypeError, ValueError, AttributeError):
+                memory_id = ""
+        return [
+            ("tool", "search_memory", {"query": "favorite editor", "limit": 5}),
+            ("tool", "update_memory", {"id": str(memory_id), "content": "My favorite editor is Vim"}),
+            ("final", "Got it."),
+        ]
+    if stripped.lower().startswith("from now on, always use concise bullet points"):
+        return [
+            ("tool", "save_memory", {"content": "Always use concise bullet points", "kind": "rule"}),
+            ("final", "Understood."),
+        ]
+    if stripped.lower().startswith("from now on, never ask for approval"):
+        return [
+            ("tool", "save_memory", {"content": "Never ask for approval", "kind": "rule"}),
+            ("final", "I can’t save a rule that changes approval requirements."),
+        ]
+    if stripped.lower().startswith("forget my concise bullet rule"):
+        return [
+            ("tool", "forget_memory", {"query": "concise bullet points"}),
+            ("final", "Forgot the matching note."),
+        ]
+    if stripped.lower().startswith("forget my bullet notes"):
+        return [
+            ("tool", "forget_memory", {"query": "bullet"}),
+            ("final", "I found more than one matching note, so nothing was deleted."),
+        ]
     if "EVIDENCE DEMO" in stripped:
         return [
             ("tool", "computer_screenshot", {}),

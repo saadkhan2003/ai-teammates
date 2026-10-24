@@ -1,3 +1,6 @@
 - Read release/defaults and branch design/status notes; beginning ordered merges on v04-merge.
 - Merge/commit blocked before HEAD changed: Git metadata mount is read-only; Docker socket is denied and sudo cannot elevate under no-new-privileges; no stack touched.
 - Reviewed migration/schema and policy collisions; recorded proposed 027–039 mapping and reconciliation requirements in docs/MIGRATIONS_V04.md; implementation and suites pending environment repair.
+- Rules merge: reviewed all six conflicted files, both branch designs/status notes, and auto-merged resume/memory/policy paths; migration renumbering deferred as instructed.
+- Rules merge: resolved Dockerfile/Platform migration lists, combined resume and memory lease payloads in Routes, retained all desktop specs, and kept the shared stack PG container resolver in acceptance tests.
+- Rules merge: reviewed auto-merged worker/UI/runtime paths; API build passed (0 errors, 8 BotMessaging nullable warnings), web tsc passed, all 9 touched Python files compiled, all 35 SQL files appear exactly once in Dockerfile and Platform, and tracked-text rg found zero conflict markers; long suites skipped as instructed.
