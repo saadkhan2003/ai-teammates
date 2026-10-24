@@ -16,7 +16,7 @@ public class ModelStreamTests
     {
         var one=new AiEndpoint(Guid.NewGuid(),kind,"http://mock/v1","chosen",_=>Task.FromResult<byte[]?>(Encoding.UTF8.GetBytes("test-key-for-stream")));
         var two=one with {ProviderId=Guid.NewGuid(),BaseUrl="http://fallback/v1"};
-        return new(one,[two],new(),new(1000),9,new(new(){["chat"]=new(new(one.ProviderId,"chosen"))}));
+        return new(one,[two],new(),new(1000),9,new(new(){["chat"]=new(new(one.ProviderId,"chosen"))}, Retry: new(0)));
     }
     private static object[] Tools => [new {type="function",function=new {name="read_file",parameters=new {type="object"}}}];
     [Fact]
@@ -58,7 +58,7 @@ public class ModelStreamTests
     }
     [Theory]
     [InlineData(true)] [InlineData(false)]
-    public async Task Fallback_only_before_any_response_bytes(bool failBefore)
+    public async Task Fallback_before_first_content_even_when_malformed_bytes_arrived(bool failBefore)
     {
         var calls=0;
         using var http=new HttpClient(new Handler(_=>{
@@ -67,7 +67,7 @@ public class ModelStreamTests
             return new(HttpStatusCode.OK){Content=new StringContent(Compatible())};
         }));
         var result=await AiStreamingGateway.Stream(http,Resolution(),Parse("[]"),Tools,Guid.NewGuid(),_=>Task.CompletedTask,default);
-        Assert.Equal(failBefore,result.Call.Ok); Assert.Equal(failBefore?2:1,calls);
+        Assert.True(result.Call.Ok); Assert.Equal(2,calls);
     }
     [Fact]
     public async Task Truncated_success_response_is_error_and_does_not_fallback()
@@ -112,18 +112,18 @@ public class ModelStreamTests
     [InlineData(true)] [InlineData(false)]
     public async Task Streaming_routing_hints_are_optional_and_do_not_change_resolved_model(bool configured)
     {
-        var resolution=Resolution("openrouter") with { Latency=configured ? new(1234) : new() };
+        var resolution=Resolution("openrouter") with { Latency=configured ? new(1234) : new(), Role = new(new(Guid.Empty, "chosen"), MaxTokens: 77) };
         var requests=new List<string>();
         using var http=new HttpClient(new Handler(request=>{requests.Add(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());return new(HttpStatusCode.OK){Content=new StringContent(Compatible())};}));
         var session=Guid.NewGuid();
-        var result=await AiStreamingGateway.Stream(http,resolution,Parse("[{\"role\":\"system\",\"content\":\"stable\"}]"),Tools,session,_=>Task.CompletedTask,default,77);
+        var result=await AiStreamingGateway.Stream(http,resolution,Parse("[{\"role\":\"system\",\"content\":\"stable\"}]"),Tools,session,_=>Task.CompletedTask,default);
         Assert.True(result.Call.Ok);
         var payload=Parse(Assert.Single(requests)); Assert.True(payload.GetProperty("stream").GetBoolean()); Assert.Equal(77,payload.GetProperty("max_tokens").GetInt32());
-        Assert.Equal("chosen",payload.GetProperty("model").GetString()); Assert.Equal(session.ToString(),payload.GetProperty("session_id").GetString());
+        Assert.Equal("chosen",payload.GetProperty("models")[0].GetString()); Assert.Equal(session.ToString(),payload.GetProperty("session_id").GetString());
         Assert.True(payload.GetProperty("stream_options").GetProperty("include_usage").GetBoolean());
         Assert.True(payload.GetProperty("messages")[0].GetProperty("content")[0].TryGetProperty("cache_control",out _));
         if(configured) Assert.Equal(1.234,payload.GetProperty("provider").GetProperty("preferred_max_latency").GetDouble());
-        else Assert.False(payload.TryGetProperty("provider",out _));
+        else Assert.False(payload.GetProperty("provider").TryGetProperty("preferred_max_latency",out _));
     }
     [Fact]
     public async Task Gateway_publishes_only_redacted_deltas_and_returns_the_same_redacted_text()

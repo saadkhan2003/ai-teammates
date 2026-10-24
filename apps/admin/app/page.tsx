@@ -1,4 +1,5 @@
 "use client";
+import { AiOverview } from "@/components/ai-controls";
 
 import { useAdmin } from "@/components/admin-state";
 
@@ -17,6 +18,7 @@ export default function AdminDashboard() {
         <h2 className="text-xl font-semibold tracking-tight">Dashboard</h2>
         <p className="mt-1 text-sm text-muted-foreground">Plans, credits, and model calls. Separate from the user app.</p>
       </header>
+      <AiOverview />
       <section data-testid="admin-stats" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {[
           ["People", String(users.length)],

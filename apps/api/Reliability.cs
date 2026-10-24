@@ -8,8 +8,8 @@ public static class TaskErrors
 {
     public static (string Code, string Text) Describe(string? code) => code switch
     {
-        "connect_openrouter" or "no_openrouter_key" => ("no_openrouter_key", "No OpenRouter key set. Add one in Settings > Vault."),
-        "provider rejected the request" or "provider_error" => ("provider_error", "The model provider rejected the request. Check the key and model in Settings > Vault."),
+        "model_access_required" or "connect_openrouter" or "no_openrouter_key" => ("model_access_required", "Model access needs attention. Check Settings > Vault."),
+        "provider rejected the request" or "provider_error" => ("provider_error", "The model service could not complete the request. Please try again later."),
         "step_budget" => ("step_budget", "The task reached its step limit. Raise the task budget or the bot's default work limit in Work settings."),
         "time_budget" => ("time_budget", "The task reached its time limit. Raise the task budget or the bot's default work limit in Work settings."),
         "repeat_loop" or "invalid_repeat" or "model round cap reached" => ("run_limit", "The task stopped after reaching a run limit. Try a smaller request."),
@@ -136,7 +136,7 @@ public static class Reliability
         });
     }
 
-    public static bool WaitsForKey(string? status, string? reason) => status == "waiting_resource" && reason is "connect_openrouter" or "no_openrouter_key";
+    public static bool WaitsForKey(string? status, string? reason) => status == "waiting_resource" && reason is "model_access_required" or "connect_openrouter" or "no_openrouter_key";
 
     public static async Task ResumeKeyWaiters(Platform platform, Guid owner)
     {
@@ -145,13 +145,13 @@ public static class Reliability
             UPDATE tasks t SET status='queued', waiting_reason=NULL, error=NULL, error_code=NULL,
                 lease_owner=NULL, lease_until=NULL, lease_epoch=lease_epoch+1, updated_at=now()
             FROM bots b WHERE t.bot_id=b.id AND b.owner_id=@owner
-              AND t.status='waiting_resource' AND t.waiting_reason IN ('connect_openrouter','no_openrouter_key')
+              AND t.status='waiting_resource' AND t.waiting_reason IN ('model_access_required','connect_openrouter','no_openrouter_key')
               AND EXISTS (SELECT 1 FROM secrets s WHERE s.owner_user_id=@owner AND s.provider='openrouter'
                   AND s.name='default' AND s.revoked_at IS NULL AND (s.expires_at IS NULL OR s.expires_at>now()))
             RETURNING t.id
             """, new { owner })).ToList();
         foreach (var id in ids)
-            await Event(platform, id, "resource_resumed", new { resource = "openrouter" });
+            await Event(platform, id, "resource_resumed", new { resource = "model_access" });
         if (ids.Count > 0) platform.Tasks.Pulse();
     }
 

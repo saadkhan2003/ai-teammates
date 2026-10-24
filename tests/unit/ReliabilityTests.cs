@@ -134,8 +134,9 @@ public class ReliabilityTests
         Assert.Equal(expected, Reliability.WaitsForKey(status, reason));
 
     [Theory]
-    [InlineData("connect_openrouter", "no_openrouter_key", "Settings > Vault")]
-    [InlineData("provider_error", "provider_error", "provider")]
+    [InlineData("connect_openrouter", "model_access_required", "Settings > Vault")]
+    [InlineData("model_access_required", "model_access_required", "Settings > Vault")]
+    [InlineData("provider_error", "provider_error", "service")]
     [InlineData("Traceback: secret sensitive exception", "worker_error", "could not finish")]
     public void ErrorsAreReadableAndDoNotEchoDetails(string input, string code, string text)
     {

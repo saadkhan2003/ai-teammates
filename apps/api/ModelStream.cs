@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using System.Net.Http.Headers;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -40,11 +38,13 @@ public static class ModelStream
         private readonly SortedDictionary<int, (string Id, string Name, StringBuilder Args)> tools = new();
         private JsonObject usage = new();
         public bool Finished { get; private set; }
+        public string? Model { get; private set; }
         public IEnumerable<ModelDelta> Read(string frame, bool anthropic)
         {
             if (frame == "[DONE]") { Finished = true; return []; }
             using var doc = JsonDocument.Parse(frame);
             var root = doc.RootElement;
+            if (String(root, "model") is { } model) Model = model;
             if (root.TryGetProperty("error", out _)) throw new InvalidDataException("model_stream_error");
             var deltas = new List<ModelDelta>();
             if (anthropic)
@@ -52,7 +52,12 @@ public static class ModelStream
                 var type = root.GetProperty("type").GetString();
                 if (type == "error") throw new InvalidDataException("model_stream_error");
                 if (type == "message_stop") Finished = true;
-                if (type == "message_start" && root.GetProperty("message").TryGetProperty("usage", out var initial)) MergeUsage(initial);
+                if (type == "message_start")
+                {
+                    var message = root.GetProperty("message");
+                    Model = String(message, "model") ?? Model;
+                    if (message.TryGetProperty("usage", out var initial)) MergeUsage(initial);
+                }
                 if (type == "message_delta" && root.TryGetProperty("usage", out var final)) MergeUsage(final);
                 if (type == "content_block_start")
                 {
@@ -107,7 +112,7 @@ public static class ModelStream
                 int N(string key) => nativeUsage.TryGetProperty(key,out var v) ? v.GetInt32() : 0;
                 resultUsage = new { prompt_tokens=N("input_tokens")+N("cache_read_input_tokens")+N("cache_creation_input_tokens"), completion_tokens=N("output_tokens"), cache_read_input_tokens=N("cache_read_input_tokens"), cache_creation_input_tokens=N("cache_creation_input_tokens") };
             }
-            return JsonSerializer.SerializeToElement(new { choices = new[] { new { message = new { role="assistant", content=text.ToString(), tool_calls=tools.Values.Select(t => new { id=t.Id, type="function", function=new { name=t.Name, arguments=t.Args.Length == 0 ? "{}" : t.Args.ToString() } }) } } }, usage=resultUsage });
+            return JsonSerializer.SerializeToElement(new { model = Model, choices = new[] { new { message = new { role="assistant", content=text.ToString(), tool_calls=tools.Values.Select(t => new { id=t.Id, type="function", function=new { name=t.Name, arguments=t.Args.Length == 0 ? "{}" : t.Args.ToString() } }) } } }, usage=resultUsage });
         }
         private static string? String(JsonElement element,string property) => element.ValueKind == JsonValueKind.Object && element.TryGetProperty(property,out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
     }
@@ -146,102 +151,61 @@ public sealed class StreamRedactor(IEnumerable<string>? secrets = null)
     }
 }
 
-/// <summary>Additive streaming adapter; the complete-response adapter remains available.</summary>
+/// <summary>SSE decoding and safe publication; admission and retries belong to AiControlledGateway.</summary>
 public static class AiStreamingGateway
 {
-    public static async Task<ModelStreamResult> Stream(HttpClient http, AiResolution resolution, JsonElement messages, object tools, Guid sessionId, Func<ModelDelta, Task> publish, CancellationToken ct, int? maxTokens = null)
+    public static async Task<ModelStreamResult> Stream(HttpClient http, AiResolution resolution, JsonElement messages, object tools, Guid sessionId, Func<ModelDelta, Task> publish, CancellationToken ct,
+        Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
-        var clock = Stopwatch.StartNew(); int? ttft = null; var missing = true;
-        var served = resolution.Primary; var prompt = messages;
-        foreach (var endpoint in new[] { resolution.Primary }.Concat(resolution.Fallbacks))
+        var clock = Stopwatch.StartNew();
+        int? ttft = null;
+        async Task<JsonElement> Read(HttpResponseMessage response, AiEndpoint endpoint, IReadOnlyList<string> keys, AiWireAttempt attempt, CancellationToken token)
         {
-            var bytes = await endpoint.Key(ct); if (bytes == null) continue;
-            missing = false; served = endpoint;
-            var key = Encoding.UTF8.GetString(bytes); CryptographicOperations.ZeroMemory(bytes);
-            var received = false;
-            ModelStreamResult Result(bool ok, JsonElement response = default, bool context = false) => new(new(ok, false, context, response, prompt, served), ttft, (int)clock.ElapsedMilliseconds);
+            var anthropic = endpoint.Kind == "anthropic";
+            var assembly = new ModelStream.Assembly();
+            var redactor = new StreamRedactor(keys);
+            var toolNames = new Dictionary<int, string>();
+            var knownTools = JsonSerializer.SerializeToElement(tools).EnumerateArray().Select(t => t.GetProperty("function").GetProperty("name").GetString()).ToHashSet();
+            JsonElement Snapshot() => JsonSerializer.Deserialize<JsonElement>(Dlp.Redact(OutputRedactor.Redact(assembly.Response(anthropic).GetRawText(), keys)));
             try
             {
-                prompt = JsonSerializer.Deserialize<JsonElement>(Dlp.Redact(OutputRedactor.Redact(messages.GetRawText(), [key])));
-                var anthropic = endpoint.Kind == "anthropic";
-                var payload = anthropic ? JsonSerializer.SerializeToNode(ProviderWire.AnthropicCompletion(endpoint.Model,prompt,tools,resolution.Caching))!.AsObject() : JsonSerializer.SerializeToNode(ProviderWire.Completion(endpoint.Model,prompt,tools))!.AsObject();
-                payload["stream"] = true;
-                if (maxTokens is {} cap) payload["max_tokens"] = cap;
-                if (!anthropic)
+                await using var stream = await response.Content.ReadAsStreamAsync(token);
+                await foreach (var frame in ModelStream.Frames(stream, token))
                 {
-                    payload["messages"] = JsonNode.Parse(PromptCaching.Messages(JsonSerializer.SerializeToElement(payload["messages"]),resolution.Caching,endpoint.Kind).GetRawText());
-                    payload.Remove("usage"); payload["stream_options"] = new JsonObject { ["include_usage"] = true };
-                    if (JsonSerializer.SerializeToElement(tools).GetArrayLength() == 0) payload.Remove("tools");
-                    if (resolution.Caching.Enabled && resolution.Caching.SessionIdPerConversation) payload["prompt_cache_key"] = sessionId.ToString("D");
-                    if (endpoint.Kind == "openrouter")
+                    foreach (var delta in assembly.Read(frame, anthropic))
                     {
-                        if (resolution.Caching.SessionIdPerConversation) payload["session_id"] = sessionId.ToString("D");
-                        if (resolution.Latency.PreferredMaxLatencyMs is {} ms) payload["provider"] = new JsonObject { ["preferred_max_latency"] = ms / 1000.0 };
-                    }
-                }
-                using var request = new HttpRequestMessage(HttpMethod.Post, anthropic ? AiGateway.MessagesUrl(endpoint.BaseUrl) : endpoint.BaseUrl.TrimEnd('/')+"/chat/completions");
-                if (anthropic) { request.Headers.Add("x-api-key",key); request.Headers.Add("anthropic-version","2023-06-01"); }
-                else request.Headers.Authorization = new AuthenticationHeaderValue("Bearer",key);
-                request.Content = new StringContent(payload.ToJsonString(),Encoding.UTF8,"application/json");
-                using var response = await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,ct);
-                if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500) continue;
-                if (!response.IsSuccessStatusCode)
-                {
-                    var error = await response.Content.ReadAsStringAsync(ct);
-                    return Result(false, context: error.Contains("context_length",StringComparison.OrdinalIgnoreCase) || error.Contains("maximum context",StringComparison.OrdinalIgnoreCase));
-                }
-                var assembly = new ModelStream.Assembly(); var redactor = new StreamRedactor([key]);
-                await using var source = await response.Content.ReadAsStreamAsync(ct);
-                await using var stream = new ObservedReadStream(source, () => received = true);
-                var toolNames = new Dictionary<int,string>();
-                var knownTools = JsonSerializer.SerializeToElement(tools).EnumerateArray().Select(t => t.GetProperty("function").GetProperty("name").GetString()).ToHashSet();
-                await foreach (var frame in ModelStream.Frames(stream,ct))
-                {
-                    received = true;
-                    foreach (var delta in assembly.Read(frame,anthropic))
-                    {
-                        if (delta.Text?.Length > 0 || delta.Name?.Length > 0 || delta.Arguments?.Length > 0 || delta.Index != null) ttft ??= (int)clock.ElapsedMilliseconds;
-                        if (delta.Text is {} text)
+                        if (delta.Text?.Length > 0 || delta.Name?.Length > 0 || delta.Arguments?.Length > 0 || delta.Index != null)
+                        {
+                            attempt.ContentStarted = true;
+                            ttft ??= (int)clock.ElapsedMilliseconds;
+                        }
+                        if (delta.Text is { } text)
                         {
                             var safe = redactor.Push(text);
-                            if (safe.Length > 0) await publish(new(Text:safe));
+                            if (safe.Length > 0) await publish(new(Text: safe));
                         }
-                        // Arguments stay private until the complete call is redacted; chips
-                        // need only a known tool name, never URLs, filenames or credentials.
-                        if (delta.Index is int toolIndex && delta.Name is { Length: > 0 })
+                        // Chips contain known tool names only; arguments remain private.
+                        if (delta.Index is int index && delta.Name is { Length: > 0 })
                         {
-                            toolNames[toolIndex] = toolNames.GetValueOrDefault(toolIndex, "") + delta.Name;
-                            if (knownTools.Contains(toolNames[toolIndex])) await publish(new(Index:toolIndex, Name:toolNames[toolIndex]));
+                            toolNames[index] = toolNames.GetValueOrDefault(index, "") + delta.Name;
+                            if (knownTools.Contains(toolNames[index])) await publish(new(Index: index, Name: toolNames[index]));
                         }
                     }
                     if (assembly.Finished) break;
                 }
-                if (!assembly.Finished) return Result(false);
-                var tail = redactor.Push("",final:true); if (tail.Length > 0) await publish(new(Text:tail));
-                var assembled = JsonSerializer.Deserialize<JsonElement>(Dlp.Redact(OutputRedactor.Redact(assembly.Response(anthropic).GetRawText(),[key])));
-                return Result(true,assembled);
+                if (!assembly.Finished) throw new InvalidDataException("model_stream_truncated");
+                var tail = redactor.Push("", final: true);
+                if (tail.Length > 0) await publish(new(Text: tail));
+                return Snapshot();
             }
-            catch (Exception ex) when (ex is HttpRequestException or IOException or JsonException or OperationCanceledException or InvalidOperationException or KeyNotFoundException or FormatException && !ct.IsCancellationRequested)
+            catch
             {
-                if (received) return Result(false);
+                // Preserve reported usage and served model on a failed stream without publishing buffered text.
+                attempt.Response = Snapshot();
+                throw;
             }
-            finally { key = ""; }
         }
-        return new(new(false,missing,false,default,prompt,served),ttft,(int)clock.ElapsedMilliseconds);
+        var call = await AiControlledGateway.Execute(http, resolution, messages, tools, sessionId, ct, delay, Read);
+        return new(call, ttft, (int)clock.ElapsedMilliseconds);
     }
-}
-
-internal sealed class ObservedReadStream(Stream inner, Action observed) : Stream
-{
-    public override bool CanRead => inner.CanRead;
-    public override bool CanSeek => false;
-    public override bool CanWrite => false;
-    public override long Length => throw new NotSupportedException();
-    public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
-    public override int Read(byte[] buffer,int offset,int count) { var n=inner.Read(buffer,offset,count); if(n>0) observed(); return n; }
-    public override async ValueTask<int> ReadAsync(Memory<byte> buffer,CancellationToken ct=default) { var n=await inner.ReadAsync(buffer,ct); if(n>0) observed(); return n; }
-    public override long Seek(long offset,SeekOrigin origin)=>throw new NotSupportedException();
-    public override void SetLength(long value)=>throw new NotSupportedException();
-    public override void Write(byte[] buffer,int offset,int count)=>throw new NotSupportedException();
-    public override void Flush()=>throw new NotSupportedException();
 }

@@ -23,6 +23,7 @@ test("owner configures a mock provider, saves and rolls back with theme evidence
     await dialog.getByLabel("Base URL", { exact: true }).fill("http://mock-openrouter:8090/p2/v1");
     await dialog.getByLabel("API key", { exact: true }).fill("sk-or-browser-mock-only-000000");
     await dialog.getByLabel("id", { exact: true }).fill("mock/planner");
+    await dialog.getByLabel("vision", { exact: true }).check();
     await dialog.getByRole("button", { name: "Save provider", exact: true }).click();
     await expect(dialog).not.toBeVisible();
     await page.getByRole("button", { name: `Test ${name}`, exact: true }).click();
@@ -36,14 +37,21 @@ test("owner configures a mock provider, saves and rolls back with theme evidence
     await page.getByLabel("Version note", { exact: true }).fill("Browser mock config");
     await page.getByRole("button", { name: "Save configuration", exact: true }).click();
     await expect(page.getByRole("status").filter({ hasText: "Configuration saved." })).toBeVisible();
-    const saved = await page.request.get("/api/admin/ai").then(r => r.json());
-    savedVersion = saved.version;
+    const versions = await page.request.get("/api/admin/ai/versions").then(r => r.json());
+    savedVersion = versions[0].version;
+    for (const heading of ["Overview", "Providers & keys", "Roles", "Catalog", "Rollout", "Evals", "Budgets", "Health", "Audit log"]) await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+    await page.getByRole("button", { name: `Run eval ${savedVersion}`, exact: true }).click();
+    await expect(page.getByRole("button", { name: `Run eval ${savedVersion}`, exact: true })).toBeEnabled();
+    // An isolated stack may have no legacy bootstrap key. Explicit owner override is audited.
+    await page.getByLabel("Owner override reason (optional)", { exact: true }).fill("Browser fixture explicit owner approval");
+    await page.getByRole("button", { name: `Publish ${savedVersion}`, exact: true }).click();
+    await expect.poll(async () => (await page.request.get("/api/admin/ai").then(r => r.json())).version).toBe(savedVersion);
     expect(savedVersion!).toBeGreaterThan(original.version);
     const rollbackTarget = original.version || savedVersion;
     await page.getByRole("button", { name: `Rollback to ${rollbackTarget}`, exact: true }).click();
     await expect(page.getByRole("status").filter({ hasText: "Rollback saved" })).toBeVisible();
     const after = await page.request.get("/api/admin/ai").then(r => r.json());
-    expect(after.version).toBeGreaterThan(savedVersion!);
+    expect(after.version).toBe(rollbackTarget);
     expect(after.active_config.roles.chat.primary.provider).toBe(original.active_config?.roles.chat.primary.provider ?? providerId);
     if (process.env.SHOT_DIR) {
       mkdirSync(process.env.SHOT_DIR, { recursive: true });

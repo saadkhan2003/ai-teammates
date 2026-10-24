@@ -92,66 +92,19 @@ public static partial class ProviderWire
         var write = Whole(usage, "cache_creation_input_tokens");
         return JsonSerializer.SerializeToElement(new
         {
+            model = Text(response, "model"),
             choices = new[] { new { message = new { role = "assistant", content = text.ToString(), tool_calls = calls } } },
             usage = new { prompt_tokens = Whole(usage, "input_tokens") + read + write, completion_tokens = Whole(usage, "output_tokens"), cache_read_input_tokens = read, cache_creation_input_tokens = write }
         });
     }
 }
 
-public sealed record AiCallResult(bool Ok, bool MissingKey, bool ContextError, JsonElement Response, JsonElement Prompt, AiEndpoint Served);
+public sealed record AiCallResult(bool Ok, bool MissingKey, bool ContextError, JsonElement Response, JsonElement Prompt, AiEndpoint Served, string? AnsweredModel = null, string? BlockReason = null, bool FallbackUsed = false);
 
 /// <summary>Non-streaming adapter seam: retries select an endpoint, then translate one complete response.</summary>
 public static class AiGateway
 {
     public static string MessagesUrl(string baseUrl) => baseUrl.TrimEnd('/').EndsWith("/v1", StringComparison.Ordinal) ? baseUrl.TrimEnd('/') + "/messages" : baseUrl.TrimEnd('/') + "/v1/messages";
-    public static async Task<AiCallResult> Complete(HttpClient http, AiResolution resolution, JsonElement messages, object tools, Guid sessionId, CancellationToken ct)
-    {
-        var prompt = messages;
-        var served = resolution.Primary;
-        var missing = true;
-        foreach (var endpoint in new[] { resolution.Primary }.Concat(resolution.Fallbacks))
-        {
-            var bytes = await endpoint.Key(ct);
-            if (bytes == null) continue;
-            missing = false;
-            served = endpoint;
-            var key = Encoding.UTF8.GetString(bytes);
-            CryptographicOperations.ZeroMemory(bytes);
-            try
-            {
-                prompt = JsonSerializer.Deserialize<JsonElement>(Dlp.Redact(OutputRedactor.Redact(prompt.GetRawText(), [key])));
-                var anthropic = endpoint.Kind == "anthropic";
-                object payload;
-                if (anthropic) payload = ProviderWire.AnthropicCompletion(endpoint.Model, prompt, tools, resolution.Caching);
-                else
-                {
-                    var completion = ProviderWire.Completion(endpoint.Model, prompt, tools);
-                    completion["messages"] = PromptCaching.Messages((JsonElement)completion["messages"]!, resolution.Caching, endpoint.Kind);
-                    if (endpoint.Kind is not ("openrouter" or "mock")) completion.Remove("usage");
-                    if (JsonSerializer.SerializeToElement(tools).GetArrayLength() == 0) completion.Remove("tools");
-                    if (resolution.Caching.Enabled && resolution.Caching.SessionIdPerConversation) completion["prompt_cache_key"] = sessionId.ToString("D");
-                    if (endpoint.Kind == "openrouter")
-                    {
-                        if (resolution.Caching.SessionIdPerConversation) completion["session_id"] = sessionId.ToString("D");
-                        if (resolution.Latency.PreferredMaxLatencyMs is { } ms) completion["provider"] = new { preferred_max_latency = ms / 1000.0 };
-                    }
-                    payload = completion;
-                }
-                using var request = new HttpRequestMessage(HttpMethod.Post, anthropic ? MessagesUrl(endpoint.BaseUrl) : endpoint.BaseUrl.TrimEnd('/') + "/chat/completions");
-                if (anthropic) { request.Headers.Add("x-api-key", key); request.Headers.Add("anthropic-version", "2023-06-01"); }
-                else request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
-                request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-                using var response = await http.SendAsync(request, ct);
-                var raw = await response.Content.ReadAsStringAsync(ct);
-                if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500) continue;
-                if (!response.IsSuccessStatusCode) return new(false, false, raw.Contains("context_length", StringComparison.OrdinalIgnoreCase) || raw.Contains("maximum context", StringComparison.OrdinalIgnoreCase) || raw.Contains("too many tokens", StringComparison.OrdinalIgnoreCase), default, prompt, served);
-                using var doc = JsonDocument.Parse(OutputRedactor.Redact(raw, [key]));
-                return new(true, false, false, anthropic ? ProviderWire.FromAnthropic(doc.RootElement) : doc.RootElement.Clone(), prompt, served);
-            }
-            catch (HttpRequestException) { }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
-            finally { key = ""; }
-        }
-        return new(false, missing, false, default, prompt, served);
-    }
+    public static Task<AiCallResult> Complete(HttpClient http, AiResolution resolution, JsonElement messages, object tools, Guid sessionId, CancellationToken ct,
+        Func<TimeSpan, CancellationToken, Task>? delay = null) => AiControlledGateway.Complete(http, resolution, messages, tools, sessionId, ct, delay);
 }
