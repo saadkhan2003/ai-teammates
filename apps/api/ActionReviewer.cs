@@ -21,7 +21,7 @@ public sealed class RuleBasedActionReviewer : IActionReviewer
 
     public Task<string?> ReviewAsync(string tool, JsonElement args, CancellationToken ct)
     {
-        if (tool is "shell" or "setup_env")
+        if (tool is "shell" or "setup_env" or "job_start")
         {
             var command = args.ValueKind == JsonValueKind.Object && args.TryGetProperty("command", out var node) && node.ValueKind == JsonValueKind.String
                 ? node.GetString() ?? "" : "";

@@ -26,8 +26,9 @@ public sealed class MigrationManifestTests
         Assert.Equal(listed.Length, listed.Distinct().Count());
         var ids = listed.Select(file => int.Parse(file[..3])).ToArray();
         Assert.Equal(ids.Length, ids.Distinct().Count());
-        // 043–046 are reserved by the parallel program.
-        Assert.Equal(Enumerable.Range(1, 42).Concat(new[] { 47, 48, 49 }), ids);
+        // v0.5: speed 043–046, briefs 047–049, then speed's usage credits and resources as 050–051.
+        Assert.Equal(Enumerable.Range(1, ids.Length), ids);
+        Assert.Equal(new[] { "047_task_briefs.sql", "048_brief_lessons.sql", "049_approval_signals.sql", "050_usage_credits.sql", "051_resources.sql" }, listed[46..51]);
         Assert.DoesNotContain(ids, id => id is >= 90 and <= 99);
         var copies = Regex.Matches(File.ReadAllText(Path.Combine(root, "apps/api/Dockerfile")),
             @"(?m)^COPY db/(\S+\.sql) /migrations/(\S+\.sql)$");

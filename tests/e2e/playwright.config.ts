@@ -6,6 +6,7 @@ for (const name of ["STACK", "BASE_URL"]) {
 }
 
 export default defineConfig({
+  grepInvert: process.env.PERF === "1" ? undefined : /@perf/,
   globalSetup: "./global-setup.ts",
   testDir: ".",
   timeout: 1_200_000,
@@ -23,7 +24,8 @@ export default defineConfig({
   },
   workers: 1,
   projects: [
-    { name: "desktop", testMatch: /(?:acceptance|security|links|vnc-lifecycle|computer-view|question-card|memory-notes|approval-rules|plugins|new-teammate-form|create-bot|about|account-menu|settings-modal|shortcuts|settings-computer|chat-polish|events|refresh-notice|library-share|library-section|library-search|chat-features|teach-task|bot-messaging|reply-ux|routines-section|coding-section|computer-card|chat-pill|long-run-resume|skills-v2|learning|briefs)\.spec\.ts/, use: { ...devices["Desktop Chrome"] } },
+    { name: "admin", testMatch: /admin-(?:app|ai-models|billing)\.spec\.ts/, use: { ...devices["Desktop Chrome"], baseURL: process.env.ADMIN_URL } },
+    { name: "desktop", testMatch: /(?:ui-shots|computer-jobs|usage-credits|speed-virtual|speed-phase[12]|perf-speed|acceptance|security|links|vnc-lifecycle|computer-view|question-card|memory-notes|approval-rules|plugins|new-teammate-form|create-bot|about|account-menu|settings-modal|shortcuts|settings-computer|chat-polish|events|refresh-notice|library-share|library-section|library-search|chat-features|teach-task|bot-messaging|reply-ux|routines-section|coding-section|computer-card|chat-pill|long-run-resume|skills-v2|learning|briefs)\.spec\.ts/, use: { ...devices["Desktop Chrome"] } },
     {
       name: "iphone-13",
       testMatch: /mobile\.spec\.ts|question-card\.spec\.ts|plugins\.spec\.ts/,

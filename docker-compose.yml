@@ -6,11 +6,16 @@ services:
     ports:
       - "18080:80"
       - "18443:443"
+      - "127.0.0.1:${ADMIN_PORT:-18082}:8081"
+    environment:
+      ADMIN_ALLOWLIST: ${ADMIN_ALLOWLIST:-0.0.0.0/0 ::/0}
     volumes:
       - ${CADDYFILE:-./Caddyfile}:/etc/caddy/Caddyfile:ro
     networks:
       - front
     depends_on:
+      admin:
+        condition: service_started
       web:
         condition: service_started
       api:
@@ -22,6 +27,20 @@ services:
   web:
     build:
       context: ./apps/web
+    environment:
+      NODE_ENV: production
+    networks:
+      - front
+    depends_on:
+      api:
+        condition: service_healthy
+    mem_limit: 192m
+    cpus: 0.15
+    restart: unless-stopped
+
+  admin:
+    build:
+      context: ./apps/admin
     environment:
       NODE_ENV: production
     networks:
@@ -68,6 +87,8 @@ services:
       SECCOMP_PROFILE: /var/lib/teammates/seccomp-chrome.json
       SNAPSHOT_DIR: /var/lib/teammates/snapshots
       MAX_COMPUTERS: ${MAX_COMPUTERS:-}
+      WARM_POOL_SIZE: ${WARM_POOL_SIZE:-0}
+      COMPUTER_READINESS_TIMEOUT_SECONDS: ${COMPUTER_READINESS_TIMEOUT_SECONDS:-45}
       COMPUTER_CPU_GUARANTEE: ${COMPUTER_CPU_GUARANTEE:-2}
       COMPUTER_CPU_BURST: ${COMPUTER_CPU_BURST:-4}
       COMPUTER_NO_CPU_LIMITS: ${COMPUTER_NO_CPU_LIMITS:-false}

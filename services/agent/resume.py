@@ -7,7 +7,7 @@ from typing import Any
 from guard import scrub
 
 NON_IDEMPOTENT = {
-    "shell", "setup_env", "write_file", "edit_file", "delete_file", "git_commit",
+    "shell", "setup_env", "write_file", "edit_file", "delete_file", "git_commit", "job_start", "job_cancel",
     "create_pr", "run_tests", "spawn_child_task", "computer_click", "computer_type",
     "computer_key", "browser_click", "record_start", "record_stop",
 }

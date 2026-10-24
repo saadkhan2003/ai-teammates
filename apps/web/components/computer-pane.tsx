@@ -5,6 +5,7 @@ import { ComputerState, DisplayDots, type ComputerPhase } from "@/components/com
 import { Eye, Maximize2, Minimize2, Minus, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { ComputerJobs } from "@/components/computer-jobs";
 import { api, readDesktopToken } from "@/lib/api";
 import type { BrowserPage, Task } from "@/lib/types";
 import { cn, errorMessage } from "@/lib/utils";
@@ -875,6 +876,7 @@ export function ComputerPane({
             </div>
           </div>
         ) : null}
+        {!(fullscreen && collapsedView) ? <ComputerJobs botId={botId} controlled={mode === "control" || holder === "human"} dark={fullscreen} /> : null}
         {keyboard ? (
           <input
             ref={keyRef}

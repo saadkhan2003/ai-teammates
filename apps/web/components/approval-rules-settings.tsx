@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SettingsSelect } from "@/components/settings-select";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/utils";
 
@@ -40,7 +40,7 @@ export function ApprovalRulesSettings() {
       <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm font-medium">{rule.tool.replaceAll("_", " ")}</p><p className="break-all text-xs text-muted-foreground">{rule.matcher.host ?? rule.matcher.prefix ?? (rule.matcher.kind === "command" ? "Exact command" : rule.matcher.kind === "recipient" ? "Same recipient" : "Scoped action")}</p></div><span className="rounded-md border px-2 py-1 text-xs">{rule.botId ? rule.botName ?? "This bot" : "All my bots"}</span></div>
       <p className="text-xs text-muted-foreground">Last used: {rule.lastUsedAt ? new Date(rule.lastUsedAt).toLocaleString() : "Never"} · {rule.useCount} uses</p>
       <div className="grid gap-2 sm:grid-cols-2">
-        <div className="space-y-1"><Label htmlFor={`scope-${rule.id}`}>Applies to</Label><Select value={rule.botId ?? "all"} disabled={busy === rule.id} onValueChange={(value) => void update(rule, { botId: value === "all" ? null : value })}><SelectTrigger id={`scope-${rule.id}`}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All my bots</SelectItem>{bots.map((bot) => <SelectItem key={bot.id} value={bot.id}>{bot.name}</SelectItem>)}</SelectContent></Select></div>
+        <div className="space-y-1"><Label htmlFor={`scope-${rule.id}`}>Applies to</Label><SettingsSelect value={rule.botId ?? "all"} disabled={busy === rule.id} onValueChange={value => void update(rule, { botId: value === "all" ? null : value })} id={`scope-${rule.id}`} options={[{ value: "all", label: "All my bots" }, ...bots.map(bot => ({ value: bot.id, label: bot.name }))]} /></div>
         {(rule.matcher.kind === "host" || rule.matcher.kind === "prefix") ? <div className="space-y-1"><Label htmlFor={`matcher-${rule.id}`}>{rule.matcher.kind === "host" ? "Host" : "Path prefix"}</Label><div className="flex gap-2"><Input id={`matcher-${rule.id}`} defaultValue={rule.matcher.host ?? rule.matcher.prefix} disabled={busy === rule.id} onBlur={(event) => { const value = event.currentTarget.value.trim(); const key = rule.matcher.kind === "host" ? "host" : "prefix"; const old = rule.matcher[key]; if (value && value !== old) void update(rule, { matcher: { ...rule.matcher, [key]: value } as Record<string, string> }); }} /><Button size="sm" variant="outline" disabled={busy === rule.id} onClick={() => { const input = document.getElementById(`matcher-${rule.id}`) as HTMLInputElement | null; if (input) input.blur(); }}>Save</Button></div></div> : null}
       </div>
       <Button size="sm" variant="outline" disabled={busy === rule.id} onClick={() => void revoke(rule)}>Revoke</Button>

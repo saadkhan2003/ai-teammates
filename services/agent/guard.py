@@ -145,6 +145,11 @@ def present_tool(name: str, args: dict | None, result):
         marked["bots"] = [dict(b, bio=wrap_untrusted(str(b.get("bio") or ""), "peer bot")) if isinstance(b, dict) and b.get("bio") else b for b in result["bots"]]
         marked["untrusted"] = True
         return marked
+    if name == "job_logs" and isinstance(result.get("log"), str) and result.get("log"):
+        marked = dict(result)
+        marked["log"] = wrap_untrusted(str(result["log"]), "job log")
+        marked["untrusted"] = True
+        return marked
     command = ""
     if isinstance(args, dict):
         command = str(args.get("command") or "")
@@ -192,7 +197,7 @@ def scrub(value):
 
 
 RISKY_PREEXEC_TOOLS = {
-    "shell", "setup_env", "write_file", "edit_file", "delete_file", "external_post", "send_message", "sign",
+    "shell", "setup_env", "job_start", "write_file", "edit_file", "delete_file", "external_post", "send_message", "sign",
     "browser_click", "computer_click", "computer_type", "computer_key", "computer_use", "launch_app", "open_app",
     "automation_write", "delegate", "spawn_child_task", "message_bot", "create_routine", "update_routine",
 }

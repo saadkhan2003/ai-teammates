@@ -73,3 +73,12 @@ def test_production_caddy_explicitly_hides_internal_metrics_and_keeps_streams_al
 def test_production_compose_does_not_publish_vnc_or_novnc_ports():
     text = _text("deploy/compose.production.yml")
     assert "5900:" not in text and "6080:" not in text
+
+
+def test_compression_excludes_event_and_vnc_paths_on_public_and_admin_listeners():
+    for name in ("Caddyfile", "deploy/Caddyfile.production", "deploy/Caddyfile.test"):
+        text = _text(name)
+        assert text.count("@compress not path /api/events /vnc/*") == 2
+        assert text.count("encode @compress zstd gzip") == 2
+        assert text.index("handle /api/events") < text.index("handle /api/*")
+        assert "flush_interval -1" in text.split("handle /vnc/*", 1)[1]

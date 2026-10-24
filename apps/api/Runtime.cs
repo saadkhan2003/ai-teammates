@@ -13,7 +13,7 @@ namespace Teammates.Api;
 
 public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer? reviewer = null)
 {
-    private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(90) };
+    private readonly HttpClient _http = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(90) };
     private readonly MemoryStore _memory = new(platform);
     private readonly IActionReviewer _reviewer = reviewer ?? new RuleBasedActionReviewer();
 
@@ -22,37 +22,62 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         var taskId = body.GetProperty("taskId").GetGuid();
         var botId = body.GetProperty("botId").GetGuid();
         var owner = await OwnerOf(botId);
+        // Brief-quality and preference-extraction checks are short tool-free calls on the quick role.
         var role = body.TryGetProperty("role", out var roleElement) ? roleElement.GetString() switch
-        { "compactor" => "compactor", "brief_quality" or "preference_extraction" => "quick", _ => "planner" } : "planner";
-        var model = role == "quick" ? platform.Configuration["MODEL_QUICK"] ?? platform.ModelName : platform.ModelName;
-        var messages = body.GetProperty("messages");
-        var secret = await platform.Resolve(owner, "secret://openrouter/default", "model_gateway", botId, null, taskId, "model_gateway");
-        if (secret == null)
-            return Results.Json(new { status = "waiting_resource", reason = "connect_openrouter" });
-        var key = Encoding.UTF8.GetString(secret);
-        CryptographicOperations.ZeroMemory(secret);
-        var redacted = RedactMessages(messages, key);
-        var payload = ProviderWire.Completion(model, redacted, role is "compactor" or "quick" ? Array.Empty<object>() : await ToolsFor(botId, ct));
-        if (role == "quick") { payload["max_tokens"] = 256; payload["response_format"] = new { type = "json_object" }; }
-        using var request = new HttpRequestMessage(HttpMethod.Post, platform.OpenRouterBase + "/chat/completions");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
-        request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+        { "compactor" or "quick" or "vision" or "coding" => roleElement.GetString()!, "brief_quality" or "preference_extraction" => "quick", _ => "planner" } : "planner";
+        var messages = PromptOrder.Build(body.GetProperty("messages"), body.TryGetProperty("liveState", out var liveState) ? liveState : null);
+        (Guid Id, Guid? Conversation, string Kind, Guid? Routine, int Epoch, string Status) task;
+        await using (var sessionConn = await platform.Data.OpenConnectionAsync(ct))
+            task = await sessionConn.QuerySingleOrDefaultAsync<(Guid Id, Guid? Conversation, string Kind, Guid? Routine, int Epoch, string Status)>("SELECT id,conversation_id,kind,routine_id,lease_epoch,status FROM tasks WHERE id=@taskId AND bot_id=@botId", new { taskId, botId });
+        if (task.Id == Guid.Empty) return Results.NotFound();
+        if (body.TryGetProperty("epoch",out var leaseEpoch) && !EpochFence.Accepts(true,leaseEpoch.GetInt32(),task.Epoch,task.Status)) return Results.StatusCode(409);
+        var sessionId = task.Conversation ?? task.Id;
+        var displayStream = task.Conversation != null && task.Kind != "peer" && task.Routine == null;
+        var routingRole = role;
+        if (role == "planner" && task.Kind == "coding") routingRole = "coding";
+        var resolution = await platform.AiRegistry.Resolve(routingRole, owner, taskId, botId, ct);
         var started = DateTimeOffset.UtcNow;
-        using var response = await _http.SendAsync(request, ct);
-        var raw = await response.Content.ReadAsStringAsync(ct);
-        key = "";
-        if (!response.IsSuccessStatusCode)
+        var tools = role is "compactor" or "quick" ? Array.Empty<object>() : await ToolsFor(botId, ct);
+        var streaming = role is not ("compactor" or "quick") && body.TryGetProperty("stream", out var streamFlag) && streamFlag.ValueKind == JsonValueKind.True;
+        int? ttftMs = null;
+        int? streamTotalMs = null;
+        AiCallResult call;
+        if (streaming && task.Status != "running") return Results.StatusCode(409);
+        if (streaming)
         {
-            await StoreModel(owner, botId, taskId, redacted, false, (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds, default, role, model);
-            var contextError = raw.Contains("context_length", StringComparison.OrdinalIgnoreCase) || raw.Contains("maximum context", StringComparison.OrdinalIgnoreCase) || raw.Contains("too many tokens", StringComparison.OrdinalIgnoreCase);
-            return Results.Json(new { status = "error", error = "provider rejected the request", errorCode = contextError ? "context_length" : "provider_error" });
+            var roundId = Guid.NewGuid();
+            if (displayStream) await platform.PublishTo(owner, new { type = "model.started", botId, taskId, roundId });
+            async Task PublishDelta(ModelDelta delta)
+            {
+                if (!await HoldsLease(taskId, task.Epoch, ct, botId)) throw new OperationCanceledException("lease_lost");
+                if (!displayStream) return;
+                await platform.PublishTo(owner, delta.Text != null
+                    ? (object)new { type = "message.delta", botId, taskId, roundId, delta = delta.Text }
+                    : new { type = "tool.delta", botId, taskId, roundId, index = delta.Index, name = delta.Name });
+            }
+            ModelStreamResult streamed;
+            try { streamed = await AiStreamingGateway.Stream(_http, resolution, RedactMessages(messages, ""), tools, sessionId, PublishDelta, ct); }
+            catch
+            {
+                if (displayStream) await platform.PublishTo(owner, new { type = "model.error", botId, taskId, roundId });
+                throw;
+            }
+            call = streamed.Call; ttftMs = streamed.TtftMs; streamTotalMs = streamed.TotalMs;
+            if (displayStream) await platform.PublishTo(owner, new { type = call.Ok ? "model.finished" : "model.error", botId, taskId, roundId });
         }
-        using var doc = JsonDocument.Parse(raw);
-        var message = doc.RootElement.GetProperty("choices")[0].GetProperty("message");
+        else call = await AiGateway.Complete(_http, resolution, RedactMessages(messages, ""), tools, sessionId, ct);
+        if (call.BlockReason != null) return Results.Json(new { status = "waiting_resource", reason = call.BlockReason });
+        if (call.MissingKey) return Results.Json(new { status = "waiting_resource", reason = "model_access_required" });
+        if (!call.Ok)
+        {
+            await StoreModel(owner, botId, taskId, call.Prompt, false, streamTotalMs ?? (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds, call.Response.ValueKind == JsonValueKind.Object ? AiUsage.Price(ProviderWire.ReadUsage(call.Response), call.Served) : default, role, resolution, call.Served, ttftMs, streaming, call.AnsweredModel, call.FallbackUsed);
+            return Results.Json(new { status = "error", error = "provider rejected the request", errorCode = call.ContextError ? "context_length" : "provider_error" });
+        }
+        var message = call.Response.GetProperty("choices")[0].GetProperty("message");
         var normalized = ProviderWire.Normalize(message);
         var normalizedText = OutputRedactor.Redact(normalized.GetRawText(), []);
-        var usage = ProviderWire.ReadUsage(doc.RootElement);
-        await StoreModel(owner, botId, taskId, redacted, true, (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds, usage, role, model);
+        var usage = AiUsage.Price(ProviderWire.ReadUsage(call.Response), call.Served);
+        await StoreModel(owner, botId, taskId, call.Prompt, true, streamTotalMs ?? (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds, usage, role, resolution, call.Served, ttftMs, streaming, call.AnsweredModel, call.FallbackUsed);
         await using var conn = await platform.Data.OpenConnectionAsync(ct);
         await conn.ExecuteAsync("UPDATE tasks SET model_calls = model_calls + 1, updated_at=now() WHERE id=@id", new { id = taskId });
         return Results.Text("{\"status\":\"ok\",\"message\":" + normalizedText + ",\"promptTokens\":" + usage.PromptTokens.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}", "application/json");
@@ -169,8 +194,10 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         var processingSettings = body.TryGetProperty("processingSettings", out var settingsNode) && settingsNode.ValueKind == JsonValueKind.String
             ? settingsNode.GetString() ?? "" : "";
         if (processingSettings.Length > 2048) return Results.BadRequest();
+        var vision = await platform.AiRegistry.Resolve("vision", owner, taskId, botId, ct);
+        var visionCacheModel = vision.ConfigVersion == 0 ? Environment.GetEnvironmentVariable("VIDEO_SUMMARY_MODEL") ?? platform.ModelName : $"{vision.ConfigVersion}:{vision.Primary.ProviderId}:{vision.Primary.Model}";
         var settingsVersion = VideoTools.SettingsVersion(
-            Environment.GetEnvironmentVariable("VIDEO_SUMMARY_MODEL") ?? platform.ModelName,
+            visionCacheModel,
             Environment.GetEnvironmentVariable("VIDEO_STT_MODEL") ?? "openai/whisper-large-v3-turbo",
             Environment.GetEnvironmentVariable("VIDEO_STT_PROVIDER") ?? "deepinfra", processingSettings);
         if (operation == "source")
@@ -222,8 +249,31 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         }
         if (operation == "model")
         {
+            if (body.GetProperty("kind").GetString() != "stt")
+            {
+                var resolution = await platform.AiRegistry.Resolve("vision", owner, taskId, botId, ct);
+                if (resolution.ConfigVersion == 0 && Environment.GetEnvironmentVariable("VIDEO_SUMMARY_MODEL") is { Length: > 0 } legacyModel)
+                    resolution = resolution with { Primary = resolution.Primary with { Model = legacyModel } };
+                var messages = JsonSerializer.SerializeToElement(new[] { new { role = "user", content = body.GetProperty("content") } });
+                var conversation = await conn.ExecuteScalarAsync<Guid>("SELECT conversation_id FROM tasks WHERE id=@taskId", new { taskId });
+                var started = DateTimeOffset.UtcNow;
+                var call = await AiGateway.Complete(_http, resolution, messages, Array.Empty<object>(), conversation, ct);
+                if (call.BlockReason != null) return Results.Json(new { status = "waiting_resource", reason = call.BlockReason });
+                if (call.MissingKey) return Results.Json(new { status = "waiting_resource", reason = "model_access_required" });
+                // Never persist image/audio data in model request logs.
+                var safePrompt = JsonSerializer.SerializeToElement(new { kind = "video_summary", multimodal = true });
+                await StoreModel(owner, botId, taskId, safePrompt, call.Ok, (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds, call.Ok ? AiUsage.Price(ProviderWire.ReadUsage(call.Response), call.Served) : default, "video", resolution, call.Served, answeredModel: call.AnsweredModel, fallbackUsed: call.FallbackUsed);
+                if (!call.Ok) return Results.Json(new { status = "error", reason = "provider_error" }, statusCode: 502);
+                await conn.ExecuteAsync("UPDATE tasks SET model_calls=model_calls+1,updated_at=now() WHERE id=@task", new { task = taskId });
+                var content = call.Response.GetProperty("choices")[0].GetProperty("message").GetProperty("content");
+                return Results.Json(new { content = content.ValueKind == JsonValueKind.String ? content.GetString() : content.GetRawText() });
+            }
+            var audioControls = await platform.AiRegistry.Resolve("vision", owner, taskId, botId, ct);
+            var audioSpend = audioControls.CheckSpend == null ? new AiSpendDecision() : await audioControls.CheckSpend(ct);
+            if (audioControls.KillSwitch?.Mode is "stop" or "safe" || audioControls.Role?.Privacy == true || audioSpend.Blocked || audioSpend.Downgrade != null)
+                return Results.Json(new { status = "waiting_resource", reason = "Audio requests are temporarily paused." });
             var secret = await platform.Resolve(owner, "secret://openrouter/default", "model_gateway", botId, null, taskId, "model_gateway");
-            if (secret == null) return Results.Json(new { status = "waiting_resource", reason = "connect_openrouter" });
+            if (secret == null) return Results.Json(new { status = "waiting_resource", reason = "model_access_required" });
             var key = Encoding.UTF8.GetString(secret);
             CryptographicOperations.ZeroMemory(secret);
             try
@@ -246,19 +296,22 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
                 request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 timeout.CancelAfter(kind == "stt" ? TimeSpan.FromSeconds(55) : TimeSpan.FromSeconds(85));
+                var providerStarted = System.Diagnostics.Stopwatch.GetTimestamp();
                 using var response = await _http.SendAsync(request, timeout.Token);
                 if (!response.IsSuccessStatusCode) return Results.Json(new { status = "error", reason = "provider_error" }, statusCode: 502);
-                using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(timeout.Token));
+                var providerRaw = await response.Content.ReadAsStringAsync(timeout.Token);
+                var providerTotalMs = (int)System.Diagnostics.Stopwatch.GetElapsedTime(providerStarted).TotalMilliseconds;
+                using var doc = JsonDocument.Parse(providerRaw);
                 if (kind == "stt")
                 {
                     using var safePrompt = JsonDocument.Parse(JsonSerializer.Serialize(new { kind = "video_stt", model, audioBytes = (body.GetProperty("audio").GetString() ?? "").Length * 3 / 4 }));
-                    await StoreVideoModel(owner, botId, taskId, safePrompt.RootElement, model, default);
+                    await StoreVideoModel(owner, botId, taskId, safePrompt.RootElement, model, ProviderWire.ReadUsage(doc.RootElement), providerTotalMs);
                     await conn.ExecuteAsync("UPDATE tasks SET model_calls=model_calls+1,updated_at=now() WHERE id=@task", new { task = taskId });
                     return Results.Json(doc.RootElement.Clone());
                 }
                 var content = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content");
                 using var summaryPrompt = JsonDocument.Parse(JsonSerializer.Serialize(new { kind = "video_summary", model, multimodal = true }));
-                await StoreVideoModel(owner, botId, taskId, summaryPrompt.RootElement, model, ProviderWire.ReadUsage(doc.RootElement));
+                await StoreVideoModel(owner, botId, taskId, summaryPrompt.RootElement, model, ProviderWire.ReadUsage(doc.RootElement), providerTotalMs);
                 await conn.ExecuteAsync("UPDATE tasks SET model_calls=model_calls+1,updated_at=now() WHERE id=@task", new { task = taskId });
                 return Results.Json(new { content = content.ValueKind == JsonValueKind.String ? content.GetString() : content.GetRawText() });
             }
@@ -270,6 +323,50 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
     private static Task<int> RememberVideoCard(NpgsqlConnection conn, Guid sessionId, JsonElement analysis) =>
         conn.ExecuteAsync("UPDATE video_tool_sessions SET analysis=CAST(@card AS jsonb) WHERE id=@sessionId",
             new { sessionId, card = OutputRedactor.Redact(JsonSerializer.Serialize(VideoTools.Card(analysis))) });
+
+    /// <summary>Unified usage gate plus lazy wake. Heavy work (a new job, or waking a sleeping computer) pauses at 100%
+    /// of the weekly allowance when no on-demand room is left. Tools on an already-awake computer keep working.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, byte> _pausedNotified = new();
+
+    private async Task<(string Code, string Reason)?> HeavyWork(Guid botId, Guid taskId, string tool, CancellationToken ct)
+    {
+        if (StorageRules.Writes(tool))
+        {
+            var storage = await platform.Resources.StorageAsync(await OwnerOf(botId), ct);
+            if (storage.State == StorageRules.Full)
+            {
+                await platform.Audit("policy", "storage.full", botId, taskId, new { tool, code = StorageRules.FullCode, storage.UsedBytes, storage.QuotaBytes });
+                return (StorageRules.FullCode, StorageRules.FullMessage(storage));
+            }
+        }
+        if (!ComputerNeed.Needs(tool)) return null;
+        var placement = await platform.PlacementForBot(botId, ct);
+        var power = platform.Compute.PowerSnapshot().FirstOrDefault(item => item.Id == placement.Computer.Value).Power;
+        if (tool != "job_start" && power == "awake") return null;
+        if (await platform.Usage.BlockReasonAsync(await OwnerOf(botId), ct) is { } reason)
+        {
+            await platform.Audit("policy", "usage.paused", botId, taskId, new { tool, code = Credits.LimitCode });
+            if (_pausedNotified.TryAdd(taskId, 0))
+            {
+                if (_pausedNotified.Count > 10_000) _pausedNotified.Clear();
+                await using var conn = await platform.Data.OpenConnectionAsync(ct);
+                var conversation = await conn.ExecuteScalarAsync<Guid?>("SELECT conversation_id FROM tasks WHERE id=@taskId", new { taskId });
+                if (conversation is { } conv)
+                {
+                    await conn.ExecuteAsync("INSERT INTO messages(conversation_id,role,kind,content,task_id) VALUES(@conv,'assistant','text',@content,@taskId)",
+                        new { conv, content = reason, taskId });
+                    await platform.Publish(new { type = "message", conversationId = conv });
+                }
+            }
+            return (Credits.LimitCode, reason);
+        }
+        if (power != "awake")
+        {
+            try { await platform.Compute.EnsureAwakeAsync(placement.Computer, ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { /* the tool reports a computer that will not wake */ }
+        }
+        return null;
+    }
 
     public async Task<IResult> Authorize(JsonElement body, CancellationToken ct)
     {
@@ -294,6 +391,8 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         }
         await platform.Audit("policy", "tool.allowed", botId, taskId,
             new { tool, reason = gated.Reason, riskClass = gated.RiskClass });
+        if (await HeavyWork(botId, taskId, tool, ct) is { } paused)
+            return Results.Json(new { decision = "deny", ok = false, code = paused.Code, reason = paused.Reason, riskClass = gated.RiskClass });
         if (tool == "browser_open" && Uri.TryCreate(Arg(args, "url"), UriKind.Absolute, out var uri))
         {
             try
@@ -339,6 +438,8 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         }
         await platform.Audit("policy", "tool.allowed", botId, taskId,
             new { tool, reason = gated.Reason, riskClass = gated.RiskClass });
+        if (await HeavyWork(botId, taskId, tool, ct) is { } paused)
+            return Results.Json(new { decision = "deny", code = paused.Code, reason = paused.Reason, riskClass = gated.RiskClass });
         return Results.Json(new { decision = "allow" });
     }
 
@@ -383,6 +484,11 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
             return Results.Json(new { ok = false, status = "waiting_approval", riskClass = gated.RiskClass, summary = gated.Summary });
         }
         if (decision == PolicyEngine.Ask) decision = PolicyEngine.Allow;
+        if (await HeavyWork(botId, taskId, tool, ct) is { } usagePaused)
+        {
+            await Step(taskId, tool, args, "deny", false, new { code = usagePaused.Code, reason = usagePaused.Reason }, EpochOf(body));
+            return Results.Json(new { ok = false, status = "blocked", code = usagePaused.Code, reason = usagePaused.Reason });
+        }
         var idempotencyKey = body.TryGetProperty("idempotencyKey", out var keyElement) && keyElement.ValueKind == JsonValueKind.String
             ? keyElement.GetString()
             : null;
@@ -630,6 +736,16 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         var computer = placement.Computer;
         switch (tool)
         {
+            case "job_start":
+                return await platform.Jobs.StartAsync(owner, botId, taskId, computer, args, ct);
+            case "job_status":
+                return await platform.Jobs.StatusAsync(owner, botId, args, ct);
+            case "job_logs":
+                return await platform.Jobs.LogsAsync(owner, botId, args, ct);
+            case "job_cancel":
+                return args.TryGetProperty("job_id", out var cancelId) && Guid.TryParse(cancelId.GetString(), out var cancelJob)
+                    ? await platform.Jobs.CancelAsync(owner, cancelJob, "bot", botId, ct)
+                    : new { ok = false, reason = "job_cancel requires job_id" };
             case "computer_screenshot":
             case "computer_click":
             case "computer_type":
@@ -1179,37 +1295,19 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
 
     private async Task<string?> ClassifyWithModel(Guid owner, Guid botId, Guid taskId, string tool, JsonElement args, CancellationToken ct)
     {
-        var secret = await platform.Resolve(owner, "secret://openrouter/default", "model_gateway", botId, null, taskId, "policy");
-        if (secret == null) return null;
-        var key = Encoding.UTF8.GetString(secret);
-        CryptographicOperations.ZeroMemory(secret);
         var keys = args.ValueKind == JsonValueKind.Object ? string.Join(',', args.EnumerateObject().Select(prop => prop.Name)) : "";
         var prompt = Dlp.Redact($"Classify this tool call. Reply with one of: read, write, send_message, payment, sign, delete, credential_use, external_post. Tool {tool}. Argument names {keys}.");
         try
         {
-            var payload = JsonSerializer.Serialize(new
-            {
-                model = platform.ModelName,
-                messages = new[] { new { role = "user", content = prompt } }
-            });
-            using var request = new HttpRequestMessage(HttpMethod.Post, platform.OpenRouterBase + "/chat/completions");
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
-            request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
-            using var response = await _http.SendAsync(request, ct);
-            var raw = await response.Content.ReadAsStringAsync(ct);
-            if (!response.IsSuccessStatusCode) return null;
-            using var doc = JsonDocument.Parse(raw);
-            var content = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString();
-            return Dlp.Redact(content);
+            var resolution = await platform.AiRegistry.Resolve("quick", owner, taskId, botId, ct);
+            var messages = JsonSerializer.SerializeToElement(new[] { new { role = "user", content = prompt } });
+            var call = await AiGateway.Complete(_http, resolution, messages, Array.Empty<object>(), taskId, ct);
+            if (call.BlockReason != null || call.MissingKey) return null;
+            await StoreModel(owner, botId, taskId, messages, call.Ok, 0, call.Ok ? AiUsage.Price(ProviderWire.ReadUsage(call.Response), call.Served) : default, "quick", resolution, call.Served, answeredModel: call.AnsweredModel, fallbackUsed: call.FallbackUsed);
+            if (!call.Ok) return null;
+            return Dlp.Redact(call.Response.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString());
         }
-        catch
-        {
-            return null;
-        }
-        finally
-        {
-            key = "";
-        }
+        catch { return null; }
     }
 
     private async Task<object> SendMessage(Guid botId, Guid taskId, JsonElement args)
@@ -1310,7 +1408,9 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         var json = result is JsonElement element ? element.GetRawText() : JsonSerializer.Serialize(result);
         json = InjectionFilter.ScrubJson(json);
         await using var conn = await platform.Data.OpenConnectionAsync();
-        var seq = await conn.ExecuteScalarAsync<int>("SELECT coalesce(max(seq),0)+1 FROM task_steps WHERE task_id=@id", new { id = taskId });
+        await using var stepTx = await conn.BeginTransactionAsync();
+        await conn.ExecuteAsync("SELECT id FROM tasks WHERE id=@taskId FOR UPDATE", new { taskId }, stepTx);
+        var seq = await conn.ExecuteScalarAsync<int>("SELECT coalesce(max(seq),0)+1 FROM task_steps WHERE task_id=@id", new { id = taskId }, stepTx);
         var safeArgs = InjectionFilter.ScrubJson(args.ValueKind == JsonValueKind.Undefined ? "{}" : args.GetRawText());
         await conn.ExecuteAsync(
             "INSERT INTO task_steps (task_id, seq, tool, args, result, policy, ok, finished_at) VALUES (@task, @seq, @tool, @args::jsonb, @result::jsonb, @policy, @ok, now())",
@@ -1347,6 +1447,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
             }
             catch (JsonException) { }
         }
+        await stepTx.CommitAsync();
     }
 
     public async Task RecoverOutbound(CancellationToken ct)
@@ -1545,23 +1646,27 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         return new { replayed = true, output };
     }
 
-    private async Task StoreModel(Guid owner, Guid botId, Guid taskId, JsonElement prompt, bool ok, int latency, TokenUsage usage, string role = "planner", string? model = null)
+    // Stream calls pass the real first content/tool delta clock; complete calls use wall time.
+    private async Task StoreModel(Guid owner, Guid botId, Guid taskId, JsonElement prompt, bool ok, int latency, TokenUsage usage, string role, AiResolution resolution, AiEndpoint served, int? ttftMs = null, bool streaming = false, string? answeredModel = null, bool fallbackUsed = false)
     {
+        role = role is "planner" or "compactor" ? resolution.RoleName : role;
         await using var conn = await platform.Data.OpenConnectionAsync();
         await conn.ExecuteAsync(
             "INSERT INTO model_requests (owner_id, bot_id, task_id, provider, model, prompt_json) VALUES (@owner, @bot, @task, @provider, @model, @prompt::jsonb)",
-            new { owner, bot = botId, task = taskId, provider = platform.LlmProvider, model = model ?? platform.ModelName, prompt = prompt.GetRawText() });
+            new { owner, bot = botId, task = taskId, provider = served.Kind, model = served.Model, prompt = prompt.GetRawText() });
         await conn.ExecuteAsync(
-            "INSERT INTO model_calls (bot_id, task_id, owner_id, role, provider, model, latency_ms, prompt_tokens, completion_tokens, ok, cost_usd) VALUES (@bot, @task, @owner, @role, @provider, @model, @latency, @promptTokens, @completionTokens, @ok, @cost)",
-            new { bot = botId, task = taskId, owner, role, provider = platform.LlmProvider, model = model ?? platform.ModelName, latency, promptTokens = usage.PromptTokens, completionTokens = usage.CompletionTokens, ok, cost = usage.CostUsd });
+            "INSERT INTO model_calls (bot_id, task_id, owner_id, role, provider, model, latency_ms, ttft_ms, total_ms, cached_tokens, cache_write_tokens, prompt_tokens, completion_tokens, ok, cost_usd, provider_id, config_version, credits, served_model, fallback_used) VALUES (@bot, @task, @owner, @role, @provider, @model, @latency, @ttft, @latency, @cachedTokens, @cacheWriteTokens, @promptTokens, @completionTokens, @ok, @cost, @providerId, @configVersion, @credits, @answeredModel, @fallbackUsed)",
+            new { bot = botId, task = taskId, owner, role, answeredModel = answeredModel ?? served.Model, fallbackUsed, provider = served.Kind, model = resolution.Primary.Model, providerId = served.ProviderId == Guid.Empty ? (Guid?)null : served.ProviderId, configVersion = resolution.ConfigVersion, credits = AiModelRegistry.Credits(resolution.Config, "default", answeredModel ?? served.Model, usage), latency, ttft = streaming ? ttftMs : ttftMs ?? latency, cachedTokens = usage.CachedTokens, cacheWriteTokens = usage.CacheWriteTokens, promptTokens = usage.PromptTokens, completionTokens = usage.CompletionTokens, ok, cost = usage.CostUsd });
+        platform.AiRegistry.RecordSpend(owner, botId, usage.CostUsd);
     }
 
-    private async Task StoreVideoModel(Guid owner, Guid botId, Guid taskId, JsonElement prompt, string model, TokenUsage usage)
+    private async Task StoreVideoModel(Guid owner, Guid botId, Guid taskId, JsonElement prompt, string model, TokenUsage usage, int totalMs)
     {
         await using var conn = await platform.Data.OpenConnectionAsync();
         var json = prompt.GetRawText();
         await conn.ExecuteAsync("INSERT INTO model_requests(owner_id,bot_id,task_id,provider,model,prompt_json) VALUES(@owner,@bot,@task,'openrouter',@model,CAST(@json AS jsonb))", new { owner, bot = botId, task = taskId, model, json });
-        await conn.ExecuteAsync("INSERT INTO model_calls(bot_id,task_id,owner_id,role,provider,model,latency_ms,prompt_tokens,completion_tokens,ok,cost_usd) VALUES(@bot,@task,@owner,'video','openrouter',@model,0,@promptTokens,@completionTokens,true,@cost)", new { bot = botId, task = taskId, owner, model, promptTokens = usage.PromptTokens, completionTokens = usage.CompletionTokens, cost = usage.CostUsd });
+        await conn.ExecuteAsync("INSERT INTO model_calls(bot_id,task_id,owner_id,role,provider,model,latency_ms,ttft_ms,total_ms,cached_tokens,cache_write_tokens,prompt_tokens,completion_tokens,ok,cost_usd) VALUES(@bot,@task,@owner,'video','openrouter',@model,@totalMs,@totalMs,@totalMs,@cachedTokens,@cacheWriteTokens,@promptTokens,@completionTokens,true,@cost)", new { bot = botId, task = taskId, owner, model, totalMs, cachedTokens = usage.CachedTokens, cacheWriteTokens = usage.CacheWriteTokens, promptTokens = usage.PromptTokens, completionTokens = usage.CompletionTokens, cost = usage.CostUsd });
+        platform.AiRegistry.RecordSpend(owner, botId, usage.CostUsd);
     }
 
     private async Task<Guid> OwnerOf(Guid botId)

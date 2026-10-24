@@ -784,7 +784,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
     await page.getByRole("tab", { name: "Computer", exact: true }).click();
     await shot(page, "dark-settings-computer");
     await page.getByRole("tab", { name: "Usage & Billing", exact: true }).click();
-    await expect(page.getByTestId("usage-report")).toBeVisible();
+    await expect(page.getByTestId("usage-weekly")).toBeVisible();
     await shot(page, "dark-settings-usage");
     await page.getByRole("tab", { name: "System", exact: true }).click();
     await shot(page, "dark-settings-system");

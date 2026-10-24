@@ -44,3 +44,29 @@ jobs:
             echo "Playwright is local/optional; set RUN_PLAYWRIGHT=true to enable it."
           fi
       # Full stack, Playwright, and eval-real are local: make test / make eval-real.
+
+  bundle-budget:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: |
+            apps/web/package-lock.json
+            apps/admin/package-lock.json
+      - name: Build web and enforce first-load budget
+        run: |
+          cd apps/web
+          npm ci
+          npm run build
+          cd ../..
+          node scripts/bundle-budget.mjs --next apps/web/.next --out test-results/web-bundle-budget.json --enforce
+      - name: Build admin and enforce first-load budget
+        run: |
+          cd apps/admin
+          npm ci
+          npm run build
+          cd ../..
+          node scripts/bundle-budget.mjs --next apps/admin/.next --out test-results/admin-bundle-budget.json --enforce

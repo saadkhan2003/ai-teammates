@@ -11,6 +11,8 @@ public sealed record DockerComputeOptions
     public string IsolationToken { get; init; } = "";
     public string? SeccompPath { get; init; }
     public int MaxComputers { get; init; } = 2;
+    public int WarmPoolSize { get; init; }
+    public TimeSpan ReadinessDeadline { get; init; } = TimeSpan.FromSeconds(45);
     /// <summary>Compose project name; scopes which containers on a shared Docker daemon this provider owns.</summary>
     public string? Stack { get; init; }
     public string ComputerToken { get; init; } = "";
@@ -26,6 +28,8 @@ public sealed record DockerComputeOptions
     public string DisplayGeometry { get; init; } = "1920x1200";
     public string DisplayDepth { get; init; } = "24";
     public long MemoryBytes { get; init; } = 640L * 1024 * 1024;
+    /// <summary>Soft memory reservation per computer. Limits above it are overcommitted across the host.</summary>
+    public long MemoryReservationBytes { get; init; }
     /// <summary>Relative CPU entitlement: 1024 shares per CPU, default two CPUs under contention.</summary>
     public long CpuShares { get; init; } = 2048;
     /// <summary>Burst ceiling; zero disables CFS quotas for test hosts.</summary>

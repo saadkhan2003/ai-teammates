@@ -29,6 +29,7 @@ def main() -> None:
     ap.add_argument("--subnet", required=True, help="first three octets, e.g. 172.30.38")
     ap.add_argument("--http", type=int, required=True)
     ap.add_argument("--https", type=int)
+    ap.add_argument("--admin", type=int, help="publish the admin listener on this loopback port")
     ap.add_argument("--api", type=int, required=True)
     ap.add_argument("--api2", type=int, help="publish a second API instance on this port")
     ap.add_argument("--chain", help="iptables chain, default <NAME>-ISO upper-case")
@@ -37,7 +38,10 @@ def main() -> None:
                     help="drop cpus: quotas (test stacks; small CFS quotas get stuck throttled on this host, see docs/ARCH_G3_STATUS.md)")
     ap.add_argument("--max-computers", type=int, default=int(os.environ.get("MAX_COMPUTERS") or "5"),
                     help="computer cap for this test stack (default 5; MAX_COMPUTERS overrides)")
+    ap.add_argument("--warm-pool-size", type=int, default=1, help="disposable paused templates (default 1)")
     a = ap.parse_args()
+    if a.warm_pool_size < 0:
+        ap.error("--warm-pool-size must not be negative")
     if a.max_computers < 1:
         ap.error("--max-computers must be positive")
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", a.name) or a.name == "teammates":
@@ -51,14 +55,17 @@ def main() -> None:
     text = re.sub(r"^name: teammates$", f"name: {name}", text, flags=re.M)
     doc = yaml.safe_load(text)
     doc["services"]["caddy"]["ports"] = [f"127.0.0.1:{a.http}:80"] + ([f"127.0.0.1:{a.https}:443"] if a.https else [])
+    if a.admin:
+        doc["services"]["caddy"]["ports"].append(f"127.0.0.1:{a.admin}:8081")
     doc["services"]["api"]["ports"] = [f"127.0.0.1:{a.api}:8080"]
     doc["services"]["api"]["environment"]["COMPUTE_STACK"] = name
     doc["services"]["api"]["environment"]["MAX_COMPUTERS"] = str(a.max_computers)
+    doc["services"]["api"]["environment"]["WARM_POOL_SIZE"] = str(a.warm_pool_size)
     doc["services"]["api"]["environment"]["ENABLE_TEST_HOOKS"] = "true"
     iso = doc["services"]["isolation"]["environment"]
     iso["ISOLATION_SUBNET"] = a.subnet
     iso["ISOLATION_CHAIN"] = chain
-    for svc in ("api", "agent", "web", "caddy"):
+    for svc in ("api", "agent", "web", "admin", "caddy"):
         doc["services"][svc].pop("container_name", None)
     # Dev stacks do not need to survive a reboot.
     for svc in doc["services"].values():
@@ -71,6 +78,9 @@ def main() -> None:
     if a.api2:
         api2 = copy.deepcopy(doc["services"]["api"])
         api2["ports"] = [f"127.0.0.1:{a.api2}:8080"]
+        # One inventory owner refills/reaps templates on this shared daemon.
+        api2["environment"]["WARM_POOL_SIZE"] = "0"
+        api2["environment"]["WARM_POOL_MAINTENANCE"] = "false"
         api2["networks"] = {"front": {}, "back": {}, "dockerctl": {}}
         doc["services"]["api2"] = api2
         doc["services"]["agent"]["depends_on"]["api"] = {"condition": "service_healthy"}

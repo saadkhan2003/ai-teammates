@@ -29,6 +29,14 @@ def test_key_save_and_rotation_resume_waiters_and_publish_safe_status(bot_factor
         status, workspace = client.call('GET', f'/api/bots/{bot_id}/workspace')
         assert status == 200
         conversation = workspace['conversationId']
+        # An admin-managed provider (AI models page) carries its own key, so users need none;
+        # the missing-key wait only applies while the stack runs on env bootstrap.
+        status, ai = login().call('GET', '/api/admin/ai')
+        assert status == 200
+        if not ai['bootstrap']:
+            task = submit(client, conversation, 'What should I call you?')
+            assert wait_task(client, bot_id, task)['status'] == 'completed'
+            return
         task = submit(client, conversation, 'What should I call you?')
         row = until(client, bot_id, task, 'waiting_resource')
         assert row['errorCode'] == 'no_openrouter_key'

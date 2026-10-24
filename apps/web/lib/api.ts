@@ -54,6 +54,7 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   ) {
     window.location.assign("/login");
   }
+  if (path === "/api/auth/logout" && response.ok && typeof window !== "undefined") window.dispatchEvent(new Event("teammates-session-reset"));
   return response;
 }
 
@@ -302,8 +303,8 @@ export function extractPrompt(entry: unknown): string {
     .join("\n\n");
 }
 
-export function isOpenRouterSecret(secret: { namespace?: string; name?: string }): boolean {
-  return secret.namespace === "openrouter" && secret.name === "default";
+export function isModelConnectionSecret(secret: { namespace?: string; name?: string }): boolean {
+  return secret.namespace === "ai_connection" && secret.name === "default";
 }
 
 export function splitList(value: string): string[] {

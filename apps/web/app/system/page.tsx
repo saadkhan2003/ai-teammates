@@ -6,11 +6,13 @@ import { SettingsFrame } from "@/components/settings-nav";
 import { Input } from "@/components/ui/input";
 import { StateMessage } from "@/components/state-message";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { asList, api, extractPrompt, readModelCalls, readProvider } from "@/lib/api";
+import dynamic from "next/dynamic";
+
+const ScrollArea = dynamic(() => import("@/components/ui/scroll-area").then(module => module.ScrollArea), { ssr: false });
+import { asList, api, extractPrompt, readModelCalls } from "@/lib/api";
 import { errorMessage, formatWhen } from "@/lib/utils";
 
-type PromptRow = { id: string; prompt: string; when?: string; model?: string };
+type PromptRow = { id: string; prompt: string; when?: string };
 
 function readPrompts(data: unknown): PromptRow[] {
   return asList(data, ["requests", "modelRequests", "items", "prompts"]).map((entry, index) => {
@@ -19,7 +21,6 @@ function readPrompts(data: unknown): PromptRow[] {
       id: typeof record.id === "string" ? record.id : `request-${index + 1}`,
       prompt: extractPrompt(entry),
       when: typeof record.createdAt === "string" ? record.createdAt : typeof record.created_at === "string" ? record.created_at : undefined,
-      model: typeof record.model === "string" ? record.model : undefined,
     };
   });
 }
@@ -30,7 +31,6 @@ export default function SystemPage() {
   const [chromeProcesses, setChromeProcesses] = useState<number | null>(null);
   const [memoryBytes, setMemoryBytes] = useState<number | null>(null);
   const [modelCalls, setModelCalls] = useState<number | null>(null);
-  const [provider, setProvider] = useState<string | null>(null);
   const [prompts, setPrompts] = useState<PromptRow[]>([]);
   const [usageError, setUsageError] = useState<string | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
@@ -46,7 +46,6 @@ export default function SystemPage() {
     const [usageResult, requestResult] = await Promise.allSettled([api<unknown>("/api/usage"), api<unknown>("/api/model-requests")]);
     if (usageResult.status === "fulfilled") {
       setModelCalls(readModelCalls(usageResult.value));
-      setProvider(readProvider(usageResult.value));
       const usage = usageResult.value as Record<string, unknown>;
       setCostUsd(typeof usage.costUsd === "number" ? usage.costUsd : null);
       setLatencyMs(typeof usage.latencyMs === "number" ? usage.latencyMs : null);
@@ -58,7 +57,6 @@ export default function SystemPage() {
     }
     if (requestResult.status === "fulfilled") {
       setPrompts(readPrompts(requestResult.value));
-      setProvider((current) => current ?? readProvider(requestResult.value));
       setRequestError(null);
     } else {
       setRequestError(errorMessage(requestResult.reason, "Could not load model requests."));
@@ -81,7 +79,6 @@ export default function SystemPage() {
     void load();
   }, [load]);
 
-  const mock = provider?.toLowerCase() === "mock";
 
   async function invite(event: FormEvent) {
     event.preventDefault();
@@ -164,8 +161,6 @@ export default function SystemPage() {
         </Button>
       </header>
       {loading ? <ListSkeleton label="Loading system metrics" rows={3} /> : null}
-      {provider ? <p className="text-sm">Provider: {provider}</p> : null}
-      {mock ? <p className="text-sm">Provider is mock. These calls stayed on this server and were not sent to OpenRouter.</p> : null}
       <section data-testid="metrics-model-calls" className="rounded-lg border border-line bg-paper p-5 shadow-none">
         <p className="text-sm text-muted-foreground">Model calls</p>
         <p className="text-2xl font-medium">{modelCalls == null ? "—" : modelCalls}</p>
@@ -201,7 +196,7 @@ export default function SystemPage() {
           <ol className="flex flex-col gap-3">
             {prompts.map((row) => (
               <li key={row.id} className="rounded-lg border border-line px-3 py-2">
-                <p className="text-xs text-muted-foreground">{[row.model, row.when ? formatWhen(row.when) : ""].filter(Boolean).join(" · ") || "Prompt"}</p>
+                <p className="text-xs text-muted-foreground">{[row.when ? formatWhen(row.when) : ""].filter(Boolean).join(" · ") || "Prompt"}</p>
                 <p className="mt-1 whitespace-pre-wrap break-words text-sm">{row.prompt || "This request did not include a prompt."}</p>
               </li>
             ))}

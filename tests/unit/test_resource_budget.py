@@ -126,7 +126,9 @@ def test_platform_defaults_are_right_sized():
     assert "teammates.disk_backend" in PROVIDER
     assert "IdlePowerMode.Hibernate" in OPTIONS
     assert "EightGigabyteClass = 6L * 1024 * 1024 * 1024" in HOST
-    assert "return 3" in HOST
+    # Overcommitted RAM: large hosts get one slot per 1.5 GiB, never fewer than 4 (> 3).
+    assert "MinimumLargeHost = 4" in HOST
+    assert "SlotBytes = 1536L * 1024 * 1024" in HOST
     assert "return 2" in HOST
     sample = PROGRAM.split("private async Task SampleComputers", 1)[1].split("private async Task", 1)[0]
     assert "ReadMemoryBytesAsync" in sample

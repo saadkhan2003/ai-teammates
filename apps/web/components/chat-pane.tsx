@@ -1,6 +1,14 @@
 "use client";
 
-import { FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { ChatMessageList, type ChatMessageListHandle } from "@/components/chat-message-list";
+import { anchoredScrollTop, appendedAssistantText, nearChatBottom, visibleChatAnchor, type ChatAnchor } from "@/lib/chat-scroll";
+import { StreamDraft } from "@/components/stream-draft";
+import { toolLabel } from "@/lib/tool-status";
+import { mergeOptimistic } from "@/lib/chat-speed";
+import { flushSync } from "react-dom";
+import { useComputerPrewarm } from "@/lib/use-computer-prewarm";
+import { beginSendPerf, endSendPerf, paintedPerf, chatPaintedPerf, initPerf } from "@/lib/perf";
+import { FormEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Markdown } from "@/components/markdown";
 import { RefreshNotice } from "@/components/refresh-notice";
 import { ResumeCard, ResumeNotice } from "@/components/resume-card";
@@ -13,7 +21,7 @@ import { parseBotRow, type BotThreadView } from "@/lib/bot-thread";
 import { MessageBody, MessageItem, plainTextOf } from "@/components/message-item";
 import { ShimmerText, workingStatus } from "@/components/shimmer-text";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { type ComposerPart, addQuote, canSend, hasBlocks, initialParts, normalizeSelection, pillPosition, removePart, setReply, toPayload } from "@/lib/chat-parts";
+import { type ComposerPart, flatten, addQuote, canSend, hasBlocks, initialParts, normalizeSelection, pillPosition, removePart, setReply, toPayload } from "@/lib/chat-parts";
 import { setAvatarMode } from "@/lib/avatar-motion";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -30,7 +38,7 @@ type TaskPlan = { taskId: string; title: string; status: string; items: { title:
 
 export function ChatPane({
   conversationId,
-  messages,
+  messages: storedMessages,
   botName,
   onSent,
   extras,
@@ -71,6 +79,52 @@ export function ChatPane({
   events?: AgentEvent[];
   onStop?: () => Promise<void>;
 }) {
+  type Pending = ChatMessage & { conversation: string; payload: Record<string, unknown> };
+  const [pending, setPending] = useState<Pending[]>([]);
+  const visiblePending = pending.filter(m => m.conversation === conversationId);
+  const messages = mergeOptimistic(storedMessages, visiblePending);
+  useEffect(() => {
+    setPending(current => current.filter(m => m.conversation !== conversationId || !storedMessages.some(real => real.id === m.id || real.clientId === m.clientId)));
+  }, [storedMessages, conversationId]);
+  async function deliver(item: Pending) {
+    setSending(true);
+    setError(null);
+    setDlp(false);
+    setPending(current => current.map(m => m.id === item.id ? { ...m, sendState: "pending" } : m));
+    try {
+      const sent = await api<{ taskId?: string; messageId?: string }>(`/api/conversations/${item.conversation}/messages`, { method: "POST", body: JSON.stringify(item.payload) });
+      if (perfTurn.current) { perfTurn.current.task = sent?.taskId; perfTurn.current.message = sent?.messageId; }
+      onSent();
+    } catch (caught) {
+      setPending(current => current.map(m => m.id === item.id ? { ...m, sendState: "failed" } : m));
+      const detail = errorMessage(caught, "Could not send that message.");
+      setDlp(caught instanceof ApiError && caught.status === 422);
+      setError(detail);
+    } finally { setSending(false); }
+  }
+  const prewarmComputer = useComputerPrewarm(botId);
+  const perfTurn = useRef<{ id: string; conversation: string; messages: Set<string>; events: Set<AgentEvent>; working: boolean; at: number; task?: string; message?: string } | null>(null);
+  useEffect(() => { initPerf(); }, []);
+  useEffect(() => {
+    if (conversationId) chatPaintedPerf(botId);
+    const turn = perfTurn.current;
+    if (!turn) return;
+    if (turn.conversation !== conversationId || performance.now() - turn.at > 600000) {
+      endSendPerf(turn.id); perfTurn.current = null; return;
+    }
+    const fresh = messages.filter(m => !turn.messages.has(m.id));
+    const user = fresh.find(m => m.role === "user" && (!turn.message || m.id === turn.message));
+    const task = turn.task ?? user?.requestId;
+    const activity = events.filter(e => !turn.events.has(e) && task && e.taskId === task);
+    const reply = fresh.some(m => m.role === "assistant" && m.content.trim() && task && m.requestId === task);
+    const measure = (name: string) => paintedPerf(`${turn.id}:${name}`, name);
+    if (user) measure("echo_ms");
+    if ((!turn.working && working && task && (activeTaskId === task || (!activeTaskId && user))) || activity.length || reply) measure("ack_ms");
+    if (activity.some(e => ["tool", "tool_call", "tool_result"].includes(e.type))) measure("tool_chip_ms");
+    if (reply || activity.some(e => ["delta", "message.delta", "text_delta"].includes(e.type) && String(e.delta ?? e.text ?? "").trim())) measure("first_token_screen_ms");
+  }, [messages, events, working, conversationId, botId, activeTaskId]);
+  const streamTextPainted = useCallback(() => { if (perfTurn.current) paintedPerf(`${perfTurn.current.id}:first_token_screen_ms`, "first_token_screen_ms"); }, []);
+  const streamToolPainted = useCallback(() => { if (perfTurn.current) paintedPerf(`${perfTurn.current.id}:tool_chip_ms`, "tool_chip_ms"); }, []);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   useEffect(() => { setAvatarMode(working ? "working" : "idle"); return () => setAvatarMode("idle"); }, [working]);
@@ -128,9 +182,63 @@ export function ChatPane({
     };
   }, []);
 
+  const messageListRef = useRef<ChatMessageListHandle>(null);
+  const lastScrollTop = useRef(0);
+  const prependAnchor = useRef<{ anchor: ChatAnchor; firstId?: string } | null>(null);
+  const announced = useRef<{ conversation?: string; ids: string[] }>({ ids: [] });
   useEffect(() => {
-    if (stickRef.current) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, events, working]);
+    const previous = announced.current;
+    const text = previous.conversation === conversationId ? appendedAssistantText(previous.ids, storedMessages) : "";
+    announced.current = { conversation: conversationId, ids: storedMessages.map(message => message.id) };
+    if (text) setLive(text);
+  }, [storedMessages, conversationId]);
+  useLayoutEffect(() => {
+    stickRef.current = true; lastScrollTop.current = 0;
+    prependAnchor.current = null;
+    setScrolledUp(false);
+  }, [conversationId]);
+  // Observe the whole content, including the independently rendered streaming leaf.
+  useLayoutEffect(() => {
+    let frame = 0;
+    const follow = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const node = scrollRef.current;
+        if (node && stickRef.current) node.scrollTop = node.scrollHeight;
+      });
+    };
+    const observer = new ResizeObserver(follow);
+    if (listRef.current) observer.observe(listRef.current);
+    follow();
+    return () => { observer.disconnect(); cancelAnimationFrame(frame); };
+  }, [conversationId]);
+  useLayoutEffect(() => {
+    const scroll = scrollRef.current;
+    const pending = prependAnchor.current;
+    if (scroll && pending && storedMessages[0]?.id !== pending.firstId) {
+      let frame = 0;
+      let attempts = 0;
+      let stable = 0;
+      const restore = () => {
+        const row = Array.from(listRef.current?.querySelectorAll<HTMLElement>("[data-chat-row]") ?? []).find(row => row.dataset.chatRow === pending.anchor.id);
+        if (row) {
+          // Rows above the anchor keep measuring for a few frames after a prepend;
+          // re-align until the anchor holds still for two frames.
+          const next = anchoredScrollTop(scroll.scrollTop, scroll.getBoundingClientRect().top, row.getBoundingClientRect().top, pending.anchor);
+          const moved = Math.abs(next - scroll.scrollTop) >= 1;
+          if (moved) scroll.scrollTop = next;
+          stable = moved ? 0 : stable + 1;
+          if (stable >= 2 || attempts++ >= 20) prependAnchor.current = null;
+          else frame = requestAnimationFrame(restore);
+        } else if (attempts++ < 8) {
+          messageListRef.current?.reveal(pending.anchor.id);
+          frame = requestAnimationFrame(restore);
+        } else prependAnchor.current = null;
+      };
+      restore();
+      return () => cancelAnimationFrame(frame);
+    } else if (scroll && stickRef.current) scroll.scrollTop = scroll.scrollHeight;
+  }, [storedMessages, messages.length, events, working]);
   const lastTextId = parts[parts.length - 1]?.id;
   useEffect(() => {
     for (const node of partRefs.current.values()) { node.style.height = "auto"; node.style.height = `${Math.min(node.scrollHeight, 180)}px`; }
@@ -202,10 +310,26 @@ export function ChatPane({
   useEffect(() => () => highlightTimers.current.forEach(window.clearTimeout), []);
   async function loadEarlier() {
     if (!onLoadOlder || loadingOlder) return;
+    const scroll = scrollRef.current;
+    if (scroll) {
+      stickRef.current = false;
+      setScrolledUp(true);
+      const anchor = visibleChatAnchor(Array.from(listRef.current?.querySelectorAll<HTMLElement>("[data-chat-row]") ?? []).map(row => {
+        const rect = row.getBoundingClientRect();
+        return { id: row.dataset.chatRow!, top: rect.top, bottom: rect.bottom };
+      }), scroll.getBoundingClientRect().top);
+      prependAnchor.current = anchor ? { anchor, firstId: storedMessages[0]?.id } : null;
+    }
     setLoadingOlder(true);
     try { await onLoadOlder(); } catch (caught) { toast.error(errorMessage(caught, "Could not load earlier messages.")); } finally { setLoadingOlder(false); }
   }
   async function jumpTo(id: string) {
+    stickRef.current = false;
+    setScrolledUp(true);
+    if (messagesRef.current.some(message => message.id === id)) {
+      messageListRef.current?.reveal(id);
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    }
     let node = document.getElementById(`msg-${id}`);
     if (!node && onLoadOlder && hasOlderRef.current) {
       stickRef.current = false;
@@ -219,6 +343,8 @@ export function ChatPane({
         if (!found) { toast.info("That message is too far back to load."); return; }
         await new Promise(resolve => window.setTimeout(resolve, 60));
       } catch (caught) { toast.error(errorMessage(caught, "Could not load earlier messages.")); return; } finally { setLoadingOlder(false); }
+      messageListRef.current?.reveal(id);
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
       node = document.getElementById(`msg-${id}`);
     }
     if (!node) { toast.info("The original message is no longer available."); return; }
@@ -233,8 +359,15 @@ export function ChatPane({
     return () => document.removeEventListener("library:open-message", openMessage);
   }, [jumpTo]);
   function focusSibling(from: HTMLElement, delta: number) {
-    const all = Array.from(listRef.current?.querySelectorAll<HTMLElement>("article[data-testid='message-item']") ?? []);
-    all[all.indexOf(from) + delta]?.focus();
+    const index = messages.findIndex(message => message.id === from.closest<HTMLElement>("[data-chat-row]")?.dataset.chatRow);
+    const target = messages[index + delta];
+    if (index < 0 || !target) return;
+    stickRef.current = false;
+    messageListRef.current?.reveal(target.id);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const row = Array.from(listRef.current?.querySelectorAll<HTMLElement>("[data-chat-row]") ?? []).find(row => row.dataset.chatRow === target.id);
+      (row?.querySelector<HTMLElement>("article[tabindex]") ?? row)?.focus();
+    }));
   }
 
   // Add to chat: floating pill on a text selection inside the message list
@@ -327,27 +460,20 @@ export function ChatPane({
       setError("This teammate does not have a conversation yet.");
       return;
     }
+    if (perfTurn.current) endSendPerf(perfTurn.current.id);
+    perfTurn.current = { id: beginSendPerf(), conversation: conversationId, messages: new Set(messages.map(m => m.id)), events: new Set(events), working, at: performance.now() };
     setSending(true);
     setError(null);
     setDlp(false);
     const rich = hasBlocks(parts);
     const text = parts.filter(p => p.type === "text").map(p => (p as { text: string }).text).join("\n").trim();
-    try {
-      await api(`/api/conversations/${conversationId}/messages`, {
-        method: "POST",
-        body: JSON.stringify(rich ? { parts: toPayload(parts), asTask } : { content: text, asTask }),
-      });
-      setParts(initialParts());
-      draftsRef.current.delete(conversationId);
-      onSent();
-    } catch (caught) {
-      const message = errorMessage(caught, "Could not send that message.");
-      const blocked = (caught instanceof ApiError && caught.status === 422) || message.toLowerCase().includes("data policy");
-      setDlp(blocked);
-      setError(message);
-    } finally {
-      setSending(false);
-    }
+    const clientId = crypto.randomUUID();
+    const payload = { ...(rich ? { parts: toPayload(parts), asTask } : { content: text, asTask }), client_id: clientId };
+    const item: Pending = { id: clientId, clientId, conversation: conversationId, role: "user", content: flatten(parts), createdAt: new Date().toISOString(), sendState: "pending", payload };
+    // Commit before awaiting IO, so the echo is present for this submit frame.
+    flushSync(() => { setPending(current => [...current, item]); setParts(initialParts()); });
+    draftsRef.current.delete(conversationId);
+    await deliver(item);
   }
 
   async function answer(messageId: string, choices: string[], custom = "") {
@@ -372,17 +498,24 @@ export function ChatPane({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div ref={scrollRef} data-testid="chat-scroll" className="min-h-0 flex-1 overflow-y-auto pt-12" onScroll={() => {
+      <div ref={scrollRef} data-testid="chat-scroll" className="min-h-0 flex-1 overflow-y-auto pt-12" style={{ overflowAnchor: "none" }} tabIndex={0} aria-label="Conversation history" onScroll={() => {
         const node = scrollRef.current;
         if (!node) return;
-        stickRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
+        // Only an upward scroll away from the bottom unsticks. Row measurement in the
+        // virtual list can move scrollTop while content grows; that must not drop follow.
+        const near = nearChatBottom(node.scrollTop, node.scrollHeight, node.clientHeight);
+        if (near) stickRef.current = true;
+        else if (node.scrollTop < lastScrollTop.current - 1) stickRef.current = false;
+        lastScrollTop.current = node.scrollTop;
         setScrolledUp(!stickRef.current);
       }}>
-        <div ref={listRef} className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 py-4">
+        <div ref={listRef} role="log" aria-label="Messages" aria-live="off" className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 py-4">
+          {visiblePending.filter(m => m.sendState === "failed").map(m => <div key={`retry-${m.id}`} role="status" className="text-sm text-destructive">Message failed. <Button size="sm" variant="outline" data-testid="retry-send" onClick={() => void deliver(m)}>Retry</Button></div>)}
+          {events.some(event => event.type === "task.started" && !storedMessages.some(m => m.role === "assistant" && m.requestId === event.taskId)) ? <div data-testid="ack-chip" role="status" className="text-sm text-muted-foreground">On it</div> : null}
           {hasOlder ? <Button type="button" data-testid="load-older" variant="ghost" size="sm" className="mx-auto" disabled={loadingOlder} onClick={() => void loadEarlier()}>{loadingOlder ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : null}Load earlier messages</Button> : null}
           {extras}
           {messages.length === 0 ? <div data-testid="chat-empty" className="py-12 text-center"><p className="font-medium">Start a conversation with {botName}</p><p className="mt-2 text-sm text-muted-foreground">Ask a question, share an idea, or assign some work.</p></div> : null}
-          {messages.map((message) => {
+          <ChatMessageList key={conversationId} ref={messageListRef} messages={messages} scrollRef={scrollRef} renderMessage={(message) => {
             const blocks = messageBlocks(message.content);
             const only = blocks.length === 1 ? blocks[0] : null;
             if (only?.kind === "memory") {
@@ -446,7 +579,7 @@ export function ChatPane({
                 />
               </MessageItem>
             );
-          })}
+          }} />
           {evidence.length ? <section aria-label="Task evidence" className="rounded-md border border-border bg-card p-3">
             <h3 className="mb-2 text-sm font-medium">Evidence</h3>
             <div className="grid gap-3 sm:grid-cols-2">{evidence.map(item => {
@@ -457,8 +590,8 @@ export function ChatPane({
               </figure>;
             })}</div>
           </section> : null}
-          {events.filter(event => !["delta", "message.delta", "text_delta"].includes(event.type)).map((event, i) => <EventCard key={`${conversationId}-${i}`} event={event} />)}
-          {working && events.some(event => ["delta", "message.delta", "text_delta"].includes(event.type)) ? <div data-testid="streaming-text" className="rounded-md bg-assistant-bubble p-3 text-sm"><Markdown text={events.filter(event => ["delta", "message.delta", "text_delta"].includes(event.type)).map(event => String(event.delta ?? event.text ?? "")).join("")} /><span aria-hidden className="inline-block h-4 w-1 animate-pulse bg-foreground" /></div> : null}
+          {events.filter(event => !["delta", "message.delta", "text_delta", "task.started", "model.started", "model.finished", "model.error"].includes(event.type)).map((event, i) => <EventCard key={`${conversationId}-${i}`} event={event} />)}
+          <StreamDraft botId={botId} completed={storedMessages.filter(m => m.role === "assistant" && m.requestId).map(m => m.requestId!)} onText={streamTextPainted} onTool={streamToolPainted} />
           {working ? (
             <div data-testid="working-row" role="status" className="flex items-center gap-2 px-1 py-1 text-sm">
               <BotAvatar animated size={22} botId={botId} shape={avatar?.shape} color={avatar?.color} />
@@ -483,7 +616,7 @@ export function ChatPane({
         onMouseDown={event => event.preventDefault()}
         onClick={() => addQuoteText(pill.text, pill.source)}
         className="z-50 inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-popover px-3 text-xs font-medium text-popover-foreground shadow-md hover:bg-bot-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11"><Quote className="h-3.5 w-3.5" aria-hidden />Add to chat</button> : null}
-      {scrolledUp ? <Button data-testid="jump-to-latest" variant="secondary" className="mx-auto my-2" onClick={() => { stickRef.current = true; setScrolledUp(false); scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }}>Jump to latest ↓</Button> : null}
+      {scrolledUp ? <Button data-testid="jump-to-latest" variant="secondary" className="mx-auto my-2" onClick={() => { stickRef.current = true; setScrolledUp(false); scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "instant" }); }}>Jump to latest ↓</Button> : null}
       <form
         data-testid="composer-bar"
         className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
@@ -519,6 +652,8 @@ export function ChatPane({
                 aria-label={last ? `Message ${botName}` : "Comment"}
                 data-testid={last ? "composer" : "composer-segment"}
                 value={part.text}
+                onFocus={prewarmComputer}
+                onInput={prewarmComputer}
                 onChange={(event) => { const value = event.target.value; setParts(current => current.map(p => p.id === part.id ? { ...p, text: value } as ComposerPart : p)); }}
                 placeholder={last && parts.length === 1 ? `Message ${botName}` : last ? "Add a comment" : ""}
                 rows={1}
@@ -801,5 +936,5 @@ function EventCard({ event }: { event: AgentEvent }) {
   if (event.type === "memory") return <MemoryNotice action={(["saved", "updated", "forgot", "suggested", "blocked"].includes(String(event.action)) ? String(event.action) : "saved") as "saved" | "updated" | "forgot" | "suggested" | "blocked"} text={String(event.content ?? "")} memoryId={String(event.memoryId ?? event.memory_id ?? "") || undefined} memoryKind={String(event.kind ?? "") || undefined} reason={String(event.reason ?? "") || undefined} />;
   const tool = String(event.tool ?? event.name ?? "Tool");
   const args = typeof event.args === "object" && event.args ? JSON.stringify(event.args) : String(event.args ?? "");
-  return <Collapsible data-testid="tool-call-card" className="rounded-md border border-border text-xs"><CollapsibleTrigger className="flex min-h-10 w-full items-center gap-2 px-3 text-left"><span aria-hidden>⌘</span><span className="font-medium">{tool}</span><span className="min-w-0 flex-1 truncate text-muted-foreground">{args.slice(0, 90)}</span><span>{String(event.status ?? (event.type === "tool_result" ? "Done" : "Running"))}</span></CollapsibleTrigger><CollapsibleContent><pre className="max-h-64 overflow-auto whitespace-pre-wrap border-t border-border p-3">{JSON.stringify({ args: event.args, result: event.result }, null, 2)}</pre></CollapsibleContent></Collapsible>;
+  return <Collapsible data-testid="tool-call-card" className="rounded-md border border-border text-xs"><CollapsibleTrigger className="flex min-h-10 w-full items-center gap-2 px-3 text-left"><span aria-hidden>⌘</span><span className="font-medium">{toolLabel(tool, event.args)}</span><span className="min-w-0 flex-1 truncate text-muted-foreground">{args.slice(0, 90)}</span><span>{String(event.status ?? (event.type === "tool_result" ? "Done" : "Running"))}</span></CollapsibleTrigger><CollapsibleContent><pre className="max-h-64 overflow-auto whitespace-pre-wrap border-t border-border p-3">{JSON.stringify({ args: event.args, result: event.result }, null, 2)}</pre></CollapsibleContent></Collapsible>;
 }

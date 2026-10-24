@@ -121,3 +121,17 @@ Step 7: Final diff whitespace check and Playwright spec TypeScript compilation p
 - Learning UI: added grouped learned notes, message-source navigation, polling, accessible delete confirmation and 375px/theme-token styling in Details; tightened shared-memory retrieval for learned-note privacy.
 - Learning tests: added classification/secret-guard tests, real-PostgreSQL owner/toggle/history/cap/delete/epoch tests, and worker formatting/restart/compaction/mock tests.
 - Learning acceptance: added isolated-mock integration flow using existing gateway request ledger and 375px Playwright react/source/delete flow with dark/light SHOT_DIR artifacts; focused C# 39/39 and Python 15/15 passed.
+## sp-ai first pass (committed 900bd37; Codex hit usage limit before final summary)
+Migration and registry: added encrypted provider storage, version snapshots, deterministic rollout, lazy keys and cross-instance invalidation.
+Gateway: added native Anthropic translation, transient-failure fallback, caching hints and served-provider/version/credit accounting for planner calls.
+Admin: added provider/model editor, role/fallback configuration, caching, prices, rollout, versions, audit and Speed pages; adapted shell to existing accounts and no-plan billing.
+Privacy/deployment: removed model/provider fields from user bot/usage/status responses and UI; added loopback admin listener, service and isolated-stack --admin port.
+Mock providers/tests: added independent compatible and Anthropic endpoints with call counters and local protocol tests; added user-branding regression test.
+Runtime/tests: routed policy classification and video summaries through role resolution; added adapter, fallback, config/credit and PostgreSQL-backed admin/rollout/key/invalidation tests.
+End-to-end coverage: authored isolated-stack CRUD/mid-run switch/rollback/rollout integration tests and ADMIN_URL-gated browser flow with four optional theme screenshots; syntax checks passed.
+Documentation: added production switching, bootstrap, keys, credits, fallback, pinned rollout behavior, rollback, admin hosting and placeholder-only API examples.
+Not yet verified by orchestrator: full dotnet unit suite (python unit 365 pass, web tsc+node tests 49 pass, admin tsc OK).
+
+sp-merge: Read README, Phase 0/model registry and both handoffs; resolved five conflicted files preserving streaming, caching, controls, catalog and golden tests.
+sp-merge: Unified streaming/non-streaming control execution, request policy, per-role token limits, key rotation and retry/breaker handling; retained stream served-model/usage/timing and combined Runtime accounting.
+sp-merge: Added stream regressions for stop/safe/spend/privacy/capabilities, role caps, router fallbacks, retry/breakers, key slots, cancellation, served usage and no fallback after content/tool output; initial focused run 57 pass/4 fail exposed stream error handling and old anchor assertions, now corrected.

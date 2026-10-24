@@ -210,3 +210,17 @@ html.light {
 [data-jump="on"] { background-color: var(--bot-accent-soft); box-shadow: 0 0 0 4px var(--bot-accent-soft); }
 [data-jump="fade"] { background-color: transparent; box-shadow: 0 0 0 4px transparent; transition: background-color 600ms cubic-bezier(0, 0, 0.2, 1), box-shadow 600ms cubic-bezier(0, 0, 0.2, 1); }
 @media (prefers-reduced-motion: reduce) { [data-jump="fade"] { transition: none; } }
+
+/* Note 41 thin type: Inter ~380 body, 450 labels, 600 headings max; #e7e9ea primary on dark. */
+.thin-type {
+  font-weight: 380;
+  color: #e7e9ea;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-optical-sizing: auto;
+  font-feature-settings: "cv11", "ss01";
+}
+html.light .thin-type { color: var(--foreground); }
+.thin-type .t-label { font-weight: 450; }
+.thin-type .t-head { font-weight: 600; }
