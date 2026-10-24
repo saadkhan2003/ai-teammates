@@ -4,7 +4,7 @@ import { login } from "./helpers";
 
 const shotDir = "/workspace/shots-skills-v2";
 async function screenshot(page: Page, screen: string, theme: "light" | "dark") {
-  await page.screenshot({ path: `${shotDir}/${screen}-${theme}.png`, fullPage: false });
+  await page.screenshot({ path: `${shotDir}/01-${screen}-${theme}.png`, fullPage: false });
 }
 async function theme(page: Page, mode: "light" | "dark") {
   await page.evaluate((value) => {

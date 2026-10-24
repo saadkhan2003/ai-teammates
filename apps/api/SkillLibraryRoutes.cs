@@ -356,7 +356,7 @@ public static class SkillLibraryRoutes
     {
         var directory = Directory.Exists("/skills/builtin") ? "/skills/builtin" : Path.Combine(AppContext.BaseDirectory, "skills", "builtin");
         if (!Directory.Exists(directory)) return;
-        foreach (var path in Directory.GetFiles(directory, "*.md").OrderBy(x => x, StringComparer.Ordinal))
+        foreach (var path in Directory.GetFiles(directory, "SKILL.md", SearchOption.AllDirectories).OrderBy(x => x, StringComparer.Ordinal))
         {
             var data = await File.ReadAllTextAsync(path);
             var match = Regex.Match(data, "(?s)^---\\s*\\nname:\\s*([a-z0-9-]+)\\s*\\n(?:description|when_to_use):\\s*(.*?)\\s*\\n---\\s*\\n(.*)$");
