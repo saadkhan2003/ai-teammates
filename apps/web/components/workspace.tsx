@@ -235,7 +235,7 @@ export function Workspace({ botId }: { botId: string }) {
           setAgentEvents(current => mergeAgentEvent(current, { ...event, ...detail, type: event.type }));
         }
       }
-      if (type === "task" && typeof event?.taskId === "string" && ["completed", "failed", "cancelled"].includes(String(event.status ?? "").toLowerCase())) {
+      if (type === "task" && typeof event?.taskId === "string" && taskIds.current.has(event.taskId) && ["completed", "failed", "cancelled"].includes(String(event.status ?? "").toLowerCase())) {
         setAgentEvents(current => current.filter(item => !(item.type === "video_progress" && item.taskId === event.taskId)));
       }
       if (type === "memory" && (event?.botId === botId || (typeof event?.taskId === "string" && taskIds.current.has(event.taskId)))) void loadAux(["memories"]);
