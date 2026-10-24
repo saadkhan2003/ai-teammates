@@ -18,7 +18,7 @@ namespace Teammates.Compute;
 /// MVP compute implementation. Talks to the Docker engine through a restricted socket proxy.
 /// User computers never receive the socket.
 /// </summary>
-public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAuthority, IComputerDisplays, IComputerDesktopControl, IAsyncDisposable
+public sealed partial class DockerComputeProvider : IComputeProvider, IDesktopSessionAuthority, IComputerDisplays, IComputerDesktopControl, IAsyncDisposable
 {
     private const string ManagedLabel = "teammates.managed";
     private const string StackLabel = "teammates.stack";
@@ -35,7 +35,7 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
     private readonly Dictionary<string, (DesktopSession Session, ComputerId Computer)> _sessions = new();
     private readonly ConcurrentDictionary<string, Task<Computer>> _restores = new();
     private readonly HashSet<string> _ready = new();
-    private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(30) };
+    private readonly HttpClient _http;
     private readonly SemaphoreSlim _isolationGate = new(1, 1);
     private HttpClient? _isolationHttp;
     private int _isolationHealthy;
@@ -53,22 +53,32 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
     /// <summary>Runs after a restore is usable, so waiting tasks can be queued again.</summary>
     public Func<ComputerId, Task>? OnComputerRestored { get; set; }
 
+    // API wires this to the nonblocking PerfRecorder without reversing project dependencies.
+    public Action<string, double, object?>? RecordPerformance { get; set; }
+    private void Stage(string name, long clock, string path) => RecordPerformance?.Invoke(name, Stopwatch.GetElapsedTime(clock).TotalMilliseconds, new { path });
+
     /// <summary>False when a configured isolation guard could not install TEAMS-ISO.</summary>
     public bool ComputerIsolationHealthy => Volatile.Read(ref _isolationHealthy) == 1;
 
     public string? ComputerIsolationDetail => _isolationDetail;
 
-    public DockerComputeProvider(DockerComputeOptions options, IExecSecretResolver secrets, ISnapshotStore snapshots, ILogger<DockerComputeProvider>? logger = null)
+    public DockerComputeProvider(DockerComputeOptions options, IExecSecretResolver secrets, ISnapshotStore snapshots, ILogger<DockerComputeProvider>? logger = null, HttpMessageHandler? computerHttpHandler = null, DockerClient? dockerClient = null)
     {
         _ = options.DnsServers(); // Reject invalid resolver configuration before creating resources.
+        if (options.WarmPoolSize < 0 || options.MaxComputers < 1 || options.ReadinessDeadline <= TimeSpan.Zero)
+            throw ComputeException.InvalidArgument("invalid compute capacity or readiness deadline");
         _options = options;
+        _warmPool = new WarmTemplatePool(options.WarmPoolSize, options.MaxComputers,
+            () => { lock (_sync) return _rows.Values.Count(Allocated) + _staleTemplates.Count; }, CreateTemplateAsync, DestroyTemplateAsync);
         _secrets = secrets;
         _snapshots = snapshots;
         _logger = logger ?? NullLogger<DockerComputeProvider>.Instance;
         var configuration = new DockerClientConfiguration(new Uri(options.DockerHost), null!, TimeSpan.FromMinutes(2), TimeSpan.FromSeconds(15), null);
-        _client = configuration.CreateClient(new System.Version(1, 44));
+        _client = dockerClient ?? configuration.CreateClient(new System.Version(1, 44));
         _isolationHealthy = string.IsNullOrWhiteSpace(options.IsolationSocket) ? 1 : 0;
         _disks = new LoopDisk(_client, options.ImageRef, options.CgroupParent, options.DisableCpuLimits);
+        _http = computerHttpHandler == null ? new HttpClient() : new HttpClient(computerHttpHandler);
+        _http.Timeout = TimeSpan.FromSeconds(30);
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", options.ComputerToken);
         try { Reload(); }
         catch (Exception ex) { _logger.LogWarning("compute inventory not loaded yet: {Message}", ex.Message); }
@@ -87,57 +97,64 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
         {
             if (_idempotency.TryGet(key, hash, out cached)) return cached!;
             lock (_sync)
-            {
                 if (_rows.ContainsKey(spec.Id.Value)) throw ComputeException.AlreadyExists("computer already exists");
-                if (_rows.Values.Count(row => row.Computer.State is ComputerState.Running or ComputerState.Provisioning) >= _options.MaxComputers)
-                    throw ComputeException.ResourceExhausted("no computer capacity");
-            }
-            var name = ContainerName(spec.Id);
-            var loop = spec.Limits.DiskBytes > 0;
-            var quota = loop ? DiskQuota.Normalize(spec.Limits.DiskBytes) : 0;
-            var workspace = (loop ? "tmimg" : "tmws") + Slug(spec.Id.Value);
-            var profile = (loop ? "tmdata" : "tmpr") + Slug(spec.Id.Value);
-            string? containerId = null;
-            await EnsureComputerIsolationAsync(ct);
-            try
+            var total = Stopwatch.GetTimestamp();
+            return await _warmPool.AllocateAsync(false, async pooled =>
             {
-                _ = SeccompSecurityOpt();
-                var labels = Labels(spec.Id, spec.OwnerId);
-                foreach (var pair in spec.Labels) labels[pair.Key] = pair.Value;
-                if (loop)
+                lock (_sync)
+                    if (_rows.ContainsKey(spec.Id.Value)) throw ComputeException.AlreadyExists("computer already exists");
+                var path = pooled ? "pool" : "create";
+                var name = ContainerName(spec.Id);
+                var loop = spec.Limits.DiskBytes > 0;
+                var quota = loop ? DiskQuota.Normalize(spec.Limits.DiskBytes) : 0;
+                var workspace = (loop ? "tmimg" : "tmws") + Slug(spec.Id.Value);
+                var profile = (loop ? "tmdata" : "tmpr") + Slug(spec.Id.Value);
+                string? containerId = null;
+                await EnsureComputerIsolationAsync(ct);
+                try
                 {
-                    labels["teammates.disk_backend"] = "loop";
-                    labels["teammates.disk_bytes"] = quota.ToString();
+                    _ = SeccompSecurityOpt();
+                    var labels = Labels(spec.Id, spec.OwnerId);
+                    foreach (var pair in spec.Labels) labels[pair.Key] = pair.Value;
+                    if (loop)
+                    {
+                        labels["teammates.disk_backend"] = "loop";
+                        labels["teammates.disk_bytes"] = quota.ToString();
+                    }
+                    await _client.Volumes.CreateAsync(new VolumesCreateParameters { Name = workspace, Labels = labels }, ct);
+                    await _client.Volumes.CreateAsync(new VolumesCreateParameters { Name = profile, Labels = labels }, ct);
+                    if (loop)
+                    {
+                        await LoadStorageOptAsync(ct);
+                        await _disks.MountAsync(workspace, profile, quota, ct);
+                    }
+                    var created = await _client.Containers.CreateContainerAsync(BuildCreate(spec, name, workspace, profile, loop, quota, labels), ct);
+                    containerId = created.ID;
+                    Stage("computer_create_ms", total, path);
+                    var startClock = Stopwatch.GetTimestamp();
+                    var started = await _client.Containers.StartContainerAsync(created.ID, new ContainerStartParameters(), ct);
+                    Stage("computer_unpause_ms", startClock, path);
+                    if (!started) throw ComputeException.Internal("docker did not start the computer");
+                    var computer = Record(spec.Id, spec.TenantId, spec.OwnerId, spec.ImageRef, ComputerState.Running, created.ID, [workspace, profile], labels, name);
+                    NoteDisk(computer.Id, loop, quota);
+                    await WaitUntilUsable(created.ID, ct, path);
+                    Stage(pooled ? "warm_pool_ready_ms" : "computer_ready_ms", total, path);
+                    MarkReady(spec.Id);
+                    _logger.LogInformation("computer created {ComputerId} container {Name}", spec.Id.Value, name);
+                    _idempotency.Remember(key, hash, computer);
+                    return computer;
                 }
-                await _client.Volumes.CreateAsync(new VolumesCreateParameters { Name = workspace, Labels = labels }, ct);
-                await _client.Volumes.CreateAsync(new VolumesCreateParameters { Name = profile, Labels = labels }, ct);
-                if (loop)
+                catch (Exception ex)
                 {
-                    await LoadStorageOptAsync(ct);
-                    await _disks.MountAsync(workspace, profile, quota, ct);
+                    if (loop) await _disks.UnmountAsync(workspace, profile, CancellationToken.None);
+                    await DiscardPartial(containerId, workspace, profile, ct);
+                    if (containerId != null) Forget(spec.Id);
+                    if (ex is ComputeException) throw;
+                    if (ex is DockerApiException api && api.Message.Contains("No such image", StringComparison.OrdinalIgnoreCase))
+                        throw ComputeException.Unavailable("computer image is not present on the docker host");
+                    throw Map(ex);
                 }
-                var created = await _client.Containers.CreateContainerAsync(BuildCreate(spec, name, workspace, profile, loop, quota, labels), ct);
-                containerId = created.ID;
-                var started = await _client.Containers.StartContainerAsync(created.ID, new ContainerStartParameters(), ct);
-                if (!started) throw ComputeException.Internal("docker did not start the computer");
-                var computer = Record(spec.Id, spec.TenantId, spec.OwnerId, spec.ImageRef, ComputerState.Running, created.ID, [workspace, profile], labels, name);
-                NoteDisk(computer.Id, loop, quota);
-                await WaitUntilUsable(created.ID, ct);
-                MarkReady(spec.Id);
-                _logger.LogInformation("computer created {ComputerId} container {Name}", spec.Id.Value, name);
-                _idempotency.Remember(key, hash, computer);
-                return computer;
-            }
-            catch (Exception ex)
-            {
-                if (loop) await _disks.UnmountAsync(workspace, profile, CancellationToken.None);
-                await DiscardPartial(containerId, workspace, profile, ct);
-                if (containerId != null) Forget(spec.Id);
-                if (ex is ComputeException) throw;
-                if (ex is DockerApiException api && api.Message.Contains("No such image", StringComparison.OrdinalIgnoreCase))
-                    throw ComputeException.Unavailable("computer image is not present on the docker host");
-                throw Map(ex);
-            }
+            }, ct);
         }
     }
 
@@ -153,13 +170,7 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
             if (row.Computer.State == ComputerState.Deleted) throw ComputeException.FailedPrecondition("computer is deleted");
             try
             {
-                await EnsureDiskAsync(row, ct);
-                var inspect = await _client.Containers.InspectContainerAsync(row.ContainerId, ct);
-                if (inspect.State.Paused)
-                    await _client.Containers.UnpauseContainerAsync(row.ContainerId, ct);
-                else if (!inspect.State.Running)
-                    await _client.Containers.StartContainerAsync(row.ContainerId, new ContainerStartParameters(), ct);
-                lock (_sync) { row.Paused = false; row.Hibernated = false; }
+                await WakeAsync(row, ct);
                 var computer = Update(id, ComputerState.Running);
                 _idempotency.Remember(key, hash, computer);
                 return computer;
@@ -514,6 +525,18 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
         _idempotency.Remember(key, hash, events);
     }
 
+    public bool HasExistingComputer(ComputerId id, string owner)
+    {
+        lock (_sync) return _rows.TryGetValue(id.Value, out var row) && row.Computer.OwnerId == owner;
+    }
+
+    public async Task PrewarmExistingAsync(ComputerId id, string owner, CancellationToken ct, int ownerLimit = int.MaxValue)
+    {
+        var row = Require(id); // Never DemandAsync: missing computers are not created by focus.
+        if (row.Computer.OwnerId != owner) throw ComputeException.PermissionDenied("computer owner mismatch");
+        await WakeAsync(row, ct, ownerLimit);
+    }
+
     public async Task EnsureAwakeAsync(ComputerId id, CancellationToken ct)
     {
         await WakeAsync(await DemandAsync(id, ct), ct);
@@ -722,10 +745,10 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
         {
             var info = await _client.System.GetSystemInfoAsync(ct);
             int running;
-            lock (_sync) running = _rows.Values.Count(row => row.Computer.State == ComputerState.Running);
+            lock (_sync) running = _rows.Values.Count(Allocated);
             var vcpu = (uint)Math.Max(1, info.NCPU) * 1000;
             var memory = (ulong)Math.Max(0, info.MemTotal);
-            return new Capacity(info.Name ?? "docker", vcpu, vcpu / 2, memory, memory / 2, 0, 0, (uint)running, (uint)_options.MaxComputers, false);
+            return new Capacity(info.Name ?? "docker", vcpu, vcpu / 2, memory, memory / 2, 0, 0, (uint)(running + _warmPool.Count), (uint)_options.MaxComputers, false);
         }
         catch (Exception ex) { throw Map(ex); }
     }
@@ -856,13 +879,13 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
         }
     }
 
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
+        await _warmPool.ReapAsync(CancellationToken.None);
         _http.Dispose();
         _isolationHttp?.Dispose();
         _isolationGate.Dispose();
         _client.Dispose();
-        return ValueTask.CompletedTask;
     }
 
     private CreateContainerParameters BuildCreate(CreateComputerSpec spec, string name, string workspace, string profile, bool loopDisk = false, ulong quotaBytes = 0, IReadOnlyDictionary<string, string>? labels = null)
@@ -1042,6 +1065,7 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
         {
             row.Paused = true;
             row.ViewerRunning = false;
+            _ready.Remove(row.Computer.Id.Value);
             row.Computer = row.Computer with { State = ComputerState.Hibernated, UpdatedAt = DateTimeOffset.UtcNow };
         }
         if (_options.IdlePower == IdlePowerMode.Reclaim)
@@ -1057,6 +1081,7 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
             row.Paused = false;
             row.Hibernated = true;
             row.ViewerRunning = false;
+            _ready.Remove(row.Computer.Id.Value);
             row.Computer = row.Computer with { State = ComputerState.Hibernated, UpdatedAt = DateTimeOffset.UtcNow };
         }
         var inspect = await _client.Containers.InspectContainerAsync(row.ContainerId, ct);
@@ -1346,102 +1371,131 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
             {
                 if (_tombstones.ContainsKey(id.Value)) throw ComputeException.FailedPrecondition("computer is deleted");
             }
-            await EnsureComputerIsolationAsync(ct);
-            var row = TryGet(id);
-            var name = row?.Name ?? ContainerName(id);
-            var loop = (row != null && IsLoop(row)) || await VolumeExists("tmimg" + Slug(id.Value), ct);
-            var workspace = loop ? VolumeName(row, "tmimg", id) : VolumeName(row, "tmws", id);
-            var profile = loop ? VolumeName(row, "tmdata", id) : VolumeName(row, "tmpr", id);
-            var quota = loop ? (row == null ? DiskQuota.DefaultBytes : DiskQuotaOf(row)) : 0UL;
-            var epoch = row?.Epoch ?? 1UL;
-            var labels = new Dictionary<string, string>();
-            if (row != null)
+            var total = Stopwatch.GetTimestamp();
+            return await _warmPool.AllocateAsync(HasAllocatedSlot(id), async pooled =>
             {
-                foreach (var pair in row.Computer.Labels)
-                    if (!pair.Key.StartsWith("teammates.", StringComparison.Ordinal)) labels[pair.Key] = pair.Value;
-            }
-            foreach (var pair in Labels(id, ownerId)) labels[pair.Key] = pair.Value;
-            if (loop)
-            {
-                labels["teammates.disk_backend"] = "loop";
-                labels["teammates.disk_bytes"] = quota.ToString();
-            }
-            if (!string.IsNullOrWhiteSpace(displayName)) labels["name"] = displayName;
-            var image = string.IsNullOrWhiteSpace(imageRef) ? _options.ImageRef : imageRef;
-            if (string.IsNullOrWhiteSpace(image)) image = row?.Computer.ImageRef ?? "";
-            if (string.IsNullOrWhiteSpace(image)) throw ComputeException.InvalidArgument("image is required");
-            if (!replace)
-            {
-                try
+                var path = pooled ? "pool" : "resume";
+                await EnsureComputerIsolationAsync(ct);
+                var row = TryGet(id);
+                var name = row?.Name ?? ContainerName(id);
+                var loop = (row != null && IsLoop(row)) || await VolumeExists("tmimg" + Slug(id.Value), ct);
+                var workspace = loop ? VolumeName(row, "tmimg", id) : VolumeName(row, "tmws", id);
+                var profile = loop ? VolumeName(row, "tmdata", id) : VolumeName(row, "tmpr", id);
+                var quota = loop ? (row == null ? DiskQuota.DefaultBytes : DiskQuotaOf(row)) : 0UL;
+                var epoch = row?.Epoch ?? 1UL;
+                var labels = new Dictionary<string, string>();
+                if (row != null)
                 {
-                    var existing = await _client.Containers.InspectContainerAsync(name, ct);
-                    RequireOwned(existing.Config.Labels);
-                    if (existing.State.Running || existing.State.Paused)
+                    foreach (var pair in row.Computer.Labels)
+                        if (!pair.Key.StartsWith("teammates.", StringComparison.Ordinal)) labels[pair.Key] = pair.Value;
+                }
+                foreach (var pair in Labels(id, ownerId)) labels[pair.Key] = pair.Value;
+                if (loop)
+                {
+                    labels["teammates.disk_backend"] = "loop";
+                    labels["teammates.disk_bytes"] = quota.ToString();
+                }
+                if (!string.IsNullOrWhiteSpace(displayName)) labels["name"] = displayName;
+                var image = string.IsNullOrWhiteSpace(imageRef) ? _options.ImageRef : imageRef;
+                if (string.IsNullOrWhiteSpace(image)) image = row?.Computer.ImageRef ?? "";
+                if (string.IsNullOrWhiteSpace(image)) throw ComputeException.InvalidArgument("image is required");
+                if (!replace)
+                {
+                    try
                     {
-                        var adopted = Record(id, row?.Computer.TenantId ?? "local", ownerId, image, existing.State.Paused ? ComputerState.Hibernated : ComputerState.Running, existing.ID, [workspace, profile], labels, name, epoch);
-                        lock (_sync)
+                        var existing = await _client.Containers.InspectContainerAsync(name, ct);
+                        RequireOwned(existing.Config.Labels);
+                        if (existing.State.Running || existing.State.Paused)
                         {
-                            if (_rows.TryGetValue(id.Value, out var adoptedRow))
+                            var adopted = Record(id, row?.Computer.TenantId ?? "local", ownerId, image, existing.State.Paused ? ComputerState.Hibernated : ComputerState.Running, existing.ID, [workspace, profile], labels, name, epoch);
+                            lock (_sync)
                             {
-                                adoptedRow.Paused = existing.State.Paused;
-                                adoptedRow.Hibernated = false;
-                                if (loop)
+                                if (_rows.TryGetValue(id.Value, out var adoptedRow))
                                 {
-                                    adoptedRow.LoopDisk = true;
-                                    adoptedRow.DiskQuotaBytes = quota;
+                                    adoptedRow.Paused = existing.State.Paused;
+                                    adoptedRow.Hibernated = false;
+                                    if (loop)
+                                    {
+                                        adoptedRow.LoopDisk = true;
+                                        adoptedRow.DiskQuotaBytes = quota;
+                                    }
                                 }
                             }
+                            if (!existing.State.Paused)
+                            {
+                                await WaitUntilUsable(existing.ID, ct, path);
+                                MarkReady(id);
+                            }
+                            _logger.LogInformation("computer still present {ComputerId} container {Name}", id.Value, name);
+                            return adopted;
                         }
-                        if (!existing.State.Paused) await WaitUntilUsable(existing.ID, ct);
-                        MarkReady(id);
-                        _logger.LogInformation("computer still present {ComputerId} container {Name}", id.Value, name);
-                        return adopted;
+                    }
+                    catch (DockerApiException ex) when ((int)ex.StatusCode == 404)
+                    {
                     }
                 }
-                catch (DockerApiException ex) when ((int)ex.StatusCode == 404)
+                _logger.LogInformation("computer restore started {ComputerId} container {Name}", id.Value, name);
+                await RemoveNamed(name, row?.ContainerId, ct);
+                Forget(id);
+                await EnsureVolume(workspace, id, ownerId, ct);
+                await EnsureVolume(profile, id, ownerId, ct);
+                if (loop)
                 {
+                    await LoadStorageOptAsync(ct);
+                    await _disks.MountAsync(workspace, profile, quota, ct);
                 }
-            }
-            _logger.LogInformation("computer restore started {ComputerId} container {Name}", id.Value, name);
-            await RemoveNamed(name, row?.ContainerId, ct);
-            Forget(id);
-            await EnsureVolume(workspace, id, ownerId, ct);
-            await EnsureVolume(profile, id, ownerId, ct);
-            if (loop)
-            {
-                await LoadStorageOptAsync(ct);
-                await _disks.MountAsync(workspace, profile, quota, ct);
-            }
-            var spec = new CreateComputerSpec(id, row?.Computer.TenantId ?? "local", ownerId, image, IsolationClass.Docker, new ResourceLimits((uint)(_options.NanoCpus / 1_000_000), (ulong)_options.MemoryBytes, quota, 256), "", labels);
-            var created = await _client.Containers.CreateContainerAsync(BuildCreate(spec, name, workspace, profile, loop, quota, labels), ct);
-            var started = await _client.Containers.StartContainerAsync(created.ID, new ContainerStartParameters(), ct);
-            if (!started) throw ComputeException.Internal("docker did not start the computer");
-            var computer = Record(id, spec.TenantId, ownerId, image, ComputerState.Running, created.ID, [workspace, profile], labels, name, epoch);
-            NoteDisk(id, loop, quota);
-            await WaitUntilUsable(created.ID, ct);
-            MarkReady(id);
-            _logger.LogInformation("computer restored {ComputerId} container {Name}", id.Value, name);
-            return computer;
+                var spec = new CreateComputerSpec(id, row?.Computer.TenantId ?? "local", ownerId, image, IsolationClass.Docker, new ResourceLimits((uint)(_options.NanoCpus / 1_000_000), (ulong)_options.MemoryBytes, quota, 256), "", labels);
+                var created = await _client.Containers.CreateContainerAsync(BuildCreate(spec, name, workspace, profile, loop, quota, labels), ct);
+                Stage("computer_create_ms", total, path);
+                var startClock = Stopwatch.GetTimestamp();
+                var started = await _client.Containers.StartContainerAsync(created.ID, new ContainerStartParameters(), ct);
+                Stage("computer_unpause_ms", startClock, path);
+                if (!started) throw ComputeException.Internal("docker did not start the computer");
+                var computer = Record(id, spec.TenantId, ownerId, image, ComputerState.Running, created.ID, [workspace, profile], labels, name, epoch);
+                NoteDisk(id, loop, quota);
+                await WaitUntilUsable(created.ID, ct, path);
+                Stage(pooled ? "warm_pool_ready_ms" : "computer_ready_ms", total, path);
+                MarkReady(id);
+                _logger.LogInformation("computer restored {ComputerId} container {Name}", id.Value, name);
+                return computer;
+            }, ct);
         }
     }
 
-    private async Task WaitUntilUsable(string containerId, CancellationToken ct)
+    private async Task WaitUntilUsable(string containerId, CancellationToken ct, string path = "resume")
     {
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(45);
-        Exception? last = null;
-        while (DateTimeOffset.UtcNow < deadline)
+        var clock = Stopwatch.GetTimestamp();
+        await AdaptiveReadiness.WaitAsync(async token =>
         {
             try
             {
-                var (code, _, _) = await Capture(containerId, ["python3", "-c", ComputerReadiness.ProbeScript], TimeSpan.FromSeconds(4), ct);
-                if (code == 0) return;
+                Row? row;
+                lock (_sync) row = _rows.Values.FirstOrDefault(r => r.ContainerId == containerId);
+                if (row != null && !string.IsNullOrWhiteSpace(_options.NetworkName))
+                {
+                    // /desktops waits on the service's desktop/browser initialization. Its
+                    // response signals readiness without a Docker exec/health polling round trip.
+                    var body = JsonSerializer.Serialize(new { botId = row.Computer.Id.Value, display = 1,
+                        name = row.Computer.Labels.GetValueOrDefault("name", "Teammate"), chrome = true });
+                    using var content = new StringContent(body, Encoding.UTF8, "application/json");
+                    using var response = await _http.PostAsync($"http://{row.Name}:7700/desktops", content, token);
+                    if (!response.IsSuccessStatusCode) return false;
+                    using var state = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token));
+                    if (!state.RootElement.TryGetProperty("ready", out var ready) || !ready.GetBoolean()
+                        || !state.RootElement.TryGetProperty("chrome", out var chrome) || !chrome.GetBoolean()) return false;
+                    using var cdp = await _http.GetAsync($"http://{row.Name}:9222/json/version", token);
+                    if (!cdp.IsSuccessStatusCode) return false;
+                    using var version = JsonDocument.Parse(await cdp.Content.ReadAsStringAsync(token));
+                    return version.RootElement.TryGetProperty("webSocketDebuggerUrl", out _);
+                }
+                var (code, _, _) = await Capture(containerId, ["python3", "-c", ComputerReadiness.ProbeScript], TimeSpan.FromSeconds(4), token);
+                return code == 0;
             }
-            catch (Exception ex) { last = ex; }
-            try { await Task.Delay(500, ct); }
-            catch (OperationCanceledException) { break; }
-        }
-        _logger.LogWarning("computer restore did not become usable {Message}", last?.Message);
-        throw ComputeException.Recovering();
+            catch (OperationCanceledException) when (!token.IsCancellationRequested) { return false; }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception) { return false; }
+        }, _options.ReadinessDeadline, ct);
+        Stage("computer_chrome_healthy_ms", clock, path);
     }
 
     private async Task<bool> VolumeExists(string name, CancellationToken ct)
@@ -1517,6 +1571,11 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
         }).GetAwaiter().GetResult();
         foreach (var item in list)
         {
+            if (item.Labels != null && OwnedByThisStack(item.Labels) && item.Labels.TryGetValue("teammates.warm_pool", out var poolLabel) && poolLabel == "template")
+            {
+                _staleTemplates.Add(item.ID);
+                continue;
+            }
             if (item.Labels == null || !item.Labels.TryGetValue("teammates.computer_id", out var id) || string.IsNullOrWhiteSpace(id))
                 continue;
             if (!OwnedByThisStack(item.Labels)) continue;
@@ -1759,52 +1818,61 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
         return _isolationHttp;
     }
 
-    private async Task WakeAsync(Row row, CancellationToken ct)
+    // Stopped/hibernated containers release their active slot; paused ones retain RAM.
+    private static bool Allocated(Row row) => row.Paused || row.Computer.State is ComputerState.Running or ComputerState.Provisioning or ComputerState.Restoring or ComputerState.Recreating;
+    private bool HasAllocatedSlot(ComputerId id) { lock (_sync) return _rows.TryGetValue(id.Value, out var row) && Allocated(row); }
+
+    private async Task WakeAsync(Row row, CancellationToken ct, int ownerLimit = int.MaxValue)
     {
-        lock (_sync) row.LastActivity = DateTimeOffset.UtcNow;
-        var inspect = await _client.Containers.InspectContainerAsync(row.ContainerId, ct);
-        if (inspect.State.Running && !inspect.State.Paused)
+        var gate = row.WakeGate;
+        await gate.WaitAsync(ct);
+        try
         {
-            lock (_sync) { row.Paused = false; row.Hibernated = false; }
-            return;
-        }
-        await EnsureComputerIsolationAsync(ct);
-        var started = DateTimeOffset.UtcNow;
-        if (inspect.State.Paused)
-        {
-            await RestoreMemoryHighAsync(row.ContainerId, ct);
-            try { await _client.Containers.UnpauseContainerAsync(row.ContainerId, ct); }
-            catch (DockerApiException ex) when (ex.Message.Contains("not paused", StringComparison.OrdinalIgnoreCase)) { }
-        }
-        else
-        {
-            if (DiskQuota.MountOnResume(inspect.State.Paused))
-                await EnsureDiskAsync(row, ct);
-            await _client.Containers.StartContainerAsync(row.ContainerId, new ContainerStartParameters(), ct);
-            var deadline = DateTimeOffset.UtcNow.Add(_options.ResumeTarget <= TimeSpan.Zero ? TimeSpan.FromSeconds(15) : _options.ResumeTarget);
-            while (DateTimeOffset.UtcNow < deadline && !ct.IsCancellationRequested)
+            lock (_sync) row.LastActivity = DateTimeOffset.UtcNow;
+            var total = Stopwatch.GetTimestamp();
+            var inspect = await _client.Containers.InspectContainerAsync(row.ContainerId, ct);
+            var sleeping = inspect.State.Paused || !inspect.State.Running;
+            var path = inspect.State.Paused ? "unpause" : "resume";
+            if (!sleeping && IsComputerReady(row.Computer.Id)) return;
+            lock (_sync) _ready.Remove(row.Computer.Id.Value);
+            await _warmPool.AllocateAsync(HasAllocatedSlot(row.Computer.Id), async _ =>
             {
-                try
+                lock (_sync)
+                    if (!Allocated(row) && _rows.Values.Count(r => r.Computer.OwnerId == row.Computer.OwnerId && Allocated(r)) >= ownerLimit)
+                        throw ComputeException.ResourceExhausted("owner computer quota");
+                await EnsureComputerIsolationAsync(ct);
+                var startClock = Stopwatch.GetTimestamp();
+                if (inspect.State.Paused)
                 {
-                    var (code, _, _) = await Capture(row.ContainerId, ["curl", "-fsS", "http://127.0.0.1:7700/health"], TimeSpan.FromSeconds(2), ct);
-                    if (code == 0) break;
+                    await RestoreMemoryHighAsync(row.ContainerId, ct);
+                    try { await _client.Containers.UnpauseContainerAsync(row.ContainerId, ct); }
+                    catch (DockerApiException ex) when (ex.Message.Contains("not paused", StringComparison.OrdinalIgnoreCase)) { }
                 }
-                catch { /* the process is still coming up */ }
-                await Task.Delay(300, ct);
-            }
-            _logger.LogInformation("computer resumed {ComputerId} in {Milliseconds} ms", row.Computer.Id.Value, (DateTimeOffset.UtcNow - started).TotalMilliseconds);
+                else if (!inspect.State.Running)
+                {
+                    await EnsureDiskAsync(row, ct);
+                    await _client.Containers.StartContainerAsync(row.ContainerId, new ContainerStartParameters(), ct);
+                }
+                if (sleeping) Stage("computer_unpause_ms", startClock, path);
+                // Reserve the active slot even if Chrome later fails its readiness deadline.
+                lock (_sync)
+                {
+                    row.Paused = false;
+                    row.Hibernated = false;
+                    row.Computer = row.Computer with { State = ComputerState.Running, UpdatedAt = DateTimeOffset.UtcNow };
+                }
+                await WaitUntilUsable(row.ContainerId, ct, path);
+                MarkReady(row.Computer.Id);
+                if (sleeping) Stage("wake_paused_ms", total, path);
+                return true;
+            }, ct);
         }
-        lock (_sync)
-        {
-            row.Paused = false;
-            row.Hibernated = false;
-            if (row.Computer.State is ComputerState.Hibernated or ComputerState.Stopped)
-                row.Computer = row.Computer with { State = ComputerState.Running, UpdatedAt = DateTimeOffset.UtcNow };
-        }
+        finally { gate.Release(); }
     }
 
     private sealed class Row
     {
+        public SemaphoreSlim WakeGate { get; } = new(1, 1);
         public required Computer Computer { get; set; }
         public required string ContainerId { get; set; }
         public required string Name { get; set; }

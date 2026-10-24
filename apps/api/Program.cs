@@ -49,6 +49,8 @@ var compute = new DockerComputeProvider(new DockerComputeOptions
     SeccompPath = config["SECCOMP_PROFILE"],
     Stack = string.IsNullOrWhiteSpace(config["COMPUTE_STACK"]) ? config["COMPOSE_PROJECT"] : config["COMPUTE_STACK"],
     MaxComputers = HostBudget.MaxComputers(HostBudget.ReadMemTotalBytes(), config["MAX_COMPUTERS"]),
+    WarmPoolSize = int.TryParse(config["WARM_POOL_SIZE"], out var poolSize) ? poolSize : 0,
+    ReadinessDeadline = TimeSpan.FromSeconds(int.TryParse(config["COMPUTER_READINESS_TIMEOUT_SECONDS"], out var readySeconds) ? readySeconds : 45),
     ComputerToken = config["COMPUTER_TOKEN"] ?? "",
     DisplayGeometry = config["DISPLAY_GEOMETRY"] ?? "1920x1200",
     DisplayDepth = config["DISPLAY_DEPTH"] ?? "24",
@@ -91,6 +93,10 @@ builder.Services.AddHostedService<AiWaiters>();
 builder.Services.AddSingleton(data);
 builder.Services.AddSingleton<PerfRecorder>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<PerfRecorder>());
+builder.Services.AddSingleton<ComputerPrewarmService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ComputerPrewarmService>());
+if (!string.Equals(config["WARM_POOL_MAINTENANCE"], "false", StringComparison.OrdinalIgnoreCase))
+    builder.Services.AddHostedService<ComputerWarmPoolService>();
 builder.Services.AddHostedService<Maintenance>();
 builder.Services.AddHostedService<SessionCacheInvalidator>();
 builder.Services.AddHostedService(sp => new TaskLeaseMaintenance(
@@ -101,6 +107,7 @@ builder.Services.AddHostedService<TicketCleanupService>();
 builder.Services.AddHostedService<DesktopLeaseSweepService>();
 
 var app = builder.Build();
+compute.RecordPerformance = app.Services.GetRequiredService<PerfRecorder>().Record;
 app.UseExceptionHandler(handler => handler.Run(async ctx =>
 {
     var feature = ctx.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>();
@@ -167,6 +174,7 @@ catch (Exception ex)
     app.Logger.LogError("computer isolation alert: computers will not start ({Message})", ex.Message);
 }
 SpeedTelemetry.Map(app, platform);
+ComputerPrewarmService.Map(app);
 Routes.Map(app, platform, runtime);
 AiAdmin.Map(app, platform);
 TeachRoutes.Map(app, platform);
