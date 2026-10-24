@@ -181,8 +181,12 @@ test("policy card, data-policy block, and login form", async ({ page }) => {
     "-d",
     "agent",
     "-tA",
+    // Stream rows (no string_agg): one aggregate over every model request OOM-killed
+    // the memory-capped postgres backend on a long-lived test database.
+    "-v",
+    "FETCH_COUNT=200",
     "-c",
-    "SELECT coalesce(string_agg(content,' '),'') FROM messages; SELECT coalesce(string_agg(prompt_json::text,' '),'') FROM model_requests; SELECT coalesce(string_agg(result::text,' '),'') FROM task_steps; SELECT coalesce(string_agg(chain_canonical,' '),'') FROM audit_events; SELECT coalesce(string_agg(fields::text,' '),'') FROM login_prompts;",
+    "SELECT content FROM messages; SELECT prompt_json::text FROM model_requests; SELECT result::text FROM task_steps; SELECT chain_canonical FROM audit_events; SELECT fields::text FROM login_prompts;",
   ]);
   expect(columns).not.toContain(LOGIN_CANARY);
   expect(columns).not.toContain("4242424242424242");

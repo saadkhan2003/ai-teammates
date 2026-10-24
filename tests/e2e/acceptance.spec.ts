@@ -697,8 +697,12 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
       "-d",
       "agent",
       "-tA",
-      "-c",
-      "SELECT coalesce(string_agg(content,' '),'') FROM messages; SELECT coalesce(string_agg(prompt_json::text,' '),'') FROM model_requests; SELECT coalesce(string_agg(result::text,' '),'') FROM task_steps;",
+    // Stream rows (no string_agg): one aggregate over every model request OOM-killed
+    // the memory-capped postgres backend on a long-lived test database.
+    "-v",
+    "FETCH_COUNT=200",
+    "-c",
+    "SELECT content FROM messages; SELECT prompt_json::text FROM model_requests; SELECT result::text FROM task_steps;",
     ]);
     assertClean("database text", columns);
     const restore = spawnSync("python3", [path.join(__dirname, "restore_check.py")], { encoding: "utf8", timeout: 180_000, env: { ...process.env, PG_CONTAINER } });
