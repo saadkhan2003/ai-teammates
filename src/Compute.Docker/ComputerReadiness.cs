@@ -13,6 +13,8 @@ public static class ComputerReadiness
         with urllib.request.urlopen(req, timeout=3) as response:
             state = json.load(response)
         assert state.get('ready') and state.get('chrome')
+        with urllib.request.urlopen('http://127.0.0.1:9222/json/version', timeout=1) as response:
+            assert json.load(response).get('webSocketDebuggerUrl')
         print('ready')
         """;
 }

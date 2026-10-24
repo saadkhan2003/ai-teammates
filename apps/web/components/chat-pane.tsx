@@ -1,5 +1,6 @@
 "use client";
 
+import { useComputerPrewarm } from "@/lib/use-computer-prewarm";
 import { beginSendPerf, endSendPerf, paintedPerf, chatPaintedPerf, initPerf } from "@/lib/perf";
 import { FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Markdown } from "@/components/markdown";
@@ -70,6 +71,7 @@ export function ChatPane({
   events?: AgentEvent[];
   onStop?: () => Promise<void>;
 }) {
+  const prewarmComputer = useComputerPrewarm(botId);
   const perfTurn = useRef<{ id: string; conversation: string; messages: Set<string>; events: Set<AgentEvent>; working: boolean; at: number; task?: string; message?: string } | null>(null);
   useEffect(() => { initPerf(); }, []);
   useEffect(() => {
@@ -541,6 +543,8 @@ export function ChatPane({
                 aria-label={last ? `Message ${botName}` : "Comment"}
                 data-testid={last ? "composer" : "composer-segment"}
                 value={part.text}
+                onFocus={prewarmComputer}
+                onInput={prewarmComputer}
                 onChange={(event) => { const value = event.target.value; setParts(current => current.map(p => p.id === part.id ? { ...p, text: value } as ComposerPart : p)); }}
                 placeholder={last && parts.length === 1 ? `Message ${botName}` : last ? "Add a comment" : ""}
                 rows={1}

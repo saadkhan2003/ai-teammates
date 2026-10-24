@@ -80,6 +80,8 @@ def test_recovery_probe_requires_desktop_and_browser_without_changing_lease(monk
     requests = []
     def fake(request, **kwargs):
         requests.append(request)
+        if isinstance(request, str) and request.endswith('/json/version'):
+            return io.BytesIO(json.dumps({'webSocketDebuggerUrl': 'ws://127.0.0.1:9222/devtools/browser/x'}).encode())
         return io.BytesIO(json.dumps(state).encode())
     monkeypatch.setattr(urllib.request, 'urlopen', fake)
     if ready:

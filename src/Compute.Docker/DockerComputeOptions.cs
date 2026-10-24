@@ -11,6 +11,8 @@ public sealed record DockerComputeOptions
     public string IsolationToken { get; init; } = "";
     public string? SeccompPath { get; init; }
     public int MaxComputers { get; init; } = 2;
+    public int WarmPoolSize { get; init; }
+    public TimeSpan ReadinessDeadline { get; init; } = TimeSpan.FromSeconds(45);
     /// <summary>Compose project name; scopes which containers on a shared Docker daemon this provider owns.</summary>
     public string? Stack { get; init; }
     public string ComputerToken { get; init; } = "";
