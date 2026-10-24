@@ -10,7 +10,7 @@ import { StateMessage } from "@/components/state-message";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/utils";
 
-type Config = { visionModel: string; transcriptionModel: string; transcriptionProvider: string; allowFallbacks?: false };
+type Config = { visionModel: string; transcriptionModel: string; transcriptionProvider?: string; allowFallbacks?: false };
 
 export default function VideoAdminConfigPage() {
   const [role, setRole] = useState<string | null>(null);
@@ -42,7 +42,7 @@ export default function VideoAdminConfigPage() {
     <Card>
       <CardHeader className="p-4">
         <CardTitle className="text-sm">Video processing</CardTitle>
-        <CardDescription>Choose the services used when teammates analyze videos. Transcription stays pinned to one provider without fallback.</CardDescription>
+        <CardDescription>Choose the models used when teammates analyze videos. Transcription uses a single fixed service with no fallback.</CardDescription>
       </CardHeader>
       <CardContent className="p-4 pt-0">
         {loading ? <StateMessage title="Loading video configuration" detail="Reading current admin settings." /> : null}
@@ -51,7 +51,6 @@ export default function VideoAdminConfigPage() {
         {!loading && staff && config ? <form className="grid gap-4" onSubmit={(event) => void save(event)}>
           <div className="grid gap-2"><Label htmlFor="video-vision-model">Video vision model</Label><Input id="video-vision-model" value={config.visionModel} onChange={(event) => setConfig({ ...config, visionModel: event.target.value })} required /></div>
           <div className="grid gap-2"><Label htmlFor="video-transcription-model">Transcription model</Label><Input id="video-transcription-model" value={config.transcriptionModel} onChange={(event) => setConfig({ ...config, transcriptionModel: event.target.value })} required /></div>
-          <div className="grid gap-2"><Label htmlFor="video-transcription-provider">Transcription provider pin</Label><Input id="video-transcription-provider" value={config.transcriptionProvider} onChange={(event) => setConfig({ ...config, transcriptionProvider: event.target.value })} required /><p className="text-xs text-muted-foreground">Fallbacks are disabled.</p></div>
           <div><Button type="submit" disabled={saving}>{saving ? "Saving…" : "Save settings"}</Button></div>
         </form> : null}
       </CardContent>

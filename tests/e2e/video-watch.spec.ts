@@ -15,7 +15,7 @@ async function openVideoChat(page: Page, theme: "light" | "dark") {
   await page.route("**/api/system/llm-status", route => route.fulfill({ json: { hasKey: true } }));
   await page.route(`**/api/computers/${BOT}/**`, route => route.fulfill({ json: { state: "off", online: false, holder: null } }));
   await page.route(`**/api/computers/${BOT}/vnc-ticket**`, route => route.fulfill({ json: { token: "e2e-idle-desktop", mode: "view", epoch: 1 } }));
-  page.routeWebSocket("**/vnc/websockify**", socket => socket.close());
+  page.routeWebSocket("**/vnc/websockify**", socket => socket.close({ code: 1000, reason: "fixture complete" }));
 
   const messages: Array<Record<string, unknown>> = [];
   let messageNo = 0;
@@ -34,18 +34,21 @@ async function openVideoChat(page: Page, theme: "light" | "dark") {
   });
   await page.route(`**/api/bots/${BOT}/**`, route => route.fulfill({ json: [] }));
   await page.route(`**/api/bots/${BOT}/workspace`, route => route.fulfill({ json: {
-    bot, conversationId: CONVERSATION, tasks: [{ id: TASK, title: "Watch attached video", status: "running" }],
+    bot, conversationId: CONVERSATION, tasks: [{ id: TASK, title: "Watch attached video", status: messageNo ? "completed" : "running" }],
     messages, messagesHasMore: false, approvals: [], pages: [], holder: "agent", openrouterConnected: true,
   } }));
   await page.route("**/api/events", route => route.fulfill({
     status: 200,
     contentType: "text/event-stream",
-    body: `data: ${JSON.stringify({ type: "video_progress", taskId: TASK, botId: BOT, detail: { stage: "Watching part", current: 1, total: 1 } })}\n\n`,
+    body: messageNo
+      ? `data: ${JSON.stringify({ type: "task", taskId: TASK, botId: BOT, status: "completed" })}\n\n`
+      : `data: ${JSON.stringify({ type: "video_progress", taskId: TASK, botId: BOT, detail: { stage: "Watching part", current: 1, total: 1 } })}\n\n`,
   }));
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`/bots/${BOT}`);
   await expect(page.getByTestId("video-progress")).toContainText("Watching part 1/1");
   await expect(page.getByText("The desktop session did not include a token.")).toHaveCount(0);
+  await expect(page.getByText(/Raw channel missing property:/)).toHaveCount(0);
 }
 
 async function sendVideoQuestion(page: Page) {
@@ -73,15 +76,16 @@ for (const theme of ["light", "dark"] as const) {
   test(`video progress, answer, and follow-up in ${theme} theme`, async ({ page }) => {
     await login(page);
     await openVideoChat(page, theme);
+    await page.screenshot({ path: `/workspace/shots-video-v1/01-progress-${theme}.png` });
     await sendVideoQuestion(page);
     await expect(page.getByTestId("message-item").filter({ hasText: VIDEO_QUESTION })).toBeVisible();
-    await expect(page.getByTestId("video-progress")).toContainText("Watching part 1/1");
-    await page.screenshot({ path: `/workspace/shots-video-v1/01-progress-${theme}.png` });
     await captureAnswerState(page, theme);
 
     await page.getByTestId("composer").fill("What happens at the end?");
     await page.getByTestId("send-chat").click();
     await expect(page.getByText("It ends with the test scene.")).toBeVisible();
+    await expect(page.getByTestId("video-progress")).toHaveCount(0);
+    await expect(page.getByTestId("stop-run")).toHaveCount(0);
     await page.screenshot({ path: `/workspace/shots-video-v1/03-followup-${theme}.png` });
   });
 }
@@ -94,6 +98,9 @@ test("staff can view video settings and members cannot", async ({ page }) => {
   await page.goto("/settings/admin-config/video");
   await expect(page.getByLabel("Video vision model")).toHaveValue("vision-test");
   await expect(page.getByLabel("Transcription model")).toHaveValue("transcription-test");
+  await expect(page.getByLabel("Transcription provider pin")).toHaveCount(0);
+  await expect(page.getByText("Transcription uses a single fixed service with no fallback.")).toBeVisible();
+  await expect(page.getByText("DeepInfra")).toHaveCount(0);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.screenshot({ path: "/workspace/shots-video-v1/04-admin-video-settings-light.png" });
 

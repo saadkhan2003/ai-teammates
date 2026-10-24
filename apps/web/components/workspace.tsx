@@ -161,6 +161,8 @@ export function Workspace({ botId }: { botId: string }) {
       if (ticket !== seq.current) return;
       taskIds.current = new Set(data.tasks.map(task => task.id));
       setWorkspace(data);
+      const activeTasks = new Set(data.tasks.filter(task => ["running", "planning", "queued"].includes((task.status ?? "").toLowerCase())).map(task => task.id));
+      setAgentEvents(current => current.filter(event => event.type !== "video_progress" || (typeof event.taskId === "string" && activeTasks.has(event.taskId))));
       setWorkspaceError(null);
     } catch (caught) {
       if (ticket !== seq.current) return;
@@ -232,6 +234,9 @@ export function Workspace({ botId }: { botId: string }) {
           const detail = event.detail && typeof event.detail === "object" ? event.detail as Record<string, unknown> : {};
           setAgentEvents(current => mergeAgentEvent(current, { ...event, ...detail, type: event.type }));
         }
+      }
+      if (type === "task" && typeof event?.taskId === "string" && ["completed", "failed", "cancelled"].includes(String(event.status ?? "").toLowerCase())) {
+        setAgentEvents(current => current.filter(item => !(item.type === "video_progress" && item.taskId === event.taskId)));
       }
       if (type === "memory" && (event?.botId === botId || (typeof event?.taskId === "string" && taskIds.current.has(event.taskId)))) void loadAux(["memories"]);
       schedule();

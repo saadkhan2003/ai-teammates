@@ -321,7 +321,8 @@ export function ComputerPane({
       setVncState("disconnected");
       setConnecting(false);
       setConnectFailed(true);
-      setError(errorMessage(caught, "Could not open the desktop."));
+      console.error("Desktop connection failed", caught);
+      setError("Couldn't connect");
       scheduleViewReconnect();
     } finally {
       if (gen === connectGen.current) pendingRef.current = false;
