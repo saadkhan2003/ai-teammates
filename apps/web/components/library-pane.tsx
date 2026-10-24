@@ -45,6 +45,7 @@ export function LibraryPane({ botId, botName, botShape, botColor }: { botId: str
   const [loadingMore, setLoadingMore] = useState<string | null>(null);
   const [moreErrors, setMoreErrors] = useState<Record<string, boolean>>({});
   const [preview, setPreview] = useState<LibraryItem | null>(null);
+  const [hover, setHover] = useState<LibraryItem | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<LibraryItem | null>(null);
   const [content, setContent] = useState<string | null>(null);
   const [contentError, setContentError] = useState(false);
@@ -188,7 +189,7 @@ export function LibraryPane({ botId, botName, botShape, botColor }: { botId: str
     const Icon = icons[item.kind] ?? FileQuestion;
     const href = itemUrl(item);
     const image = item.kind === "image" || item.kind === "screenshots";
-    return <li key={item.id} data-library-item={item.id} className="group relative flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-[var(--bot-accent-soft)] focus-within:bg-[var(--bot-accent-soft)] motion-reduce:transition-none" onMouseEnter={() => setPreview(item)} onMouseLeave={() => setPreview(null)} onFocus={() => setPreview(item)}>
+    return <li key={item.id} data-library-item={item.id} className="group relative flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-[var(--bot-accent-soft)] focus-within:bg-[var(--bot-accent-soft)] motion-reduce:transition-none" onMouseEnter={() => setHover(item)} onMouseLeave={() => setHover(null)} onFocus={() => setHover(item)} onBlur={() => setHover(null)}>
       <span data-testid={item.kind === "unknown" ? "library-unknown-icon" : undefined} data-kind={item.kind} className={`relative grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-md border border-border bg-background ${item.kind === "unknown" ? "text-muted-foreground" : "text-foreground"}`}>
         {image && item.thumbUrl ? <><Icon aria-hidden="true" className="absolute h-4 w-4 text-muted-foreground" /><img className="relative h-full w-full object-cover opacity-0 transition-opacity duration-300 motion-reduce:transition-none" onLoad={event => event.currentTarget.classList.replace("opacity-0", "opacity-100")} src={item.thumbUrl} alt="" loading="lazy" /></> : <Icon aria-hidden="true" className={`h-4 w-4 ${item.kind === "unknown" ? "text-muted-foreground" : "text-muted-foreground"}`} />}
         {item.kind === "pdf" && <span aria-hidden="true" className="absolute inset-x-0 bottom-0 h-1 bg-red-500" />}
@@ -196,7 +197,7 @@ export function LibraryPane({ botId, botName, botShape, botColor }: { botId: str
       <button type="button" className="min-w-0 flex-1 truncate text-left text-sm outline-none focus-visible:ring-1 focus-visible:ring-[var(--bot-accent-ring)]" title={item.name} onClick={() => setPreview(item)}>{item.name}</button>
       <a href={href} download={item.name} aria-label={`Download ${item.name}`} className="grid h-7 w-7 shrink-0 place-items-center rounded-sm text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"><Download className="h-4 w-4" /></a>
       <DropdownMenu onOpenChange={open => { if (open) void loadShares(item); }}><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100" aria-label={`Actions for ${item.name}`}><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => setPreview(item)}>Open</DropdownMenuItem><DropdownMenuItem asChild><a href={href} download={item.name}><Download />Download</a></DropdownMenuItem><DropdownMenuItem onSelect={() => void togglePin(item)}><Star />{item.pinned ? "Unpin" : "Pin"}</DropdownMenuItem><DropdownMenuItem onSelect={() => void createShare(item)}><Copy />Share</DropdownMenuItem>{(shareInfo[item.id] ?? []).filter(share => share.url).map(share => <DropdownMenuItem key={share.id} onSelect={() => { void navigator.clipboard.writeText(share.url!); toast.success("Share link copied."); }}><Copy />Copy link</DropdownMenuItem>)}{(shareInfo[item.id] ?? []).map(share => <DropdownMenuItem key={`revoke-${share.id}`} onSelect={() => void revokeShare(item, share.id)} className="text-destructive">Revoke share link</DropdownMenuItem>)}<DropdownMenuItem onSelect={() => setDeleteTarget(item)} className="text-destructive"><Trash2 />Delete…</DropdownMenuItem><DropdownMenuItem onSelect={() => { void navigator.clipboard?.writeText(item.name); toast.success("Name copied."); }}><Copy />Copy name</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
-      {preview?.id === item.id && <div role="tooltip" className="pointer-events-none absolute left-8 top-9 z-20 hidden w-64 rounded-md border border-border bg-popover p-3 shadow-md group-hover:block group-focus-within:block"><div className="mb-2 grid h-32 place-items-center overflow-hidden rounded border border-border bg-card">{image && item.thumbUrl ? <img src={item.thumbUrl} alt="" className="h-full w-full object-contain" /> : <Icon className="h-8 w-8 text-muted-foreground" />}</div><p className="truncate text-sm font-medium">{item.name}</p><p className="mt-2 flex items-center gap-2 text-xs text-muted-foreground"><BotAvatar shape={botShape} color={botColor} size={18} />{item.direction === "in" ? "You" : botName} · {item.createdAt ? new Date(item.createdAt).toLocaleString() : formatAge()}</p></div>}
+      {hover?.id === item.id && <div role="tooltip" className="pointer-events-none absolute left-8 top-9 z-20 hidden w-64 rounded-md border border-border bg-popover p-3 shadow-md group-hover:block group-focus-within:block"><div className="mb-2 grid h-32 place-items-center overflow-hidden rounded border border-border bg-card">{image && item.thumbUrl ? <img src={item.thumbUrl} alt="" className="h-full w-full object-contain" /> : <Icon className="h-8 w-8 text-muted-foreground" />}</div><p className="truncate text-sm font-medium">{item.name}</p><p className="mt-2 flex items-center gap-2 text-xs text-muted-foreground"><BotAvatar shape={botShape} color={botColor} size={18} />{item.direction === "in" ? "You" : botName} · {item.createdAt ? new Date(item.createdAt).toLocaleString() : formatAge()}</p></div>}
     </li>;
   };
 
@@ -207,7 +208,7 @@ export function LibraryPane({ botId, botName, botShape, botColor }: { botId: str
     const rows = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("[data-library-item]"));
     const index = rows.indexOf(row);
     if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); rows[nextLibraryRowIndex(index, event.key === "ArrowDown" ? 1 : -1, rows.length)]?.querySelector<HTMLElement>("button")?.focus(); }
-    if (event.key === "Enter") { event.preventDefault(); const item = [...(searchItems ?? []), ...allItems].find(candidate => candidate.id === row.dataset.libraryItem); if (item) setPreview(item); }
+    if (event.key === "Enter" && !["BUTTON", "A"].includes((event.target as HTMLElement).tagName)) { event.preventDefault(); const item = [...(searchItems ?? []), ...allItems].find(candidate => candidate.id === row.dataset.libraryItem); if (item) setPreview(item); }
     if (event.key === "Delete") { event.preventDefault(); const item = [...(searchItems ?? []), ...allItems].find(candidate => candidate.id === row.dataset.libraryItem); if (item) setDeleteTarget(item); }
   };
 
@@ -236,6 +237,7 @@ export function LibraryPane({ botId, botName, botShape, botColor }: { botId: str
         </div>}
       </div>
     </section>)}
+    </>}
     <Dialog open={!!preview} onOpenChange={open => { if (!open) setPreview(null); }}>
       <DialogContent className="max-h-[90vh] max-w-4xl overflow-hidden p-0" onKeyDown={event => { if (event.key === "ArrowLeft") { event.preventDefault(); movePreview(-1); } if (event.key === "ArrowRight") { event.preventDefault(); movePreview(1); } }}>
         {preview && <>
@@ -251,6 +253,5 @@ export function LibraryPane({ botId, botName, botShape, botColor }: { botId: str
     <Dialog open={!!deleteTarget} onOpenChange={open => { if (!open) setDeleteTarget(null); }}>
       <DialogContent className="max-w-md"><DialogHeader><DialogTitle>Delete {deleteTarget?.name}?</DialogTitle><DialogDescription>The file is removed from Library and cannot be recovered after 30 days.</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" autoFocus onClick={() => setDeleteTarget(null)}>Cancel</Button><Button variant="destructive" onClick={() => void deleteItem()}>Delete</Button></DialogFooter></DialogContent>
     </Dialog>
-    </>}
   </div>;
 }
