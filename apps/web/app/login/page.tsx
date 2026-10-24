@@ -80,7 +80,7 @@ export default function LoginPage() {
                 {error}
               </p>
             ) : null}
-            <Button data-testid="login-submit" type="submit" disabled={pending}>
+            <Button data-testid="login-submit" type="submit" className="self-end" disabled={pending}>
               {pending ? "Signing in…" : "Sign in"}
             </Button>
           </form>

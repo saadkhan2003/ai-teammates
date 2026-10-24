@@ -53,15 +53,15 @@ export function SettingsNav() {
   );
 }
 
-export function SettingsFrame({ children }: { children: ReactNode }) {
+export function SettingsFrame({ children, edge = false }: { children: ReactNode; edge?: boolean }) {
   return (
     <div className="flex h-full min-h-0 flex-col md:flex-row">
-      <div className="shrink-0 border-b border-border md:w-52 md:border-b-0 md:border-r">
-        <h1 className="px-4 pb-1 pt-3 text-sm font-medium">Settings</h1>
+      <div className="shrink-0 border-b border-border md:w-52 md:border-b-0 md:border-r md:py-[var(--space-page)]">
+        <h1 className="px-4 pb-[var(--space-label)] text-sm font-medium">Settings</h1>
         <SettingsNav />
       </div>
       <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-4">{children}</div>
+        <div className={cn("mx-auto flex w-full max-w-[var(--content-width)] flex-col gap-[var(--space-section)] px-[var(--space-page)] py-[var(--space-page)]", edge && "pr-12")}>{children}</div>
       </div>
     </div>
   );

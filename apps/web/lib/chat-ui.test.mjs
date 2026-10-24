@@ -63,6 +63,12 @@ test("apply, mentions, accent, reply, and schedule helpers", () => {
   assert.equal(chat.routineSchedule("0 8 * * *"), "Every day at 8:00 AM");
   assert.equal(chat.routineSchedule("30 15 * * 1"), "Every Monday at 3:30 PM");
   assert.equal(chat.jobOpenHref("bot", { id: "job", prUrl: "" }), "/bots/bot/jobs/job");
+  assert.equal(chat.safeHref("javascript:alert(1)"), null);
+  assert.equal(chat.safeHref("/settings/usage"), "/settings/usage");
+  assert.equal(chat.isExternalHref("https://cursor.com/agents/abc"), true);
+  assert.equal(chat.isAppHref("/bots/abc/jobs/1"), true);
+  assert.equal(chat.linkDisplayUrl("https://cursor.com/agents/bc-a34805ab-19fd-5b59-913c-7cde9ebbae92"), "cursor.com/agents/bc-a34805ab-19fd-5b59-913c-7cde9ebbae92");
+  assert.equal(chat.linkDisplayUrl("/settings/usage"), "/settings/usage");
   const finished = chat.normalizeCodingJob({ title: "Ship", status: "merged", branch: "cursor/bot-app-awareness", prNumber: 6, files_changed: "31", additions: 1113, deletions: 26 });
   assert.equal(finished.filesChanged, 31);
   assert.equal(finished.additions, 1113);
@@ -72,6 +78,31 @@ test("apply, mentions, accent, reply, and schedule helpers", () => {
   assert.equal(chat.showsJobResult({ status: "failed", branch: "", prNumber: null, prUrl: "" }), true);
   assert.equal(chat.filesChangedLabel(1), "1 file changed");
   assert.equal(chat.filesChangedLabel(31), "31 files changed");
+});
+
+test("chat message helpers for quotes, reactions, questions, and links", () => {
+  assert.equal(chat.QUOTE_HIGHLIGHT_MS, 3000);
+  assert.deepEqual([...chat.QUICK_REACTIONS], ["👍", "👎", "❤️", "😂", "🎉"]);
+  assert.equal(chat.pickerSide(80), "below");
+  assert.equal(chat.pickerSide(20), "above");
+  assert.equal(chat.pickerSide(47, 40), "above");
+  assert.equal(chat.optionLetter(0), "A");
+  assert.equal(chat.optionLetter(2), "C");
+  assert.equal(chat.optionLetter(-1), "");
+  assert.equal(chat.newMessagesLabel(1), "↓ 1 new message");
+  assert.equal(chat.newMessagesLabel(4), "↓ 4 new messages");
+  assert.equal(chat.quotePlacement("user"), "above");
+  assert.equal(chat.quotePlacement("assistant"), "inside");
+  const truncated = chat.truncateUrl("https://cursor.com/agents/bc-theme-fixes-and-more-than-fits");
+  assert.equal(truncated.endsWith("…"), true);
+  assert.equal(truncated.length, 36);
+  assert.equal(chat.truncateUrl("https://cursor.com/agents/bc"), "cursor.com/agents/bc");
+  assert.equal(chat.isExternalHref("https://cursor.com/agents/bc"), true);
+  assert.equal(chat.isExternalHref("/bots/ada"), false);
+  const jobs = [{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", title: "Theme fixes", prUrl: "https://example.com/pull/7" }];
+  assert.equal(chat.linkTitle("https://example.com/pull/7", "its live page", jobs), "Theme fixes");
+  assert.equal(chat.linkTitle("/bots/ada/jobs/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "job", jobs), "Theme fixes");
+  assert.equal(chat.linkTitle("/bots/ada", "Library", jobs), "Library");
 });
 
 test("message blocks keep coding jobs and video", () => {

@@ -86,16 +86,16 @@ export default function PolicySettingsPage() {
   const staff = role === "owner" || role === "admin";
 
   return (
-    <div className="flex flex-col gap-4">
+    <>
       <form className="flex flex-col gap-4" onSubmit={(event) => void save(event)}>
         <Card>
-          <CardHeader className="p-4">
+          <CardHeader>
             <CardTitle className="text-sm">Action policy</CardTitle>
             <CardDescription>Risky classes ask before the tool runs. A hard deny still wins.</CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-3 p-4 pt-0 md:grid-cols-2">
+          <CardContent className="grid gap-4 md:grid-cols-2">
             {CLASSES.map((name) => (
-              <div key={name} className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2">
+              <div key={name} className="flex min-h-11 items-center justify-between gap-3 rounded-lg border border-border px-3">
                 <Label htmlFor={`policy-${name}`} className="text-sm font-normal">
                   {name}
                 </Label>
@@ -113,29 +113,29 @@ export default function PolicySettingsPage() {
                 </Select>
               </div>
             ))}
+          <div className="flex min-h-11 items-center justify-between gap-3 border-t border-border pt-4 md:col-span-2">
+              <div>
+                <p className="text-sm">Model assist</p>
+                <p className="text-xs text-muted-foreground">Classify plugin tools. Built-in tools stay on the class rules.</p>
+              </div>
+              <Switch data-testid="policy-model-assist" checked={assist} onCheckedChange={setAssist} aria-label="Model-assisted classifier for plugin tools" />
+            </div>
           </CardContent>
-        </Card>
-        <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
-          <div>
-            <p className="text-sm">Model assist</p>
-            <p className="text-xs text-muted-foreground">Classify plugin tools. Built-in tools stay on the class rules.</p>
+          <div className="flex justify-end p-4 pt-0">
+            <Button type="submit">Save policy</Button>
           </div>
-          <Switch data-testid="policy-model-assist" checked={assist} onCheckedChange={setAssist} aria-label="Model-assisted classifier for plugin tools" />
-        </div>
-        <Button type="submit" size="sm" className="w-fit rounded-md">
-          Save policy
-        </Button>
+        </Card>
       </form>
       {staff ? (
         <Card>
-          <CardHeader className="p-4">
+          <CardHeader>
             <CardTitle className="text-sm">Hard deny list</CardTitle>
             <CardDescription>Admin only. Built-in rules cannot be removed, and approval cannot override them.</CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-3 p-4 pt-0">
+          <CardContent className="flex flex-col gap-4">
             <ul className="flex flex-col gap-2" data-testid="deny-list">
               {rules.map((rule) => (
-                <li key={rule.code} className="rounded-lg border border-border px-3 py-2 text-sm">
+                <li key={rule.code} className="flex min-h-11 flex-col justify-center rounded-lg border border-border px-3 py-2 text-sm">
                   <span className="font-medium">{rule.code}</span>
                   {rule.builtin ? <span className="ml-2 text-xs text-muted-foreground">built-in</span> : null}
                   {rule.description ? <p className="text-muted-foreground">{rule.description}</p> : null}
@@ -155,9 +155,11 @@ export default function PolicySettingsPage() {
                 <Label htmlFor="deny-description">Description</Label>
                 <Input id="deny-description" value={description} onChange={(event) => setDescription(event.target.value)} />
               </div>
-              <Button type="submit" size="sm" variant="outline" className="mt-6 rounded-md">
-                Add rule
-              </Button>
+              <div className="flex items-end justify-end">
+                <Button type="submit" variant="outline">
+                  Add rule
+                </Button>
+              </div>
             </form>
           </CardContent>
         </Card>
@@ -167,6 +169,6 @@ export default function PolicySettingsPage() {
           {error}
         </p>
       ) : null}
-    </div>
+    </>
   );
 }

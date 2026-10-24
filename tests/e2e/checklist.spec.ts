@@ -135,6 +135,7 @@ test("reactions toggle off, reply quote highlight, answered question, attachment
   await shot(page, "07-question-answered");
 
   const attachment = page.getByTestId("attachment-card");
+  await attachment.hover();
   await expect(attachment.getByTestId("attachment-reply")).toBeVisible();
   await attachment.getByTestId("attachment-more").click();
   await expect(page.getByRole("menuitem", { name: "Copy link" })).toBeVisible();

@@ -506,7 +506,7 @@ export function Workspace({ botId }: { botId: string }) {
                     </TabsTrigger>
                   ))}
                 </TabsList>
-                <TabsContent value="details" className="px-3 pb-6">
+                <TabsContent value="details" className="flex flex-col gap-[var(--space-section)] px-4 pb-6">
                   <CodingPanel
                     jobs={jobs}
                     routines={routines.items}
@@ -517,24 +517,25 @@ export function Workspace({ botId }: { botId: string }) {
                     onOpenJob={setOpenJob}
                     onToggleRoutine={toggleRoutine}
                   />
-                  <div className="mt-3 flex flex-col gap-2 text-sm">
-                    <p className="text-muted-foreground">{bot?.instructions || "No description yet."}</p>
-                    <p className="text-muted-foreground">Provider: {provider || "unknown"}</p>
-                    {provider.toLowerCase() === "mock" ? <p>Provider is mock. This teammate is not calling OpenRouter.</p> : null}
-                  </div>
-                  <Collapsible data-testid="connect-apps" className="mt-4">
+                  <section>
+                    <h2 className="mb-2 text-xs font-medium text-muted-foreground">About</h2>
+                    <p className="text-sm text-muted-foreground">{bot?.instructions || "No description yet."}</p>
+                    <p className="mt-2 text-sm text-muted-foreground">Provider: {provider || "unknown"}</p>
+                    {provider.toLowerCase() === "mock" ? <p className="mt-2 text-sm">Provider is mock. This teammate is not calling OpenRouter.</p> : null}
+                  </section>
+                  <Collapsible data-testid="connect-apps">
                     <CollapsibleTrigger className="flex min-h-11 w-full items-center text-left text-sm font-medium">Connect apps</CollapsibleTrigger>
-                    <CollapsibleContent className="pb-3">
+                    <CollapsibleContent className="pb-2">
                       <PluginsPane mode="catalog" />
                     </CollapsibleContent>
                   </Collapsible>
-                  <section data-testid="channels" className="py-3">
-                    <h2 className="text-xs font-medium text-muted-foreground">Channels</h2>
-                    <p className="mt-2 text-sm text-muted-foreground">No channels. Group chats will list them here.</p>
+                  <section data-testid="channels">
+                    <h2 className="mb-2 text-xs font-medium text-muted-foreground">Channels</h2>
+                    <p className="text-sm text-muted-foreground">No channels. Group chats will list them here.</p>
                   </section>
-                  <section data-testid="members" className="py-3">
-                    <h2 className="text-xs font-medium text-muted-foreground">Members</h2>
-                    <p className="mt-2 text-sm text-muted-foreground">Just you and {bot?.name || "this teammate"}.</p>
+                  <section data-testid="members">
+                    <h2 className="mb-2 text-xs font-medium text-muted-foreground">Members</h2>
+                    <p className="text-sm text-muted-foreground">Just you and {bot?.name || "this teammate"}.</p>
                   </section>
                 </TabsContent>
                 <TabsContent value="library" className="px-3 pb-6">
@@ -635,24 +636,39 @@ function BotSettings({
   }
 
   return (
-    <form data-testid="bot-settings" className="grid gap-3 overflow-y-auto px-4 py-3" onSubmit={save}>
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-medium">Teammate settings</p>
-        <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+    <form data-testid="bot-settings" className="flex flex-col gap-6 overflow-y-auto px-4 py-4" onSubmit={save}>
+      <div className="flex items-center">
+        <Button type="button" variant="ghost" size="sm" className="-ml-2" onClick={onClose}>
           Back
         </Button>
       </div>
-      <p className="text-sm font-medium">Avatar</p>
-      <BotAvatarPicker botId={botId} shape={draft.avatarShape} color={draft.avatarColor} onChange={(shape, color) => setDraft({ ...draft, avatarShape: shape, avatarColor: color })} />
-      <Label htmlFor="settings-name">Name</Label>
-      <Input id="settings-name" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} required />
-      <Label htmlFor="settings-title">Title</Label>
-      <Input id="settings-title" value={draft.role} onChange={(event) => setDraft({ ...draft, role: event.target.value })} />
-      <Label htmlFor="settings-description">Description</Label>
-      <Textarea id="settings-description" value={draft.instructions} onChange={(event) => setDraft({ ...draft, instructions: event.target.value })} />
-      <Label htmlFor="settings-model">Model</Label>
-      <Input id="settings-model" value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="Provider default" />
-      <div className="flex items-center justify-between gap-3 text-sm">
+      <div>
+        <h2 className="text-sm font-medium">Teammate settings</h2>
+        <p className="mt-1 text-xs text-muted-foreground">Avatar, name, and notifications for this teammate.</p>
+      </div>
+      <section className="flex flex-col gap-2">
+        <p className="text-xs font-medium text-muted-foreground">Avatar</p>
+        <BotAvatarPicker botId={botId} shape={draft.avatarShape} color={draft.avatarColor} onChange={(shape, color) => setDraft({ ...draft, avatarShape: shape, avatarColor: color })} />
+      </section>
+      <section className="flex flex-col gap-4">
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="settings-name">Name</Label>
+          <Input id="settings-name" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} required />
+        </div>
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="settings-title">Title</Label>
+          <Input id="settings-title" value={draft.role} onChange={(event) => setDraft({ ...draft, role: event.target.value })} />
+        </div>
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="settings-description">Description</Label>
+          <Textarea id="settings-description" value={draft.instructions} onChange={(event) => setDraft({ ...draft, instructions: event.target.value })} />
+        </div>
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="settings-model">Model</Label>
+          <Input id="settings-model" value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="Provider default" />
+        </div>
+      </section>
+      <div className="flex min-h-11 items-center justify-between gap-3 text-sm">
         <Label htmlFor="settings-notifications">Notifications</Label>
         <Switch
           id="settings-notifications"
@@ -661,9 +677,9 @@ function BotSettings({
         />
       </div>
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
-      <Button type="submit" size="sm">
-        Save
-      </Button>
+      <div className="flex justify-end">
+        <Button type="submit">Save</Button>
+      </div>
     </form>
   );
 }

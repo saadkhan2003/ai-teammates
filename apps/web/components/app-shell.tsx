@@ -5,6 +5,9 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { type FormEvent, type ReactNode, type UIEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { AvatarClock } from "@/components/avatar-motion/avatar-clock";
+import { HeroAvatar } from "@/components/avatar-motion/hero-avatar";
+import { MotionAvatar } from "@/components/avatar-motion/motion-avatar";
 import { BotAvatar } from "@/components/bot-avatar";
 import { BotAvatarPicker } from "@/components/bot-avatar-picker";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -409,7 +412,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       {compact || !activeBot ? null : (
         <div data-testid="selected-bot-tile" className="flex flex-col items-center px-3 pb-3 text-center">
           <span className="relative grid h-[60px] w-[60px] place-items-center rounded-[8px] bg-accent">
-            <BotAvatar botId={activeBot.id} shape={activeBot.avatarShape} color={activeBot.avatarColor} size={44} />
+            <HeroAvatar botId={activeBot.id} name={activeBot.name} shape={activeBot.avatarShape} color={activeBot.avatarColor} size={44} />
             <span className={cn("absolute bottom-1 right-1 size-2.5 rounded-full border-2 border-sidebar", statusDotClass(activeBot.status, activeBot.attention))} />
           </span>
           <span className="mt-2 max-w-full truncate text-xs font-semibold uppercase tracking-wide">{activeBot.name}</span>
@@ -440,13 +443,13 @@ export function AppShell({ children }: { children: ReactNode }) {
                             aria-current={active ? "page" : undefined}
                             title={bot.name}
                             className={cn(
-                              "flex items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-accent",
+                              "avatar-motion-row flex items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-accent",
                               active && "bg-accent",
                               compact ? "justify-center px-1" : "pr-8",
                             )}
                           >
                             <span className="relative shrink-0">
-                              <BotAvatar botId={bot.id} shape={bot.avatarShape} color={bot.avatarColor} size={32} />
+                              <MotionAvatar slot={bot.id} variant="row" botId={bot.id} shape={bot.avatarShape} color={bot.avatarColor} size={32} label={bot.name} />
                               <span
                                 data-testid="bot-status-dot"
                                 data-status={bot.attention ? "attention" : bot.status}
@@ -587,6 +590,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <TooltipProvider delayDuration={300}>
+      <AvatarClock />
       <div
         data-testid="app-shell"
         className="flex min-h-0 bg-background pt-[env(safe-area-inset-top)] text-foreground"
@@ -861,5 +865,5 @@ function FeedbackDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     catch (error) { toast.error(errorMessage(error, "Could not send feedback.")); }
     finally { setBusy(false); }
   }
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent data-testid="feedback-dialog"><DialogHeader><DialogTitle>Send feedback</DialogTitle><DialogDescription>Share a note with the AI Teammates team.</DialogDescription></DialogHeader><form onSubmit={(event) => void submit(event)} className="space-y-3"><Textarea data-testid="feedback-message" value={message} onChange={event => setMessage(event.target.value)} maxLength={5000} required placeholder="What should we know?" /><Button data-testid="feedback-submit" type="submit" disabled={busy || !message.trim()}>{busy ? "Sending…" : "Send feedback"}</Button></form></DialogContent></Dialog>;
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent data-testid="feedback-dialog"><DialogHeader><DialogTitle>Send feedback</DialogTitle><DialogDescription>Share a note with the AI Teammates team.</DialogDescription></DialogHeader><form onSubmit={(event) => void submit(event)} className="space-y-4"><Textarea data-testid="feedback-message" value={message} onChange={event => setMessage(event.target.value)} maxLength={5000} required placeholder="What should we know?" /><DialogFooter><Button data-testid="feedback-submit" type="submit" disabled={busy || !message.trim()}>{busy ? "Sending…" : "Send feedback"}</Button></DialogFooter></form></DialogContent></Dialog>;
 }

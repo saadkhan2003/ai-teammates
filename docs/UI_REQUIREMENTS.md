@@ -38,13 +38,29 @@
 
 ## 23. Link pill hover preview (added Oct 24)
 
-Owned by the chat-messages agent. Not built on this branch.
+Built on this branch.
 
 - Inline link pills show a small icon plus a label.
 - Hovering a link pill shows a small rounded card just above it: a bold title on 1–2 lines, then a row with a favicon, the URL truncated with an ellipsis, and a ↗ icon. Click opens external links in the browser and in-app links in the app.
-- The message toolbar appears to the right of a hovered bot bubble at the same time.
-- The card follows the theme.
+- The message toolbar (smiley, reply, ⋯) appears to the right of a hovered bot bubble at the same time.
+- The card follows the theme (card surface, not a hard-coded white fill).
+
+## Spacing and placement
+
+Tokens live in `apps/web/styles/theme-tokens.css` (`:root` and `html.light` share the same values). Reading pages, settings, and the chat column use `--content-width`.
+
+| Token | Value | Use |
+| --- | --- | --- |
+| `--space-page` | 24px | Outer padding of a page or settings column |
+| `--space-section` | 32px | Gap between sections |
+| `--space-card` | 16px | Gap between cards in a group |
+| `--space-inset` | 16px | Padding inside a card |
+| `--space-label` | 8px | Distance from a section label to the card under it |
+| `--row-height` | 44px | Minimum height of a list or settings row |
+| `--content-width` | 48rem | Centred max width for chat, home, job detail, and settings |
+
+Placement: a page header keeps the title and subtitle on the left and the primary action on the right. A form or dialog puts the primary action at the bottom right. Destructive actions sit apart from secondary actions. Related settings share one titled card. The chat composer keeps a 16px side inset so the pill lines up with the message column; that inset is `--space-inset`, and the column width is still `--content-width`.
 
 ## What this branch builds
 
-Items 13, 14, 20, and 21, plus the grey row and ⋯ button from item 4, Light/Dark/System, and removal of Assign work. The send and voice buttons use the bot colour. Avatar motion (items 1–3, 5, and the row morph in item 4) is the avatar agent. Chat message items 6–12, 18, 19, 22's in-chat card, and item 23 are the chat agent. The right panel, computer view, and item 22's panel rows are the right-panel agent. The notifications bell is a round button in the sidebar header so the footer stays the two pills in the reference.
+Items 13, 14, 20, 21, and 23, plus the grey row and ⋯ button from item 4, Light/Dark/System, and removal of Assign work. The send and voice buttons use the bot colour. Avatar motion (items 1–3, 5, and the row morph in item 4) is the avatar agent. Chat message items 6–12, 18, 19, and 22's in-chat card are the chat agent. The right panel, computer view, and item 22's panel rows are the right-panel agent. The notifications bell is a round button in the sidebar header so the footer stays the two pills in the reference.

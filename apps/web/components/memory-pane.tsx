@@ -70,7 +70,7 @@ export function MemoryPane({
             {formError}
           </p>
         ) : null}
-        <Button data-testid="memory-save" type="submit" disabled={saving}>
+        <Button data-testid="memory-save" type="submit" className="self-end" disabled={saving}>
           {saving ? "Saving…" : "Save memory"}
         </Button>
       </form>

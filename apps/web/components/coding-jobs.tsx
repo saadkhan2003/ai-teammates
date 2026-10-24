@@ -3,6 +3,7 @@
 import { ArrowUpRight, Box, Check, ChevronRight, Cloud, Eye, GitBranch, GitPullRequest, X } from "lucide-react";
 import { useState } from "react";
 import { BotAvatar } from "@/components/bot-avatar";
+import { LinkPill } from "@/components/link-pill";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -10,6 +11,7 @@ import {
   filesChangedLabel,
   isActiveJob,
   jobCountLabel,
+  isExternalHref,
   jobIconKind,
   jobOpenHref,
   jobSubtitle,
@@ -88,7 +90,7 @@ export function CodingJobsCard({
         <p className="mt-2 text-sm font-semibold">{jobCountLabel(jobs)}</p>
         <ul className="mt-1">
           {jobs.map((job) => (
-            <li key={job.id} data-testid="coding-job-row" data-status={job.status} data-job-id={job.id} className="group flex items-center gap-2 rounded-lg px-1 py-1.5 hover:bg-accent">
+            <li key={job.id} data-testid="coding-job-row" data-status={job.status} data-job-id={job.id} className="group flex min-h-11 items-center gap-2 rounded-lg px-1 hover:bg-accent">
               <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" aria-label={job.title} onClick={() => open(job)}>
                 <JobMark job={job} accent={accent} />
                 <span className="truncate text-sm">{job.title}</span>
@@ -140,7 +142,7 @@ export function CodingPanel({
   onToggleRoutine: (routine: Routine, enabled: boolean) => void;
 }) {
   return (
-    <div className="border-b border-border px-3 py-3" style={{ ["--bot-accent" as string]: accent }}>
+    <div className="flex flex-col gap-[var(--space-section)]" style={{ ["--bot-accent" as string]: accent }}>
       <section data-testid="coding-list" aria-label="Coding">
         <div className="flex items-baseline justify-between gap-2">
           <h2 className="text-xs font-medium text-muted-foreground">Coding</h2>
@@ -155,7 +157,7 @@ export function CodingPanel({
           <ul className="mt-2 rounded-xl bg-card p-1 text-card-foreground">
             {jobs.map((job) => (
               <li key={job.id} data-testid="coding-panel-row" data-status={job.status} data-job-id={job.id} className="group relative rounded-lg hover:bg-accent">
-                <button type="button" className="flex w-full items-center gap-2 px-2 py-2 text-left" aria-label={job.title} onClick={() => onOpenJob(job)}>
+                <button type="button" className="flex min-h-11 w-full items-center gap-2 px-2 text-left" aria-label={job.title} onClick={() => onOpenJob(job)}>
                   <JobMark job={job} accent={accent} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm text-card-foreground">{job.title}</span>
@@ -186,7 +188,7 @@ export function CodingPanel({
           </ul>
         ) : null}
       </section>
-      <section data-testid="routines-list" aria-label="Routines" className="mt-4">
+      <section data-testid="routines-list" aria-label="Routines">
         <h2 className="text-xs font-medium text-muted-foreground">Routines</h2>
         {routines.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">No routines yet.</p> : null}
         {routines.length > 0 ? (
@@ -194,7 +196,7 @@ export function CodingPanel({
             {routines.map((routine) => {
               const enabled = routine.enabled !== false;
               return (
-                <li key={routine.id} className="flex items-center gap-2 py-2">
+                <li key={routine.id} className="flex min-h-11 items-center gap-2">
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm text-card-foreground">{routine.name}</p>
                     <p className="truncate text-xs text-muted-foreground">{routineSchedule(routine.cron)}</p>
@@ -219,12 +221,24 @@ export function CodingPanel({
   );
 }
 
-export function JobMention({ job, accent, onOpen }: { job: CodingJob; accent: string; onOpen: () => void }) {
+export function JobMention({ job, accent, botId, onOpen }: { job: CodingJob; accent: string; botId?: string; onOpen: () => void }) {
+  const href = jobOpenHref(botId, job);
+  const external = isExternalHref(href);
   return (
-    <button type="button" data-testid="job-mention" className="mx-0.5 inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-card px-2 py-0.5 align-middle text-xs text-card-foreground" onClick={onOpen}>
-      <JobMark job={job} accent={accent} />
-      <span className="truncate">{job.title}</span>
-    </button>
+    <LinkPill
+      href={href}
+      title={job.title}
+      testId="job-mention"
+      className="mx-0.5"
+      onClick={
+        external
+          ? undefined
+          : (event) => {
+              event.preventDefault();
+              onOpen();
+            }
+      }
+    />
   );
 }
 
@@ -270,8 +284,12 @@ export function JobResultCard({ job, accent, onOpen }: { job: CodingJob; accent:
           <span data-testid="job-result-failed" className="grid size-5 shrink-0 place-items-center rounded-full bg-destructive text-destructive-foreground" role="img" aria-label="Failed">
             <X className="h-3 w-3" />
           </span>
+        ) : job.status === "merged" ? (
+          <span data-testid="job-result-succeeded" className="grid size-5 shrink-0 place-items-center rounded-full bg-success text-on-accent" role="img" aria-label="Merged">
+            <Check className="h-3 w-3" />
+          </span>
         ) : (
-          <span data-testid="job-result-succeeded" className="grid size-5 shrink-0 place-items-center rounded-full bg-success text-on-accent" role="img" aria-label="Succeeded">
+          <span data-testid="job-result-succeeded" className="grid size-5 shrink-0 place-items-center rounded-full border border-muted-foreground text-muted-foreground" role="img" aria-label="Finished">
             <Check className="h-3 w-3" />
           </span>
         )}
@@ -296,18 +314,18 @@ export function JobResultCard({ job, accent, onOpen }: { job: CodingJob; accent:
             href={prHref}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex h-11 min-w-0 flex-1 items-center justify-center rounded-lg bg-muted text-sm font-medium text-foreground hover:bg-accent"
+            className="inline-flex h-11 min-w-0 flex-1 items-center justify-center rounded-xl bg-primary text-sm font-medium text-primary-foreground"
           >
             View PR
           </a>
         ) : (
-          <button type="button" data-testid="job-result-pr" disabled className="inline-flex h-11 min-w-0 flex-1 items-center justify-center rounded-lg bg-muted text-sm font-medium text-muted-foreground">
+          <button type="button" data-testid="job-result-pr" disabled className="inline-flex h-11 min-w-0 flex-1 items-center justify-center rounded-xl bg-primary text-sm font-medium text-primary-foreground opacity-50">
             View PR
           </button>
         )}
         <Tooltip>
           <TooltipTrigger asChild>
-            <button type="button" data-testid="job-result-open" aria-label="Open job" className="grid h-11 w-11 shrink-0 place-items-center rounded-lg border border-border bg-card hover:bg-accent" onClick={onOpen}>
+            <button type="button" data-testid="job-result-open" aria-label="Open job" className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-border bg-card hover:bg-accent" onClick={onOpen}>
               <Box className="h-4 w-4" />
             </button>
           </TooltipTrigger>

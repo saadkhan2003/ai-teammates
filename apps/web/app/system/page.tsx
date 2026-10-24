@@ -3,6 +3,8 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { SettingsFrame } from "@/components/settings-nav";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { StateMessage } from "@/components/state-message";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -100,13 +102,24 @@ export default function SystemPage() {
 
   return (
     <SettingsFrame>
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-sm font-medium">System</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Health, invitations, and model calls. Prompts are shown without credentials or raw request bodies.
+          </p>
+        </div>
+        <Button variant="secondary" onClick={() => void load()}>
+          Refresh
+        </Button>
+      </header>
       {health?.computerIsolation === false ? (
-        <p role="alert" data-testid="isolation-alert" className="rounded-lg border border-line bg-paper p-4 text-sm text-clay">
+        <p role="alert" data-testid="isolation-alert" className="rounded-lg border border-border bg-card p-4 text-sm text-destructive">
           Computer isolation rules are missing. Computers will not start until the rules are installed again.
         </p>
       ) : null}
       {health ? (
-        <section data-testid="admin-health" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <section data-testid="admin-health" className="grid gap-[var(--space-card)] sm:grid-cols-2 lg:grid-cols-5">
           {[
             ["Postgres", health.postgres ? "up" : "down"],
             ["Isolation", health.computerIsolation === false ? "down" : "up"],
@@ -114,7 +127,7 @@ export default function SystemPage() {
             ["Computers", String(health.computers ?? "—")],
             ["Stuck tasks", String(health.stuckTasks ?? "—")],
           ].map(([label, value]) => (
-            <article key={label} className="rounded-lg border border-line bg-paper p-4">
+            <article key={label} className="rounded-lg border border-border bg-card p-4">
               <p className="text-xs text-muted-foreground">{label}</p>
               <p className="text-2xl font-semibold">{value}</p>
             </article>
@@ -122,50 +135,52 @@ export default function SystemPage() {
         </section>
       ) : null}
       {health ? (
-        <form className="flex flex-col gap-3 rounded-lg border border-line bg-paper p-5 sm:flex-row sm:items-end" onSubmit={invite}>
-          <label className="flex flex-1 flex-col gap-1 text-sm">
-            Invite email
-            <Input value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} type="email" required />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            Role
-            <select value={inviteRole} onChange={(event) => setInviteRole(event.target.value)} className="h-10 rounded-md border border-line bg-paper px-3 text-sm">
-              <option value="member">member</option>
-              <option value="admin">admin</option>
-            </select>
-          </label>
-          <Button type="submit">Invite</Button>
-          {inviteToken ? <p className="text-xs text-muted-foreground sm:basis-full">Token (shown once): {inviteToken}</p> : null}
-          {inviteError ? <p className="text-sm text-clay sm:basis-full">{inviteError}</p> : null}
+        <form className="flex flex-col gap-4 rounded-lg border border-border bg-card p-4" onSubmit={invite}>
+          <div>
+            <h2 className="text-sm font-medium">Invite a teammate</h2>
+            <p className="mt-1 text-sm text-muted-foreground">The token is shown once.</p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="invite-email">Invite email</Label>
+              <Input id="invite-email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} type="email" required />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="invite-role">Role</Label>
+              <Select value={inviteRole} onValueChange={setInviteRole}>
+                <SelectTrigger id="invite-role" className="min-h-11">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="member">member</SelectItem>
+                  <SelectItem value="admin">admin</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          {inviteToken ? <p className="text-xs text-muted-foreground">Token (shown once): {inviteToken}</p> : null}
+          {inviteError ? <p className="text-sm text-destructive">{inviteError}</p> : null}
+          <div className="flex justify-end">
+            <Button type="submit">Invite</Button>
+          </div>
         </form>
       ) : null}
-      <section data-testid="outbound-actions" className="rounded-lg border border-line bg-paper p-4">
-        <h2 className="text-sm font-medium">Outbound actions</h2>
+      <section data-testid="outbound-actions" className="rounded-lg border border-border bg-card p-4">
+        <h2 className="mb-2 text-sm font-medium">Outbound actions</h2>
         <p className="mt-1 text-sm text-muted-foreground">Sends, posts, purchases, and plugin writes. A retry replays the stored result.</p>
         {outbound.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">No outbound actions recorded yet.</p> : null}
         <ul className="mt-3 flex flex-col gap-2">
           {outbound.map((row, index) => (
-            <li key={String(row.id ?? index)} className="text-sm">
+            <li key={String(row.id ?? index)} className="flex min-h-11 items-center text-sm">
               {String(row.kind ?? "action")} · {String(row.tool ?? "")} · {String(row.status ?? "")}
             </li>
           ))}
         </ul>
       </section>
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h2 className="text-sm font-medium">System</h2>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Model calls and recorded prompts. Prompts are shown without credentials or raw request bodies.
-          </p>
-        </div>
-        <Button variant="secondary" onClick={() => void load()}>
-          Refresh
-        </Button>
-      </header>
       {loading ? <StateMessage title="Loading system metrics…" detail="Reading usage and recorded model requests." /> : null}
       {provider ? <p className="text-sm">Provider: {provider}</p> : null}
       {mock ? <p className="text-sm">Provider is mock. These calls stayed on this server and were not sent to OpenRouter.</p> : null}
-      <section data-testid="metrics-model-calls" className="rounded-lg border border-line bg-paper p-5 shadow-none">
+      <section data-testid="metrics-model-calls" className="rounded-lg border border-border bg-card p-4">
         <p className="text-sm text-muted-foreground">Model calls</p>
         <p className="text-2xl font-medium">{modelCalls == null ? "—" : modelCalls}</p>
         <p data-testid="metrics-cost" className="mt-3 text-sm">
@@ -186,8 +201,8 @@ export default function SystemPage() {
           </p>
         ) : null}
       </section>
-      <section className="rounded-lg border border-line bg-paper p-4">
-        <h2 className="text-sm font-medium">Prompts</h2>
+      <section className="rounded-lg border border-border bg-card p-4">
+        <h2 className="mb-2 text-sm font-medium">Prompts</h2>
         {requestError ? (
           <p role="alert" className="mt-2 text-sm text-clay">
             Could not load model requests. {requestError}
@@ -199,7 +214,7 @@ export default function SystemPage() {
         <ScrollArea className="mt-3 h-[min(50dvh,520px)]">
           <ol className="flex flex-col gap-3">
             {prompts.map((row) => (
-              <li key={row.id} className="rounded-lg border border-line px-3 py-2">
+              <li key={row.id} className="flex min-h-11 flex-col justify-center rounded-lg border border-border px-3 py-2">
                 <p className="text-xs text-muted-foreground">{[row.model, row.when ? formatWhen(row.when) : ""].filter(Boolean).join(" · ") || "Prompt"}</p>
                 <p className="mt-1 whitespace-pre-wrap break-words text-sm">{row.prompt || "This request did not include a prompt."}</p>
               </li>

@@ -177,6 +177,7 @@ test("upload card shows a moving bar and a media skeleton", async ({ page }) => 
   await expect(page.getByTestId("upload-bar")).toBeVisible();
   await shot(page, "04-upload-bar");
   await expect(page.getByTestId("upload-card")).toHaveAttribute("data-status", "done");
+  await page.getByTestId("attachment-card").hover();
   await expect(page.getByTestId("attachment-reply")).toBeVisible();
   await expect(page.getByTestId("attachment-more")).toBeVisible();
   await shot(page, "07-attachment-actions");

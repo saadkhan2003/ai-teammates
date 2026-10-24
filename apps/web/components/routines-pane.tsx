@@ -112,7 +112,7 @@ export function RoutinesPane({
             {formError}
           </p>
         ) : null}
-        <Button data-testid="routine-create" type="submit" disabled={saving}>
+        <Button data-testid="routine-create" type="submit" className="self-end" disabled={saving}>
           {saving ? "Scheduling…" : "Create routine"}
         </Button>
       </form>

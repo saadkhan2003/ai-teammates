@@ -104,4 +104,13 @@ public class SecurityTests
     [InlineData("a", false)]
     public void EmojiIsOneGrapheme(string value, bool expected) =>
         Assert.Equal(expected, EmojiRules.IsSingleEmoji(value));
+
+    [Theory]
+    [InlineData("user", true)]
+    [InlineData("assistant", false)]
+    [InlineData("system", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void BotsReactOnlyToUserMessages(string? role, bool allowed) =>
+        Assert.Equal(allowed, ReactionRules.BotMayReact(role));
 }

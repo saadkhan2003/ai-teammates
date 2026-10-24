@@ -135,15 +135,21 @@ export default function DashboardPage() {
         </div>
       ) : null}
       {!loading && !error && bots.length > 0 ? (
-        <div className="flex h-full min-h-0 w-full flex-col overflow-y-auto px-6 py-6">
-          <h1 className="text-lg font-medium">Teammates</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Open a conversation. Each one keeps the same computer.</p>
-          <ul className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+        <div className="flex h-full min-h-0 w-full flex-col overflow-y-auto">
+          <div className="mx-auto flex w-full max-w-[var(--content-width)] flex-col px-[var(--space-page)] py-[var(--space-page)]">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h1 className="text-lg font-medium">Teammates</h1>
+              <p className="mt-1 text-sm text-muted-foreground">Open a conversation. Each one keeps the same computer.</p>
+            </div>
+            <Button onClick={() => window.dispatchEvent(new Event("teammates-open-create"))}>New</Button>
+          </div>
+          <ul className="mt-[var(--space-section)] grid grid-cols-2 gap-[var(--space-card)]">
             {bots.map((bot) => (
               <li key={bot.id}>
                 <Link
                   href={`/bots/${bot.id}`}
-                  className="flex h-full flex-col items-center rounded-lg border border-border bg-card px-3 py-4 text-center hover:bg-accent"
+                  className="flex h-full min-h-11 flex-col items-center rounded-lg border border-border bg-card p-4 text-center hover:bg-accent"
                 >
                   <span className="grid h-14 w-14 place-items-center rounded-md bg-muted text-sm font-medium">
                     {bot.avatar || initials(bot.name)}
@@ -154,6 +160,7 @@ export default function DashboardPage() {
               </li>
             ))}
           </ul>
+          </div>
         </div>
       ) : null}
     </div>
