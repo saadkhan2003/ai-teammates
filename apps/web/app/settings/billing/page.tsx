@@ -66,8 +66,8 @@ export default function BillingPage() {
 }
 
 function InputValue({ ariaLabel, value, onChange, placeholder }: { ariaLabel: string; value: string; onChange: (value: string) => void; placeholder: string }) {
-  return <input aria-label={ariaLabel} type="number" min="0.0001" max="100000" step="0.0001" value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} className="h-10 rounded-md border border-input bg-background px-3 text-sm" />;
+  return <input aria-label={ariaLabel} type="number" min="0.0001" max="100000" step="0.0001" value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} className="h-10 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />;
 }
 function TextareaValue({ ariaLabel, value, onChange }: { ariaLabel: string; value: string; onChange: (value: string) => void }) {
-  return <textarea aria-label={ariaLabel} value={value} onChange={event => onChange(event.target.value)} rows={9} className="rounded-md border border-input bg-background p-3 font-mono text-xs" />;
+  return <textarea aria-label={ariaLabel} value={value} onChange={event => onChange(event.target.value)} rows={9} className="rounded-md border border-input bg-background p-3 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />;
 }
