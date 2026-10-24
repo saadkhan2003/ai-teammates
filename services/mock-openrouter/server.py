@@ -87,7 +87,29 @@ def anthropic_response(response: dict) -> dict:
     for call in message.get("tool_calls", []):
         content.append({"type": "tool_use", "id": call["id"], "name": call["function"]["name"], "input": json.loads(call["function"]["arguments"])})
     usage = response.get("usage", {})
-    return {"id": "msg_mock", "type": "message", "role": "assistant", "content": content, "stop_reason": "tool_use" if message.get("tool_calls") else "end_turn", "usage": {"input_tokens": usage.get("prompt_tokens", 1), "output_tokens": usage.get("completion_tokens", 1), "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}
+    return {"model": response.get("model", "mock/planner"), "id": "msg_mock", "type": "message", "role": "assistant", "content": content, "stop_reason": "tool_use" if message.get("tool_calls") else "end_turn", "usage": {"input_tokens": usage.get("prompt_tokens", 1), "output_tokens": usage.get("completion_tokens", 1), "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}
+
+
+def completion(text):
+    return {"choices": [{"message": {"role": "assistant", "content": text}}], "usage": {"prompt_tokens": 5, "completion_tokens": 2, "cost": 0.000001}}
+
+
+def content_text(value):
+    if isinstance(value, str):
+        return value
+    return " ".join(p.get("text", "") for p in value if isinstance(p, dict)) if isinstance(value, list) else ""
+
+
+CATALOG = [
+    {"id": "mock/planner", "name": "Mock planner", "supported_parameters": ["tools", "temperature", "max_tokens"], "context_length": 128000,
+     "architecture": {"input_modalities": ["text", "image"], "output_modalities": ["text"]}, "top_provider": {"max_completion_tokens": 8192},
+     "pricing": {"prompt": "0.000001", "completion": "0.000002"}},
+    {"id": "mock/retiring", "name": "Retiring fixture", "supported_parameters": ["tools"], "context_length": 64000,
+     "architecture": {"input_modalities": ["text", "image"], "output_modalities": ["text"]}, "top_provider": {"max_completion_tokens": 4096},
+     "pricing": {"prompt": "0.0000001", "completion": "0.0000002"}, "expiration_date": "2027-01-01"},
+    {"id": "mock/weak", "name": "Weak eval fixture", "supported_parameters": ["tools"], "context_length": 64000,
+     "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]}, "top_provider": {"max_completion_tokens": 4096}}
+]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -109,7 +131,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path in ("/api/v1/models", "/p2/v1/models", "/anthropic/v1/models"):
             count(path)
-            self._send(200, {"data": [{"id": "mock/planner"}]})
+            self._send(200, {"data": CATALOG})
             return
         if path == "/api/v1/key":
             count(path)
@@ -147,7 +169,22 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(messages, list):
             messages = []
         print(f"messages={len(messages)}", flush=True)
-        response = plan(messages)
+        selected_model = payload.get("model") or (payload.get("models") or ["mock/planner"])[0]
+        systems = " ".join(content_text(m.get("content", "")) for m in messages if m.get("role") == "system")
+        if "AI_GOLDEN_JUDGE" in systems:
+            response = completion('{"score":1}')
+        elif "AI_GOLDEN_CASE:" in systems:
+            if selected_model == "mock/weak":
+                response = completion("incorrect")
+            elif "arithmetic" in systems:
+                response = completion("4")
+            elif "structured" in systems:
+                response = completion('{"ok":true}')
+            else:
+                response = completion("I cannot share private information.")
+        else:
+            response = plan(messages)
+        response["model"] = selected_model
         usage = response.setdefault("usage", {})
         cached = cached_usage(messages, usage.get("prompt_tokens", 0))
         usage["prompt_tokens_details"] = {"cached_tokens": cached}

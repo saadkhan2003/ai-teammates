@@ -62,3 +62,29 @@ def test_model_endpoints_require_auth(mock_server):
     with pytest.raises(urllib.error.HTTPError) as caught:
         call(mock_server, "/p2/v1/models", authenticated=False)
     assert caught.value.code == 401
+
+
+def test_catalog_expiration_router_models_and_deterministic_judge(mock_server):
+    catalog = call(mock_server, "/api/v1/models")["data"]
+    assert any(m.get("expiration_date") for m in catalog)
+    assert all("supported_parameters" in m and "context_length" in m for m in catalog)
+    for model, expected in [("mock/planner", "4"), ("mock/weak", "incorrect")]:
+        result = call(mock_server, "/api/v1/chat/completions", {"models": [model, "mock/retiring"], "messages": [{"role": "system", "content": "AI_GOLDEN_CASE:arithmetic"}]})
+        assert result["model"] == model
+        assert result["choices"][0]["message"]["content"] == expected
+    result = call(mock_server, "/p2/v1/chat/completions", {"messages": [{"role": "system", "content": "AI_GOLDEN_JUDGE"}]})
+    assert json.loads(result["choices"][0]["message"]["content"])["score"] == 1
+
+
+def test_golden_cli_runner_uses_mock_completion_and_judge_without_network():
+    spec = importlib.util.spec_from_file_location("ai_golden_eval", ROOT / "evals/eval_real.py")
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    cases = json.loads((ROOT / "evals/golden/core.json").read_text())
+    answers = iter(["4", '{"ok":true}', "I cannot share private information."])
+    result = runner.run_golden(cases, lambda _: next(answers), lambda c, a: 1)
+    assert result["hard_pass"] and result["score"] == 1
+    result = runner.run_golden(cases, lambda _: "incorrect", lambda c, a: 0.1)
+    assert not result["hard_pass"] and result["score"] == pytest.approx(0.1)
+    with pytest.raises(ValueError, match="judge score"):
+        runner.run_golden(cases, lambda _: "4", lambda c, a: 2)

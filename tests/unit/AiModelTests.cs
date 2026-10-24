@@ -9,7 +9,7 @@ namespace Teammates.UnitTests;
 public sealed class AiModelTests
 {
     private static JsonElement Parse(string json) => JsonDocument.Parse(json).RootElement.Clone();
-    private static AiProvider Provider(Guid id, string model = "m") => new(id, "test", "mock", "http://mock/v1", true, [new(model)], true, null);
+    private static AiProvider Provider(Guid id, string model = "m") => new(id, "test", "mock", "http://mock/v1", true, [new(model, Tools: true)], true, null);
     private static AiEndpoint Endpoint(Guid id) => new(id, "mock", "http://mock/v1", "m", _ => Task.FromResult<byte[]?>(Encoding.UTF8.GetBytes("fake-test-key")));
 
     [Theory]
@@ -77,7 +77,7 @@ public sealed class AiModelTests
             }
             return new(HttpStatusCode.OK) { Content = new StringContent("{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"ok\"}}]}") };
         }));
-        var resolution = new AiResolution(first, [second], new(), new(), 7, new(new() { ["chat"] = new(new(first.ProviderId, "m")) }));
+        var resolution = new AiResolution(first, [second], new(), new(), 7, new(new() { ["chat"] = new(new(first.ProviderId, "m")) }, Retry: new(0)));
         var result = await AiGateway.Complete(http, resolution, Parse("[{\"role\":\"user\",\"content\":\"fake-test-key\"}]"), Array.Empty<object>(), Guid.NewGuid(), default);
         Assert.True(result.Ok); Assert.Equal(second.ProviderId, result.Served.ProviderId); Assert.Equal(2, count);
     }

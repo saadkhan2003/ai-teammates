@@ -258,7 +258,7 @@ class Worker:
         except ComputerRecovering:
             await self._status(task, "waiting_resource", reason=RECOVERING)
         except VideoResourceWait:
-            await self._status(task, "waiting_resource", reason="connect_openrouter")
+            await self._status(task, "waiting_resource", reason="model_access_required")
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 409 and _desktop_busy(exc.response):
                 await self._status(task, "waiting_human", reason="You're in control — tell me when to continue")
@@ -637,7 +637,7 @@ class Worker:
         if payload.get("promptTokens") is not None:
             task["_lastPromptTokens"] = int(payload.get("promptTokens") or 0)
         if status == "waiting_resource":
-            await self._status(task, "waiting_resource", reason=payload.get("reason") or "connect_openrouter")
+            await self._status(task, "waiting_resource", reason=payload.get("reason") or "model_access_required")
             return "stop"
         if status == "error":
             if task.get("_justCompacted") and payload.get("errorCode") == "context_length":

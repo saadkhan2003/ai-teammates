@@ -9,7 +9,7 @@ using Npgsql;
 
 namespace Teammates.Api;
 
-public static class AiAdmin
+public static partial class AiAdmin
 {
     private static readonly HttpClient Http = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(10) };
     private static IResult Json(object value) => Results.Json(value, AiModelRegistry.Json);
@@ -51,7 +51,9 @@ public static class AiAdmin
         {
             var snapshot = await registry.Snapshot();
             var active = snapshot.Versions.FirstOrDefault(v => v.IsActive);
-            return Json(new { providers = snapshot.Providers, active_config = active?.Config, version = active?.Version ?? 0, rollout = active?.Config.Rollout ?? new(), bootstrap = active == null });
+            await using var conn = await platform.Data.OpenConnectionAsync();
+            var changed = await conn.ExecuteScalarAsync<DateTimeOffset?>("SELECT max(created_at) FROM ai_config_audit WHERE action IN ('config.published','config.rollback','rollout.promoted')");
+            return Json(new { bootstrap_config = active == null ? new { kind = platform.LlmProvider, model = platform.ModelName } : null, last_change = changed, providers = snapshot.Providers, active_config = active?.Config, version = active?.Version ?? 0, rollout = snapshot.Rollout ?? new(), bootstrap = active == null });
         });
         group.MapGet("/versions", async () => Json((await registry.Snapshot()).Versions));
         group.MapGet("/audit", async (HttpContext ctx) =>
@@ -75,14 +77,20 @@ public static class AiAdmin
             var snapshot = await registry.Snapshot();
             Check(snapshot.Providers.Any(p => p.Id == id), "provider not found");
             var providers = snapshot.Providers.Select(p => p.Id == id ? provider : p).ToList();
-            foreach (var config in await ReferencedConfigs(conn, tx, snapshot)) Check(AiModelRegistry.Validate(config, providers).Count == 0, "provider is referenced by active config or rollout; update config first");
+            if (snapshot.KillSwitch?.SafeModel is { } safe && safe.Provider == id)
+            {
+                Check(provider.Enabled && provider.Kind == snapshot.Providers.Single(p => p.Id == id).Kind && provider.Models.Any(m => m.Id == safe.Model), "provider/model is reserved by the kill switch");
+                foreach (var version in snapshot.Versions)
+                    foreach (var (name, role) in version.Config.Roles) Check(AiCapabilities.Reasons(name, role, provider, provider.Models.Single(m => m.Id == safe.Model)).Count == 0, "safe model must retain configured role capabilities and privacy");
+            }
+            foreach (var config in await ReferencedConfigs(conn, tx, snapshot)) Check(AiModelRegistry.Validate(config, providers).Count == 0, "provider is referenced by immutable saved history; retain its models and capabilities");
             await conn.ExecuteAsync("UPDATE ai_providers SET name=@Name,kind=@Kind,base_url=@BaseUrl,enabled=@Enabled,models=CAST(@models AS jsonb),updated_at=now() WHERE id=@Id", new { provider.Id, provider.Name, provider.Kind, provider.BaseUrl, provider.Enabled, models = JsonSerializer.Serialize(provider.Models, AiModelRegistry.Json) }, tx);
             return new { id };
         }));
         group.MapDelete("/providers/{id:guid}", (HttpContext ctx, Guid id) => Write(platform, Actor(ctx), "provider.deleted", async (conn, tx) =>
         {
             var snapshot = await registry.Snapshot();
-            Check(!(await ReferencedConfigs(conn, tx, snapshot)).Any(c => c.Roles.Values.Any(r => new[] { r.Primary }.Concat(r.Fallbacks ?? []).Any(t => t.Provider == id))), "provider is referenced by active config or rollout");
+            Check(snapshot.KillSwitch?.SafeModel?.Provider != id && !(await ReferencedConfigs(conn, tx, snapshot)).Any(c => AiModelRegistry.Targets(c).Any(t => t.Provider == id)), "provider is referenced by saved history or the kill switch");
             Check(await conn.ExecuteAsync("DELETE FROM ai_providers WHERE id=@id", new { id }, tx) == 1, "provider not found");
             return new { id };
         }));
@@ -114,16 +122,17 @@ public static class AiAdmin
         group.MapPut("/config", (HttpContext ctx, JsonElement body) => Write(platform, Actor(ctx), "config.created", async (conn, tx) =>
         {
             var config = Read<AiConfig>(body.GetProperty("config"));
-            var candidate = body.TryGetProperty("as_candidate", out var asCandidate) && asCandidate.GetBoolean();
+            var candidate = !body.TryGetProperty("as_candidate", out var asCandidate) || asCandidate.GetBoolean();
             var note = body.TryGetProperty("note", out var noteNode) ? Dlp.Redact(noteNode.GetString() ?? "") : "";
             Check(note.Length <= 1000, "note too long");
             var snapshot = await registry.Snapshot();
             ValidateConfig(config, snapshot);
             var active = snapshot.Versions.FirstOrDefault(v => v.IsActive);
-            Check(!candidate || active != null, "save an active config before creating a candidate");
+
             // Candidate rollout metadata comes from the active version, never from itself.
+            Check(candidate, "create a candidate, run eval, then publish");
             var version = await CreateVersion(conn, tx, config with { Rollout = candidate ? new() : config.Rollout }, note, Actor(ctx), !candidate);
-            if (candidate) await SetRollout(conn, tx, active!.Version, new(version, 0));
+            if (candidate) await SetRollout(conn, tx, active?.Version ?? 0, new(version, 0));
             return new { version, as_candidate = candidate };
         }));
         group.MapPost("/versions/{v:int}/rollback", (HttpContext ctx, int v) => Write(platform, Actor(ctx), "config.rollback", async (conn, tx) =>
@@ -133,7 +142,10 @@ public static class AiAdmin
             Check(source != null, "version not found");
             var config = source!.Config with { Rollout = new() };
             ValidateConfig(config, snapshot);
-            return new { version = await CreateVersion(conn, tx, config, $"Rollback to {v}", Actor(ctx), true), source_version = v };
+            if (!await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM ai_config_activations WHERE version=@v)", new { v }, tx))
+                await CheckEval(conn, tx, v, Actor(ctx), null, platform);
+            await Activate(conn, tx, v);
+            return new { version = v, source_version = v };
         }));
         group.MapPut("/rollout", (HttpContext ctx, JsonElement body) => Write(platform, Actor(ctx), "rollout.updated", async (conn, tx) =>
         {
@@ -142,6 +154,7 @@ public static class AiAdmin
             var active = snapshot.Versions.FirstOrDefault(v => v.IsActive);
             Check(active != null, "active configuration required");
             ValidateConfig(active!.Config with { Rollout = rollout }, snapshot);
+            if (rollout.Percent > 0 && rollout.CandidateVersion is { } candidateVersion) await CheckEval(conn, tx, candidateVersion, Actor(ctx), body, platform);
             await SetRollout(conn, tx, active.Version, rollout);
             return rollout;
         }));
@@ -149,31 +162,37 @@ public static class AiAdmin
         {
             var snapshot = await registry.Snapshot();
             var active = snapshot.Versions.FirstOrDefault(v => v.IsActive);
-            var candidate = snapshot.Versions.FirstOrDefault(v => v.Version == active?.Config.Rollout?.CandidateVersion);
+            var candidate = snapshot.Versions.FirstOrDefault(v => v.Version == snapshot.Rollout?.CandidateVersion);
             Check(candidate != null, "candidate required");
+            await CheckEval(conn, tx, candidate!.Version, Actor(ctx), null, platform);
             var config = candidate!.Config with { Rollout = new() };
             ValidateConfig(config, snapshot);
-            return new { version = await CreateVersion(conn, tx, config, $"Promote {candidate.Version}", Actor(ctx), true) };
+            await Activate(conn, tx, candidate.Version);
+            return new { version = candidate.Version };
         })));
+        MapControls(group, platform);
         MapShell(app, platform);
     }
 
-    private static async Task<IEnumerable<AiConfig>> ReferencedConfigs(NpgsqlConnection conn, NpgsqlTransaction tx, AiSnapshot snapshot)
-    {
-        var active = snapshot.Versions.FirstOrDefault(v => v.IsActive);
-        var pinned = (await conn.QueryAsync<int>("SELECT DISTINCT resolved_version FROM ai_task_config_assignments WHERE active_version=@version", new { version = active?.Version ?? 0 }, tx)).ToHashSet();
-        return snapshot.Versions.Where(v => v.IsActive || v.Version == active?.Config.Rollout?.CandidateVersion || pinned.Contains(v.Version)).Select(v => v.Config);
-    }
+    private static Task<IEnumerable<AiConfig>> ReferencedConfigs(NpgsqlConnection conn, NpgsqlTransaction tx, AiSnapshot snapshot) =>
+        Task.FromResult<IEnumerable<AiConfig>>(snapshot.Versions.Select(v => v.Config));
     public static void ValidateProvider(AiProvider provider)
     {
         Check(!string.IsNullOrWhiteSpace(provider.Name) && provider.Name.Length <= 120, "name required (max 120 characters)");
         Check(provider.Kind is "mock" or "openrouter" or "anthropic" or "openai" or "google" or "openai_compatible", "invalid provider kind");
         Check(Uri.TryCreate(provider.BaseUrl, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" && uri.UserInfo == "" && uri.Query == "" && uri.Fragment == "", "base_url must be an http(s) URL without credentials, query or fragment");
-        Check(provider.Models is { Count: > 0 and <= 500 } && provider.Models.All(m => m != null && !string.IsNullOrWhiteSpace(m.Id) && m.Id.Length <= 200 && m.ContextTokens >= 0) && provider.Models.Select(m => m.Id).Distinct().Count() == provider.Models.Count, "models must have unique nonempty ids and nonnegative context_tokens");
+        Check(provider.Models is { Count: > 0 and <= 500 } && provider.Models.All(m => m != null && !string.IsNullOrWhiteSpace(m.Id) && m.Id.Length <= 200 && m.ContextTokens >= 0 && (m.MaxCompletionTokens == null || m.MaxCompletionTokens > 0) && (m.Pricing == null || m.Pricing.Values.All(value => decimal.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var amount) && amount >= 0))) && provider.Models.Select(m => m.Id).Distinct().Count() == provider.Models.Count, "models must have unique nonempty ids and nonnegative context_tokens");
     }
     private static void ValidateConfig(AiConfig config, AiSnapshot snapshot)
     {
         var errors = AiModelRegistry.Validate(config, snapshot.Providers);
+        if (snapshot.KillSwitch is { Mode: "safe", SafeModel: { } safe })
+        {
+            var provider = snapshot.Providers.FirstOrDefault(p => p.Id == safe.Provider && p.Enabled);
+            var model = provider?.Models.FirstOrDefault(m => m.Id == safe.Model);
+            if (model == null) errors.Add("safe model is unavailable");
+            else foreach (var (name, role) in config.Roles ?? []) if (role != null) errors.AddRange(AiCapabilities.Reasons(name, role, provider!, model));
+        }
         if (config.Rollout?.CandidateVersion is { } v)
         {
             var candidate = snapshot.Versions.FirstOrDefault(x => x.Version == v && !x.IsActive);
@@ -184,11 +203,18 @@ public static class AiAdmin
     public static async Task<int> CreateVersion(NpgsqlConnection conn, NpgsqlTransaction tx, AiConfig config, string note, Guid actor, bool active)
     {
         var version = await conn.ExecuteScalarAsync<int>("SELECT coalesce(max(version),0)+1 FROM ai_config_versions", transaction: tx);
-        if (active) await conn.ExecuteAsync("UPDATE ai_config_versions SET is_active=false WHERE is_active", transaction: tx);
-        await conn.ExecuteAsync("INSERT INTO ai_config_versions(version,config,note,created_by,is_active) VALUES(@version,CAST(@config AS jsonb),@note,@actor,@active)", new { version, config = JsonSerializer.Serialize(config, AiModelRegistry.Json), note, actor, active }, tx);
+
+        await conn.ExecuteAsync("INSERT INTO ai_config_versions(version,config,note,created_by,is_active) VALUES(@version,CAST(@config AS jsonb),@note,@actor,@active)", new { version, config = JsonSerializer.Serialize(config, AiModelRegistry.Json), note, actor, active = false }, tx);
+        if (active) await Activate(conn, tx, version);
         return version;
     }
-    private static Task SetRollout(NpgsqlConnection conn, NpgsqlTransaction tx, int version, AiRollout rollout) => conn.ExecuteAsync("UPDATE ai_config_versions SET config=jsonb_set(config,'{rollout}',CAST(@rollout AS jsonb)) WHERE version=@version", new { version, rollout = JsonSerializer.Serialize(rollout, AiModelRegistry.Json) }, tx);
+    private static Task SetRollout(NpgsqlConnection conn, NpgsqlTransaction tx, int version, AiRollout rollout) => conn.ExecuteAsync("UPDATE ai_config_state SET candidate_version=@CandidateVersion,rollout_percent=@Percent WHERE id=1", new { version, rollout.CandidateVersion, rollout.Percent }, tx);
+
+    private static async Task Activate(NpgsqlConnection conn, NpgsqlTransaction tx, int version)
+    {
+        await conn.ExecuteAsync("INSERT INTO ai_config_activations(version) VALUES(@version) ON CONFLICT DO NOTHING", new { version }, tx);
+        await conn.ExecuteAsync("UPDATE ai_config_state SET active_version=@version,candidate_version=NULL,rollout_percent=0,activation_epoch=activation_epoch+1 WHERE id=1", new { version }, tx);
+    }
 
     private static async Task<IResult> Write(Platform platform, Guid actor, string action, Func<NpgsqlConnection, NpgsqlTransaction, Task<object>> change)
     {
@@ -197,8 +223,10 @@ public static class AiAdmin
         await conn.ExecuteAsync("SELECT pg_advisory_xact_lock(840044)", transaction: tx);
         // Refresh after obtaining the write lock, so concurrent writers validate the committed state.
         platform.AiRegistry.Invalidate();
+        var before = await StateSummary(conn, tx);
         var detail = await change(conn, tx);
-        var json = JsonSerializer.Serialize(detail, AiModelRegistry.Json);
+        var after = await StateSummary(conn, tx);
+        var json = JsonSerializer.Serialize(new { result = detail, before, after }, AiModelRegistry.Json);
         await conn.ExecuteAsync("INSERT INTO ai_config_audit(actor,action,detail) VALUES(@actor,@action,CAST(@json AS jsonb))", new { actor, action, json }, tx);
         await tx.CommitAsync();
         platform.AiRegistry.Invalidate();
@@ -207,7 +235,7 @@ public static class AiAdmin
     }
 
     public sealed record ProbeResult(bool Ok, long LatencyMs, string? Error = null, List<string>? Models = null);
-    public static async Task<ProbeResult> Test(AiProvider provider, byte[]? bytes, CancellationToken ct)
+    public static async Task<ProbeResult> Test(AiProvider provider, byte[]? bytes, CancellationToken ct, HttpClient? client = null)
     {
         if (bytes == null) return new(false, 0, "key_not_set");
         var key = Encoding.UTF8.GetString(bytes);
@@ -219,7 +247,7 @@ public static class AiAdmin
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             if (provider.Kind == "anthropic") { request.Headers.Add("x-api-key", key); request.Headers.Add("anthropic-version", "2023-06-01"); }
             else request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
-            using var response = await Http.SendAsync(request, ct);
+            using var response = await (client ?? Http).SendAsync(request, ct);
             if (!response.IsSuccessStatusCode) return new(false, clock.ElapsedMilliseconds, $"http_{(int)response.StatusCode}");
             var raw = await response.Content.ReadAsStringAsync(ct);
             if (provider.Kind == "openrouter" && !ProviderWire.ReadKey(raw).Ok) return new(false, clock.ElapsedMilliseconds, "invalid_response");
@@ -246,7 +274,7 @@ public static class AiAdmin
         group.MapGet("/ai/calls", async () =>
         {
             await using var conn = await platform.Data.OpenConnectionAsync();
-            var rows = await conn.QueryAsync("SELECT id,owner_id,provider_id,provider,model,config_version,prompt_tokens,completion_tokens,cost_usd,credits,ok,created_at FROM model_calls ORDER BY created_at DESC LIMIT 100");
+            var rows = await conn.QueryAsync("SELECT id,owner_id,bot_id,task_id,provider_id,provider,model,served_model,fallback_used,config_version,prompt_tokens,completion_tokens,cost_usd,credits,ok,created_at FROM model_calls ORDER BY created_at DESC LIMIT 100");
             return Results.Json(rows.Select(Platform.ToDict));
         });
     }

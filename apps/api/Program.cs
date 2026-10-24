@@ -86,6 +86,8 @@ builder.Services.AddSingleton(loginFlow);
 builder.Services.AddSingleton(runtime);
 builder.Services.AddSingleton(platform.AiRegistry);
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AiModelRegistry>());
+builder.Services.AddHostedService<AiCatalog>();
+builder.Services.AddHostedService<AiWaiters>();
 builder.Services.AddSingleton(data);
 builder.Services.AddSingleton<PerfRecorder>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<PerfRecorder>());

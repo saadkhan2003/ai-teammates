@@ -144,6 +144,7 @@ public sealed class Platform
         "042_video_analyses.sql",
         "043_speed_telemetry.sql",
         "044_ai_models.sql",
+        "045_ai_controls.sql",
     ];
 
     private async Task MigrateAndSeedLocked(string ownerUser, string ownerPassword)
@@ -364,7 +365,7 @@ public sealed class Platform
             """,
             new { id, owner });
         if (row == null) return null;
-        var result = ToDict(row);
+        Dictionary<string, object?> result = ToDict(row);
         if (result.GetValueOrDefault("provider") as string == "openrouter") result["provider"] = "ai_connection";
         return result;
     }
