@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -262,6 +263,61 @@ def desktop_identity(bot_id: str) -> tuple[int, Path, Path]:
     return prepare(bot_id)
 
 
+def profile_root() -> Path:
+    return Path(os.environ.get("PROFILE_ROOT", "/data/profiles"))
+
+
+def profile_dir(bot_id: str) -> Path:
+    """The Chrome profile of a desktop. It follows desktop_identity: a desktop
+    whose bot was deleted gets a fresh scratch profile, never the deleted bot's
+    cookies, logins or history."""
+    safe = safe_id(bot_id)
+    return profile_root() / (desktop_scratch_id(safe) if is_deleted(safe) else safe)
+
+
+def _svc_ctl(*args: str) -> None:
+    binary = os.environ.get("S6_SVC", "/command/s6-svc")
+    if Path(binary).exists():
+        subprocess.run([binary, *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=False)
+
+
+def _retire_browser_profile(safe: str, root: Path, home: Path) -> None:
+    """Remove a deleted bot's Chrome profile. A shared desktop's Chrome that is
+    still running on it is stopped first and started again on the desktop's
+    scratch profile and identity."""
+    old = profile_root() / safe
+    services = Path(os.environ.get("DESK_SERVICE_DIR", "/run/service"))
+    moved: list[tuple[Path, str]] = []
+    for run in sorted(services.glob("chrome-*/run")) if services.is_dir() else []:
+        try:
+            script = run.read_text()
+        except OSError:
+            continue
+        if f"--user-data-dir={old} " in script:
+            _svc_ctl("-wD", "-T", "15000", "-d", str(run.parent))
+            moved.append((run, script))
+    if old.exists() or old.is_symlink():
+        shutil.rmtree(old, ignore_errors=True)
+    if not moved:
+        return
+    scratch = desktop_scratch_id(safe)
+    uid = ensure(scratch)
+    fresh = profile_root() / scratch
+    fresh.mkdir(parents=True, exist_ok=True)
+    if os.geteuid() == 0:
+        os.chown(fresh, uid, uid)
+        os.chmod(fresh, 0o700)
+    for run, script in moved:
+        script = script.replace(f"--user-data-dir={old} ", f"--user-data-dir={fresh} ")
+        script = script.replace(f"export HOME={home}\n", f"export HOME={home_for(scratch)}\n")
+        script = script.replace(f"export BOT_ROOT={root}\n", f"export BOT_ROOT={root_for(scratch)}\n")
+        script = script.replace(f"export BOT_ID={safe}\n", f"export BOT_ID={scratch}\n")
+        script = re.sub(r"--reuid \d+ --regid \d+", f"--reuid {uid} --regid {uid}", script)
+        run.write_text(script)
+        run.chmod(0o755)
+        _svc_ctl("-u", str(run.parent))
+
+
 _PRIV = threading.Lock()
 
 
@@ -297,6 +353,7 @@ def wipe(bot_id: str) -> None:
     for extra in (workspace_base() / "outputs" / safe, workspace_base() / "outputs" / bot_id):
         if extra.exists():
             shutil.rmtree(extra)
+    _retire_browser_profile(safe, root, home)
     path = _state_file()
     if not path.exists():
         return

@@ -340,7 +340,7 @@ class BrowserHub:
         return await page.screenshot(type="png")
 
     def _cookie_file(self, bot_id: str) -> Path:
-        return Path("/data/profiles") / bot_id / "teammates-cookies.json"
+        return workspace.profile_dir(bot_id) / "teammates-cookies.json"
 
     async def set_cookie(self, bot_id: str, name: str, value: str, url: str) -> None:
         # Chrome keeps CDP cookies in memory until it exits cleanly. A Docker

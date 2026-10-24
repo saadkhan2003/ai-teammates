@@ -332,9 +332,9 @@ class DesktopManager:
 
     async def _spawn_chrome(self, desk: Desktop) -> None:
         n = desk.display
-        profile = Path("/data/profiles") / desk.bot_id
-        profile.mkdir(parents=True, exist_ok=True)
         uid, root, home = workspace.desktop_identity(desk.bot_id)
+        profile = workspace.profile_dir(desk.bot_id)
+        profile.mkdir(parents=True, exist_ok=True)
         if os.geteuid() == 0:
             if profile.stat().st_uid != uid:
                 workspace._own(profile, uid)

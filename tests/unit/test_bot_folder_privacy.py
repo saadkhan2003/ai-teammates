@@ -24,6 +24,9 @@ def ws(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKSPACE_ROOT", str(tmp_path / "ws"))
     monkeypatch.setenv("STATE_ROOT", str(tmp_path / "state"))
     monkeypatch.setenv("HOME_ROOT", str(tmp_path / "home"))
+    monkeypatch.setenv("PROFILE_ROOT", str(tmp_path / "profiles"))
+    monkeypatch.setenv("DESK_SERVICE_DIR", str(tmp_path / "service"))
+    monkeypatch.setenv("S6_SVC", str(tmp_path / "no-s6"))
     import workspace
     return workspace
 
@@ -74,6 +77,77 @@ def test_desktop_services_never_point_at_deleted_folder(ws, monkeypatch):
         assert str(ws.home_for(DESK)) not in written[name]
         assert f"export BOT_ROOT={ws.root_for(ws.desktop_scratch_id(DESK))}" in written[name]
     assert not ws.root_for(DESK).exists()
+
+
+def _chrome_service(ws, monkeypatch, tmp_path, bot_id, display=1):
+    """Write the real Chrome service script of a desktop into the test service dir."""
+    import desktops
+    services = tmp_path / "service"
+    def write(name, body, down=False):
+        (services / name).mkdir(parents=True, exist_ok=True)
+        (services / name / "run").write_text(body)
+    async def nothing(*_args, **_kwargs):
+        return None
+    monkeypatch.setattr(desktops, "_write_service", write)
+    monkeypatch.setattr(desktops, "chrome_bin", lambda: "/usr/bin/chromium")
+    for name in ("_rescan", "_svc", "_wait_port"):
+        monkeypatch.setattr(desktops, name, nothing)
+    monkeypatch.setattr(desktops.asyncio, "sleep", nothing)
+    manager = desktops.DesktopManager()
+    monkeypatch.setattr(manager, "_hide_when_idle", nothing)
+    async def spawn():
+        await manager._spawn_chrome(desktops.Desktop(bot_id, display, name="Owner Desk"))
+    asyncio.run(spawn())
+    return services / f"chrome-{display}" / "run"
+
+
+def test_deleted_bot_chrome_profile_is_wiped_and_never_reused(ws, monkeypatch, tmp_path):
+    ws.ensure(DESK)
+    ws.ensure(ALICE)
+    for bot in (DESK, ALICE):
+        cookies = ws.profile_dir(bot) / "Default" / "Cookies"
+        cookies.parent.mkdir(parents=True)
+        cookies.write_text("session-of-" + bot)
+    old = ws.profile_dir(DESK)
+    assert old == ws.profile_root() / DESK
+    ws.wipe(DESK)
+    assert not old.exists()
+    assert (ws.profile_dir(ALICE) / "Default" / "Cookies").read_text() == "session-of-" + ALICE
+    fresh = ws.profile_dir(DESK)
+    assert fresh != old and fresh.name == ws.desktop_scratch_id(DESK)
+    # A respawned shared desktop starts Chrome on the scratch profile.
+    script = _chrome_service(ws, monkeypatch, tmp_path, DESK).read_text()
+    assert f"--user-data-dir={fresh} " in script and str(old) + " " not in script
+    assert not old.exists()
+    import browser
+    assert browser.BrowserHub.__dict__["_cookie_file"](None, DESK) == fresh / "teammates-cookies.json"
+
+
+def test_running_shared_chrome_moves_off_a_deleted_bots_profile(ws, monkeypatch, tmp_path):
+    log = tmp_path / "s6.log"
+    fake = tmp_path / "s6-svc"
+    fake.write_text(f'#!/bin/sh\necho "$@" >> "{log}"\n')
+    fake.chmod(0o755)
+    monkeypatch.setenv("S6_SVC", str(fake))
+    ws.ensure(DESK)
+    run = _chrome_service(ws, monkeypatch, tmp_path, DESK)
+    other = _chrome_service(ws, monkeypatch, tmp_path, ALICE, display=2)
+    before, untouched = run.read_text(), other.read_text()
+    old_profile, old_root, old_home = ws.profile_dir(DESK), ws.root_for(DESK), ws.home_for(DESK)
+    assert f"--user-data-dir={old_profile} " in before
+    ws.wipe(DESK)
+    after = run.read_text()
+    scratch = ws.desktop_scratch_id(DESK)
+    assert f"--user-data-dir={ws.profile_root() / scratch} " in after
+    for gone in (old_profile, old_root, old_home):
+        assert str(gone) + " " not in after and str(gone) + "\n" not in after
+        assert not gone.exists()
+    assert f"export BOT_ID={scratch}\n" in after
+    uid = ws.ensure(scratch)
+    assert f"--reuid {uid} --regid {uid}" in after and f"--reuid {ws.ensure(ALICE)} " not in after
+    assert other.read_text() == untouched
+    calls = log.read_text().splitlines()
+    assert calls == [f"-wD -T 15000 -d {run.parent}", f"-u {run.parent}"]
 
 
 @pytest.fixture
