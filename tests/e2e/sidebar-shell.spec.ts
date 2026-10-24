@@ -109,10 +109,41 @@ test("sidebar, composer, and floating header follow light and dark", async ({ pa
   await expect(menu).toHaveCSS("opacity", "0");
   await row.hover();
   await expect(menu).toHaveCSS("opacity", "1");
+  await page.getByTestId("sidebar").screenshot({ path: `${dir}/light-row-hover.png` });
+
+  await expect(page.getByTestId("notifications")).toBeVisible();
+  await page.getByTestId("composer-pill").screenshot({ path: `${dir}/light-composer.png` });
+  await page.getByTestId("bot-name-button").screenshot({ path: `${dir}/light-header-pill.png` });
+
+  await page.mouse.move(900, 40);
+  const scroll = page.locator(".sidebar-scroll");
+  const restThumb = await scroll.evaluate((node) => getComputedStyle(node).scrollbarColor);
+  expect(restThumb.replace(/\s+/g, " ")).toMatch(/transparent|rgba\(0,\s*0,\s*0,\s*0\)/);
+  await scroll.evaluate((node) => {
+    const list = node.querySelector("ul");
+    const sample = list?.firstElementChild;
+    if (!list || !sample) return;
+    for (let i = 0; i < 14; i += 1) list.appendChild(sample.cloneNode(true));
+  });
+  await scroll.hover();
+  await scroll.evaluate((node) => node.setAttribute("data-scrolling", "true"));
+  const hotThumb = await scroll.evaluate((node) => getComputedStyle(node).scrollbarColor);
+  expect(hotThumb).not.toBe(restThumb);
+  await scroll.screenshot({ path: `${dir}/light-scrollbar.png` });
+  await scroll.evaluate((node) => {
+    node.removeAttribute("data-scrolling");
+    const list = node.querySelector("ul");
+    while (list && list.children.length > 2) list.lastElementChild?.remove();
+  });
 
   await page.getByTestId("sidebar").screenshot({ path: `${dir}/light-footer-rest.png` });
+  await page.getByTestId("sidebar-footer").screenshot({ path: `${dir}/hover-frame-1-rest.png` });
   const apps = page.getByTestId("open-plugins");
   await page.getByTestId("sidebar-footer").hover();
+  await page.waitForTimeout(120);
+  await page.getByTestId("sidebar-footer").screenshot({ path: `${dir}/hover-frame-2-mid.png` });
+  await page.waitForTimeout(200);
+  await page.getByTestId("sidebar-footer").screenshot({ path: `${dir}/hover-frame-3-expanded.png` });
   await expect(apps).toContainText("Connect apps");
   await expect(page.getByTestId("account-button")).toBeVisible();
   await shot(page, "light-sidebar");
@@ -137,6 +168,17 @@ test("sidebar, composer, and floating header follow light and dark", async ({ pa
   expect(composerBg).not.toBe("rgb(255, 255, 255)");
   await shot(page, "dark-sidebar");
   await page.getByTestId("sidebar").screenshot({ path: `${dir}/dark-sidebar-footer.png` });
+  await page.getByTestId("composer-pill").screenshot({ path: `${dir}/dark-composer.png` });
+  await page.getByTestId("bot-name-button").screenshot({ path: `${dir}/dark-header-pill.png` });
+  await page.getByTestId("sidebar-footer").screenshot({ path: `${dir}/dark-hover-frame-1-rest.png` });
+  await page.getByTestId("sidebar-footer").hover();
+  await page.waitForTimeout(120);
+  await page.getByTestId("sidebar-footer").screenshot({ path: `${dir}/dark-hover-frame-2-mid.png` });
+  await page.waitForTimeout(200);
+  await page.getByTestId("sidebar-footer").screenshot({ path: `${dir}/dark-hover-frame-3-expanded.png` });
+  await expect(page.getByTestId("open-plugins")).toContainText("Connect apps");
+  await page.mouse.move(640, 280);
+  await page.waitForTimeout(250);
 
   await page.setViewportSize({ width: 1024, height: 576 });
   await shot(page, "dark-1024");

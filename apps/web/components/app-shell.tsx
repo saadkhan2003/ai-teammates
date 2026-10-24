@@ -370,6 +370,29 @@ export function AppShell({ children }: { children: ReactNode }) {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="icon" data-testid="notifications" aria-label="Notifications" className="relative h-9 w-9 rounded-full border-border bg-card text-card-foreground shadow-sm">
+              <Bell />
+              {unread > 0 ? <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-brand" /> : null}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-64">
+            <div className="flex items-center justify-between px-2 py-1.5">
+              <p className="text-xs font-medium">Notifications</p>
+              <button type="button" className="text-xs text-muted-foreground" onClick={() => void markRead()}>
+                Mark read
+              </button>
+            </div>
+            {notes.length === 0 ? <p className="px-2 py-2 text-xs text-muted-foreground">Nothing waiting.</p> : null}
+            {notes.map((note) => (
+              <DropdownMenuItem key={note.id} className="flex flex-col items-start gap-0.5">
+                <span className="text-sm">{note.title}</span>
+                {note.body ? <span className="text-xs text-muted-foreground">{note.body}</span> : null}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
         {mobile ? null : (
           <Button
             data-testid="rail-toggle"
@@ -506,27 +529,6 @@ export function AppShell({ children }: { children: ReactNode }) {
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align="start" className="w-64" data-testid="account-menu">
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger data-testid="notifications">
-                <Bell /> Notifications
-                {unread > 0 ? <span className="ml-auto text-xs text-muted-foreground">{unread}</span> : null}
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="w-64">
-                <div className="flex items-center justify-between px-2 py-1.5">
-                  <p className="text-xs font-medium">Notifications</p>
-                  <button type="button" className="text-xs text-muted-foreground" onClick={() => void markRead()}>
-                    Mark read
-                  </button>
-                </div>
-                {notes.length === 0 ? <p className="px-2 py-2 text-xs text-muted-foreground">Nothing waiting.</p> : null}
-                {notes.map((note) => (
-                  <DropdownMenuItem key={note.id} className="flex flex-col items-start gap-0.5">
-                    <span className="text-sm">{note.title}</span>
-                    {note.body ? <span className="text-xs text-muted-foreground">{note.body}</span> : null}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>Weekly usage <span className="ml-auto text-xs text-muted-foreground">7% used</span></DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="w-56">

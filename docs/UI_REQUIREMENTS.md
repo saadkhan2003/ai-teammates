@@ -1,72 +1,50 @@
-# UI requirements
-
-Source: the owner's UI notes (Oct 23–24, 2026), committed here so later work keeps the same list. Copy Grok Bot behaviour with our own branding and logo. Surfaces use `apps/web/styles/theme-tokens.css`.
-
-This branch (`cursor/grok-chat-ui-2a3b`) implements the theme, the removal of Assign work, the left sidebar, the composer, and the floating header pill. The other rows are owned by the parallel agents and are not built here.
+# Every UI detail Saad asked for (Oct 23-24, 2026). ALL of these are required. Copy Grok Bot behaviour with our own branding and logo.
 
 ## Accent colour (bot colour) everywhere
+- The colour he picks for a bot is its accent everywhere: avatar, his sent bubbles, send and voice buttons, bot name label, active icons, overall accent.
+- Right panel: avatar, routine toggles, Details/Library/Computer tab states, coding status icons, PR icons, "Open" hover.
+- The answered-card letter badge and similar per-bot accents use that bot's own avatar colour, never a fixed red.
 
-- The colour picked for a bot is its accent everywhere: avatar, sent bubbles, send and voice buttons, bot name label, active icons, overall accent.
-- Right panel: avatar, routine toggles, Details/Library/Computer tab states, coding status icons, PR icons, "Open" hover. Owned by agent 3.
-- The answered-card letter badge and similar per-bot accents use that bot's own avatar colour, never a fixed red. Owned by agent 2.
+## The approved list of 22 items (all approved, including eyes follow cursor, a tint behind the big avatar on hover, and the row ⋯ button)
+1. Avatar loop: the big sidebar avatar and the small avatar above the composer run one continuous looping animation, frame-perfectly in sync and always on: slow clockwise rotation (about 40 s per turn) with smooth breathing or wobble of the points, eyes blinking every 4-5 s and darting left and right with snappy easing. Other list avatars stay static except on hover (item 4).
+2. Eyes follow the cursor.
+3. Hover card: hovering the big sidebar avatar fades in a small card over about 1 s with the bot name and a preview of its last message, and fades out on leave. No stretch effect. A subtle tint appears behind the big avatar on hover.
+4. Row hover: sidebar rows turn light grey instantly, and that row's avatar morphs shape and grows slightly (wiggle). There's a row ⋯ button on hover.
+5. Status shimmer: the status line beside the small composer avatar shimmers left to right (about 2 s per sweep, repeating about every 8 s) and slides in.
+6. Reply display: when the user replies, a small rounded grey pill with the quoted text in grey, cut off with "…", sits above his own bubble, aligned right. When the bot replies, the quote goes inside the top of its grey bubble: a small speech-bubble icon, the quoted text in grey with "…", then the answer. Clicking a quote scrolls to the original message, highlights it for 3 s and fades out. A reply chip appears above the composer while replying.
+7. Message hover toolbar: smiley, reply, ⋯.
+8. Attachment hover: on a user message with attachments, a reply icon and a ⋯ menu appear beside EACH attachment (image, video, file).
+9. Reaction picker: clicking the smiley opens a small rounded pill just under the toolbar with 👍 👎 ❤️ 😂 🎉 and an add-emoji button for the full picker; it flips above when there's no room. NOT a wide 288px panel.
+10. Reaction pill: a small pill on the reacted message's corner. Hover shows a white rounded tooltip above it: "<Bot name> reacted with <emoji>". Bots react only to the user's messages.
+11. Question card restyle: a white rounded card, a bold question, and options as plain rows with a small grey letter badge (A, B, C) on the left, not filled buttons. Pressing the letter key picks it.
+12. Answered card: the question stays, greyed out, and only the chosen option remains, its letter badge filled in the bot's colour with a white letter. The other options disappear.
+13. Header pill: a floating centred pill with the bot avatar and name at the top of the chat, with a hover state.
+14. A thin scrollbar that hides automatically.
+15. Computer thumbnail (info pane, Computer tab): it shows the live desktop whenever the computer is on. On hover the preview dims and a centred "↗ Open" label opens the full computer view. Caption: "<Bot>'s screen".
+16. Sleep card, only when the computer is stopped: a grey rounded card with our greyed logo and "z z", "Computer is asleep", the "<Bot>'s screen" caption, and tap to wake.
+17. Computer view control pill: one white rounded pill on the dark desktop replaces the old pills and the "Hand back" button. While watching: an eye icon, grey "Watching" and a black "Take control" button. While in control: a pointer icon, "You're in control" and a light grey "Stop" button. When the bot asked for help (a sign-in or handoff), the button reads "I'm done" and hands control back. Clean frame, no bot overlay, desktop taskbar visible.
+18. Jump to latest: when scrolled up, a round white down-arrow button appears. When new messages arrive while scrolled up, a "↓ N new message(s) ×" pill appears in the bot colour. Clicking it jumps to the newest message; × dismisses it.
+19. Upload state: a thin bar under the file card slides left to right on a loop while uploading. Images and videos show a shimmering skeleton until the preview renders, then it fades in.
+20. Composer: a white pill with fully rounded ends and a thin light border. ＋ on the left, placeholder "Message <bot name>", a mic icon on the right, then a round bot-colour button with a voice icon that turns into an ↑ arrow while typing.
+21. Sidebar footer: two pills. A rounded account pill (photo and name) opens the account menu. A separate pill with overlapping connected-app icons opens Connect apps or plugins. Keep the notifications bell. HOVER: the apps pill smoothly expands right to left into a wide "Connect apps" pill with the icons, while the account pill shrinks to just the round photo (name hidden but still clickable). It reverts on mouse leave.
+22. Coding jobs card: a header with a count and one row per job with a live status icon (spinning while running, a check when finished, a green check when merged, red on failure). On hover the row turns grey and shows an eye (Watch, opens the live view in the app) and ↗ (Open, opens the full page or PR in a new window). Clicking the row opens the job details. A finished-job card in chat shows the title and status icon, the branch and PR number, files changed with green additions and red deletions, a View PR button and an open-in-app button.
 
-## Approved list
+## Also requested
+- Share button at the top of the right panel, with a menu: "Create a copy" and "Share a template link".
+- Right panel tabs: Details, Library and Computer. Routines panel with accent toggles.
+- Themes: Light, Dark and System (live, the default). Every surface follows the theme.
+- Remove the "Assign work" button unless a feature needs it.
+- Bots are self-aware: in-app link pills, short warm replies.
 
-1. Avatar loop. The big sidebar avatar and the small avatar above the composer run one continuous looping animation, in sync and always on: slow clockwise rotation (about 40 s per turn) with breathing or wobble, eyes blinking every 4–5 s and darting with snappy easing. Other list avatars stay static except on hover (item 4). Owned by agent 4.
-2. Eyes follow the cursor. Owned by agent 4.
-3. Hover card. Hovering the big sidebar avatar fades in a small card over about 1 s with the bot name and a preview of its last message, and fades out on leave. A subtle tint appears behind the big avatar. Owned by agent 4.
-4. Row hover. Sidebar rows turn light grey instantly, and a ⋯ button appears (Open, Delete). The avatar morph and grow on that hover is owned by agent 4. The grey row and ⋯ button are on this branch.
-5. Status shimmer. The status line beside the small composer avatar shimmers left to right (about 2 s per sweep, repeating about every 8 s) and slides in. Owned by agent 4.
-6. Reply display. A quoted pill or quote inside the bubble, click-to-scroll with a 3 s highlight, and a reply chip above the composer. Owned by agent 2.
-7. Message hover toolbar: smiley, reply, ⋯. Owned by agent 2.
-8. Attachment hover: reply and ⋯ beside each attachment. Owned by agent 2.
-9. Reaction picker: a small pill (👍 👎 ❤️ 😂 🎉 plus add), not a wide panel. Owned by agent 2.
-10. Reaction pill on the message corner, with the tooltip "<Bot name> reacted with <emoji>". Bots react only to the user's messages. Owned by agent 2.
-11. Question card: letter badges and letter-key shortcuts. Owned by agent 2.
-12. Answered card: chosen option only, letter badge filled with the bot colour. Owned by agent 2.
-13. Header pill. A floating centred pill with the bot avatar, name, and status, overlapping the thread, with a hover shadow. On this branch.
-14. A thin scrollbar that hides until the sidebar list is hovered, focused, or scrolling. On this branch.
-15. Computer thumbnail, hover "↗ Open", caption "<Bot>'s screen". Owned by agent 3.
-16. Sleep card when the computer is stopped. Owned by agent 3.
-17. Computer control pill: Watching / Take control, You're in control / Stop, and I'm done. Owned by agent 3.
-18. Jump to latest: round down-arrow, and "↓ N new message(s) ×" in the bot colour. Owned by agent 2.
-19. Upload bar and image/video skeletons. Owned by agent 2.
-20. Composer. A fully rounded pill on the card colour, thin border, ＋ on the left (Attach files, Teach a task), placeholder "Message <bot name>", mic, then a round bot-colour button that shows a voice icon when empty and an up arrow while typing. On this branch. Theme-aware, so dark mode uses the dark card rather than a hard-coded white fill.
-21. Sidebar footer. Two fully rounded pills on the sidebar background, matching the reference. Left pill: round photo (or initials) and the full name, medium weight, truncated; click opens the account menu. Right pill: up to three overlapping connected-app marks; click opens Connect apps. Hovering the footer expands the apps pill leftward into a wide "Connect apps" pill and shrinks the account pill to the round photo. It reverts on mouse leave. Notifications stay in the account menu so the footer stays two pills. Dark mode keeps the same shape on dark card surfaces. On this branch.
-22. Coding jobs card, hover Watch/Open, and the finished-job card. Owned by agent 3 (panel) and agent 2 (the in-chat card).
+## 23. Link pill hover preview (added Oct 24)
 
-## 23. Link pill hover preview
-
-Owned by agent 2. Not built on this branch.
+Owned by the chat-messages agent. Not built on this branch.
 
 - Inline link pills show a small icon plus a label.
 - Hovering a link pill shows a small rounded card just above it: a bold title on 1–2 lines, then a row with a favicon, the URL truncated with an ellipsis, and a ↗ icon. Click opens external links in the browser and in-app links in the app.
-- The message toolbar (smiley, reply, ⋯) appears to the right of a hovered bot bubble at the same time.
+- The message toolbar appears to the right of a hovered bot bubble at the same time.
 - The card follows the theme.
 
-## Also requested
+## What this branch builds
 
-- Share button on the right panel, with "Create a copy" and "Share a template link". Owned by agent 3.
-- Right panel tabs: Details, Library, and Computer. Routines with accent toggles. Owned by agent 3.
-- Themes: Light, Dark, and System (live, the default). Every surface follows the theme. On this branch, including the composer.
-- No "Assign work" button. Send already creates the task. On this branch.
-- Bots are self-aware: in-app link pills and short warm replies. Link pills are owned by agent 2.
-
-## Full-window checklist (this branch)
-
-| Spec line | Result |
-| --- | --- |
-| 3-column layout, right panel, window glyphs | Owned by agent 3 |
-| Sidebar search and new as round card buttons | On this branch |
-| Selected bot tile: centred rounded square, name, subtitle, status dot | On this branch |
-| Bot rows: avatar, status dot, name, subtitle, grey hover, ⋯ | On this branch (avatar motion owned by agent 4) |
-| Thin auto-hide sidebar scrollbar | On this branch |
-| Footer pills and hover expand, notifications bell kept | On this branch |
-| Floating header pill | On this branch |
-| Composer pill | On this branch |
-| Message bubbles, quotes, link pills, working line | Owned by agent 2 |
-| Link pill hover card (item 23) | Owned by agent 2 |
-| Right info panel, coding rows, routine toggles, computer view | Owned by agent 3 |
-| Avatar loop, eyes, hover card, row morph, status shimmer | Owned by agent 4 |
-| Light, Dark, System | On this branch |
-| Assign work removed | On this branch |
+Items 13, 14, 20, and 21, plus the grey row and ⋯ button from item 4, Light/Dark/System, and removal of Assign work. The send and voice buttons use the bot colour. Avatar motion (items 1–3, 5, and the row morph in item 4) is the avatar agent. Chat message items 6–12, 18, 19, 22's in-chat card, and item 23 are the chat agent. The right panel, computer view, and item 22's panel rows are the right-panel agent. The notifications bell is a round button in the sidebar header so the footer stays the two pills in the reference.
