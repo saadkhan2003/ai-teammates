@@ -156,6 +156,8 @@ public static class Routes
             await conn.ExecuteAsync("INSERT INTO bots (id, owner_id, name, role, instructions, token_hash, avatar_shape, avatar_color, is_primary, bio) VALUES (@id, @owner, @name, @role, @instructions, @hash, @avatarShape, @avatarColor, @primary, @bio)", new { id, owner = user, name, role, instructions, hash, avatarShape, avatarColor, primary = existingBots == 0, bio });
             var conversation = await conn.ExecuteScalarAsync<Guid>("INSERT INTO conversations (bot_id, title) VALUES (@id, 'Desk') RETURNING id", new { id });
             await conn.ExecuteAsync("INSERT INTO control_locks (bot_id, holder, epoch) VALUES (@id, 'agent', 1)", new { id });
+            // A new bot needs its owner's shared computer, so a stopped one may run again.
+            if (shared != null) await Platform.WantComputer(conn, user.Value);
             try
             {
                 if (shared == null)

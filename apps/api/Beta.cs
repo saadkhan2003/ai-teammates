@@ -244,6 +244,10 @@ public static class Beta
             }
             catch (ComputeException ex)
             {
+                // A stopped computer whose container is gone stays stopped; it is rebuilt only when asked for.
+                if (ex.Code == ComputeErrorCode.NotFound
+                    && await conn.ExecuteScalarAsync<string>("SELECT status FROM user_computers WHERE user_id=@id", new { id = user }) == "stopped")
+                    return Results.Json(new { status = "stopped", computerId = id, missing = true });
                 return Results.Json(new { status = "unknown", computerId = id, error = ex.Code.ToString() });
             }
         });
@@ -272,6 +276,7 @@ public static class Beta
             if (user == null) return Results.Unauthorized();
             var id = await Computer(platform, user.Value);
             if (id == null) return Results.NotFound();
+            await using (var wanted = await platform.Data.OpenConnectionAsync(ct)) await Platform.WantComputer(wanted, user.Value);
             var computer = await platform.Compute.RestartComputerAsync(new ComputerId(id.Value.ToString()), IdempotencyKey.Require("restart-" + Guid.NewGuid().ToString("n")), ct);
             return Results.Json(new { ok = true, status = computer.State.ToString().ToLowerInvariant() });
         });
@@ -283,6 +288,7 @@ public static class Beta
             var id = await Computer(platform, user.Value);
             if (id == null) return Results.NotFound();
             await using var conn = await platform.Data.OpenConnectionAsync(ct);
+            await Platform.WantComputer(conn, user.Value);
             var name = await conn.ExecuteScalarAsync<string>(
                 "SELECT b.name FROM bots b JOIN user_computers c ON c.desktop_bot_id = b.id WHERE c.user_id=@id",
                 new { id = user });

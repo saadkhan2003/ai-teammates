@@ -467,7 +467,10 @@ public sealed class Platform
     {
         if (!Guid.TryParse(id.Value, out var computerId)) return false;
         await using var conn = await Data.OpenConnectionAsync(ct);
-        var owner = await conn.ExecuteScalarAsync<Guid?>("SELECT user_id FROM user_computers WHERE computer_id=@id", new { id = computerId });
+        // Only a computer that is meant to be running is rebuilt. A stopped
+        // computer whose container disappeared stays stopped until its owner
+        // or one of their bots asks for it again.
+        var owner = await ClaimComputerRecovery(conn, computerId);
         if (owner == null) return false;
         var name = await conn.ExecuteScalarAsync<string>(
             """
@@ -476,10 +479,19 @@ public sealed class Platform
             WHERE c.computer_id = @id
             """,
             new { id = computerId });
-        await conn.ExecuteAsync("UPDATE user_computers SET status='recovering' WHERE computer_id=@id", new { id = computerId });
         _ = ObserveRestore(Compute.RestoreComputerAsync(id, owner.Value.ToString(), null, false, name, CancellationToken.None));
         return true;
     }
+
+    /// <summary>Marks a wanted computer as recovering and returns its owner, or null when nobody asked for it to run.</summary>
+    public static Task<Guid?> ClaimComputerRecovery(NpgsqlConnection conn, Guid computerId) =>
+        conn.ExecuteScalarAsync<Guid?>(
+            "UPDATE user_computers SET status='recovering' WHERE computer_id=@id AND status IN ('running','recovering') RETURNING user_id",
+            new { id = computerId });
+
+    /// <summary>An explicit request from the owner or a new bot: the computer may run (and be rebuilt) again.</summary>
+    public static Task<int> WantComputer(NpgsqlConnection conn, Guid user) =>
+        conn.ExecuteAsync("UPDATE user_computers SET status='running' WHERE user_id=@user AND status='stopped'", new { user });
 
     public async Task ResumeRecoveringTasks(ComputerId id)
     {
