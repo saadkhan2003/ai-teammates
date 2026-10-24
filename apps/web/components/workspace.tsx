@@ -267,6 +267,9 @@ export function Workspace({ botId }: { botId: string }) {
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") {
+        // A dialog, popover or menu already handled this Escape (Radix calls preventDefault when it dismisses);
+        // closing that layer must not also close the info pane behind it.
+        if (event.defaultPrevented || document.querySelector("[role='dialog'][data-state='open'], [role='alertdialog'][data-state='open']")) return;
         const target = event.target as HTMLElement | null;
         const inPane = !!target?.closest?.("[data-testid='info-pane']");
         const onPill = !!target?.closest?.("[data-testid='bot-name-button']");
