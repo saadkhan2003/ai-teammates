@@ -21,6 +21,13 @@ for (const theme of ["light", "dark"]) {
     const stopAllow = autoAllowBrowserOpens(page, bot.id, ["write_page", "edit_page"]);
     try {
       await page.goto(`/bots/${bot.id}`);
+      const botName = page.getByTestId("bot-name-button");
+      if (await botName.getAttribute("aria-expanded") !== "true") await botName.click();
+      await page.getByRole("tab", { name: "Library", exact: true }).click();
+      await expect(page.getByText("Nothing here yet", { exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "Pages", exact: true }).click();
+      await expect(page.getByTestId("pages-library")).toBeVisible();
+      await page.getByRole("button", { name: /All library items/ }).click();
       const appText = await page.locator("body").innerText();
       expect(appText).not.toMatch(/OpenRouter|OpenAI|Anthropic|GPT|Claude|Gemini|DeepInfra/i);
       await page.getByTestId("composer").fill("Make a page with projects and a calculator");

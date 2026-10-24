@@ -32,6 +32,10 @@ export function evaluateExpression(expression, inputs = {}) {
   return n;
 }
 
+export function nextGridSort(sort, ascending, hasSorted, column) {
+  return { sort: column, ascending: hasSorted && sort === column ? !ascending : true, hasSorted: true };
+}
+
 export function parsePage(source) {
   // Only JSON inside an exact `page` fence is a component. Everything else is text.
   const pieces = String(source).slice(0, 262144).split(/```page\s*\n([\s\S]*?)\n```/g);
@@ -97,7 +101,7 @@ export function runRenderer() {
         const rows = Array.isArray(item.rows) ? item.rows.slice(0, 1000).filter(Array.isArray).map(row => columns.map((_, i) => String(row[i] ?? "").slice(0, 2000))) : [];
         const table = el("table"), head = el("thead"), tr = el("tr"), body = el("tbody"); let sort = -1, ascending = true, hasSorted = false, query = "";
         columns.forEach((column, i) => { const th = el("th"); th.scope = "col"; th.setAttribute("role", "columnheader");
-          if (item.type === "grid") { const b = el("button", column + " ↕"); b.type = "button"; th.setAttribute("aria-sort", "none"); b.addEventListener("click", () => { ascending = hasSorted && sort === i ? !ascending : true; sort = i; hasSorted = true; columns.forEach((_, index) => tr.children[index].setAttribute("aria-sort", index === sort ? (ascending ? "ascending" : "descending") : "none")); draw(); }); th.append(b); }
+          if (item.type === "grid") { const b = el("button", column + " ↕"); b.type = "button"; th.setAttribute("aria-sort", "none"); b.addEventListener("click", () => { ({ sort, ascending, hasSorted } = nextGridSort(sort, ascending, hasSorted, i)); columns.forEach((_, index) => tr.children[index].setAttribute("aria-sort", index === sort ? (ascending ? "ascending" : "descending") : "none")); draw(); }); th.append(b); }
           else th.textContent = column;
           tr.append(th);
         });
@@ -182,5 +186,5 @@ export function runRenderer() {
 export const rendererCss = `:root{color-scheme:dark;--bg:#141414;--fg:#e7e9ea;--muted:#92969a;--line:#303236;--soft:#202225}.light{color-scheme:light;--bg:#fff;--fg:#202124;--muted:#687078;--line:#e2e4e7;--soft:#f5f6f7}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:380 14px/1.65 Inter,system-ui,sans-serif}main{max-width:1000px;margin:0 auto;padding:28px 32px 64px}.block{margin:0 0 20px}h1{font-size:28px;letter-spacing:-.7px}h2{font-size:22px}h3{font-size:16px}h1,h2,h3,h4{font-weight:600;line-height:1.3;margin:18px 0 12px}p{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0}input,select,button{font:450 13px Inter,system-ui,sans-serif;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:8px 10px}button{cursor:pointer}button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #4d8dff;outline-offset:2px}input:not([type=checkbox]):not([type=range]),select{max-width:100%;width:240px}.field{display:flex;flex-direction:column;gap:6px}.check{display:flex;align-items:center;gap:8px;margin:9px 0}.result{display:block;font-size:30px;font-weight:600;margin-top:4px}.muted,.legend{color:var(--muted);font-size:12px}.table-wrap{overflow:auto;margin-top:12px}table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);white-space:pre-wrap;overflow-wrap:anywhere;max-width:400px}th{font-weight:600}th button{padding:0;border:0;background:transparent;font-weight:600}.callout{background:var(--soft);border-left:3px solid #4d8dff;padding:12px 16px;border-radius:4px}.tabs{display:flex;gap:8px;border-bottom:1px solid var(--line);padding-bottom:8px}.tabs [aria-selected=true]{background:var(--soft)}progress{width:100%;accent-color:#4d8dff}svg{width:100%;max-height:300px}code{font-size:12px;background:var(--soft);padding:2px 4px;border-radius:3px}@media(max-width:600px){main{padding:20px 16px}}`;
 
 export function rendererBundle() {
-  return [sanitizeMarkdown, evaluateExpression, parsePage, runRenderer].map(fn => fn.toString()).join("\n") + "\nrunRenderer();";
+  return [sanitizeMarkdown, evaluateExpression, nextGridSort, parsePage, runRenderer].map(fn => fn.toString()).join("\n") + "\nrunRenderer();";
 }

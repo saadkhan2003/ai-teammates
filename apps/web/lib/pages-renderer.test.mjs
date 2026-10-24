@@ -1,6 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateExpression as calc, sanitizeMarkdown, parsePage, rendererBundle } from './pages-renderer.mjs';
+import { evaluateExpression as calc, sanitizeMarkdown, parsePage, rendererBundle, nextGridSort } from './pages-renderer.mjs';
+
+test('grid headers expose columnheader roles and cycle aria-sort none to ascending to descending', () => {
+  const source = rendererBundle();
+  assert.match(source, /setAttribute\("role", "columnheader"\)/);
+  assert.match(source, /setAttribute\("aria-sort", "none"\)/);
+  let state = { sort: -1, ascending: true, hasSorted: false };
+  const ariaSort = ['none'];
+  state = nextGridSort(state.sort, state.ascending, state.hasSorted, 0);
+  ariaSort.push(state.ascending ? 'ascending' : 'descending');
+  state = nextGridSort(state.sort, state.ascending, state.hasSorted, 0);
+  ariaSort.push(state.ascending ? 'ascending' : 'descending');
+  assert.deepEqual(ariaSort, ['none', 'ascending', 'descending']);
+});
 
 test('calculator respects precedence, parentheses, unary signs and own numeric inputs', () => {
   assert.equal(calc('price * quantity * (1 + tax / 100)', { price: 20, quantity: 3, tax: 10 }), 66);
