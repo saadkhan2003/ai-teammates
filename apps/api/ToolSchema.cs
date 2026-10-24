@@ -42,7 +42,7 @@ public static class ToolSchema
         Fn("run_tests", "Run tests with a supported runner", Enum("runner", "Test runner", true, "auto", "npm", "pytest", "dotnet", "make"), Opt("args", "string", "Arguments without shell metacharacters"), Opt("repo", "string", "Repository path under workspace")),
         Fn("create_pr", "Ask first, then create a pull request. Use watch_ci to inspect checks.", Req("title", "string", "Title"), Req("body", "string", "Description"), Opt("base", "string", "Base branch"), Opt("repo", "string", "Repository path under workspace")),
         Fn("watch_ci", "Read current pull request CI checks", Opt("pr", "string", "Pull request number or URL")),
-        Fn("spawn_child_task", "Create an isolated child worktree. Nothing is merged automatically; merge with git merge task/<id>.", Req("title", "string", "Short title"), Req("instruction", "string", "Child task"), Opt("repo", "string", "Repository path"), Opt("branch", "string", "Branch name")),
+        Fn("spawn_child_task", "Create an isolated child worktree with a structured brief. First load_skill(writing-a-great-brief). Fix brief_rejected issues; do ONE rewrite on brief_needs_rewrite. needs_clarification requires ask_user first. Nothing is merged automatically.", Req("title", "string", "Short title"), Opt("brief", "object", "Structured outcome, context, boundaries, checkable acceptance and evidence report; follow Writing a great brief."), Opt("instruction", "string", "Legacy fallback folded into brief.goal; other required brief fields still apply"), Opt("repo", "string", "Repository path"), Opt("branch", "string", "Branch name")),
         Fn("child_status", "Read a child task status", Req("task_id", "string", "Child task id")),
         Fn("shell", "Run a shell command", Req("command", "string", "Command")),
         Fn("setup_env", "Run a command with a secret in the environment", Req("secret_ref", "string", "secret:// reference"), Req("env_name", "string", "Env var"), Req("command", "string", "Command")),
@@ -74,7 +74,8 @@ public static class ToolSchema
         Fn("message_bot", "Send a message to another teammate of the same user. Returns at once with a thread id. The reply comes back to you as a new task. Pass thread_id to continue a thread. Keep the title short.",
             Req("bot", "string", "Teammate name or id"),
             Req("title", "string", "Short thread title, 3 to 60 characters"),
-            Req("text", "string", "What you need, up to 4000 characters"),
+            Opt("brief", "object", "Optional structured delegation: goal and report_back required"),
+            Opt("text", "string", "What you need, up to 4000 characters; required without brief"),
             Opt("thread_id", "string", "Continue this thread")),
         Fn("reply_to_bot", "Send a mid-task update on the thread you were asked on. Your final answer is sent back automatically.",
             Req("thread_id", "string", "Thread id"),
@@ -105,11 +106,13 @@ public static class ToolSchema
             Opt("expires_at", "string", "ISO time after which a recurring routine stops"),
             Opt("quiet", "string", "Quiet rule: when nothing is worth saying, reply only NOTHING_NEW and the user is not notified"),
             Opt("exact", "boolean", "Skip the small start-time jitter"),
-            Req("instruction", "string", "What to do on each run")),
+            Opt("brief", "object", "Optional structured routine: goal and report_back required"),
+            Opt("instruction", "string", "What to do on each run; required without brief")),
         Fn("get_routine", "Read one routine with its saved text and recent runs. Required before update_routine.",
             Req("routine", "string", "Routine id or name"), Opt("bot", "string", "Owner teammate when using a name")),
         Fn("update_routine", "Change a routine. Read it with get_routine first and edit the saved text, do not rewrite from memory. The user is asked first." + " Times are the owner's local time (the zone is in the result of get_routine/list_routines); use 'now' from get_routine to work out dates. For a message the user should see in the morning use a weekday 8am-7pm window unless they said otherwise. Minimum interval 5 minutes.",
             Req("routine", "string", "Routine id or name"), Opt("bot", "string", "Owner teammate when using a name"),
+            Opt("brief", "object", "Optional structured routine: goal and report_back required"),
             Opt("name", "string", "New name"), Opt("instruction", "string", "New instruction"), Opt("cron", "string", "New five field cron"),
             Opt("run_at", "string", "New one-off time"), Opt("timezone", "string", "New IANA zone"), Opt("expires_at", "string", "New expiry"),
             Opt("quiet", "string", "New quiet rule"), Opt("exact", "boolean", "Skip jitter")),
@@ -130,6 +133,8 @@ public static class ToolSchema
             if (tool == "ask_user" && field.Name == "prompt" && !present) continue;
             if (field.Required && !present) return tool + " requires " + field.Name;
             if (!present) continue;
+            if (field.Type == "object" && field.Name != "brief" && value.ValueKind != JsonValueKind.Object)
+                return tool + " " + field.Name + " must be an object";
             if (field.Type == "number" && (value.ValueKind != JsonValueKind.Number || !value.TryGetDouble(out var number) || !double.IsFinite(number)))
                 return tool + " " + field.Name + " must be a finite number";
             if (field.Type == "string")
@@ -203,7 +208,7 @@ public static class ToolSchema
         var required = new List<string>();
         foreach (var field in fields)
         {
-            properties[field.Name] = Schema(field);
+            properties[field.Name] = field.Name == "brief" ? BriefSchema(name != "spawn_child_task") : Schema(field);
             if (field.Required) required.Add(field.Name);
         }
         var parameters = new Dictionary<string, object> { ["type"] = "object", ["properties"] = properties };
@@ -219,6 +224,27 @@ public static class ToolSchema
                 ["x-fields"] = fields
             }
         };
+    }
+
+    public static JsonElement BriefSchema(bool light = false)
+    {
+        var schema = System.Text.Json.Nodes.JsonNode.Parse("""
+            {"type":"object","properties":{
+              "goal":{"type":"string","description":"Required outcome in one or two sentences, not steps"},
+              "kind":{"type":"string","enum":["feature","bugfix","ui","refactor","research","ops"],"default":"feature"},
+              "priority":{"type":"string","enum":["low","normal","high","urgent"]},"effort":{"type":"string","enum":["small","medium","large"]},"budget":{"type":"string"},
+              "context":{"description":"Quote the user's own words, mood, why and background","anyOf":[{"type":"string"},{"type":"object","properties":{"quote":{"type":"string"},"author":{"type":"string"},"mood":{"type":"string"},"why":{"type":"string"},"background":{"type":"string"}}}]},
+              "references":{"type":"array","items":{"type":"object","properties":{"kind":{"type":"string","enum":["file","screenshot","note","url","library"]},"path_or_url":{"type":"string"},"why":{"type":"string"}},"required":["kind","path_or_url","why"]}},
+              "scope":{"type":"object","properties":{"in":{"type":"array","items":{"type":"string"}},"out":{"type":"array","items":{"type":"string"}}}},
+              "non_goals":{"type":"array","items":{"type":"string"}},"rules":{"type":"array","items":{"type":"string"}},"checklist":{"type":"array","items":{"type":"string"}},
+              "acceptance":{"type":"array","minItems":1,"items":{"type":"object","properties":{"criterion":{"type":"string"},"check":{"type":"string","description":"Named test/command, screenshot, Playwright snapshot or side-by-side crop; never just works"}},"required":["criterion","check"]}},
+              "repro":{"type":"object","description":"Required for bugfix","properties":{"steps":{"type":"array","items":{"type":"string"}},"current":{"type":"string"},"expected":{"type":"string"},"unchanged":{"type":"string"}}},
+              "assumptions":{"type":"array","items":{"type":"string"}},"open_questions":{"type":"array","items":{"type":"object","properties":{"question":{"type":"string"},"blocking":{"type":"boolean"}},"required":["question","blocking"]}},
+              "gate":{"type":"string","default":"Do not push or merge until every acceptance check passes."},"report_back":{"type":"string"},"brief_version":{"type":"integer","default":1}
+            },"required":["goal","context","acceptance","report_back"]}
+            """)!.AsObject();
+        if (light) schema["required"] = new System.Text.Json.Nodes.JsonArray("goal", "report_back");
+        return JsonSerializer.SerializeToElement(schema);
     }
 
     private static Dictionary<string, object> Schema(Field field)

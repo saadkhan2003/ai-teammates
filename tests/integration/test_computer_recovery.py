@@ -163,3 +163,52 @@ def _conversation(client, bot_id: str) -> str:
     status, workspace = client.call("GET", f"/api/bots/{bot_id}/workspace")
     assert status == 200, workspace
     return workspace["conversationId"]
+
+
+def test_removed_stopped_computer_stays_stopped_until_asked(bot_factory):
+    """Removing a stopped computer's container must not bring it back as running."""
+    import uuid
+    from test_acceptance import Client, _psql, worker_call
+    from test_bot_messaging import _cleanup
+
+    username = "stopped-missing-" + uuid.uuid4().hex[:12]
+    password = "unit-stack-password-123"
+    worker_call("POST", "/internal/test/users", {"username": username, "password": password})
+    client = Client()
+    assert client.call("POST", "/api/auth/login", {"username": username, "password": password})[0] == 200
+    bot = bot_factory(client, "Stopped missing sentinel")
+    _cleanup(client, bot)
+    status, stopped = client.call("GET", "/api/computer")
+    assert status == 200 and stopped["status"] == "stopped", stopped
+    computer_id = stopped["computerId"]
+    name = _container(computer_id)
+    try:
+        _docker("rm", "-f", name)
+        # Reads and several housekeeping passes must not rebuild it.
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            status, computer = client.call("GET", "/api/computer")
+            assert status == 200 and computer["status"] == "stopped", computer
+            assert _state(name) == "missing", _state(name)
+            time.sleep(1)
+        assert _psql(f"SELECT status FROM user_computers WHERE computer_id='{computer_id}'") == "stopped"
+
+        # A stop that lands while an owner-requested rebuild runs wins.
+        client.call("POST", "/api/computer/restart", {})
+        status, stopping = client.call("POST", "/api/computer/stop", {})
+        assert status == 200 and stopping["status"] in ("stopped", "stopping"), stopping
+        deadline = time.time() + 120
+        while time.time() < deadline and (_state(name) == "running" or _psql(f"SELECT status FROM user_computers WHERE computer_id='{computer_id}'") != "stopped"):
+            time.sleep(1)
+        assert _state(name) != "running", _state(name)
+        assert _psql(f"SELECT status FROM user_computers WHERE computer_id='{computer_id}'") == "stopped"
+
+        # An explicit request from the owner may rebuild it.
+        _bring_up(client, name)
+        assert _psql(f"SELECT status FROM user_computers WHERE computer_id='{computer_id}'") in {"running", "recovering"}
+    finally:
+        # The rebuild may still hold the lifecycle gate; stop once it lets go.
+        deadline = time.time() + 90
+        while time.time() < deadline and client.call("POST", "/api/computer/stop", {})[0] not in (200, 204):
+            time.sleep(1)
+        subprocess.run(["sudo", "docker", "rm", "-f", name], capture_output=True)

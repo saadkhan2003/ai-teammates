@@ -11,6 +11,7 @@ import { ChatPane } from "@/components/chat-pane";
 import { LoginCard } from "@/components/login-card";
 import { FilesPane } from "@/components/files-pane";
 import { MemoryPane } from "@/components/memory-pane";
+import { LearnedSection } from "@/components/learned-section";
 import { CodingSection } from "@/components/coding-section";
 import { RoutinesSection } from "@/components/routines-section";
 import { SkillsPane } from "@/components/skills-pane";
@@ -357,6 +358,7 @@ export function Workspace({ botId }: { botId: string }) {
           </p>
         ) : null}
         <ChatPane
+          onOpenTask={() => { setDetailTab("tasks"); setPaneRaw(true); }}
           onEditMemory={(id) => { setMemoryFocusId(id); setDetailTab("memory"); setPaneRaw(true); }}
           onMemoryChanged={() => void loadAux(["memories"])}
           editRequest={routineEditRequest}
@@ -529,6 +531,7 @@ export function Workspace({ botId }: { botId: string }) {
                 onEdit={(text) => setRoutineEditRequest((current) => ({ key: (current?.key ?? 0) + 1, text }))}
               />
               <CodingSection botId={botId} />
+              <LearnedSection key={botId} botId={botId} onOpenMessage={() => { if (!window.matchMedia("(min-width: 768px)").matches) setPane(false); }} />
               <section data-testid="channels" className="border-b border-border px-3 py-3">
                 <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Channels</h2>
                 <p className="mt-2 text-sm text-muted-foreground">No channels. Group chats will list them here.</p>

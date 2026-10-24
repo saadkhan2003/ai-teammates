@@ -59,6 +59,12 @@ public static class MemoryGuard
         return null;
     }
 
+    public static string? CheckLearned(string content, string source)
+    {
+        if (UnsafeRule.IsMatch(content)) return "unsafe_rule";
+        return Check(content, "journal", source, false, false, false, "agent", 400);
+    }
+
     public static bool Grounded(string note, string source)
     {
         var words = Words(DateAnchor.Replace(note, ""));
@@ -96,7 +102,7 @@ public static class MemoryRuleScope
         System.Text.RegularExpressions.Regex.IsMatch(scope, @"^connector:[a-zA-Z0-9_.:-]{1,120}$");
 }
 
-public sealed class MemoryStore(Platform platform)
+public sealed partial class MemoryStore(Platform platform)
 {
     public static string Normalize(string content)
     {
@@ -246,7 +252,7 @@ public sealed class MemoryStore(Platform platform)
             return new { matches = Array.Empty<object>() };
         var rows = (await conn.QueryAsync("""
             SELECT id, content, kind, created_at AS date, visibility, author FROM memories
-            WHERE owner_id=@owner AND (bot_id=@bot OR visibility='owner') AND status='active' AND deleted_at IS NULL
+            WHERE owner_id=@owner AND (bot_id=@bot OR (visibility='owner' AND learned_kind IS NULL)) AND status='active' AND deleted_at IS NULL
               AND (@kind IS NULL OR kind=@kind) AND (NOT @peer OR kind='rule')
               AND (conversation_id IS NULL OR conversation_id=@conversation)
               AND to_tsvector('english', coalesce(content,'')) @@ plainto_tsquery('english', @query)

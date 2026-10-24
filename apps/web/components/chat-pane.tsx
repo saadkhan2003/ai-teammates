@@ -48,9 +48,11 @@ export function ChatPane({
   editRequest,
   onEditMemory,
   onMemoryChanged,
+  onOpenTask,
 }: {
   onEditMemory?: (id: string) => void;
   onMemoryChanged?: () => void;
+  onOpenTask?: (taskId: string) => void;
   editRequest?: { key: number; text: string };
   botId?: string;
   avatar?: { shape?: string; color?: string; primary?: boolean };
@@ -433,6 +435,7 @@ export function ChatPane({
                 onChanged={onSent}
                 announce={announce}
                 focusSibling={focusSibling}
+                onOpenTask={onOpenTask}
               >
                 <MessageBody
                   message={message}

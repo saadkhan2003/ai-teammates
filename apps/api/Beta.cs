@@ -244,6 +244,10 @@ public static class Beta
             }
             catch (ComputeException ex)
             {
+                // A stopped computer whose container is gone stays stopped; it is rebuilt only when asked for.
+                if (ex.Code == ComputeErrorCode.NotFound
+                    && await conn.ExecuteScalarAsync<string>("SELECT status FROM user_computers WHERE user_id=@id", new { id = user }) == "stopped")
+                    return Results.Json(new { status = "stopped", computerId = id, missing = true });
                 return Results.Json(new { status = "unknown", computerId = id, error = ex.Code.ToString() });
             }
         });
@@ -259,11 +263,25 @@ public static class Beta
             // must never interrupt another bot or a task that can wake it again.
             if (await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM bots WHERE owner_id=@user)", new { user }))
                 return Results.Conflict(new { error = "computer_in_use" });
-            var computer = await platform.Compute.StopComputerAsync(new ComputerId(id.Value.ToString()),
-                new StopOptions(false, TimeSpan.FromSeconds(10)), IdempotencyKey.Require("stop-" + Guid.NewGuid().ToString("n")), ct);
+            // Mark it stopped first so a missing container is never rebuilt by the stop itself.
             await conn.ExecuteAsync("UPDATE user_computers SET status='stopped' WHERE user_id=@user AND computer_id=@id", new { user, id });
+            string state;
+            try
+            {
+                var computer = await platform.Compute.StopComputerAsync(new ComputerId(id.Value.ToString()),
+                    new StopOptions(false, TimeSpan.FromSeconds(10)), IdempotencyKey.Require("stop-" + Guid.NewGuid().ToString("n")), ct);
+                state = computer.State.ToString().ToLowerInvariant();
+            }
+            catch (ComputeException ex) when (ex.Code == ComputeErrorCode.NotFound)
+            {
+                state = "stopped"; // the container is already gone
+            }
+            catch (ComputeException ex) when (ex.Code == ComputeErrorCode.Conflict && platform.Compute.IsComputerRestoring(new ComputerId(id.Value.ToString())))
+            {
+                state = "stopping"; // the rebuild finishes, sees the stop and puts it back to sleep
+            }
             await platform.Audit(user.Value.ToString(), "computer.stopped", null, null, new { computerId = id });
-            return Results.Json(new { ok = true, status = computer.State.ToString().ToLowerInvariant() });
+            return Results.Json(new { ok = true, status = state });
         });
 
         app.MapPost("/api/computer/restart", async (HttpContext ctx, CancellationToken ct) =>
@@ -272,6 +290,7 @@ public static class Beta
             if (user == null) return Results.Unauthorized();
             var id = await Computer(platform, user.Value);
             if (id == null) return Results.NotFound();
+            await using (var wanted = await platform.Data.OpenConnectionAsync(ct)) await Platform.WantComputer(wanted, user.Value);
             var computer = await platform.Compute.RestartComputerAsync(new ComputerId(id.Value.ToString()), IdempotencyKey.Require("restart-" + Guid.NewGuid().ToString("n")), ct);
             return Results.Json(new { ok = true, status = computer.State.ToString().ToLowerInvariant() });
         });
@@ -283,6 +302,7 @@ public static class Beta
             var id = await Computer(platform, user.Value);
             if (id == null) return Results.NotFound();
             await using var conn = await platform.Data.OpenConnectionAsync(ct);
+            await Platform.WantComputer(conn, user.Value);
             var name = await conn.ExecuteScalarAsync<string>(
                 "SELECT b.name FROM bots b JOIN user_computers c ON c.desktop_bot_id = b.id WHERE c.user_id=@id",
                 new { id = user });

@@ -35,6 +35,19 @@ def _plan(messages: list) -> dict:
     transcript = [item for item in messages or [] if isinstance(item, dict)]
     if transcript and _content_text(transcript[-1].get("content")).startswith("[compaction-summary-request]"):
         return _final(json.dumps(_compaction_summary(transcript), ensure_ascii=False, sort_keys=True))
+    if any("[approval-preference-extraction]" in _content_text(m.get("content")) for m in transcript if m.get("role") == "system"):
+        try:
+            data = json.loads(_first_user(transcript))
+            fallback = data["fallback"]
+            return _final(json.dumps({"kind": fallback["Kind"], "text": fallback["Text"]}, ensure_ascii=False))
+        except (ValueError, KeyError, TypeError):
+            return _final("{}")
+    if _first_user(transcript).startswith("[brief-quality-review]"):
+        return _final(json.dumps({"warnings": ["Include evidence paths in the report."]}))
+    if "BRIEF_TEST" in _first_user(transcript):
+        return _brief_plan(transcript)
+    if "BRIEF_CHILD_FAIL" in _first_user(transcript):
+        return _final(NO_PLAN)
     long_run = re.search(r"LONG RUN DEMO\s+(\d+)", _first_user(transcript), re.IGNORECASE)
     if long_run:
         return _long_run_plan(transcript, min(500, int(long_run.group(1))))
@@ -766,3 +779,28 @@ def _final(text: str) -> dict:
         ],
         "usage": {"prompt_tokens": 12, "completion_tokens": 8},
     }
+
+
+def _brief_plan(messages: list) -> dict:
+    """Explicit integration trigger: malformed brief -> actionable error -> repaired brief."""
+    results = [m for m in messages if m.get("role") == "tool"]
+    # The fixture repo is created through bot-confined tools (write_file + run_tests),
+    # not the shared desktop shell, so it always lands in this bot's own workspace.
+    if not results:
+        return _tool("write_file", {"path": "/workspace/brief-test-repo/package.json", "content": '{"name": "brief-test-repo", "private": true, "scripts": {"test": "git init -q . && git -c user.name=Fixture -c user.email=fixture@example.test commit -q --allow-empty -m fixture"}}'})
+    if len(results) == 1:
+        return _tool("run_tests", {"runner": "npm", "repo": "brief-test-repo"})
+    prior = [m for m in results if _tool_name(m, messages) == "spawn_child_task"]
+    if not prior:
+        return _tool("spawn_child_task", {"title": "Brief integration child", "repo": "brief-test-repo", "brief": {"goal": "Implement the requested feature."}})
+    last = str(prior[-1].get("content") or "")
+    if "brief_rejected" in last or "brief_needs_rewrite" in last:
+        return _tool("spawn_child_task", {"title": "Brief integration child", "repo": "brief-test-repo", "brief": {
+            "goal": "BRIEF_CHILD_FAIL: produce the requested fixture result with verifiable test evidence.", "kind": "feature", "priority": "high", "effort": "small",
+            "context": "The user asked for BRIEF_TEST; they need confidence that rejected briefs can be repaired before any child starts.",
+            "references": [{"kind": "file", "path_or_url": "/workspace/brief-test-repo", "why": "Use the isolated fixture repository."}],
+            "scope": {"in": ["brief-test-repo"], "out": ["Other bot workspaces"]}, "non_goals": ["Do not merge or push."],
+            "rules": ["Preserve ownership and DLP; return only fixture evidence."], "checklist": ["Check the fixture output and failure path."],
+            "acceptance": [{"criterion": "A fixture result is produced once in the child worktree.", "check": "Inspect the fixture report path and compare expected output."}],
+            "gate": "Do not push or merge until all acceptance checks pass.", "report_back": "Return evidence paths, test pass/fail/skip counts and commit SHA."}})
+    return _final("The structured brief is ready and linked to the child task.")

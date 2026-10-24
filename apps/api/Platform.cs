@@ -140,6 +140,10 @@ public sealed class Platform
         "040_tickets_state.sql",
         "041_skill_library.sql",
         "042_video_analyses.sql",
+        // 043–046 reserved for sibling programs; explicit manifest supports gaps.
+        "047_task_briefs.sql",
+        "048_brief_lessons.sql",
+        "049_approval_signals.sql",
     ];
 
     private async Task MigrateAndSeedLocked(string ownerUser, string ownerPassword)
@@ -463,7 +467,10 @@ public sealed class Platform
     {
         if (!Guid.TryParse(id.Value, out var computerId)) return false;
         await using var conn = await Data.OpenConnectionAsync(ct);
-        var owner = await conn.ExecuteScalarAsync<Guid?>("SELECT user_id FROM user_computers WHERE computer_id=@id", new { id = computerId });
+        // Only a computer that is meant to be running is rebuilt. A stopped
+        // computer whose container disappeared stays stopped until its owner
+        // or one of their bots asks for it again.
+        var owner = await ClaimComputerRecovery(conn, computerId);
         if (owner == null) return false;
         var name = await conn.ExecuteScalarAsync<string>(
             """
@@ -472,10 +479,19 @@ public sealed class Platform
             WHERE c.computer_id = @id
             """,
             new { id = computerId });
-        await conn.ExecuteAsync("UPDATE user_computers SET status='recovering' WHERE computer_id=@id", new { id = computerId });
         _ = ObserveRestore(Compute.RestoreComputerAsync(id, owner.Value.ToString(), null, false, name, CancellationToken.None));
         return true;
     }
+
+    /// <summary>Marks a wanted computer as recovering and returns its owner, or null when nobody asked for it to run.</summary>
+    public static Task<Guid?> ClaimComputerRecovery(NpgsqlConnection conn, Guid computerId) =>
+        conn.ExecuteScalarAsync<Guid?>(
+            "UPDATE user_computers SET status='recovering' WHERE computer_id=@id AND status IN ('running','recovering') RETURNING user_id",
+            new { id = computerId });
+
+    /// <summary>An explicit request from the owner or a new bot: the computer may run (and be rebuilt) again.</summary>
+    public static Task<int> WantComputer(NpgsqlConnection conn, Guid user) =>
+        conn.ExecuteAsync("UPDATE user_computers SET status='running' WHERE user_id=@user AND status='stopped'", new { user });
 
     public async Task ResumeRecoveringTasks(ComputerId id)
     {
@@ -498,8 +514,36 @@ public sealed class Platform
               )
             """,
             new { id = computerId });
-        await conn.ExecuteAsync("UPDATE user_computers SET status='running' WHERE computer_id=@id", new { id = computerId });
+        // Only a rebuild that is still wanted becomes running. When the owner
+        // stopped it while it was being rebuilt, put it back to sleep.
+        if (await FinishComputerRecovery(conn, computerId) == "stopped")
+            _ = StopAfterRestore(id);
         if (resumed > 0) Tasks.Pulse();
+    }
+
+    /// <summary>Flips a recovering computer to running and returns the resulting status (null when there is no row).</summary>
+    public static Task<string?> FinishComputerRecovery(NpgsqlConnection conn, Guid computerId) =>
+        conn.ExecuteScalarAsync<string?>(
+            """
+            WITH done AS (UPDATE user_computers SET status='running' WHERE computer_id=@id AND status='recovering' RETURNING status)
+            SELECT COALESCE((SELECT status FROM done), (SELECT status FROM user_computers WHERE computer_id=@id))
+            """,
+            new { id = computerId });
+
+    private async Task StopAfterRestore(ComputerId id)
+    {
+        // The restore still holds the lifecycle gate while this callback runs.
+        for (var attempt = 0; attempt < 30; attempt++)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(1));
+            try
+            {
+                await Compute.StopComputerAsync(id, new StopOptions(false, TimeSpan.FromSeconds(10)), IdempotencyKey.Require("stop-restored-" + Guid.NewGuid().ToString("n")), CancellationToken.None);
+                return;
+            }
+            catch (ComputeException ex) when (ex.Code == ComputeErrorCode.Conflict) { }
+            catch (Exception) { return; }
+        }
     }
 
     private static async Task ObserveRestore(Task restore)

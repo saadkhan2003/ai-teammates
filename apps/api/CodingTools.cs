@@ -20,7 +20,8 @@ public static class CodingTools
     {
         var repo = Repo(Arg(args, "repo"));
         if (repo == null) throw new ToolHalt("invalid", "repo must be a relative workspace path without '..'");
-        var root = repo == "." ? "/workspace" : "/workspace/" + repo;
+        // Confined argv is not path-rewritten, so tools must use the bot's real root (same as spawn_child_task).
+        var root = BotFs.Root(botId) + (repo == "." ? "" : "/" + repo);
         switch (tool)
         {
             case "plan_set":
@@ -76,9 +77,11 @@ public static class CodingTools
             case "spawn_child_task":
             {
                 var title = Arg(args, "title").Trim();
-                var instruction = Arg(args, "instruction").Trim();
+                var prepared = await BriefStore.Prepare(platform, botId, taskId, args, false, ct);
+                if (prepared.Error is not null) return prepared.Error;
+                var instruction = prepared.Value!.Markdown;
                 var branch = Arg(args, "branch");
-                if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(instruction)) throw new ToolHalt("invalid", "title and instruction are required");
+                if (string.IsNullOrWhiteSpace(title)) throw new ToolHalt("invalid", "title is required");
                 if (branch.Length > 0 && (!System.Text.RegularExpressions.Regex.IsMatch(branch, @"^[A-Za-z0-9_./-]+$") || branch.Split('/').Contains(".."))) throw new ToolHalt("invalid", "branch is invalid");
                 await using var conn = await platform.Data.OpenConnectionAsync(ct);
                 var parent = await conn.QuerySingleAsync<(int Depth, Guid Bot, Guid? Parent)>("SELECT coalesce((SELECT 1 FROM tasks p WHERE p.id=t.parent_task_id),0)::int,b.id,t.parent_task_id FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE t.id=@task", new { task = taskId });
@@ -89,12 +92,19 @@ public static class CodingTools
                 var worktree = ChildTaskPolicy.Worktree(repo, childId.ToString("N"));
                 var worktreePath = worktree.StartsWith("./", StringComparison.Ordinal) ? worktree[2..] : worktree;
                 branch = branch.Length == 0 ? ChildTaskPolicy.Branch(childId.ToString("N")) : branch;
-                var worktreeResult = await run(["git", "-C", root, "worktree", "add", worktreePath, "-b", branch]);
+                var childRepoRoot = BotFs.Root(botId) + (repo == "." ? "" : "/" + repo);
+                var worktreeResult = await run(["git", "-C", childRepoRoot, "worktree", "add", BotFs.Root(botId) + "/" + worktreePath, "-b", branch]);
                 if (worktreeResult.Code != 0) return new { ok = false, error = OutputRedactor.Redact(worktreeResult.Stderr) };
                 var childInstruction = $"Work only inside /workspace/{worktreePath}. Commit there. Do not touch other directories.\n\n{instruction}";
-                await conn.ExecuteAsync("INSERT INTO tasks(id,bot_id,title,instruction,kind,status,parent_task_id,worktree_path,conversation_id) SELECT @id,bot_id,@title,@instruction,kind,'queued',@parent,@worktree,conversation_id FROM tasks WHERE id=@parent", new { id = childId, parent = taskId, title, instruction = childInstruction, worktree = worktreePath });
+                await using var tx = await conn.BeginTransactionAsync(ct);
+                await conn.ExecuteAsync("INSERT INTO tasks(id,bot_id,title,instruction,kind,status,parent_task_id,worktree_path,conversation_id) SELECT @id,bot_id,@title,@instruction,'work','queued',@parent,@worktree,conversation_id FROM tasks WHERE id=@parent", new { id = childId, parent = taskId, title, instruction = childInstruction, worktree = worktreePath }, tx);
+                await BriefStore.Save(conn, tx, childId, botId, taskId, prepared.Value);
+                await conn.ExecuteAsync("INSERT INTO messages(conversation_id,role,content,task_id) SELECT conversation_id,'assistant',@text,@parent FROM tasks WHERE id=@parent AND conversation_id IS NOT NULL", new { parent = taskId, text = "Prepared brief: " + title }, tx);
+                await tx.CommitAsync(ct);
+                await platform.Audit("agent", "brief.created", botId, childId, new { parentTaskId = taskId, version = 1, score = prepared.Value.Quality.Score });
+                await platform.Publish(new { type = "task", taskId = childId, botId });
                 platform.Tasks.Pulse();
-                return new { taskId = childId, worktree = worktreePath, branch };
+                return new { taskId = childId, worktree = worktreePath, branch, hasBrief = true, briefVersion = 1, quality = prepared.Value.Quality };
             }
             case "child_status":
             {

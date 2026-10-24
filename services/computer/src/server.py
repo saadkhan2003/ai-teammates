@@ -462,7 +462,10 @@ async def _start_recording(bot_id: str, body: dict, display: int):
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail="maxSeconds must be between 1 and 600") from exc
     workspace_bot_id = str(body.get("botId") or bot_id)
-    uid, root, home = workspace.prepare(workspace_bot_id)
+    try:
+        uid, root, home = workspace.prepare(workspace_bot_id)
+    except workspace.WorkspaceDeleted as exc:
+        raise HTTPException(status_code=410, detail="workspace_deleted") from exc
     recordings_dir = root / "recordings"
     recordings_dir.mkdir(parents=True, exist_ok=True)
     os.chown(recordings_dir, uid, uid)
@@ -672,6 +675,8 @@ async def teach_stop(bot_id: str, body: dict, _: None = Depends(require_token)):
         return FileResponse(video, media_type="video/mp4", filename="demo.mp4",
                             headers={"X-Teach-Session": session["id"], "X-Teach-Metadata": metadata,
                                      "X-Teach-Path": recording_path})
+    except workspace.WorkspaceDeleted as exc:
+        raise HTTPException(status_code=410, detail="workspace_deleted") from exc
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="recording session not found") from exc
     except RuntimeError as exc:
@@ -800,9 +805,25 @@ async def get_cookies(bot_id: str, _: None = Depends(require_token)):
 async def shell(bot_id: str, body: dict, _: None = Depends(require_token)):
     actor_id, epoch = await agent_allowed(bot_id, body, "shell")
     command, timeout = _shell_request(body, 30)
+    owner = _workspace_bot(bot_id, body)
     result = await _fence(bot_id).run_effect("shell", actor_id, epoch,
-        run_command(bot_id, command, None, timeout, []))
+        run_command(owner, command, None, timeout, []))
     return {"code": "DESKTOP_BUSY", "status": result.value} if isinstance(result, ActionOutcome) else result
+
+
+def _workspace_bot(bot_id: str, body: dict) -> str:
+    """The bot whose folder a shell command runs in. A shared per-owner desktop is
+    addressed by its desktop bot, but each caller's files stay in its own folder."""
+    raw = body.get("workspace_bot_id", body.get("workspaceBotId"))
+    if raw is None:
+        return bot_id
+    if not isinstance(raw, str):
+        raise HTTPException(status_code=400, detail="invalid workspace bot")
+    try:
+        workspace.safe_id(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid workspace bot") from exc
+    return raw
 
 
 def _shell_request(body: dict, default_timeout: int) -> tuple[str, int]:
@@ -823,15 +844,17 @@ async def setup_env(bot_id: str, body: dict, _: None = Depends(require_token)):
         raise HTTPException(status_code=400, detail="invalid environment")
     if any(not isinstance(k, str) or not k or len(k) > 128 or not isinstance(v, str) or len(v) > 65536 for k, v in raw_env.items()):
         raise HTTPException(status_code=400, detail="invalid environment")
+    owner = _workspace_bot(bot_id, body)
     env = dict(raw_env)
     values = list(env.values())
     try:
         result = await _fence(bot_id).run_effect("shell", actor_id, epoch,
-            run_command(bot_id, command, env, timeout, values))
+            run_command(owner, command, env, timeout, values))
         return {"code": "DESKTOP_BUSY", "status": result.value} if isinstance(result, ActionOutcome) else result
     finally:
         try:
-            scrub_tree(values, workspace.root_for(bot_id))
+            if not workspace.is_deleted(owner):
+                scrub_tree(values, workspace.root_for(owner))
         except ValueError:
             pass
         env.clear()
@@ -843,6 +866,7 @@ async def ssh_key(bot_id: str, body: dict, _: None = Depends(require_token)):
     actor_id, epoch = await agent_allowed(bot_id, body, "shell")
     material = str(body.get("material") or "")
     command, timeout = _shell_request(body, 20)
+    owner = _workspace_bot(bot_id, body)
     if len(material) > 65536:
         raise HTTPException(status_code=400, detail="invalid key material")
     key_path = Path("/run/desk/keys") / f"{bot_id}-{int(time.time())}.key"
@@ -854,7 +878,7 @@ async def ssh_key(bot_id: str, body: dict, _: None = Depends(require_token)):
         if material and material in command:
             return {"exitCode": 126, "stdout": "", "stderr": "command contains a resolved secret", "rejected": True}
         result = await _fence(bot_id).run_effect("shell", actor_id, epoch, run_command(
-            bot_id,
+            owner,
             command,
             {"GIT_SSH_COMMAND": f"ssh -i {key_path} -o IdentitiesOnly=yes"},
             timeout,
@@ -885,6 +909,8 @@ async def human_input(bot_id: str, body: dict, _: None = Depends(require_token))
 def _as_bot(bot_id: str, fn):
     try:
         uid, root, _home = workspace.prepare(bot_id)
+    except workspace.WorkspaceDeleted as exc:
+        raise HTTPException(status_code=410, detail="workspace_deleted") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="bad bot id") from exc
 
