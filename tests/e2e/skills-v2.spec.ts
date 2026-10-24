@@ -50,7 +50,7 @@ test("owner can view, review, revert, and archive guide skills in the bot Skills
     await screenshot(page, "skills-pane-history", "light");
     await screenshot(page, "skills-pane-history", "dark");
     await dialog.getByRole("button", { name: "Revert" }).click();
-    await expect(dialog.getByRole("heading", { name: /Daily review · v3/ })).toBeVisible();
+    await expect(dialog.getByRole("heading", { name: /Daily review, version 3/ })).toBeVisible();
     await screenshot(page, "skills-pane-reverted", "dark");
     await screenshot(page, "skills-pane-reverted", "light");
     await page.keyboard.press("Escape");

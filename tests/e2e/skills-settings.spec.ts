@@ -66,9 +66,9 @@ test("owner manages the shared Skills library in both themes", async ({ page }) 
     await page.getByTestId("skill-body").fill("# Review the queue\n\n- Check two queues\n- Note exceptions");
     await page.getByTestId("skill-save").click();
     await expect(page.getByTestId("skill-detail").locator("article").getByText("Check two queues")).toBeVisible();
-    await expect(page.getByTestId("skill-detail").getByText("Version 2")).toBeVisible();
-    await expect(page.getByTestId("skill-detail").getByText("Version 1")).toBeVisible();
-    await expect(page.getByTestId("skill-detail").getByText("Version 0")).toHaveCount(0);
+    await expect(page.getByTestId("skill-detail").getByText("Version 2", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("skill-detail").getByText("Version 1", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("skill-detail").getByText("Version 0", { exact: true })).toHaveCount(0);
     await page.getByTestId("skill-delete").click();
     await expect(page.getByTestId("skill-delete-dialog")).toBeVisible();
     await screenshot(page, "skills-delete-dialog", "light");
