@@ -876,6 +876,7 @@ public sealed partial class DockerComputeProvider : IComputeProvider, IDesktopSe
         request.Content = new StringContent(json, Encoding.UTF8, "application/json");
         using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         if ((int)response.StatusCode == 409) throw ComputeException.Conflict("computer control conflict");
+        if ((int)response.StatusCode == 403) throw ComputeException.FailedPrecondition(ComputeException.ControlRefusedMessage);
         if (!response.IsSuccessStatusCode) throw ComputeException.FailedPrecondition("computer control rejected the call");
         await using var input = await response.Content.ReadAsStreamAsync(ct);
         using var output = new MemoryStream();
@@ -911,6 +912,7 @@ public sealed partial class DockerComputeProvider : IComputeProvider, IDesktopSe
                 if (response.IsSuccessStatusCode) return text;
                 var status = (int)response.StatusCode;
                 if (status == 409) throw ComputeException.Conflict("computer control conflict");
+                if (status == 403) throw ComputeException.FailedPrecondition(ComputeException.ControlRefusedMessage);
                 if (status is 404 or 500 or 503 && DateTimeOffset.UtcNow < deadline)
                 {
                     await Task.Delay(300, ct);

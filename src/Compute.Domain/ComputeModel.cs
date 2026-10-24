@@ -82,6 +82,9 @@ public sealed class ComputeException : Exception
     public static ComputeException NotFound(string message) => new(ComputeErrorCode.NotFound, message);
     public static ComputeException AlreadyExists(string message) => new(ComputeErrorCode.AlreadyExists, message);
     public static ComputeException InvalidArgument(string message) => new(ComputeErrorCode.InvalidArgument, message);
+    /// <summary>The computer answered 403: the caller's control (holder, epoch or token) is not accepted.</summary>
+    public const string ControlRefusedMessage = "computer control refused the caller";
+    public bool IsControlRefused => Code == ComputeErrorCode.FailedPrecondition && Message == ControlRefusedMessage;
     public static ComputeException FailedPrecondition(string message) => new(ComputeErrorCode.FailedPrecondition, message);
     public static ComputeException Conflict(string message) => new(ComputeErrorCode.Conflict, message);
     public static ComputeException IdempotencyConflict(string message) => new(ComputeErrorCode.IdempotencyConflict, message);

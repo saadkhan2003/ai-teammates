@@ -810,8 +810,16 @@ public static class Routes
             if (!DesktopLeaseRepository.IsActiveFor(lease, user.Value, tabId, epoch, dbNow)) return Results.Json(new { error = "human control is not held" }, statusCode: 403);
             var selector = body.TryGetProperty("selector", out var sel) ? sel.GetString() : "#human-check";
             var target = body.TryGetProperty("targetId", out var tid) ? tid.GetString() : "";
-            var json = await platform.Compute.ControlAsync(placement.Computer, $"/desktops/{placement.Desktop}/human-input", JsonSerializer.Serialize(new { selector, targetId = target, epoch }), ct);
-            return Results.Text(json, "application/json");
+            try
+            {
+                var json = await platform.Compute.ControlAsync(placement.Computer, $"/desktops/{placement.Desktop}/human-input", JsonSerializer.Serialize(new { selector, targetId = target, epoch }), ct);
+                return Results.Text(json, "application/json");
+            }
+            catch (ComputeException ex) when (HumanInputErrors.LostControl(ex))
+            {
+                // The computer no longer has this tab as its human holder (restart, hand-back, newer epoch).
+                return Results.Json(new { error = HumanInputErrors.NotHeld }, statusCode: 409);
+            }
         });
 
         app.MapGet("/api/bots/{id:guid}/files", async (HttpContext ctx, Guid id, string? path, CancellationToken ct) =>
