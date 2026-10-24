@@ -17,10 +17,11 @@ test('grid headers expose columnheader roles and cycle aria-sort none to ascendi
 
 test('numeric table columns align and format values with locale separators', () => {
   const rows = [['2,400', 'North'], ['12500', 'South'], ['0', 'West']];
-  assert.equal(isNumericColumn(rows.map(row => [row[0].replaceAll(',', ''), row[1]]), 0), true);
+  assert.equal(isNumericColumn(rows, 0), true);
   assert.equal(isNumericColumn(rows, 1), false);
   assert.equal(isNumericColumn([['2'], ['']], 0), true);
   assert.equal(formatPageNumber(2400), '2,400');
+  assert.equal(formatPageNumber('2,400'), '2,400');
   const source = rendererBundle();
   assert.match(rendererCss, /th\.numeric,td\.numeric\{text-align:right;font-variant-numeric:tabular-nums/);
 });

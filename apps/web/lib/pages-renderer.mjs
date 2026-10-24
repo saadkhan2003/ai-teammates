@@ -129,7 +129,7 @@ export function runRenderer() {
         function draw() {
           const filtered = rows.filter(row => row.join(" ").toLowerCase().includes(query.toLowerCase()));
           if (sort >= 0) filtered.sort((a, b) => (numeric[sort] ? Number(a[sort].replace(/,(?=\d{3}(?:\D|$))/g, "")) - Number(b[sort].replace(/,(?=\d{3}(?:\D|$))/g, "")) : a[sort].localeCompare(b[sort], undefined, { numeric: true })) * (ascending ? 1 : -1));
-          body.replaceChildren(); filtered.forEach(row => { const tr = el("tr"); row.forEach((cell, index) => { const td = el("td", numeric[index] && cell.trim() ? formatPageNumber(Number(cell)) : cell); if (numeric[index]) td.classList.add("numeric"); tr.append(td); }); body.append(tr); });
+          body.replaceChildren(); filtered.forEach(row => { const tr = el("tr"); row.forEach((cell, index) => { const td = el("td", numeric[index] && cell.trim() ? formatPageNumber(cell) : cell); if (numeric[index]) td.classList.add("numeric"); tr.append(td); }); body.append(tr); });
           if (!filtered.length) { const tr = el("tr"), td = el("td", "No matching rows"); td.colSpan = Math.max(1, columns.length); tr.append(td); body.append(tr); }
         }
         if (item.type === "grid") { const filter = el("input"); filter.placeholder = "Filter rows"; filter.setAttribute("aria-label", "Filter rows"); filter.addEventListener("input", () => { query = filter.value; draw(); }); section.append(filter); }
@@ -170,7 +170,7 @@ export function runRenderer() {
       case "chart": {
         const rows = (Array.isArray(item.data) ? item.data : []).slice(0, 100).filter(row => row && Number.isFinite(row.value)).map(row => ({ label: String(row.label || ""), value: Math.max(0, Math.min(1e12, row.value)) }));
         const total = rows.reduce((sum, row) => sum + row.value, 0), max = Math.max(1, ...rows.map(row => row.value)), slotWidth = 76, chartWidth = Math.max(600, rows.length * slotWidth);
-        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); svg.setAttribute("viewBox", `0 0 ${chartWidth} 270`); svg.setAttribute("role", "img"); svg.setAttribute("aria-label", String(item.title || "Chart"));
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); svg.setAttribute("viewBox", `0 0 ${chartWidth} 270`); svg.setAttribute("width", String(chartWidth)); svg.setAttribute("height", "270"); svg.setAttribute("role", "img"); svg.setAttribute("aria-label", String(item.title || "Chart"));
         const colors = ["#4d8dff", "#6ec9a8", "#b49aff", "#f3b76c"];
         let angle = -Math.PI / 2;
         if (item.chart === "bar") {
