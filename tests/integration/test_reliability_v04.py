@@ -99,10 +99,15 @@ def test_unused_computer_stop_requires_owner_session_and_refuses_live_bots(bot_f
 
 def test_desktop_reconciliation_does_not_wake_a_stopped_unused_computer(bot_factory):
     active = login()
-    bot_factory(active, 'Active reconciliation sentinel')
+    sentinel = bot_factory(active, 'Active reconciliation sentinel')
     status, active_computer = active.call('GET', '/api/computer')
     assert status == 200
     active_id = str(uuid.UUID(active_computer['computerId']))
+    # Housekeeping only renews agent-held leases. Hand the active desktop to the
+    # agent so this test does not depend on an earlier test having done it.
+    status, handed = active.call('POST', f'/api/computers/{sentinel}/continue', {})
+    assert status == 200, handed
+    assert _psql(f"SELECT holder_kind FROM desktop_lease WHERE computer_id='{active_id}' AND display=1") == 'agent'
 
     username = 'stop-regression-' + uuid.uuid4().hex[:12]
     password = 'unit-stack-password-123'
