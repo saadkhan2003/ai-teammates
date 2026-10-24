@@ -137,6 +137,7 @@ test("chat surfaces follow light, dark, and both system schemes", async ({ page 
   await page.emulateMedia({ colorScheme: "light" });
   await openChat(page, "system", saved);
   await expect(page.locator("html")).toHaveClass(/light/);
+  await page.getByTestId("attachment-card").hover();
   await page.getByTestId("attachment-more").click();
   await expect(page.getByRole("menuitem", { name: "Copy link" })).toBeVisible();
   await shot(page, "system-os-light");

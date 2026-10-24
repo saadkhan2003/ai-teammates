@@ -67,10 +67,12 @@ def test_start_coding_jobs_reports_live_status():
 
 
 def test_thanks_is_reaction_only():
+    assistant = {"role": "assistant", "content": "Done.", "message_id": "bot-1"}
     user = {"role": "user", "content": "thanks!", "message_id": "msg-1"}
-    name, args, result = _call([user])
+    name, args, result = _call([assistant, user])
     assert name == "react_to_message"
     assert args == {"message_id": "msg-1", "emoji": "👍"}
+    assert args["message_id"] != "bot-1"
     assert result["choices"][0]["finish_reason"] == "tool_calls"
     final = plan([user, {"role": "tool", "content": "{\"ok\": true, \"action\": \"added\"}"}])
     message = final["choices"][0]["message"]

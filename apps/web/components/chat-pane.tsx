@@ -3,7 +3,7 @@
 import { FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { Markdown } from "@/components/markdown";
 import type { AgentEvent } from "@/lib/events";
-import { ArrowDown, ArrowUp, AudioLines, Mic, Notebook, Plus } from "lucide-react";
+import { ArrowDown, ArrowUp, AudioLines, MessageSquareQuote, Mic, MoreHorizontal, Notebook, Plus, Reply, Smile } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -18,12 +18,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { CodingJobsCard, JobMention, JobResultCard, LiveJobStep } from "@/components/coding-jobs";
 import { ApiError, api, apiFetch } from "@/lib/api";
-import { liveJob, reactionTooltip, readableAccent, replySnippet, showsJobResult, splitJobMentions, visibleReactions, type CodingJob } from "@/lib/chat-ui";
+import { EXTRA_EMOJIS, liveJob, newMessagesLabel, optionLetter, pickerSide, QUICK_REACTIONS, QUOTE_HIGHLIGHT_MS, quotePlacement, reactionTooltip, readableAccent, replySnippet, showsJobResult, splitJobMentions, visibleReactions, type CodingJob } from "@/lib/chat-ui";
 import { messageBlocks, type FormField, type MessageBlock, type QuestionOption } from "@/lib/message-blocks";
 import type { ChatMessage } from "@/lib/types";
 import { cn, errorMessage, formatWhen } from "@/lib/utils";
-
-const QUICK_REACTIONS = ["👍", "❤️", "🎉", "😂", "✅"];
 
 type PendingUpload = {
   id: string;
@@ -82,6 +80,16 @@ export function ChatPane({
   const [userName, setUserName] = useState("You");
   const [reply, setReply] = useState<ChatMessage | null>(null);
   const [uploads, setUploads] = useState<PendingUpload[]>([]);
+  const [picker, setPicker] = useState<{ id: string; side: "above" | "below"; full: boolean } | null>(null);
+
+  useEffect(() => {
+    if (!picker) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setPicker(null);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [picker]);
   const paint = readableAccent(accent || avatarColor);
   const active = liveJob(codingJobs);
   const byId = new Map(messages.map((message) => [message.id, message]));
@@ -128,6 +136,13 @@ export function ChatPane({
     }
   }, [content]);
 
+  function togglePicker(messageId: string, anchor: HTMLButtonElement) {
+    const rect = anchor.getBoundingClientRect();
+    const bounds = scrollRef.current?.getBoundingClientRect();
+    const side = pickerSide((bounds?.bottom ?? window.innerHeight) - rect.bottom);
+    setPicker((current) => (current?.id === messageId ? null : { id: messageId, side, full: false }));
+  }
+
   function jump() {
     stickRef.current = true;
     setScrolledUp(false);
@@ -141,7 +156,7 @@ export function ChatPane({
     if (!node) return;
     node.setAttribute("data-highlight", "true");
     node.scrollIntoView({ behavior: "smooth", block: "center" });
-    window.setTimeout(() => node.removeAttribute("data-highlight"), 3000);
+    window.setTimeout(() => node.removeAttribute("data-highlight"), QUOTE_HIGHLIGHT_MS);
   }
 
   async function stop() {
@@ -155,8 +170,6 @@ export function ChatPane({
     }
   }
 
-  const initial = userName.trim().charAt(0).toUpperCase() || "Y";
-
   async function react(messageId: string, emoji: string) {
     const glyph = emoji.trim();
     if (!glyph) return;
@@ -167,6 +180,7 @@ export function ChatPane({
         body: JSON.stringify({ emoji: glyph }),
       });
       setCustomEmoji("");
+      setPicker(null);
       onSent();
     } catch (caught) {
       setError(errorMessage(caught, "Could not update that reaction."));
@@ -273,7 +287,7 @@ export function ChatPane({
       <div
         ref={scrollRef}
         data-testid="chat-scroll"
-        className="min-h-0 flex-1 overflow-y-auto pt-12"
+        className="relative z-0 min-h-0 flex-1 overflow-y-auto pt-12"
         onScroll={() => {
           const node = scrollRef.current;
           if (!node) return;
@@ -317,15 +331,26 @@ export function ChatPane({
             }
             if (only?.kind === "question") {
               return (
-                <article key={message.id} id={`message-${message.id}`} data-testid="message-item" data-role={message.role} className="group mr-auto w-full max-w-md">
+                <article key={message.id} id={`message-${message.id}`} data-testid="message-item" data-role={message.role} className="group relative mr-auto w-full max-w-md">
                   <QuestionCard
                     prompt={only.prompt}
                     options={only.options}
                     multiple={only.multiple}
                     allowCustom={only.allowCustom}
                     answer={only.answer}
-                    initial={initial}
                     onAnswer={(choices, custom) => answer(message.id, choices, custom)}
+                  />
+                  <MessageToolbar
+                    messageId={message.id}
+                    content={message.content}
+                    mine={false}
+                    picker={picker?.id === message.id ? picker : null}
+                    customEmoji={customEmoji}
+                    onCustomEmoji={setCustomEmoji}
+                    onToggle={(anchor) => togglePicker(message.id, anchor)}
+                    onExpand={() => setPicker((current) => (current ? { ...current, full: true } : current))}
+                    onReact={(emoji) => void react(message.id, emoji)}
+                    onReply={() => setReply(message)}
                   />
                   <time className="mt-1 block px-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{formatWhen(message.createdAt)}</time>
                 </article>
@@ -334,104 +359,92 @@ export function ChatPane({
             const mine = message.role === "user";
             const reactions = visibleReactions(message.role, message.reactions);
             const quoted = message.replyToId ? byId.get(message.replyToId) : undefined;
+            const placement = quotePlacement(message.role);
+            const media = blocks.filter((block) => block.kind === "image" || block.kind === "video" || block.kind === "file");
+            const body = blocks.filter((block) => block.kind !== "image" && block.kind !== "video" && block.kind !== "file");
+            const singleLine = mine && media.length === 0 && body.length === 1 && body[0].kind === "text" && !body[0].text.includes("\n") && body[0].text.trim().length < 80;
+            const showBubble = body.length > 0 || (Boolean(message.replyToId) && placement === "inside");
             return (
               <article
                 key={message.id}
                 id={`message-${message.id}`}
                 data-testid="message-item"
                 data-role={message.role}
-                className={mine ? "group ml-auto min-w-0 max-w-[85%] rounded-bubble sm:max-w-[75%]" : "group mr-auto min-w-0 max-w-[85%] rounded-bubble sm:max-w-[75%]"}
+                className={cn("group relative flex w-fit min-w-0 max-w-[85%] flex-col sm:max-w-[70%]", mine ? "ml-auto items-end" : "mr-auto items-start")}
               >
-                {!mine ? (
-                  <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
-                    <img src="/favicon.svg" alt="" className="h-5 w-5 rounded-sm" />
-                    {botName}
+                {message.replyToId && placement === "above" ? (
+                  <button
+                    type="button"
+                    data-testid="reply-quote"
+                    className="mb-1 max-w-full truncate rounded-full bg-muted px-3 py-1 text-left text-xs text-muted-foreground"
+                    onClick={() => focusMessage(message.replyToId!)}
+                  >
+                    {replySnippet(quoted?.content ?? "")}
+                  </button>
+                ) : null}
+                {showBubble ? (
+                  <div
+                    data-testid="message-bubble"
+                    className={cn(
+                      "relative space-y-2 px-3.5 py-2 text-sm",
+                      mine ? "bg-[var(--bot-accent)] text-on-accent" : "bg-assistant-bubble text-assistant-bubble-foreground",
+                      singleLine ? "rounded-full" : mine ? "rounded-2xl" : "rounded-xl",
+                      reactions.length ? "mb-3" : "",
+                    )}
+                  >
+                    {message.replyToId && placement === "inside" ? (
+                      <button
+                        type="button"
+                        data-testid="reply-quote"
+                        className="flex w-full min-w-0 items-center gap-1.5 text-left text-xs text-muted-foreground"
+                        onClick={() => focusMessage(message.replyToId!)}
+                      >
+                        <MessageSquareQuote className="size-3.5 shrink-0" aria-hidden />
+                        <span className="truncate">{replySnippet(quoted?.content ?? "")}</span>
+                      </button>
+                    ) : null}
+                    {body.map((block, index) => (
+                      <MessageBlockView
+                        key={`${message.id}-body-${index}`}
+                        block={block}
+                        jobs={codingJobs}
+                        accent={paint}
+                        mine={mine}
+                        onOpenJob={onOpenJob}
+                        onReply={() => setReply(message)}
+                      />
+                    ))}
+                    <ReactionCluster reactions={reactions} botName={botName} userName={userName} onToggle={(emoji) => void react(message.id, emoji)} />
                   </div>
                 ) : null}
-                <div
-                  data-testid="message-bubble"
-                  className={
-                    mine
-                      ? `relative space-y-2 rounded-bubble bg-user-bubble px-3.5 py-2 text-sm text-user-bubble-foreground${reactions.length ? " mb-3" : ""}`
-                      : `relative space-y-2 rounded-bubble bg-assistant-bubble px-3.5 py-2 text-sm text-assistant-bubble-foreground${reactions.length ? " mb-3" : ""}`
-                  }
-                >
-                  {message.replyToId ? (
-                    <button
-                      type="button"
-                      data-testid="reply-quote"
-                      className="block w-full rounded-md border-l-2 border-border bg-muted px-2 py-1 text-left text-xs text-muted-foreground"
-                      onClick={() => focusMessage(message.replyToId!)}
-                    >
-                      {replySnippet(quoted?.content ?? "")}
-                    </button>
-                  ) : null}
-                  {blocks.map((block, index) => (
-                    <MessageBlockView
-                      key={`${message.id}-${index}`}
-                      block={block}
-                      jobs={codingJobs}
-                      accent={paint}
-                      onOpenJob={onOpenJob}
-                      onReply={() => setReply(message)}
-                    />
-                  ))}
-                  {reactions.length > 0 ? (
-                    <div data-testid="reaction-cluster" className={cn("absolute bottom-0 z-10 flex translate-y-1/2 gap-1", mine ? "right-2" : "left-2")}>
-                      {reactions.map((reaction) => {
-                        const who = reaction.actorType === "bot" ? botName : userName;
-                        return (
-                          <Tooltip key={reaction.id ?? `${reaction.actorType}-${reaction.emoji}`}>
-                            <TooltipTrigger asChild>
-                              <button
-                                type="button"
-                                data-testid="reaction-pill"
-                                data-emoji={reaction.emoji}
-                                data-actor={reaction.actorType}
-                                aria-label={reactionTooltip(reaction.actorType, who, reaction.emoji)}
-                                className="rounded-full border border-border bg-card px-1.5 py-0 text-sm leading-5 text-card-foreground shadow-sm"
-                                onClick={() => {
-                                  if (reaction.actorType === "user") void react(message.id, reaction.emoji);
-                                }}
-                              >
-                                {reaction.emoji}
-                              </button>
-                            </TooltipTrigger>
-                            <TooltipContent side="top">{reactionTooltip(reaction.actorType, who, reaction.emoji)}</TooltipContent>
-                          </Tooltip>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                </div>
-                <div className="mt-1 flex flex-wrap items-center gap-1">
-                  <button type="button" data-testid="message-reply" aria-label="Reply" className="rounded-md px-1.5 py-0.5 text-xs text-muted-foreground opacity-0 hover:bg-accent group-hover:opacity-100 group-focus-within:opacity-100" onClick={() => setReply(message)}>
-                    Reply
-                  </button>
-                  {message.role === "assistant" ? (
-                    <div className="flex flex-wrap items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100" data-testid="reaction-picker">
-                      {QUICK_REACTIONS.map((emoji) => (
-                        <Button key={emoji} variant="ghost" size="sm" type="button" className="rounded-md px-1.5 py-0.5 text-sm hover:bg-accent" onClick={() => void react(message.id, emoji)}>
-                          {emoji}
-                        </Button>
-                      ))}
-                      <input
-                        data-testid="reaction-custom"
-                        value={customEmoji}
-                        onChange={(event) => setCustomEmoji(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            event.preventDefault();
-                            void react(message.id, customEmoji);
-                          }
-                        }}
-                        placeholder="Emoji"
-                        className="w-16 rounded-md border border-border bg-card px-2 py-0.5 text-xs text-foreground"
-                        aria-label="Custom emoji"
+                {media.length > 0 ? (
+                  <div className={cn("relative flex w-full flex-col gap-1", showBubble ? "mt-1" : "", !showBubble && reactions.length ? "mb-3" : "")} data-testid={showBubble ? undefined : "message-bubble"}>
+                    {media.map((block, index) => (
+                      <MessageBlockView
+                        key={`${message.id}-media-${index}`}
+                        block={block}
+                        jobs={codingJobs}
+                        accent={paint}
+                        mine={mine}
+                        onOpenJob={onOpenJob}
+                        onReply={() => setReply(message)}
                       />
-                    </div>
-                  ) : null}
-                </div>
+                    ))}
+                    {showBubble ? null : <ReactionCluster reactions={reactions} botName={botName} userName={userName} onToggle={(emoji) => void react(message.id, emoji)} />}
+                  </div>
+                ) : null}
+                <MessageToolbar
+                  messageId={message.id}
+                  content={message.content}
+                  mine={mine}
+                  picker={picker?.id === message.id ? picker : null}
+                  customEmoji={customEmoji}
+                  onCustomEmoji={setCustomEmoji}
+                  onToggle={(anchor) => togglePicker(message.id, anchor)}
+                  onExpand={() => setPicker((current) => (current ? { ...current, full: true } : current))}
+                  onReact={(emoji) => void react(message.id, emoji)}
+                  onReply={() => setReply(message)}
+                />
                 <time className="mt-1 block px-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{formatWhen(message.createdAt)}</time>
               </article>
             );
@@ -461,25 +474,26 @@ export function ChatPane({
         </div>
       </div>
       {scrolledUp ? (
-        <div className="pointer-events-none absolute inset-x-0 bottom-28 z-10 flex flex-col items-center gap-2">
+        <div className="pointer-events-none absolute inset-x-0 bottom-28 z-30 flex justify-center">
           {fresh > 0 && !dismissedFresh ? (
-            <div data-testid="new-messages" className="pointer-events-auto flex items-center gap-1 rounded-full px-3 py-1 text-sm text-on-accent shadow-sm" style={{ backgroundColor: paint }}>
+            <div data-testid="new-messages" className="pointer-events-auto flex items-center gap-1 rounded-full bg-[var(--bot-accent)] px-3 py-1 text-sm text-on-accent shadow-sm">
               <button type="button" onClick={jump}>
-                {fresh === 1 ? "↓ 1 new message" : `↓ ${fresh} new messages`}
+                {newMessagesLabel(fresh)}
               </button>
               <button type="button" aria-label="Dismiss new messages" className="px-1" onClick={() => setDismissedFresh(true)}>
                 ×
               </button>
             </div>
-          ) : null}
-          <button type="button" data-testid="jump-to-latest" aria-label="Jump to latest" className="pointer-events-auto grid size-11 place-items-center rounded-full border border-border bg-card text-card-foreground shadow-sm" onClick={jump}>
-            <ArrowDown className="h-5 w-5" />
-          </button>
+          ) : (
+            <button type="button" data-testid="jump-to-latest" aria-label="Jump to latest" className="pointer-events-auto grid size-10 place-items-center rounded-full border border-border bg-card text-card-foreground shadow-md" onClick={jump}>
+              <ArrowDown className="h-5 w-5" />
+            </button>
+          )}
         </div>
       ) : null}
       <form data-testid="composer-bar" className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]" onSubmit={onSubmit}>
         {reply ? (
-          <div data-testid="reply-chip" className="flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-sm text-card-foreground">
+          <div data-testid="reply-chip" className="flex items-center gap-2 rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">
             <span className="min-w-0 flex-1 truncate">{replySnippet(reply.content)}</span>
             <button type="button" aria-label="Cancel reply" onClick={() => setReply(null)}>
               ×
@@ -599,7 +613,6 @@ function QuestionCard({
   multiple,
   allowCustom,
   answer,
-  initial,
   onAnswer,
 }: {
   prompt: string;
@@ -607,7 +620,6 @@ function QuestionCard({
   multiple: boolean;
   allowCustom: boolean;
   answer: string[] | null;
-  initial: string;
   onAnswer: (choices: string[], custom?: string) => Promise<boolean>;
 }) {
   const [picked, setPicked] = useState<string[]>([]);
@@ -615,7 +627,8 @@ function QuestionCard({
   const [localAnswer, setLocalAnswer] = useState<string[] | null>(null);
   const [pending, setPending] = useState(false);
   const answered = !!((answer?.length ?? 0) || localAnswer?.length);
-  const shown = (answer?.length ? answer : localAnswer ?? []).join(", ");
+  const chosen = answer?.length ? answer : localAnswer ?? [];
+  const chooseRef = useRef<(label: string) => void>(() => undefined);
 
   async function choose(label: string) {
     if (answered || pending) return;
@@ -629,6 +642,25 @@ function QuestionCard({
     setPending(false);
   }
 
+  chooseRef.current = (label: string) => {
+    void choose(label);
+  };
+
+  useEffect(() => {
+    if (answered) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.metaKey || event.ctrlKey || event.altKey || event.repeat || event.key.length !== 1) return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+      const index = event.key.toUpperCase().charCodeAt(0) - 65;
+      if (index < 0 || index >= options.length) return;
+      event.preventDefault();
+      chooseRef.current(options[index].label);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [answered, options]);
+
   async function submitCustom() {
     if (answered || pending) return;
     const text = custom.trim();
@@ -640,14 +672,24 @@ function QuestionCard({
 
   if (answered) {
     return (
-      <div data-testid="question-card" data-answered="true" className="rounded-md border border-border bg-card px-4 py-3 shadow-sm">
+      <div data-testid="question-card" data-answered="true" className="rounded-2xl border border-border bg-card px-4 py-3 text-card-foreground shadow-sm">
         <div data-testid="question-answered">
           <p className="text-sm text-muted-foreground">{prompt}</p>
-          <div className="mt-2 flex items-center gap-2">
-            <span className="grid size-6 shrink-0 place-items-center rounded-md bg-destructive text-[11px] font-medium text-destructive-foreground" aria-hidden>
-              {initial}
-            </span>
-            <span className="min-w-0 text-sm text-foreground">{shown}</span>
+          <div className="mt-2 flex flex-col gap-1">
+            {chosen.map((label) => {
+              const index = options.findIndex((option) => option.label === label);
+              const letter = index >= 0 ? optionLetter(index) : "";
+              return (
+                <div key={label} className="flex items-center gap-2 py-1">
+                  {letter ? (
+                    <span data-testid="option-letter" className="grid size-5 shrink-0 place-items-center rounded-md bg-[var(--bot-accent)] text-[11px] font-medium text-on-accent" aria-hidden>
+                      {letter}
+                    </span>
+                  ) : null}
+                  <span className="min-w-0 text-sm text-foreground">{label}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -655,49 +697,207 @@ function QuestionCard({
   }
 
   return (
-    <div data-testid="question-card" data-answered="false" className="rounded-md border border-border bg-card px-4 py-3 shadow-sm">
-      <p className="text-sm font-medium">{prompt}</p>
-      <div className="mt-3 flex flex-col gap-2">
-        {options.map((option) => (
-          <Button
-            key={option.label}
-            type="button"
-            variant={option.style === "danger" ? "destructive" : multiple && picked.includes(option.label) ? "secondary" : "default"}
-            aria-pressed={multiple ? picked.includes(option.label) : undefined}
-            data-style={option.style}
-            disabled={pending}
-            className="min-h-11 w-full justify-start whitespace-normal text-left"
-            onClick={() => choose(option.label)}
-          >
-            {option.label}
-          </Button>
-        ))}
+    <div data-testid="question-card" data-answered="false" className="rounded-2xl border border-border bg-card px-4 py-3 text-card-foreground shadow-sm">
+      <p className="text-sm font-semibold">{prompt}</p>
+      {multiple ? <p className="mt-0.5 text-xs text-muted-foreground">Choose all that apply</p> : null}
+      <div className="mt-2 flex flex-col">
+        {options.map((option, index) => {
+          const letter = optionLetter(index);
+          const selected = picked.includes(option.label);
+          return (
+            <button
+              key={option.label}
+              type="button"
+              aria-pressed={multiple ? selected : undefined}
+              data-style={option.style}
+              data-letter={letter}
+              disabled={pending}
+              className="flex min-h-11 w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-muted disabled:opacity-60"
+              onClick={() => void choose(option.label)}
+            >
+              <span
+                aria-hidden
+                data-testid="option-letter"
+                className={cn(
+                  "grid size-5 shrink-0 place-items-center rounded-md text-[11px] font-medium",
+                  selected ? "bg-[var(--bot-accent)] text-on-accent" : "bg-muted text-muted-foreground",
+                )}
+              >
+                {letter}
+              </span>
+              <span className="min-w-0">{option.label}</span>
+            </button>
+          );
+        })}
         {allowCustom ? (
-          <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="mt-2 flex flex-col gap-2 sm:flex-row">
             <Input
               data-testid="question-custom"
               value={custom}
               onChange={(event) => setCustom(event.target.value)}
-              placeholder="Your own answer"
+              placeholder="Type your own answer"
               className="min-h-11"
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
                   event.preventDefault();
-                  submitCustom();
+                  void submitCustom();
                 }
               }}
             />
-            <Button type="button" variant="secondary" className="min-h-11" data-testid="question-custom-send" disabled={pending} onClick={submitCustom}>
+            <Button type="button" variant="secondary" className="min-h-11" data-testid="question-custom-send" disabled={pending} onClick={() => void submitCustom()}>
               Send
             </Button>
           </div>
         ) : null}
         {multiple ? (
-          <Button type="button" className="min-h-11" data-testid="question-confirm" disabled={pending || (picked.length === 0 && !custom.trim())} onClick={submitCustom}>
-            Send choice
+          <Button type="button" className="ml-auto mt-2 h-9 rounded-full px-4" data-testid="question-confirm" disabled={pending || (picked.length === 0 && !custom.trim())} onClick={() => void submitCustom()}>
+            Done
           </Button>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function ReactionCluster({
+  reactions,
+  botName,
+  userName,
+  onToggle,
+}: {
+  reactions: { id?: string; actorType: string; emoji: string }[];
+  botName: string;
+  userName: string;
+  onToggle: (emoji: string) => void;
+}) {
+  if (reactions.length === 0) return null;
+  return (
+    <div data-testid="reaction-cluster" className="absolute bottom-0 right-2 z-10 flex translate-y-1/2 gap-1">
+      {reactions.map((reaction) => {
+        const who = reaction.actorType === "bot" ? botName : userName;
+        return (
+          <Tooltip key={reaction.id ?? `${reaction.actorType}-${reaction.emoji}`}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                data-testid="reaction-pill"
+                data-emoji={reaction.emoji}
+                data-actor={reaction.actorType}
+                aria-label={reactionTooltip(reaction.actorType, who, reaction.emoji)}
+                className="rounded-full border border-border bg-card px-1.5 py-0 text-sm leading-5 text-card-foreground shadow-sm"
+                onClick={() => {
+                  if (reaction.actorType === "user") onToggle(reaction.emoji);
+                }}
+              >
+                {reaction.emoji}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="rounded-full bg-popover text-popover-foreground shadow-md">
+              {reactionTooltip(reaction.actorType, who, reaction.emoji)}
+            </TooltipContent>
+          </Tooltip>
+        );
+      })}
+    </div>
+  );
+}
+
+function MessageToolbar({
+  messageId,
+  content,
+  mine,
+  picker,
+  customEmoji,
+  onCustomEmoji,
+  onToggle,
+  onExpand,
+  onReact,
+  onReply,
+}: {
+  messageId: string;
+  content: string;
+  mine: boolean;
+  picker: { id: string; side: "above" | "below"; full: boolean } | null;
+  customEmoji: string;
+  onCustomEmoji: (value: string) => void;
+  onToggle: (anchor: HTMLButtonElement) => void;
+  onExpand: () => void;
+  onReact: (emoji: string) => void;
+  onReply: () => void;
+}) {
+  const side = picker?.side ?? "below";
+  const place = cn("absolute z-30", mine ? "right-0" : "left-0", side === "above" ? "bottom-full mb-1" : "top-full mt-1");
+  return (
+    <div className={cn("absolute top-0 z-20", mine ? "right-full mr-1.5" : "left-full ml-1.5")}>
+      <div
+        data-testid="message-toolbar"
+        className={cn(
+          "flex items-center gap-0.5 rounded-full border border-border bg-card p-0.5 text-card-foreground shadow-sm transition-opacity",
+          picker ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+        )}
+      >
+        <button type="button" data-testid="message-react" aria-label="React" aria-expanded={picker?.id === messageId} className="grid size-7 place-items-center rounded-full hover:bg-accent" onClick={(event) => onToggle(event.currentTarget)}>
+          <Smile className="size-4" />
+        </button>
+        <button type="button" data-testid="message-reply" aria-label="Reply" className="grid size-7 place-items-center rounded-full hover:bg-accent" onClick={onReply}>
+          <Reply className="size-4" />
+        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button type="button" data-testid="message-more" aria-label="More message actions" className="grid size-7 place-items-center rounded-full hover:bg-accent">
+              <MoreHorizontal className="size-4" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align={mine ? "end" : "start"}>
+            <DropdownMenuItem
+              onSelect={() => {
+                void navigator.clipboard?.writeText(content).then(
+                  () => toast.success("Copied the message."),
+                  () => toast.error("Could not copy that message."),
+                );
+              }}
+            >
+              Copy text
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      {picker?.full ? (
+        <div data-testid="emoji-picker" data-side={side} className={cn(place, "w-52 rounded-2xl border border-border bg-popover p-2 text-popover-foreground shadow-md")}>
+          <div className="grid grid-cols-6 gap-0.5">
+            {[...QUICK_REACTIONS, ...EXTRA_EMOJIS].map((emoji) => (
+              <button key={emoji} type="button" className="grid size-8 place-items-center rounded-md text-base hover:bg-accent" onClick={() => onReact(emoji)}>
+                {emoji}
+              </button>
+            ))}
+          </div>
+          <input
+            data-testid="reaction-custom"
+            value={customEmoji}
+            onChange={(event) => onCustomEmoji(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                onReact(customEmoji);
+              }
+            }}
+            placeholder="Emoji"
+            aria-label="Custom emoji"
+            className="mt-1 w-full rounded-full border border-border bg-card px-2 py-1 text-xs text-foreground"
+          />
+        </div>
+      ) : picker ? (
+        <div data-testid="reaction-picker" data-side={side} className={cn(place, "flex max-w-[13.5rem] items-center gap-0.5 rounded-full border border-border bg-popover px-1 py-0.5 text-popover-foreground shadow-md")}>
+          {QUICK_REACTIONS.map((emoji) => (
+            <button key={emoji} type="button" className="grid size-7 place-items-center rounded-full text-base hover:bg-accent" onClick={() => onReact(emoji)}>
+              {emoji}
+            </button>
+          ))}
+          <button type="button" data-testid="reaction-add" aria-label="Add emoji" className="grid size-7 place-items-center rounded-full hover:bg-accent" onClick={onExpand}>
+            <Plus className="size-3.5" />
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -721,39 +921,42 @@ function MessageBlockView({
   block,
   jobs,
   accent,
+  mine,
   onOpenJob,
   onReply,
 }: {
   block: MessageBlock;
   jobs: CodingJob[];
   accent: string;
+  mine: boolean;
   onOpenJob?: (job: CodingJob) => void;
   onReply: () => void;
 }) {
+  const side = mine ? "start" : "end";
   if (block.kind === "text") return <RichText text={block.text} jobs={jobs} accent={accent} onOpenJob={onOpenJob} />;
   if (block.kind === "question" || block.kind === "memory" || block.kind === "coding-jobs") return null;
   if (block.kind === "form") return <SecureFormCard title={block.title} fields={block.fields} />;
   if (block.kind === "image" || block.kind === "video") {
-    return <MediaAttachment name={block.name} url={block.url} video={block.kind === "video"} onReply={onReply} />;
+    return <MediaAttachment name={block.name} url={block.url} video={block.kind === "video"} side={side} onReply={onReply} />;
   }
   return (
-    <div data-testid="attachment-card" className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-card-foreground">
+    <div data-testid="attachment-card" className="group/file relative w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-card-foreground">
       <a href={block.url || "#"} className="flex min-h-11 items-center gap-2">
         <span className="truncate font-medium">{block.name}</span>
         {block.mime ? <span className="text-xs text-muted-foreground">{block.mime}</span> : null}
       </a>
-      <AttachmentActions name={block.name} url={block.url} onReply={onReply} />
+      <AttachmentActions name={block.name} url={block.url} side={side} onReply={onReply} />
     </div>
   );
 }
 
 function RichText({ text, jobs, accent, onOpenJob }: { text: string; jobs: CodingJob[]; accent: string; onOpenJob?: (job: CodingJob) => void }) {
   const parts = splitJobMentions(text);
-  if (!parts.some((part) => part.kind === "job")) return <Markdown text={text} />;
+  if (!parts.some((part) => part.kind === "job")) return <Markdown text={text} jobs={jobs} />;
   return (
     <div className="whitespace-pre-wrap">
       {parts.map((part, index) => {
-        if (part.kind === "text") return <Markdown key={index} text={part.text} />;
+        if (part.kind === "text") return <Markdown key={index} text={part.text} jobs={jobs} />;
         const job = jobs.find((item) => item.id === part.id) ?? { id: part.id, title: "Coding job", status: "running" as const, step: "", prNumber: null, prUrl: "", branch: "", filesChanged: 0, additions: 0, deletions: 0 };
         return <JobMention key={part.id} job={job} accent={accent} onOpen={() => onOpenJob?.(job)} />;
       })}
@@ -761,11 +964,11 @@ function RichText({ text, jobs, accent, onOpenJob }: { text: string; jobs: Codin
   );
 }
 
-function MediaAttachment({ name, url, video, onReply }: { name: string; url: string; video: boolean; onReply: () => void }) {
+function MediaAttachment({ name, url, video, side, onReply }: { name: string; url: string; video: boolean; side: "start" | "end"; onReply: () => void }) {
   const [ready, setReady] = useState(false);
   return (
-    <figure data-testid="attachment-card" className="overflow-hidden rounded-lg border border-border bg-card">
-      <div className="relative min-h-24">
+    <figure data-testid="attachment-card" className="group/file relative overflow-visible rounded-xl border border-border bg-card">
+      <div className="relative min-h-24 overflow-hidden rounded-xl">
         {!ready ? <div data-testid="media-skeleton" className="media-shimmer absolute inset-0 min-h-24" /> : null}
         {video ? (
           <video src={url} controls className={cn("max-h-64 w-full transition-opacity", ready ? "opacity-100" : "opacity-0")} onLoadedData={() => setReady(true)} />
@@ -774,21 +977,26 @@ function MediaAttachment({ name, url, video, onReply }: { name: string; url: str
         )}
       </div>
       <figcaption className="px-2 py-1 text-xs text-muted-foreground">{name}</figcaption>
-      <AttachmentActions name={name} url={url} onReply={onReply} />
+      <AttachmentActions name={name} url={url} side={side} onReply={onReply} />
     </figure>
   );
 }
 
-function AttachmentActions({ name, url, onReply }: { name: string; url?: string; onReply: () => void }) {
+function AttachmentActions({ name, url, side, onReply }: { name: string; url?: string; side: "start" | "end"; onReply: () => void }) {
   return (
-    <div className="flex items-center gap-1 px-2 pb-2">
-      <button type="button" data-testid="attachment-reply" aria-label="Reply" className="rounded-md px-2 py-1 text-xs hover:bg-accent" onClick={onReply}>
-        Reply
+    <div
+      className={cn(
+        "absolute top-1 z-10 flex items-center gap-0.5 rounded-full border border-border bg-card p-0.5 text-card-foreground opacity-0 shadow-sm transition-opacity group-hover/file:opacity-100 group-focus-within/file:opacity-100",
+        side === "end" ? "left-full ml-1" : "right-full mr-1",
+      )}
+    >
+      <button type="button" data-testid="attachment-reply" aria-label="Reply" className="grid size-7 place-items-center rounded-full hover:bg-accent" onClick={onReply}>
+        <Reply className="size-3.5" />
       </button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <button type="button" data-testid="attachment-more" aria-label="More attachment actions" className="rounded-md px-2 py-1 text-xs hover:bg-accent">
-            ⋯
+          <button type="button" data-testid="attachment-more" aria-label="More attachment actions" className="grid size-7 place-items-center rounded-full hover:bg-accent">
+            <MoreHorizontal className="size-3.5" />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start">

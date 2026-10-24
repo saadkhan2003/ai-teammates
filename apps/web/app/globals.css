@@ -123,15 +123,18 @@
 
 [data-highlight="true"] {
   animation: quote-fade 3s ease forwards;
+  border-radius: var(--radius-card);
 }
 
 @keyframes quote-fade {
   0%,
-  70% {
+  55% {
     box-shadow: 0 0 0 2px var(--bot-accent, var(--foreground));
+    background-color: color-mix(in srgb, var(--bot-accent, var(--foreground)) 18%, transparent);
   }
   100% {
     box-shadow: 0 0 0 0 transparent;
+    background-color: transparent;
   }
 }
 

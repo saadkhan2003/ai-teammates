@@ -114,9 +114,51 @@ export function visibleReactions<T extends { actorType?: string }>(role: string,
   return (reactions ?? []).filter((reaction) => role === "user" || reaction.actorType !== "bot");
 }
 
+export const QUICK_REACTIONS = ["👍", "👎", "❤️", "😂", "🎉"] as const;
+
+export const EXTRA_EMOJIS = ["😀", "😅", "😍", "🤔", "😢", "🔥", "✅", "🙏", "🚀", "✨", "👀", "💯"] as const;
+
+export const QUOTE_HIGHLIGHT_MS = 3000;
+
 export function reactionTooltip(actor: string, name: string, emoji: string): string {
   const who = actor === "bot" ? name : name || "You";
   return `${who} reacted with ${emoji}`;
+}
+
+export function pickerSide(spaceBelow: number, pickerHeight = 40): "above" | "below" {
+  return spaceBelow < pickerHeight + 8 ? "above" : "below";
+}
+
+export function optionLetter(index: number): string {
+  if (!Number.isInteger(index) || index < 0 || index > 25) return "";
+  return String.fromCharCode(65 + index);
+}
+
+export function newMessagesLabel(count: number): string {
+  const total = Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0;
+  return total === 1 ? "↓ 1 new message" : `↓ ${total} new messages`;
+}
+
+export function quotePlacement(role: string): "above" | "inside" {
+  return role === "user" ? "above" : "inside";
+}
+
+export function truncateUrl(value: string, max = 36): string {
+  const text = value.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(1, max - 1))}…`;
+}
+
+export function isExternalHref(href: string): boolean {
+  return /^https?:\/\//i.test(href);
+}
+
+export function linkTitle(href: string, label: string, jobs: Array<Pick<CodingJob, "id" | "title" | "prUrl">> = []): string {
+  const job = jobs.find((item) => (item.prUrl && href === item.prUrl) || (item.id.length > 0 && href.includes(item.id)));
+  const named = job?.title.trim();
+  if (named) return named;
+  const text = label.trim();
+  return text || href;
 }
 
 export function replySnippet(content: string): string {

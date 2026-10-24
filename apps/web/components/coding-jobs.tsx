@@ -242,8 +242,12 @@ export function JobResultCard({ job, accent, onOpen }: { job: CodingJob; accent:
           <span data-testid="job-result-failed" className="grid size-5 shrink-0 place-items-center rounded-full bg-destructive text-destructive-foreground" role="img" aria-label="Failed">
             <X className="h-3 w-3" />
           </span>
+        ) : job.status === "merged" ? (
+          <span data-testid="job-result-succeeded" className="grid size-5 shrink-0 place-items-center rounded-full bg-success text-on-accent" role="img" aria-label="Merged">
+            <Check className="h-3 w-3" />
+          </span>
         ) : (
-          <span data-testid="job-result-succeeded" className="grid size-5 shrink-0 place-items-center rounded-full bg-success text-on-accent" role="img" aria-label="Succeeded">
+          <span data-testid="job-result-succeeded" className="grid size-5 shrink-0 place-items-center rounded-full border border-muted-foreground text-muted-foreground" role="img" aria-label="Finished">
             <Check className="h-3 w-3" />
           </span>
         )}
@@ -268,18 +272,18 @@ export function JobResultCard({ job, accent, onOpen }: { job: CodingJob; accent:
             href={prHref}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex h-11 min-w-0 flex-1 items-center justify-center rounded-lg bg-muted text-sm font-medium text-foreground hover:bg-accent"
+            className="inline-flex h-11 min-w-0 flex-1 items-center justify-center rounded-xl bg-primary text-sm font-medium text-primary-foreground"
           >
             View PR
           </a>
         ) : (
-          <button type="button" data-testid="job-result-pr" disabled className="inline-flex h-11 min-w-0 flex-1 items-center justify-center rounded-lg bg-muted text-sm font-medium text-muted-foreground">
+          <button type="button" data-testid="job-result-pr" disabled className="inline-flex h-11 min-w-0 flex-1 items-center justify-center rounded-xl bg-primary text-sm font-medium text-primary-foreground opacity-50">
             View PR
           </button>
         )}
         <Tooltip>
           <TooltipTrigger asChild>
-            <button type="button" data-testid="job-result-open" aria-label="Open job" className="grid h-11 w-11 shrink-0 place-items-center rounded-lg border border-border bg-card hover:bg-accent" onClick={onOpen}>
+            <button type="button" data-testid="job-result-open" aria-label="Open job" className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-border bg-card hover:bg-accent" onClick={onOpen}>
               <Box className="h-4 w-4" />
             </button>
           </TooltipTrigger>
