@@ -25,6 +25,8 @@ public sealed class PageDocument
 public sealed class PageRevision
 {
     public int Version { get; set; }
+    public int AddedLines { get; set; }
+    public int RemovedLines { get; set; }
     public string Author { get; set; } = "";
     public string Summary { get; set; } = "";
     public DateTime CreatedAt { get; set; }
@@ -44,6 +46,20 @@ public sealed class PagesStore(NpgsqlDataSource data)
     public static bool Valid(string title, string kind, string source, string summary = "") =>
         !string.IsNullOrWhiteSpace(title) && title.Length <= 160 && kind is "report" or "dashboard" or "tracker" or "plan" or "other"
         && Encoding.UTF8.GetByteCount(source) <= MaxSourceBytes && summary.Length <= 500 && !Dlp.HasStrict(source) && !Dlp.HasStrict(title) && !Dlp.HasStrict(summary);
+    public static (int Added, int Removed) Diff(string before, string after)
+    {
+        static Dictionary<string, int> Lines(string text) => (text.Length == 0 ? Array.Empty<string>() : text.Replace("\r\n", "\n").Split('\n')).GroupBy(line => line).ToDictionary(group => group.Key, group => group.Count());
+        var a = Lines(before); var b = Lines(after);
+        var added = b.Sum(pair => Math.Max(0, pair.Value - a.GetValueOrDefault(pair.Key)));
+        var removed = a.Sum(pair => Math.Max(0, pair.Value - b.GetValueOrDefault(pair.Key)));
+        return (added, removed);
+    }
+    public static string? Source(JsonElement b)
+    {
+        if (!b.TryGetProperty("source", out var source)) return null;
+        if (source.ValueKind != JsonValueKind.String) throw new ArgumentException("invalid_source");
+        return source.GetString();
+    }
     public static bool IsTool(string tool) => tool is "write_page" or "edit_page";
     public static string Get(JsonElement b, string key) => b.ValueKind == JsonValueKind.Object && b.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
 
@@ -70,7 +86,7 @@ public sealed class PagesStore(NpgsqlDataSource data)
         // Validate bot and conversation ownership even for direct API calls.
         if (!await c.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM bots WHERE id=@bot AND owner_id=@owner)", new { bot, owner }, tx)) return null;
         if (chat != null && !await c.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM conversations WHERE id=@chat AND bot_id=@bot)", new { chat, bot }, tx)) return null;
-        var version = 1;
+        var version = 1; var previousSource = "";
         if (id != null)
         {
             var old = await c.QuerySingleOrDefaultAsync<PageDocument>("""
@@ -79,6 +95,7 @@ public sealed class PagesStore(NpgsqlDataSource data)
                 """, new { id, owner, bot }, tx);
             if (old == null) return null;
             old.Source = await c.ExecuteScalarAsync<string>("SELECT source FROM page_versions WHERE page_id=@id AND version=@version", new { id, version = old.CurrentVersion }, tx) ?? "";
+            previousSource = old.Source;
             title = old.Title; kind = old.Kind; chat = old.ConversationId; version = old.CurrentVersion + 1;
             if (restore != null)
             {
@@ -92,6 +109,7 @@ public sealed class PagesStore(NpgsqlDataSource data)
                 if (edits.GetArrayLength() > 50) throw new ArgumentException("too_many_edits");
                 foreach (var edit in edits.EnumerateArray())
                 {
+                    if (edit.ValueKind != JsonValueKind.Object || !edit.TryGetProperty("find", out var f) || f.ValueKind != JsonValueKind.String || !edit.TryGetProperty("replace", out var r) || r.ValueKind != JsonValueKind.String) throw new ArgumentException("invalid_edit");
                     var find = Get(edit, "find"); var replacement = Get(edit, "replace");
                     var index = source.IndexOf(find, StringComparison.Ordinal);
                     if (find.Length == 0 || index < 0 || source.IndexOf(find, index + find.Length, StringComparison.Ordinal) >= 0) throw new ArgumentException("edit_find_must_match_once");
@@ -108,14 +126,15 @@ public sealed class PagesStore(NpgsqlDataSource data)
             await c.ExecuteAsync("INSERT INTO pages(id,owner_id,bot_id,conversation_id,title,kind) VALUES(@id,@owner,@bot,@chat,@title,@kind)", new { id, owner, bot, chat, title, kind }, tx);
         }
         else await c.ExecuteAsync("UPDATE pages SET current_version=@version,updated_at=now() WHERE id=@id AND owner_id=@owner", new { id, owner, version }, tx);
-        await c.ExecuteAsync("INSERT INTO page_versions(page_id,version,source,author,summary) VALUES(@id,@version,@source,@author,@summary)", new { id, version, source, author, summary }, tx);
+        var diff = Diff(previousSource, source);
+        await c.ExecuteAsync("INSERT INTO page_versions(page_id,version,source,author,summary,added_lines,removed_lines) VALUES(@id,@version,@source,@author,@summary,@added,@removed)", new { id, version, source, author, summary, added = diff.Added, removed = diff.Removed }, tx);
         await tx.CommitAsync();
         return await Read(owner, id.Value, version);
     }
     public async Task<IEnumerable<PageRevision>> History(Guid owner, Guid id)
     {
         await using var c = await data.OpenConnectionAsync();
-        return await c.QueryAsync<PageRevision>("SELECT v.version,v.author,v.summary,v.created_at FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.id=@id AND p.owner_id=@owner ORDER BY version DESC LIMIT 200", new { owner, id });
+        return await c.QueryAsync<PageRevision>("SELECT v.version,v.author,v.summary,v.created_at,v.added_lines,v.removed_lines FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.id=@id AND p.owner_id=@owner ORDER BY version DESC LIMIT 200", new { owner, id });
     }
     public async Task<(Guid Id, string Token)?> Share(Guid owner, Guid id)
     {
@@ -156,6 +175,18 @@ public static class PagesRoutes
 {
     public static void Map(WebApplication app, Platform platform)
     {
+        app.Use(async (ctx, next) =>
+        {
+            var path = ctx.Request.Path.Value ?? "";
+            if (ctx.Request.Method is "POST" or "PUT" && (path.StartsWith("/api/pages/", StringComparison.Ordinal) || path.StartsWith("/api/bots/", StringComparison.Ordinal) && path.EndsWith("/pages", StringComparison.Ordinal)))
+            {
+                const long cap = 2 * 1024 * 1024;
+                if (ctx.Request.ContentLength > cap) { ctx.Response.StatusCode = 413; return; }
+                var feature = ctx.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>();
+                if (feature is { IsReadOnly: false }) feature.MaxRequestBodySize = cap;
+            }
+            await next(ctx);
+        });
         var store = new PagesStore(platform.Data);
         var group = app.MapGroup("/api");
         group.AddEndpointFilter(async (invocation, next) =>
@@ -165,7 +196,7 @@ public static class PagesRoutes
             ctx.Response.Headers.CacheControl = "no-store";
             var owner = await Routes.RequireUser(ctx, platform);
             if (owner == null) return Results.Unauthorized();
-            if (!MemoryWriteLimits.Allow(owner.Value, 120)) return Results.StatusCode(429);
+            if (!PagesRateLimit.Allow(owner.Value, 120)) return Results.StatusCode(429);
             ctx.Items["page_owner"] = owner.Value;
             try { return await next(invocation); }
             catch (ArgumentException) { return Results.BadRequest(new { error = "Invalid page content or edit. Maximum source size is 256 KB." }); }
@@ -180,7 +211,7 @@ public static class PagesRoutes
         {
             var owner = (Guid)ctx.Items["page_owner"]!;
             Guid? chat = Guid.TryParse(PagesStore.Get(b, "conversationId"), out var cid) ? cid : null;
-            var result = await store.Save(owner, bot, chat, null, PagesStore.Get(b, "title"), PagesStore.Get(b, "kind"), PagesStore.Get(b, "source"), "Created page", "user");
+            var result = await store.Save(owner, bot, chat, null, PagesStore.Get(b, "title"), PagesStore.Get(b, "kind"), PagesStore.Source(b), "Created page", "user");
             if (result == null) return Results.NotFound();
             await platform.Audit(owner.ToString(), "page.create", bot, null, new { result.Id, version = result.Version });
             return Results.Json(result);
@@ -200,7 +231,7 @@ public static class PagesRoutes
         {
             var owner = (Guid)ctx.Items["page_owner"]!; var old = await store.Read(owner, id);
             if (old == null) return Results.NotFound();
-            var result = await store.Save(owner, old.BotId, old.ConversationId, id, old.Title, old.Kind, b.TryGetProperty("source", out _) ? PagesStore.Get(b, "source") : null, PagesStore.Get(b, "summary"), "user", edits: b.TryGetProperty("edits", out var edits) ? edits : default);
+            var result = await store.Save(owner, old.BotId, old.ConversationId, id, old.Title, old.Kind, PagesStore.Source(b), PagesStore.Get(b, "summary"), "user", edits: b.TryGetProperty("edits", out var edits) ? edits : default);
             await platform.Audit(owner.ToString(), "page.edit", old.BotId, null, new { id, version = result?.Version });
             return Results.Json(result);
         }).WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(2 * 1024 * 1024));
@@ -237,14 +268,14 @@ public static class PagesRoutes
             ctx.Response.Headers.CacheControl = "no-store"; ctx.Response.Headers["Referrer-Policy"] = "no-referrer";
             var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
             var rateKey = new Guid(SHA256.HashData(Encoding.UTF8.GetBytes("pages-public:" + ip)).AsSpan(0, 16));
-            if (!MemoryWriteLimits.Allow(rateKey, 120)) return Results.StatusCode(429);
+            if (!PagesRateLimit.Allow(rateKey, 120)) return Results.StatusCode(429);
             var result = await store.Shared(token); return result == null ? Results.NotFound() : Results.Json(result);
         });
     }
 
     public static async Task<object> Tool(Platform platform, Guid owner, Guid bot, Guid task, string tool, JsonElement args)
     {
-        if (!MemoryWriteLimits.Allow(owner, 60)) throw new ToolHalt("denied", "page_rate_limited");
+        if (!PagesRateLimit.Allow(owner, 60)) throw new ToolHalt("denied", "page_rate_limited");
         await using var c = await platform.Data.OpenConnectionAsync();
         var context = await c.QuerySingleOrDefaultAsync<(Guid Id, Guid? Chat, Guid? Origin)>("SELECT id,conversation_id AS chat,origin_thread_id AS origin FROM tasks WHERE id=@task AND bot_id=@bot", new { task, bot });
         if (context.Id == Guid.Empty || context.Origin != null) throw new ToolHalt("denied", "page_requires_owner_chat");
@@ -252,7 +283,11 @@ public static class PagesRoutes
         Guid? id = null;
         if (tool == "edit_page")
         {
-            if (Guid.TryParse(PagesStore.Get(args, "page_id"), out var supplied)) id = supplied;
+            if (args.TryGetProperty("page_id", out _))
+            {
+                if (!Guid.TryParse(PagesStore.Get(args, "page_id"), out var supplied)) throw new ToolHalt("invalid", "invalid_page_id");
+                id = supplied;
+            }
             else id = await c.ExecuteScalarAsync<Guid?>("SELECT id FROM pages WHERE owner_id=@owner AND bot_id=@bot AND conversation_id=@chat ORDER BY updated_at DESC LIMIT 1", new { owner, bot, chat = context.Chat });
             if (id == null) throw new ToolHalt("not_found", "no_page_in_chat");
             // The tool cannot cross a bot's chat boundary, even for the same owner.
@@ -260,7 +295,7 @@ public static class PagesRoutes
         }
         try
         {
-            var page = await store.Save(owner, bot, context.Chat, id, PagesStore.Get(args, "title"), PagesStore.Get(args, "kind"), args.TryGetProperty("source", out _) ? PagesStore.Get(args, "source") : null, PagesStore.Get(args, "summary"), "bot", edits: args.TryGetProperty("edits", out var edits) ? edits : default);
+            var page = await store.Save(owner, bot, context.Chat, id, PagesStore.Get(args, "title"), PagesStore.Get(args, "kind"), PagesStore.Source(args), PagesStore.Get(args, "summary"), "bot", edits: args.TryGetProperty("edits", out var edits) ? edits : default);
             if (page == null) throw new ToolHalt("not_found", "page_not_found");
             await platform.Audit(bot.ToString(), id == null ? "page.create" : "page.edit", bot, task, new { page.Id, page.Version });
             if (context.Chat != null)
@@ -272,5 +307,28 @@ public static class PagesRoutes
             return new { ok = true, page_id = page.Id, title = page.Title, kind = page.Kind, version = page.Version };
         }
         catch (ArgumentException) { throw new ToolHalt("invalid", "invalid_page_content_or_edits"); }
+    }
+}
+
+
+public static class PagesRateLimit
+{
+    private sealed class Bucket { public readonly object Gate = new(); public DateTime Start = DateTime.UtcNow; public int Hits; }
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, Bucket> Buckets = new();
+    public static bool Allow(Guid key, int limit)
+    {
+        if (Buckets.Count > 10000)
+        {
+            foreach (var pair in Buckets.Where(p => DateTime.UtcNow - p.Value.Start > TimeSpan.FromMinutes(2))) Buckets.TryRemove(pair.Key, out _);
+            if (Buckets.Count > 10000 && !Buckets.ContainsKey(key)) return false;
+        }
+        var bucket = Buckets.GetOrAdd(key, _ => new Bucket());
+        lock (bucket.Gate)
+        {
+            var now = DateTime.UtcNow;
+            if (now - bucket.Start >= TimeSpan.FromMinutes(1)) { bucket.Start = now; bucket.Hits = 0; }
+            if (bucket.Hits >= limit) return false;
+            bucket.Hits++; return true;
+        }
     }
 }

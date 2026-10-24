@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Dapper;
 using Npgsql;
 using Teammates.Api;
@@ -76,4 +77,42 @@ public class PagesStoreTests : IAsyncLifetime
         Assert.Null(await Store.Shared(link.Token));
         Assert.Equal("private", (await Store.Read(owner, page.Id))!.ShareMode);
     }
+    [PostgresFact]
+    public async Task HttpRoutesRequireSessionAndRejectForeignOwnerForEveryOperation()
+    {
+        await using var c = await data!.OpenConnectionAsync();
+        await c.ExecuteAsync("CREATE TABLE sessions(user_id uuid,token_hash text,expires_at timestamptz)");
+        var token = PagesStore.NewToken();
+        await c.ExecuteAsync("INSERT INTO sessions VALUES(@stranger,@hash,now()+interval '1 hour')", new { stranger, hash = PagesStore.HashToken(token) });
+        var page = (await Store.Save(owner, bot, chat, null, "Report", "report", "Private", "", "user"))!;
+        var link = (await Store.Share(owner, page.Id))!.Value;
+        var builder = Microsoft.AspNetCore.Builder.WebApplication.CreateBuilder();
+        builder.Logging.ClearProviders();
+        await using var app = builder.Build(); app.Urls.Add("http://127.0.0.1:0");
+        var platform = new Teammates.Api.Platform(data!, new byte[32], null!, null!, new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
+        PagesRoutes.Map(app, platform); await app.StartAsync();
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        var requests = new[] {
+            ("GET", $"/api/bots/{bot}/pages"), ("POST", $"/api/bots/{bot}/pages"),
+            ("GET", $"/api/pages/{page.Id}"), ("PUT", $"/api/pages/{page.Id}"),
+            ("GET", $"/api/pages/{page.Id}/versions"), ("POST", $"/api/pages/{page.Id}/restore/1"),
+            ("GET", $"/api/pages/{page.Id}/shares"), ("POST", $"/api/pages/{page.Id}/shares"),
+            ("DELETE", $"/api/pages/{page.Id}/shares/{link.Id}") };
+        foreach (var (method, path) in requests)
+        {
+            using var request = new HttpRequestMessage(new HttpMethod(method), path);
+            if (method is "POST" or "PUT") request.Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
+            Assert.Equal(System.Net.HttpStatusCode.Unauthorized, (await client.SendAsync(request)).StatusCode);
+        }
+        client.DefaultRequestHeaders.Add("Cookie", "teammates_session=" + token);
+        foreach (var (method, path) in requests)
+        {
+            using var request = new HttpRequestMessage(new HttpMethod(method), path);
+            if (method is "POST" or "PUT") request.Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
+            Assert.Equal(System.Net.HttpStatusCode.NotFound, (await client.SendAsync(request)).StatusCode);
+        }
+        Assert.Equal(System.Net.HttpStatusCode.OK, (await client.GetAsync("/api/public/pages/" + link.Token)).StatusCode);
+        await app.StopAsync();
+    }
+
 }

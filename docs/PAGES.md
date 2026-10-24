@@ -1,6 +1,6 @@
 # Pages
 
-Pages turn a chat result into a private canvas. Open the card in chat or find it in Library → Pages. The canvas supports resize, full screen, copy/export Markdown, version history, viewing older versions and restoring one as a new version. Inputs and checklist changes are local to the preview; ask the bot to save source changes.
+Pages turn a chat result into a private canvas. Open the card in chat or find it in Library → Pages. The canvas supports resize, full screen, copy/export Markdown, version history with added/removed line counts, viewing older versions and restoring one as a new version. Inputs and checklist changes are local to the preview; ask the bot to save source changes.
 
 `write_page(title, kind, source)` creates a page. Kinds: `report`, `dashboard`, `tracker`, `plan`, `other`. For follow-ups, use `edit_page(page_id?, source?, edits?, summary)`. Omit page_id to edit the latest page in this chat. An edit can replace the full source or supply up to 50 `{find, replace}` objects; every find must match exactly once. A bot can only edit pages in its own chat. Existing page ids and titles are supplied as untrusted context. Page tools pass through the normal policy, approval, task lease and deduplication path. They cannot publish share links.
 

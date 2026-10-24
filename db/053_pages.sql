@@ -19,6 +19,8 @@ CREATE TABLE page_versions (
     version int NOT NULL CHECK (version > 0),
     source text NOT NULL CHECK (octet_length(source) <= 262144),
     author text NOT NULL CHECK (author IN ('bot','user')),
+    added_lines int NOT NULL DEFAULT 0 CHECK (added_lines >= 0),
+    removed_lines int NOT NULL DEFAULT 0 CHECK (removed_lines >= 0),
     summary text NOT NULL DEFAULT '' CHECK (length(summary) <= 500),
     created_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY(page_id, version)

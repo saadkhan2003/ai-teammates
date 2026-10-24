@@ -25,5 +25,40 @@ public class PagesTests
         Assert.Equal(PagesStore.HashToken(first), PagesStore.HashToken(first));
     }
     [Fact]
+    public void DiffCountsAddedRemovedAndDuplicateLines()
+    {
+        Assert.Equal((1, 1), PagesStore.Diff("A\nB", "A\nC"));
+        Assert.Equal((0, 1), PagesStore.Diff("A\nA", "A"));
+        Assert.Equal((2, 0), PagesStore.Diff("", "A\nB"));
+        Assert.Equal((0, 0), PagesStore.Diff("A\r\nB", "A\nB"));
+    }
+    [Fact]
     public void MigrationIsRegistered() => Assert.Contains("053_pages.sql", Teammates.Api.Platform.MigrationFiles);
+}
+
+public class PagesToolPolicyTests
+{
+    [Theory]
+    [InlineData("write_page")]
+    [InlineData("edit_page")]
+    public void PageToolsHonorApprovalPolicyAndDeduplicate(string tool)
+    {
+        var args = System.Text.Json.JsonSerializer.SerializeToElement(new { title = "Page", kind = "report", source = "# Safe", summary = "Updated" });
+        Assert.True(ActionClassifier.IsBuiltIn(tool));
+        Assert.Equal(ActionClasses.Write, ActionClassifier.Classify(tool, args));
+        Assert.True(ToolDedupe.Applies(tool, "page-call"));
+        foreach (var mode in new[] { PolicyEngine.Allow, PolicyEngine.Ask, PolicyEngine.Deny })
+        {
+            var policy = new UserPolicy(); policy.Classes[ActionClasses.Write] = mode;
+            Assert.Equal(mode, PolicyGate.Evaluate(tool, args, new HashSet<string>(), policy, [], null, false).Decision);
+        }
+        Assert.Null(ToolSchema.Validate(tool, args));
+    }
+    [Fact]
+    public void PageRateLimitsArePerKeyAndFailAtTheLimit()
+    {
+        var key = Guid.NewGuid();
+        Assert.True(PagesRateLimit.Allow(key, 2)); Assert.True(PagesRateLimit.Allow(key, 2)); Assert.False(PagesRateLimit.Allow(key, 2));
+        Assert.True(PagesRateLimit.Allow(Guid.NewGuid(), 2));
+    }
 }
