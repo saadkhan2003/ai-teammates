@@ -250,7 +250,7 @@ def _steps(text: str, messages: list) -> list[Step]:
         widget = examples.get(kind)
         if widget:
             return [("tool", "send_widget", {"widget": widget}), ("final", "Widget demo ready.")]
-    if stripped.startswith("Widget action:"):
+    if stripped.startswith("Widget action:") or stripped.startswith("The user submitted an action in an interactive chat widget"):
         return [("final", "Widget action received.")]
     if "PLAN DEMO" in text:
         return [
