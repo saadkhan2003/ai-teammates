@@ -18,7 +18,7 @@ export const settingsNavGroups = [
       { id: "computer", label: "Computer", href: "/settings/computer" },
       { id: "vault", label: "Vault", href: "/settings/secrets" },
       { id: "plugins", label: "Plugins", href: "/settings/plugins" },
-      { id: "video-config", label: "Video config", section: "video-config" },
+      { id: "video-config", label: "Video config", href: "/settings/video" },
     ],
   },
   {

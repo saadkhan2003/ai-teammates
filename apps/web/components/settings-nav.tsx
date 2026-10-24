@@ -7,6 +7,9 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { settingsNavGroups } from "./settings-nav-data.mjs";
 
+type SettingsNavItem = { id: string; label: string; href?: string; section?: string; exact?: boolean; admin?: boolean; testId?: string };
+type SettingsNavGroup = { heading: string; items: SettingsNavItem[] };
+
 export function SettingsNav() {
   const pathname = usePathname();
   const [role, setRole] = useState<string | null>(null);
@@ -18,10 +21,11 @@ export function SettingsNav() {
   }, []);
 
   const isAdmin = role == null || role === "owner" || role === "admin";
+  const groups = settingsNavGroups as SettingsNavGroup[];
 
   return (
     <nav aria-label="Settings" className="flex gap-1 overflow-x-auto px-2 py-1 md:flex-col md:overflow-visible md:px-2">
-      {settingsNavGroups.map((group) => {
+      {groups.map((group) => {
         const items = group.items.filter((item) => !item.admin || isAdmin);
         if (!items.length) return null;
         return (
