@@ -1,0 +1,6 @@
+- Added initial additive skill library and revision schema; replay skills table remains untouched.
+- Added owner and worker skill-library routes with owner scoping, bot-authored write restriction, DLP and size checks, revision snapshots, and audit events.
+- Added worker model catalog injection, load/write model tools, a built-in markdown example, design note, and Skills pane guide listing/view.
+- Added per-owner read-only seeding of builtin markdown guides, builtin mutation protection, and revision revert endpoint; API build and web tsc completed successfully before these last API refinements.
+- Verification: C# unit tests 288 passed; Python unit tests 107 passed (computer network firewall test excluded by rule); web node tests 36 passed; web TypeScript check clean; final API build succeeded with 0 errors. Integration/e2e skills tests were authored and intentionally not run (requested final-merge coverage).
+- Commit attempt was blocked by the environment: the linked git common directory under src/.git is read-only (COMMIT_EDITMSG creation denied), despite the branch commit instruction. Changes remain in this worktree and uncommitted.

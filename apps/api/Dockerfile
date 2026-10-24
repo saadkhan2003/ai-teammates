@@ -38,6 +38,8 @@ COPY db/023_routine_test.sql /migrations/023_routine_test.sql
 COPY db/024_library.sql /migrations/024_library.sql
 COPY db/025_library_actions.sql /migrations/025_library_actions.sql
 COPY db/026_library_shares.sql /migrations/026_library_shares.sql
+COPY db/090_skill_library.sql /migrations/090_skill_library.sql
+COPY services/agent/skills/builtin/ /skills/builtin/
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
     DOTNET_gcServer=0 \
     DOTNET_GCHeapHardLimit=0x10000000

@@ -252,6 +252,14 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
                 return await ForgetMemory(botId, taskId, Arg(args, "content"));
             case "search_memory":
                 return await SearchMemory(botId, Arg(args, "query"));
+            case "load_skill":
+            {
+                await using var c = await platform.Data.OpenConnectionAsync(ct);
+                var skill = await c.QuerySingleOrDefaultAsync("SELECT s.name,s.title,s.body,s.version FROM skill_library s JOIN bots b ON b.owner_id=s.owner_id WHERE b.id=@bot AND s.name=@name AND s.archived_at IS NULL AND (s.bot_id IS NULL OR s.bot_id=@bot) LIMIT 1", new { bot = botId, name = Arg(args,"name") });
+                return skill ?? (object)new { ok = false, error = "Unknown skill. Check the skill catalog for available names." };
+            }
+            case "write_skill":
+                return await WriteSkill(owner, botId, args);
             case "save_artifact":
                 return await SaveArtifact(botId, taskId, computer, Arg(args, "name"), Arg(args, "path"), ct);
             case "request_secret":
@@ -593,6 +601,20 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
             """,
             new { bot = botId, q = query, emb = vector });
         return new { matches = rows.Select(row => (string)((IDictionary<string, object>)row)["content"]).ToArray() };
+    }
+
+    private async Task<object> WriteSkill(Guid owner, Guid botId, JsonElement args)
+    {
+        var name=Arg(args,"name"); var title=Arg(args,"title"); var hint=Arg(args,"when_to_use"); var body=Arg(args,"body");
+        if (!System.Text.RegularExpressions.Regex.IsMatch(name,"^[a-z0-9]+(?:-[a-z0-9]+)*$") || body.Length>32768 || hint.Length>240 || Dlp.HasStrict(body))
+            throw new ToolHalt("invalid","skill content is invalid or contains sensitive data");
+        body=OutputRedactor.Redact(body);
+        await using var conn=await platform.Data.OpenConnectionAsync();
+        var old=await conn.QuerySingleOrDefaultAsync<(Guid Id,int Version,string Body,string Source)>("SELECT id,version,body,source FROM skill_library WHERE owner_id=@owner AND bot_id=@bot AND name=@name AND archived_at IS NULL",new{owner,bot=botId,name});
+        Guid id;
+        if(old.Id==Guid.Empty) id=await conn.ExecuteScalarAsync<Guid>("INSERT INTO skill_library(owner_id,bot_id,name,title,when_to_use,body,source,created_by) VALUES(@owner,@bot,@name,@title,@hint,@body,'bot',@author) RETURNING id",new{owner,bot=botId,name,title,hint,body,author=botId.ToString()});
+        else { if(old.Source!="bot")throw new ToolHalt("denied","bots may edit only bot-authored skills"); id=old.Id; await conn.ExecuteAsync("INSERT INTO skill_revisions(skill_id,version,body,author,reason) VALUES(@id,@version,@body,@author,'bot update')",new{id,version=old.Version,body=old.Body,author=botId.ToString()}); await conn.ExecuteAsync("UPDATE skill_library SET title=@title,when_to_use=@hint,body=@body,version=version+1,updated_at=now() WHERE id=@id",new{id,title,hint,body}); }
+        await platform.Audit(botId.ToString(),"skill.bot_write",botId,null,new{id,name}); return new{id,version=old.Id==Guid.Empty?1:old.Version+1};
     }
 
     private async Task<object> SaveArtifact(Guid botId, Guid taskId, ComputerId computer, string name, string path, CancellationToken ct)
