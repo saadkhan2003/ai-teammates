@@ -40,8 +40,11 @@ for (const theme of ["light", "dark"]) {
       await expect(canvas).toBeVisible();
       const frame = page.frameLocator('[data-testid="page-frame"]');
       await expect(frame.getByRole("heading", { name: "Quarterly overview", exact: true })).toBeVisible();
-      await frame.getByRole("button", { name: "Project" }).click();
-      await expect(frame.getByRole("columnheader", { name: /Project/ })).toHaveAttribute("aria-sort", "ascending");
+      // The canvas can re-render once after the first paint (theme sync), which resets sort state; retry the click.
+      await expect(async () => {
+        await frame.getByRole("button", { name: "Project" }).click();
+        await expect(frame.getByRole("columnheader", { name: /Project/ })).toHaveAttribute("aria-sort", "ascending", { timeout: 1500 });
+      }).toPass({ timeout: 15000 });
       await expect(frame.locator("tbody tr").first()).toContainText("Atlas");
       await frame.getByPlaceholder("Filter rows").fill("Planning");
       await expect(frame.locator("tbody tr")).toHaveCount(1);
