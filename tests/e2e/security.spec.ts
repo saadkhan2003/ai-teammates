@@ -134,7 +134,8 @@ test("policy card, data-policy block, and login form", async ({ page }) => {
     slug,
     "python3",
     "-c",
-    "import json,os,urllib.request; body=json.dumps({'selector':'#status'}).encode(); req=urllib.request.Request('http://127.0.0.1:7700/desktops/'+os.environ['COMPUTER_ID']+'/browser/extract', data=body, headers={'Authorization':'Bearer '+os.environ['COMPUTER_TOKEN'],'Content-Type':'application/json'}); print(urllib.request.urlopen(req).read().decode())",
+    // Desktop effects are fenced: read the current agent epoch, then extract as an agent actor at that epoch.
+    "import json,os,urllib.request; base='http://127.0.0.1:7700/desktops/'+os.environ['COMPUTER_ID']; h={'Authorization':'Bearer '+os.environ['COMPUTER_TOKEN'],'Content-Type':'application/json'}; call=lambda p,b: json.loads(urllib.request.urlopen(urllib.request.Request(base+p, data=json.dumps(b).encode(), headers=h)).read().decode()); st=call('/lease', {'actorId':'e2e','action':'state'}); print(json.dumps(call('/browser/extract', {'selector':'#status','actor_id':'agent:e2e','epoch':st['epoch']})))",
   ]);
   expect(pageText).toContain("logged in");
   expect(pageText).not.toContain(LOGIN_CANARY);
