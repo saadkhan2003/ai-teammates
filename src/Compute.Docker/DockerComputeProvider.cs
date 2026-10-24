@@ -1004,6 +1004,8 @@ public sealed partial class DockerComputeProvider : IComputeProvider, IDesktopSe
                 "COMPUTER_NAME=" + (spec.Labels.TryGetValue("name", out var label) ? label : "Teammate"),
                 "DISPLAY_NUM=1",
                 "COMPUTER_SECOND_DISPLAY=" + (_options.SecondDisplay ? "true" : "false"),
+                "DESKTOP_LAZY=" + (_options.DesktopLazy ? "true" : "false"),
+                "DESKTOP_IDLE_SECONDS=" + _options.DesktopIdleSeconds,
                 // Chrome binds DevTools to 127.0.0.1. cdp-proxy publishes :9222.
                 "CDP_PORT=9223",
                 "VNC_VIEW_PORT=5900",
@@ -1531,13 +1533,15 @@ public sealed partial class DockerComputeProvider : IComputeProvider, IDesktopSe
                     // /desktops waits on the service's desktop/browser initialization. Its
                     // response signals readiness without a Docker exec/health polling round trip.
                     var body = JsonSerializer.Serialize(new { botId = row.Computer.Id.Value, display = 1,
-                        name = row.Computer.Labels.GetValueOrDefault("name", "Teammate"), chrome = true });
+                        name = row.Computer.Labels.GetValueOrDefault("name", "Teammate"), chrome = true, lazy = _options.DesktopLazy });
                     using var content = new StringContent(body, Encoding.UTF8, "application/json");
                     using var response = await _http.PostAsync($"http://{row.Name}:7700/desktops", content, token);
                     if (!response.IsSuccessStatusCode) return false;
                     using var state = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token));
-                    if (!state.RootElement.TryGetProperty("ready", out var ready) || !ready.GetBoolean()
-                        || !state.RootElement.TryGetProperty("chrome", out var chrome) || !chrome.GetBoolean()) return false;
+                    if (!state.RootElement.TryGetProperty("ready", out var ready) || !ready.GetBoolean()) return false;
+                    // Headless: the computer is usable without a desktop; Chrome starts on first browser use.
+                    if (state.RootElement.TryGetProperty("desktop", out var desktop) && desktop.GetString() == "asleep") return true;
+                    if (!state.RootElement.TryGetProperty("chrome", out var chrome) || !chrome.GetBoolean()) return false;
                     using var cdp = await _http.GetAsync($"http://{row.Name}:9222/json/version", token);
                     if (!cdp.IsSuccessStatusCode) return false;
                     using var version = JsonDocument.Parse(await cdp.Content.ReadAsStringAsync(token));

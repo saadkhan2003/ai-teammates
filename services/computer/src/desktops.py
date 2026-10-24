@@ -15,6 +15,49 @@ from browser_flags import chrome_egress_flags
 S6_SCAN = "/command/s6-svscanctl"
 S6_SVC = "/command/s6-svc"
 STATE_PATH = Path("/data/state/desktops.json")
+CDP_ACTIVITY_DIR = Path("/run/desk")
+DESKTOP_SERVICES = ("chrome", "vncrw", "vncview", "xterm", "panels", "wm", "xvfb")
+
+
+def lazy_default() -> bool:
+    """Computers start with no desktop unless DESKTOP_LAZY=false."""
+    return os.environ.get("DESKTOP_LAZY", "true").strip().lower() not in {"0", "false", "no"}
+
+
+def idle_seconds() -> int:
+    try:
+        return max(30, int(os.environ.get("DESKTOP_IDLE_SECONDS", "300")))
+    except ValueError:
+        return 300
+
+
+def cdp_activity(display: int) -> float:
+    """When the CDP proxy last carried traffic for this display (file mtime, monotonic-free)."""
+    try:
+        return (CDP_ACTIVITY_DIR / f"cdp-{display}").stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _has_client(port: int) -> bool:
+    """True when an established TCP connection is using this local port (somebody is watching).
+    A listening VNC server with no viewer does not count."""
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(table) as handle:
+                next(handle, None)
+                for line in handle:
+                    fields = line.split()
+                    if len(fields) > 3 and fields[3] == "01" and int(fields[1].rsplit(":", 1)[1], 16) == port:
+                        return True
+        except (OSError, ValueError, IndexError):
+            continue
+    return False
+
+
+def _now() -> float:
+    import time
+    return time.time()
 
 
 @dataclass
@@ -26,6 +69,10 @@ class Desktop:
     epoch: int = 1
     chrome: bool = False
     hidden: bool = False
+    # Headless by default: a desktop is registered (lease, fence, status work) but its
+    # Xvfb, window manager, dock and Chrome only run while `awake`.
+    awake: bool = True
+    last_use: float = 0.0
 
 
 class StaleDesktopEpoch(PermissionError):
@@ -229,29 +276,124 @@ class DesktopManager:
         except json.JSONDecodeError:
             return []
 
-    async def ensure(self, bot_id: str, display: int, name: str, chrome: bool) -> Desktop:
+    async def ensure(self, bot_id: str, display: int, name: str, chrome: bool, lazy: bool = False) -> Desktop:
         async with self.lock_for(bot_id):
             current = self.desktops.get(bot_id)
             if current is None:
                 async with self._display_lock:
                     if display < 1 or any(d.display == display for d in [*self.desktops.values(), *self.secondary.values(), *self.windows.values()]):
                         raise ValueError("display already assigned or invalid")
-                    current = Desktop(bot_id=bot_id, display=display, name=name)
-                    await self._spawn_display(current)
+                    current = Desktop(bot_id=bot_id, display=display, name=name, awake=not lazy)
+                    if not lazy:
+                        await self._spawn_display(current)
                     self.desktops[bot_id] = current
+            elif not lazy and not current.awake:
+                await self._wake_locked(current)
             current.name = name or current.name
-            if chrome and not current.chrome:
+            if chrome and current.awake and not current.chrome:
                 await self._spawn_chrome(current)
                 current.chrome = True
+            if current.awake:
+                current.last_use = _now()
             self._prepare_workspace(bot_id)
             self.save()
             return current
 
+    def is_awake(self, bot_id: str) -> bool:
+        desk = self.desktops.get(bot_id)
+        return bool(desk and desk.awake)
+
+    def touch(self, bot_id: str) -> None:
+        desk = self.desktops.get(bot_id)
+        if desk is not None and desk.awake:
+            desk.last_use = _now()
+
+    async def wake(self, bot_id: str) -> bool:
+        """Start the desktop and Chrome for a browser or desktop call, Watch or Take control.
+        Returns True when this call started it."""
+        desk = self.desktops.get(bot_id)
+        if desk is None:
+            raise KeyError(bot_id)
+        if desk.awake:
+            desk.last_use = _now()
+            return False
+        async with self.lock_for(bot_id):
+            if desk.awake:
+                return False
+            await self._wake_locked(desk)
+            return True
+
+    async def _wake_locked(self, desk: Desktop) -> None:
+        await self._spawn_display(desk)
+        for service in ("xvfb", "wm", "panels"):
+            await _svc("-u", f"/run/service/{service}-{desk.display}")
+        await _wait_x(desk.display)
+        await self._spawn_chrome(desk)
+        desk.chrome = True
+        desk.awake = True
+        desk.last_use = _now()
+        print(json.dumps({"level": "info", "msg": "desktop woke", "display": desk.display}), flush=True)
+
+    async def sleep_desktop(self, bot_id: str) -> bool:
+        """Stop Chrome, then the desktop. The computer, its files and its jobs keep running."""
+        desk = self.desktops.get(bot_id)
+        if desk is None or not desk.awake:
+            return False
+        async with self.lock_for(bot_id):
+            if not desk.awake:
+                return False
+            for extra in [n for (owner, n) in list(self.windows) if owner == bot_id] + ([2] if bot_id in self.secondary else []):
+                try:
+                    await self.destroy(bot_id, extra)
+                except ValueError:
+                    pass
+            n = desk.display
+            for service in DESKTOP_SERVICES:
+                path = Path("/run/service") / f"{service}-{n}"
+                if path.exists():
+                    (path / "down").write_text("")
+                    await _svc("-d", str(path))
+            await asyncio.sleep(1.0)
+            for service in DESKTOP_SERVICES:
+                path = Path("/run/service") / f"{service}-{n}"
+                if path.exists():
+                    await _svc("-k", str(path))
+            desk.awake = False
+            desk.chrome = False
+            desk.hidden = False
+            self.save()
+            print(json.dumps({"level": "info", "msg": "desktop asleep", "display": n}), flush=True)
+            return True
+
+    def idle_desktops(self, now: float | None = None, limit: int | None = None) -> list[str]:
+        """Awake desktops nobody has used, watched or controlled for `limit` seconds."""
+        now = _now() if now is None else now
+        limit = idle_seconds() if limit is None else limit
+        idle = []
+        for bot_id, desk in self.desktops.items():
+            if not desk.awake or desk.holder != "agent":
+                continue
+            last = max(desk.last_use, cdp_activity(desk.display))
+            if now - last < limit:
+                continue
+            if _has_client(view_port(desk.display)) or _has_client(rw_port(desk.display)):
+                # Somebody is watching: that counts as use.
+                desk.last_use = now
+                continue
+            idle.append(bot_id)
+        return idle
+
     async def restore_all(self) -> None:
         rows = self.load()
+        lazy = lazy_default()
         for row in rows:
             if int(row.get("window", 1)) == 1:
-                await self.ensure(row["bot_id"], int(row["display"]), row.get("name") or "Teammate", chrome=True)
+                await self.ensure(row["bot_id"], int(row["display"]), row.get("name") or "Teammate", chrome=True, lazy=lazy)
+        if lazy:
+            # Extra windows reopen on demand; a restart does not bring up any desktop.
+            if rows:
+                self.save()
+            return
         for row in rows:
             window = int(row.get("window", 1))
             if window > 1:
@@ -635,14 +777,18 @@ class DesktopManager:
         desk = self.desktops.get(bot_id) if display == 1 else (self.windows.get((bot_id, display)) or (self.secondary.get(bot_id) if display == 2 else None))
         if desk is None:
             return {"ready": False}
-        rw_up = _port_open(rw_port(desk.display))
+        primary = self.desktops.get(bot_id)
+        awake = primary.awake if primary is not None else desk.awake
+        rw_up = awake and _port_open(rw_port(desk.display))
         return {
             "ready": True,
+            "desktop": "on" if awake else "asleep",
+            "idleSeconds": int(max(0.0, _now() - max(desk.last_use, cdp_activity(desk.display)))) if awake else None,
             "botId": desk.bot_id,
             "display": desk.display,
             "holder": desk.holder,
             "epoch": desk.epoch,
-            "chrome": desk.chrome and _port_open(cdp_port(desk.display)),
+            "chrome": awake and desk.chrome and _port_open(cdp_port(desk.display)),
             "viewPort": view_port(desk.display),
             "rwPort": rw_port(desk.display),
             "rwRunning": rw_up,

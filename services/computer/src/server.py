@@ -15,7 +15,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Query
 from fastapi.responses import FileResponse, Response
 import workspace
 from browser import BrowserHub, run_command
-from desktops import DesktopManager, StaleDesktopEpoch, cdp_port, geometry, rw_port, view_port
+from desktops import DesktopManager, StaleDesktopEpoch, cdp_port, geometry, idle_seconds, lazy_default, rw_port, view_port
+import re
 from fixtureserver import start as start_fixtures
 from pure import redact, scrub_tree
 from private_browser import PrivateBrowser, load_host_suffixes, private_browser_url_allowed, replace_host_suffixes
@@ -102,10 +103,12 @@ async def lifespan(app: FastAPI):
         if computer_id and computer_id not in manager.desktops:
             display = int(os.environ.get("DISPLAY_NUM", "1"))
             name = os.environ.get("COMPUTER_NAME", "Teammate")
-            await manager.ensure(computer_id, display, name, True)
+            await manager.ensure(computer_id, display, name, True, lazy=lazy_default())
     except Exception as exc:
         print(json.dumps({"level": "error", "msg": "restore failed", "error": str(exc)}), flush=True)
+    reaper = asyncio.create_task(_desktop_reaper())
     yield
+    reaper.cancel()
     for process, _path, _started, _root in recordings.values():
         if process.returncode is None:
             process.kill()
@@ -122,6 +125,100 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+# Calls that need the desktop (X, the window manager or Chrome). Everything else (shell,
+# files, jobs, metrics, status) runs headless and never starts it.
+_WAKE_PATHS = re.compile(
+    r"^/desktops/(?P<bot>[^/]+)/(?:screenshot|click|key|scroll|type|record/start|teach/start|vnc-tokens|"
+    r"chrome/restart|human-input|pages|cookies|browser/[a-z-]+|wake)$"
+    r"|^/windows/(?P<wbot>[^/]+)/\d+(?:/owner-token)?$"
+)
+
+
+def _authorized(request: Request) -> bool:
+    expected = os.environ.get("COMPUTER_TOKEN", "")
+    header = request.headers.get("authorization", "")
+    presented = header[7:].strip() if header.lower().startswith("bearer ") else ""
+    return bool(expected and presented and _eq(presented, expected))
+
+
+async def wake_desktop(bot_id: str) -> bool:
+    started = await manager.wake(bot_id)
+    if started:
+        try:
+            await _hub().connect(bot_id)
+        except Exception as exc:
+            print(json.dumps({"level": "warn", "msg": "browser hub connect after wake failed", "error": type(exc).__name__}), flush=True)
+    manager.touch(bot_id)
+    return started
+
+
+async def sleep_desktop(bot_id: str) -> bool:
+    if hub is not None:
+        browser = hub.browsers.pop(bot_id, None)
+        if browser is not None:
+            try:
+                await browser.close()
+            except Exception:
+                pass
+    return await manager.sleep_desktop(bot_id)
+
+
+@app.middleware("http")
+async def lazy_desktop(request: Request, call_next):
+    if request.method in {"POST", "PUT", "GET"}:
+        match = _WAKE_PATHS.match(request.url.path)
+        if match is not None and _authorized(request):
+            bot_id = match.group("bot") or match.group("wbot")
+            if bot_id in manager.desktops:
+                try:
+                    await wake_desktop(bot_id)
+                except Exception as exc:
+                    print(json.dumps({"level": "error", "msg": "desktop wake failed", "error": str(exc)[:200]}), flush=True)
+    return await call_next(request)
+
+
+async def _desktop_reaper() -> None:
+    """After DESKTOP_IDLE_SECONDS with no desktop or browser use and nobody watching, stop
+    Chrome and then the desktop. The computer and its jobs keep running."""
+    while True:
+        await asyncio.sleep(min(15, max(1, idle_seconds() // 4)))
+        try:
+            for bot_id in manager.idle_desktops():
+                recording = recordings.get(bot_id)
+                if recording is not None and recording[0].returncode is None:
+                    continue
+                await sleep_desktop(bot_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(json.dumps({"level": "error", "msg": "desktop reaper", "error": str(exc)[:200]}), flush=True)
+
+
+@app.post("/desktops/{bot_id}/wake")
+async def desktop_wake(bot_id: str, _: None = Depends(require_token)):
+    if bot_id not in manager.desktops:
+        raise HTTPException(status_code=404, detail="desktop not ready")
+    # The middleware already woke it; this route reports the state.
+    return manager.status(bot_id)
+
+
+@app.post("/desktops/{bot_id}/sleep")
+async def desktop_sleep(bot_id: str, _: None = Depends(require_token)):
+    if bot_id not in manager.desktops:
+        raise HTTPException(status_code=404, detail="desktop not ready")
+    await sleep_desktop(bot_id)
+    return manager.status(bot_id)
+
+
+@app.post("/displays/{display}/wake")
+async def display_wake(display: int, _: None = Depends(require_token)):
+    """The CDP proxy calls this when a browser tool connects and Chrome is not running."""
+    for bot_id, desk in manager.desktops.items():
+        if desk.display == display:
+            await wake_desktop(bot_id)
+            return manager.status(bot_id)
+    raise HTTPException(status_code=404, detail="no desktop on that display")
 
 
 @app.post("/library/thumbnail")
@@ -219,11 +316,14 @@ async def health():
     token = Path("/run/desk/secrets/plugin.token")
     display = int(os.environ.get("DISPLAY_NUM", "1"))
     viewer_installed = Path(f"/run/service/vncview-{display}/run").is_file()
+    # A desktop that is asleep on purpose is healthy: it starts on the next browser or desktop call.
+    asleep = any(d.display == display and not d.awake for d in manager.desktops.values())
     return {
         "ok": True,
         "secretsReady": token.is_file(),
-        "x": Path(f"/tmp/.X11-unix/X{display}").exists(),
-        "chrome": _port_open(cdp_port(display)),
+        "desktop": "asleep" if asleep else "on",
+        "x": asleep or Path(f"/tmp/.X11-unix/X{display}").exists(),
+        "chrome": asleep or _port_open(cdp_port(display)),
         # The view server is installed and starts when someone watches.
         "vnc": _port_open(view_port(display)) or viewer_installed,
         "vncRunning": _port_open(view_port(display)),
@@ -254,8 +354,18 @@ def _port_open(port: int) -> bool:
 
 @app.get("/metrics")
 async def metrics(_: None = Depends(require_token)):
+    return desktop_metrics()
+
+
+DESKTOP_COMMS = {"chromium", "chrome", "chrome_crashpad", "Xvfb", "openbox", "xfwm4", "picom", "plank", "x11vnc",
+                 "xfce4-panel", "tint2", "dbus-daemon", "dbus-run-session", "xsetroot", "xterm"}
+
+
+def desktop_metrics() -> dict:
     rss = 0
+    desktop_rss = 0
     chrome = 0
+    desktop_processes = 0
     try:
         for entry in Path("/proc").iterdir():
             if not entry.name.isdigit():
@@ -263,15 +373,26 @@ async def metrics(_: None = Depends(require_token)):
             try:
                 comm = (entry / "comm").read_text().strip()
                 statm = (entry / "statm").read_text().split()
-                rss += int(statm[1]) * 4096
-                if comm in {"chromium", "chrome", "Xvfb", "openbox", "xfwm4", "x11vnc"}:
-                    if comm == "chromium":
+                size = int(statm[1]) * 4096
+                rss += size
+                if comm in DESKTOP_COMMS or comm.startswith("chrom"):
+                    desktop_rss += size
+                    desktop_processes += 1
+                    if comm == "chromium" or comm == "chrome":
                         chrome += 1
-            except OSError:
+            except (OSError, IndexError, ValueError):
                 continue
     except OSError:
         pass
-    return {"memoryBytes": rss, "chromeProcesses": chrome, "desktops": len(manager.desktops)}
+    cgroup = None
+    try:
+        cgroup = int(Path("/sys/fs/cgroup/memory.current").read_text().strip())
+    except (OSError, ValueError):
+        pass
+    on = sum(1 for desk in manager.desktops.values() if desk.awake)
+    return {"memoryBytes": rss, "chromeProcesses": chrome, "desktops": len(manager.desktops),
+            "desktopsOn": on, "desktop": "on" if on else "asleep", "desktopRssBytes": desktop_rss,
+            "desktopProcesses": desktop_processes, "cgroupBytes": cgroup, "idleSeconds": idle_seconds()}
 
 
 @app.post("/desktops")
@@ -280,8 +401,9 @@ async def ensure_desktop(body: dict, _: None = Depends(require_token)):
     display = int(body["display"])
     name = str(body.get("name") or "Teammate")
     chrome = bool(body.get("chrome", True))
-    desk = await manager.ensure(bot_id, display, name, chrome)
-    if chrome:
+    lazy = bool(body.get("lazy", False))
+    desk = await manager.ensure(bot_id, display, name, chrome, lazy=lazy)
+    if chrome and desk.awake:
         await _hub().connect(bot_id)
     return manager.status(desk.bot_id)
 
@@ -563,6 +685,10 @@ async def restart_chrome(bot_id: str, _: None = Depends(require_token)):
 
 @app.post("/desktops/{bot_id}/viewer")
 async def set_viewer(bot_id: str, body: dict, _: None = Depends(require_token)):
+    if not body.get("up", True) and not manager.is_awake(bot_id):
+        return manager.status(bot_id, int(body.get("display", 1)))
+    if bot_id in manager.desktops:
+        await wake_desktop(bot_id)  # Watch
     await selected_display(bot_id, int(body.get("display", 1)))
     await manager.set_viewer(bot_id, bool(body.get("up", True)), int(body.get("display", 1)))
     return manager.status(bot_id, int(body.get("display", 1)))
@@ -575,6 +701,8 @@ async def set_control(bot_id: str, body: dict, _: None = Depends(require_token))
     holder = str(body.get("holder", ""))
     if holder not in {"human", "agent", "fenced"}:
         raise HTTPException(status_code=400, detail="invalid lease holder")
+    if holder == "human" and bot_id in manager.desktops:
+        await wake_desktop(bot_id)  # Take control
     epoch = int(body["epoch"])
     actor_id = str(body.get("actorId") or ("api-human" if holder == "human" else "agent:service"))
     try:

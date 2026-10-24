@@ -17,6 +17,10 @@ public sealed record DockerComputeOptions
     public string? Stack { get; init; }
     public string ComputerToken { get; init; } = "";
     public string ComputerDns { get; init; } = Environment.GetEnvironmentVariable("COMPUTER_DNS") ?? "1.1.1.1,8.8.8.8";
+    /// <summary>Computers start with no desktop; Xvfb, the window manager and Chrome start on the first
+    /// browser or desktop call, Watch or Take control, and stop again after <see cref="DesktopIdleSeconds"/>.</summary>
+    public bool DesktopLazy { get; init; } = !string.Equals(Environment.GetEnvironmentVariable("COMPUTER_DESKTOP_LAZY"), "false", StringComparison.OrdinalIgnoreCase);
+    public int DesktopIdleSeconds { get; init; } = int.TryParse(Environment.GetEnvironmentVariable("COMPUTER_DESKTOP_IDLE_SECONDS"), out var idle) && idle >= 30 ? idle : 300;
     public bool SecondDisplay { get; init; } = !string.Equals(Environment.GetEnvironmentVariable("COMPUTER_SECOND_DISPLAY"), "false", StringComparison.OrdinalIgnoreCase);
     public IReadOnlyList<string> DnsServers()
     {
