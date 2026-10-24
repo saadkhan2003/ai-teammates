@@ -1,12 +1,14 @@
 "use client";
 
+import { ChatMessageList, type ChatMessageListHandle } from "@/components/chat-message-list";
+import { anchoredScrollTop, appendedAssistantText, nearChatBottom, visibleChatAnchor, type ChatAnchor } from "@/lib/chat-scroll";
 import { StreamDraft } from "@/components/stream-draft";
 import { toolLabel } from "@/lib/tool-status";
 import { mergeOptimistic } from "@/lib/chat-speed";
 import { flushSync } from "react-dom";
 import { useComputerPrewarm } from "@/lib/use-computer-prewarm";
 import { beginSendPerf, endSendPerf, paintedPerf, chatPaintedPerf, initPerf } from "@/lib/perf";
-import { FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Markdown } from "@/components/markdown";
 import { RefreshNotice } from "@/components/refresh-notice";
 import { ResumeCard, ResumeNotice } from "@/components/resume-card";
@@ -178,9 +180,55 @@ export function ChatPane({
     };
   }, []);
 
+  const messageListRef = useRef<ChatMessageListHandle>(null);
+  const prependAnchor = useRef<{ anchor: ChatAnchor; firstId?: string } | null>(null);
+  const announced = useRef<{ conversation?: string; ids: string[] }>({ ids: [] });
   useEffect(() => {
-    if (stickRef.current) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, events, working]);
+    const previous = announced.current;
+    const text = previous.conversation === conversationId ? appendedAssistantText(previous.ids, storedMessages) : "";
+    announced.current = { conversation: conversationId, ids: storedMessages.map(message => message.id) };
+    if (text) setLive(text);
+  }, [storedMessages, conversationId]);
+  useLayoutEffect(() => {
+    stickRef.current = true;
+    prependAnchor.current = null;
+    setScrolledUp(false);
+  }, [conversationId]);
+  // Observe the whole content, including the independently rendered streaming leaf.
+  useLayoutEffect(() => {
+    let frame = 0;
+    const follow = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const node = scrollRef.current;
+        if (node && stickRef.current) node.scrollTop = node.scrollHeight;
+      });
+    };
+    const observer = new ResizeObserver(follow);
+    if (listRef.current) observer.observe(listRef.current);
+    follow();
+    return () => { observer.disconnect(); cancelAnimationFrame(frame); };
+  }, [conversationId]);
+  useLayoutEffect(() => {
+    const scroll = scrollRef.current;
+    const pending = prependAnchor.current;
+    if (scroll && pending && storedMessages[0]?.id !== pending.firstId) {
+      let frame = 0;
+      let attempts = 0;
+      const restore = () => {
+        const row = Array.from(listRef.current?.querySelectorAll<HTMLElement>("[data-chat-row]") ?? []).find(row => row.dataset.chatRow === pending.anchor.id);
+        if (row) {
+          scroll.scrollTop = anchoredScrollTop(scroll.scrollTop, scroll.getBoundingClientRect().top, row.getBoundingClientRect().top, pending.anchor);
+          prependAnchor.current = null;
+        } else if (attempts++ < 8) {
+          messageListRef.current?.reveal(pending.anchor.id);
+          frame = requestAnimationFrame(restore);
+        } else prependAnchor.current = null;
+      };
+      restore();
+      return () => cancelAnimationFrame(frame);
+    } else if (scroll && stickRef.current) scroll.scrollTop = scroll.scrollHeight;
+  }, [storedMessages, messages.length, events, working]);
   const lastTextId = parts[parts.length - 1]?.id;
   useEffect(() => {
     for (const node of partRefs.current.values()) { node.style.height = "auto"; node.style.height = `${Math.min(node.scrollHeight, 180)}px`; }
@@ -252,10 +300,26 @@ export function ChatPane({
   useEffect(() => () => highlightTimers.current.forEach(window.clearTimeout), []);
   async function loadEarlier() {
     if (!onLoadOlder || loadingOlder) return;
+    const scroll = scrollRef.current;
+    if (scroll) {
+      stickRef.current = false;
+      setScrolledUp(true);
+      const anchor = visibleChatAnchor(Array.from(listRef.current?.querySelectorAll<HTMLElement>("[data-chat-row]") ?? []).map(row => {
+        const rect = row.getBoundingClientRect();
+        return { id: row.dataset.chatRow!, top: rect.top, bottom: rect.bottom };
+      }), scroll.getBoundingClientRect().top);
+      prependAnchor.current = anchor ? { anchor, firstId: storedMessages[0]?.id } : null;
+    }
     setLoadingOlder(true);
     try { await onLoadOlder(); } catch (caught) { toast.error(errorMessage(caught, "Could not load earlier messages.")); } finally { setLoadingOlder(false); }
   }
   async function jumpTo(id: string) {
+    stickRef.current = false;
+    setScrolledUp(true);
+    if (messagesRef.current.some(message => message.id === id)) {
+      messageListRef.current?.reveal(id);
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    }
     let node = document.getElementById(`msg-${id}`);
     if (!node && onLoadOlder && hasOlderRef.current) {
       stickRef.current = false;
@@ -269,6 +333,8 @@ export function ChatPane({
         if (!found) { toast.info("That message is too far back to load."); return; }
         await new Promise(resolve => window.setTimeout(resolve, 60));
       } catch (caught) { toast.error(errorMessage(caught, "Could not load earlier messages.")); return; } finally { setLoadingOlder(false); }
+      messageListRef.current?.reveal(id);
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
       node = document.getElementById(`msg-${id}`);
     }
     if (!node) { toast.info("The original message is no longer available."); return; }
@@ -283,8 +349,15 @@ export function ChatPane({
     return () => document.removeEventListener("library:open-message", openMessage);
   }, [jumpTo]);
   function focusSibling(from: HTMLElement, delta: number) {
-    const all = Array.from(listRef.current?.querySelectorAll<HTMLElement>("article[data-testid='message-item']") ?? []);
-    all[all.indexOf(from) + delta]?.focus();
+    const index = messages.findIndex(message => message.id === from.closest<HTMLElement>("[data-chat-row]")?.dataset.chatRow);
+    const target = messages[index + delta];
+    if (index < 0 || !target) return;
+    stickRef.current = false;
+    messageListRef.current?.reveal(target.id);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const row = Array.from(listRef.current?.querySelectorAll<HTMLElement>("[data-chat-row]") ?? []).find(row => row.dataset.chatRow === target.id);
+      (row?.querySelector<HTMLElement>("article[tabindex]") ?? row)?.focus();
+    }));
   }
 
   // Add to chat: floating pill on a text selection inside the message list
@@ -415,19 +488,19 @@ export function ChatPane({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div ref={scrollRef} data-testid="chat-scroll" className="min-h-0 flex-1 overflow-y-auto pt-12" onScroll={() => {
+      <div ref={scrollRef} data-testid="chat-scroll" className="min-h-0 flex-1 overflow-y-auto pt-12" style={{ overflowAnchor: "none" }} tabIndex={0} aria-label="Conversation history" onScroll={() => {
         const node = scrollRef.current;
         if (!node) return;
-        stickRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
+        stickRef.current = nearChatBottom(node.scrollTop, node.scrollHeight, node.clientHeight);
         setScrolledUp(!stickRef.current);
       }}>
-        <div ref={listRef} className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 py-4">
+        <div ref={listRef} role="log" aria-label="Messages" aria-live="off" className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 py-4">
           {visiblePending.filter(m => m.sendState === "failed").map(m => <div key={`retry-${m.id}`} role="status" className="text-sm text-destructive">Message failed. <Button size="sm" variant="outline" data-testid="retry-send" onClick={() => void deliver(m)}>Retry</Button></div>)}
           {events.some(event => event.type === "task.started" && !storedMessages.some(m => m.role === "assistant" && m.requestId === event.taskId)) ? <div data-testid="ack-chip" role="status" className="text-sm text-muted-foreground">On it</div> : null}
           {hasOlder ? <Button type="button" data-testid="load-older" variant="ghost" size="sm" className="mx-auto" disabled={loadingOlder} onClick={() => void loadEarlier()}>{loadingOlder ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : null}Load earlier messages</Button> : null}
           {extras}
           {messages.length === 0 ? <div data-testid="chat-empty" className="py-12 text-center"><p className="font-medium">Start a conversation with {botName}</p><p className="mt-2 text-sm text-muted-foreground">Ask a question, share an idea, or assign some work.</p></div> : null}
-          {messages.map((message) => {
+          <ChatMessageList key={conversationId} ref={messageListRef} messages={messages} scrollRef={scrollRef} renderMessage={(message) => {
             const blocks = messageBlocks(message.content);
             const only = blocks.length === 1 ? blocks[0] : null;
             if (only?.kind === "memory") {
@@ -490,7 +563,7 @@ export function ChatPane({
                 />
               </MessageItem>
             );
-          })}
+          }} />
           {evidence.length ? <section aria-label="Task evidence" className="rounded-md border border-border bg-card p-3">
             <h3 className="mb-2 text-sm font-medium">Evidence</h3>
             <div className="grid gap-3 sm:grid-cols-2">{evidence.map(item => {
@@ -527,7 +600,7 @@ export function ChatPane({
         onMouseDown={event => event.preventDefault()}
         onClick={() => addQuoteText(pill.text, pill.source)}
         className="z-50 inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-popover px-3 text-xs font-medium text-popover-foreground shadow-md hover:bg-bot-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11"><Quote className="h-3.5 w-3.5" aria-hidden />Add to chat</button> : null}
-      {scrolledUp ? <Button data-testid="jump-to-latest" variant="secondary" className="mx-auto my-2" onClick={() => { stickRef.current = true; setScrolledUp(false); scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }}>Jump to latest ↓</Button> : null}
+      {scrolledUp ? <Button data-testid="jump-to-latest" variant="secondary" className="mx-auto my-2" onClick={() => { stickRef.current = true; setScrolledUp(false); scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "instant" }); }}>Jump to latest ↓</Button> : null}
       <form
         data-testid="composer-bar"
         className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]"

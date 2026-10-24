@@ -1,6 +1,9 @@
 "use client";
 
-import { PluginsPane } from "@/components/plugins-pane";
+import dynamic from "next/dynamic";
+import { ListSkeleton } from "@/components/ui/skeleton";
+
+const PluginsPane = dynamic(() => import("@/components/plugins-pane").then(module => module.PluginsPane), { ssr: false, loading: () => <ListSkeleton label="Loading plugins" rows={3} /> });
 
 export default function PluginsSettingsPage() {
   return (
