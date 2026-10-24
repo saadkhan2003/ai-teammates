@@ -1,6 +1,6 @@
 ---
 name: research
-when_to_use: Use when gathering facts from several sources and separating evidence from conclusions.
+description: Use when gathering facts from several sources and separating evidence from conclusions.
 ---
 # Research
 
