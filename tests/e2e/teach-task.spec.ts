@@ -52,7 +52,8 @@ test("teach a task: banner with timer and X, red outline on the desktop frame, Y
   await expect(page.getByTestId("control-pill")).toContainText("You're in control");
   await page.getByTestId("recording-cancel").click();
   await expect(banner).toHaveCount(0);
+  // The banner hides before the hand-back request returns, so wait for the holder to flip.
+  await expect.poll(async () => (await (await page.request.get(`/api/bots/${bot.id}/workspace`)).json()).holder, { timeout: 15_000 }).toBe("agent");
   const workspace = await (await page.request.get(`/api/bots/${bot.id}/workspace`)).json();
-  expect(workspace.holder).toBe("agent");
   expect((workspace.messages as { skill?: unknown }[]).filter(m => m.skill).length).toBe(before);
 });
