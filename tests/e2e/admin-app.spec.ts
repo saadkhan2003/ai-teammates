@@ -171,6 +171,7 @@ test("admin app renders in light and dark and edits users", async ({ page }) => 
   await expect(page.getByTestId("platform-form")).toBeVisible();
   await fit();
   await page.screenshot({ path: `${dir}/dark-settings.png`, fullPage: true });
+  state.signedIn = false; // login screenshots: the login page sends signed-in staff to the dashboard
   await page.goto("/login?theme=dark");
   await expect(page.getByTestId("admin-login")).toBeVisible();
   await page.screenshot({ path: `${dir}/dark-login.png`, fullPage: true });
