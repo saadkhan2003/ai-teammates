@@ -198,6 +198,7 @@ def test_random_lease_interleavings_never_authorize_two_writers_or_decrease_epoc
 def test_shell_and_cdp_http_actions_require_epoch_and_use_fence():
     source = (ROOT / "services/computer/src/server.py").read_text()
     runtime = (ROOT / "apps/api/Runtime.cs").read_text()
+    login_flow = (ROOT / "apps/api/LoginFlow.cs").read_text()
     shell = source.split('@app.post("/desktops/{bot_id}/shell")', 1)[1].split('@app.post', 1)[0]
     setup = source.split('@app.post("/desktops/{bot_id}/setup-env")', 1)[1].split('@app.post', 1)[0]
     ssh = source.split('@app.post("/desktops/{bot_id}/ssh-key")', 1)[1].split('@app.post', 1)[0]
@@ -211,6 +212,11 @@ def test_shell_and_cdp_http_actions_require_epoch_and_use_fence():
         assert "run_effect(" in section
     assert '"/desktops/{placement.Desktop}/shell"' in runtime
     assert 'actor_id = actorId, epoch = desktopEpoch' in runtime
+    assert '"request_login" or "shell"' in runtime
+    assert 'logins.Handle(owner, botId, taskId, args, actorId, desktopEpoch, ct)' in runtime
+    assert 'selector = inspectSelector, actor_id = actorId, epoch = desktopEpoch' in login_flow
+    assert 'writer.WriteString("actor_id", actorId)' in login_flow
+    assert 'writer.WriteNumber("epoch", desktopEpoch)' in login_flow
     assert '"/desktops/{desktop}/setup-env"' in runtime
     assert 'statusCode: 409' in runtime and 'new { code = "DESKTOP_BUSY" }' in runtime
 

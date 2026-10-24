@@ -131,7 +131,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         var owner = await OwnerOf(botId);
         var actorId = body.TryGetProperty("actor_id", out var actorValue) ? actorValue.GetString() ?? "" : "";
         var desktopEpoch = await AgentDesktopEpoch(botId, ct);
-        if ((tool is "browser_open" or "browser_extract" or "browser_click" or "browser_screenshot" or "type_secret" or "shell") && desktopEpoch == null)
+        if ((tool is "browser_open" or "browser_extract" or "browser_click" or "browser_screenshot" or "type_secret" or "request_login" or "shell") && desktopEpoch == null)
             return Results.Json(new { code = "DESKTOP_BUSY", reason = "You're in control — tell me when to continue" }, statusCode: 409);
         var gated = await Gate(botId, taskId, tool, args, false, ct);
         var decision = gated.Decision;
@@ -280,7 +280,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
             case "request_secret":
                 return await RequestSecret(owner, botId, taskId, args);
             case "request_login":
-                return await logins.Handle(owner, botId, taskId, args, ct);
+                return await logins.Handle(owner, botId, taskId, args, actorId, desktopEpoch, ct);
             case "search_tools":
                 return await PluginCatalog.SearchTools(platform, botId, Arg(args, "query"), ct);
             case "load_tool":

@@ -33,11 +33,11 @@ public sealed class LoginFlow(Platform platform, LoginBroker broker)
         }
     }
 
-    public async Task<object> Handle(Guid owner, Guid botId, Guid taskId, JsonElement args, CancellationToken ct)
+    public async Task<object> Handle(Guid owner, Guid botId, Guid taskId, JsonElement args, string actorId, long desktopEpoch, CancellationToken ct)
     {
         if (TryVaultRefs(args, out var refs))
         {
-            await FillFromVault(owner, botId, taskId, args, refs, ct);
+            await FillFromVault(owner, botId, taskId, args, refs, actorId, desktopEpoch, ct);
             return new { status = "filled" };
         }
 
@@ -75,7 +75,7 @@ public sealed class LoginFlow(Platform platform, LoginBroker broker)
             }
             try
             {
-                var attention = await TypeFields(botId, Arg(args, "targetId"), row.Url, row.Fields, row.SubmitSelector, fields, ct);
+                var attention = await TypeFields(botId, Arg(args, "targetId"), row.Url, row.Fields, row.SubmitSelector, fields, actorId, desktopEpoch, ct);
                 await SetStatus(row.Id, "filled");
                 if (attention)
                 {
@@ -214,7 +214,7 @@ public sealed class LoginFlow(Platform platform, LoginBroker broker)
         return $"secret://{provider}/{name}";
     }
 
-    private async Task FillFromVault(Guid owner, Guid botId, Guid taskId, JsonElement args, Dictionary<string, string> refs, CancellationToken ct)
+    private async Task FillFromVault(Guid owner, Guid botId, Guid taskId, JsonElement args, Dictionary<string, string> refs, string actorId, long desktopEpoch, CancellationToken ct)
     {
         var domain = Arg(args, "domain");
         var url = Arg(args, "url");
@@ -230,7 +230,7 @@ public sealed class LoginFlow(Platform platform, LoginBroker broker)
                 if (resolved.Value == null) throw new ToolHalt("denied", resolved.Deny ?? "denied");
                 values.Add(new SecretField(pair.Key, resolved.Value));
             }
-            var attention = await TypeFields(botId, Arg(args, "targetId"), url, JsonSerializer.Serialize(defined, Camel), Arg(args, "submitSelector"), values, ct);
+            var attention = await TypeFields(botId, Arg(args, "targetId"), url, JsonSerializer.Serialize(defined, Camel), Arg(args, "submitSelector"), values, actorId, desktopEpoch, ct);
             if (attention)
             {
                 await WaitFor(taskId, "captcha_or_mfa");
@@ -243,20 +243,20 @@ public sealed class LoginFlow(Platform platform, LoginBroker broker)
         }
     }
 
-    private async Task<bool> TypeFields(Guid botId, string targetId, string url, string fieldsJson, string submit, IReadOnlyList<SecretField> values, CancellationToken ct)
+    private async Task<bool> TypeFields(Guid botId, string targetId, string url, string fieldsJson, string submit, IReadOnlyList<SecretField> values, string actorId, long desktopEpoch, CancellationToken ct)
     {
         var defined = JsonSerializer.Deserialize<List<LoginField>>(fieldsJson, Camel) ?? [];
         var placement = await platform.PlacementForBot(botId, ct);
         var expected = Origin(url);
         var inspectSelector = defined.FirstOrDefault(field => !string.IsNullOrWhiteSpace(field.Selector))?.Selector ?? "#password";
-        var inspect = await platform.Compute.ControlAsync(placement.Computer, $"/desktops/{placement.Desktop}/browser/inspect", JsonSerializer.Serialize(new { targetId, selector = inspectSelector }), ct);
+        var inspect = await platform.Compute.ControlAsync(placement.Computer, $"/desktops/{placement.Desktop}/browser/inspect", JsonSerializer.Serialize(new { targetId, selector = inspectSelector, actor_id = actorId, epoch = desktopEpoch }), ct);
         using (var doc = JsonDocument.Parse(inspect))
         {
             var origin = doc.RootElement.TryGetProperty("frameOrigin", out var frame) ? frame.GetString() ?? "" : "";
             if (string.IsNullOrWhiteSpace(origin) || !origin.Equals(expected, StringComparison.OrdinalIgnoreCase) || CredentialSites.IsLookAlike(origin))
                 throw new ToolHalt("denied", "domain_not_allowed");
         }
-        var payload = FillPayload(targetId, expected, submit, defined, values);
+        var payload = FillPayload(targetId, expected, submit, defined, values, actorId, desktopEpoch);
         try
         {
             var typed = await platform.Compute.ControlAsync(placement.Computer, $"/desktops/{placement.Desktop}/browser/fill-login", payload, ct);
@@ -275,7 +275,7 @@ public sealed class LoginFlow(Platform platform, LoginBroker broker)
         }
     }
 
-    private static byte[] FillPayload(string targetId, string expected, string submit, List<LoginField> defined, IReadOnlyList<SecretField> values)
+    private static byte[] FillPayload(string targetId, string expected, string submit, List<LoginField> defined, IReadOnlyList<SecretField> values, string actorId, long desktopEpoch)
     {
         using var stream = new MemoryStream();
         using (var writer = new Utf8JsonWriter(stream))
@@ -284,6 +284,8 @@ public sealed class LoginFlow(Platform platform, LoginBroker broker)
             writer.WriteString("targetId", targetId);
             writer.WriteString("expectedOrigin", expected);
             writer.WriteString("submitSelector", submit ?? "");
+            writer.WriteString("actor_id", actorId);
+            writer.WriteNumber("epoch", desktopEpoch);
             writer.WriteStartArray("fields");
             var count = 0;
             foreach (var field in defined)
