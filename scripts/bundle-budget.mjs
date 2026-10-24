@@ -24,5 +24,5 @@ for (const [route, files] of routeFiles) {
     if (fs.existsSync(full) && /\.js$/.test(file)) bytes += gzipSync(fs.readFileSync(full)).byteLength;
   }
   console.log(`${route}: ${bytes} gzip bytes`);
-  if (bytes > target) process.exitCode = 1;
+  if (bytes >= target) process.exitCode = 1;
 }

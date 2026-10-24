@@ -52,4 +52,15 @@ public sealed class WidgetsTests
         using var deep = JsonDocument.Parse("""{"version":1,"id":"w","type":"card","x":{"a":{"b":{"c":{"d":{"e":{"f":{"g":{"h":{}}}}}}}}}}""");
         Assert.Equal("widget_too_deep", WidgetSchema.Validate(deep.RootElement));
     }
+
+    [Fact]
+    public void MirrorsStrictClientFieldsForStructuredWidgetData()
+    {
+        using var malformedPoint = JsonDocument.Parse("""{"version":1,"id":"chart","type":"chart","chart":"bar","data":[{"label":"Today","value":3,"script":"not accepted"}]}""");
+        Assert.Equal("invalid_chart", WidgetSchema.Validate(malformedPoint.RootElement));
+        using var malformedField = JsonDocument.Parse("""{"version":1,"id":"form","type":"form","fields":[{"name":"kind","label":"Kind","type":"select","options":"all"}],"submit":{"id":"go","label":"Go","action":"go"}}""");
+        Assert.Equal("invalid_form", WidgetSchema.Validate(malformedField.RootElement));
+        using var valid = JsonDocument.Parse("""{"version":1,"id":"chart","type":"chart","chart":"line","data":[{"label":"Today","value":3,"series":"requests"}]}""");
+        Assert.Null(WidgetSchema.Validate(valid.RootElement));
+    }
 }

@@ -19,8 +19,6 @@ def validate(widget: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("invalid widget envelope")
     if widget["type"] == "code" and (len(str(widget.get("code", ""))) > 24000 or len(str(widget.get("original", ""))) > 24000):
         raise ValueError("code widget exceeds maximum source length")
-    if widget["type"] == "code" and (len(str(widget.get("code", ""))) > 24000 or len(str(widget.get("original", ""))) > 24000):
-        raise ValueError("code widget exceeds maximum source length")
     if widget["type"] == "image-grid":
         for image in widget.get("images", []):
             url = image.get("url", "")
