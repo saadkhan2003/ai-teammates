@@ -1,5 +1,17 @@
 # Speed plan
 
+## Phase 4 frontend loading and bundles
+
+Every web and admin page route has a segment `loading.tsx` with fixed-size skeletons shaped for its page type. The bot route uses a chat skeleton; form and table routes reserve their main content area to keep navigation from shifting the page while client data arrives.
+
+The sidebar prefetches `/api/bots/{id}/workspace` on link hover or keyboard focus and keeps the JSON in the small in-memory TTL cache at `apps/web/lib/prefetch-cache.ts` for 30 seconds (bounded to 64 entries). The bot view can read the same URL key through `get`; stale data is removed on access. Next route prefetch is enabled on the links as well.
+
+The bot `Workspace` is a dynamic import. The global shell defers the plugins pane and the create-bot template/avatar controls, which are only needed after opening those dialogs. Both Next configs optimize named `lucide-react` imports. Source-graph estimates, pending Docker measurements: deferring the workspace may remove roughly 50–150 KiB gzip from a bot route's initial chunk set, and deferring shell dialog code may remove roughly 10–40 KiB from routes that do not open those dialogs. Icon import optimization is expected to save under 5 KiB per route. These are estimates, not measured savings. The likely largest remaining web first-load route is `/bots/[id]` because its route still uses the shared app shell and chat UI; settings routes also share that shell. Admin routes share `AdminShell`; `/ai-models` is the likely admin route to watch. The CI bundle job enforces 200 KiB gzip for each measured route in both apps and emits JSON reports.
+
+React Compiler remains off. Next.js 15 supports `experimental.reactCompiler`, and its documented setup requires `babel-plugin-react-compiler`; the plugin is an optional Next peer dependency but is absent from the installed tree and lockfile package records. Enabling it would therefore require adding a package and lockfile update, so it does not meet this task's no-new-package condition. Next 16 is optional and not part of this change; an upgrade should update Next and React compatibility together, move `reactCompiler` to the stable top-level option if enabled, then run both app builds and the route budget before adoption.
+
+The 200 KiB target has not been measured locally because host builds are prohibited. The orchestrator should review the CI route reports and split any route that exceeds the limit.
+
 ## Phase 0 measurement
 
 Phase 0 adds measurements only. Chat sends, task execution and paint behavior stay as they were. Non-streaming provider TTFT equals the full provider response wall time; Phase 2 will supply the real first-token clock at the `Runtime.StoreModel` seam. `latency_ms` is retained. Provider usage includes read/write cache tokens when reported; absent usage stays NULL, not an invented hit.
