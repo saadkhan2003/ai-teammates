@@ -14,6 +14,7 @@ import { api } from "@/lib/api";
 import { CLAMP_MAX_PX, EXPANDED, LONG_PRESS_MS, cancelsLongPress, flatten, needsClamp } from "@/lib/chat-parts";
 import { readVideoAnalysis } from "@/lib/video-analysis";
 import { VideoAnalysisCard } from "@/components/video-analysis-card";
+import { BriefCard } from "@/components/brief-card";
 import { QUICK_REACTIONS, searchEmoji } from "@/lib/emoji";
 import type { ChatMessage, MessagePartView } from "@/lib/types";
 import { cn, errorMessage, formatWhen } from "@/lib/utils";
@@ -33,6 +34,7 @@ export type MessageItemProps = {
   onChanged: () => void;
   announce: (text: string) => void;
   focusSibling: (from: HTMLElement, delta: number) => void;
+  onOpenTask?: (taskId: string) => void;
 };
 
 export function plainTextOf(message: ChatMessage): string {
@@ -47,7 +49,7 @@ const selectionIn = (el: HTMLElement | null) => {
 };
 
 export function MessageItem(props: MessageItemProps) {
-  const { message, fresh, mine, botName, botId, bot, byId, children, onReact, onReply, onQuote, onChanged, announce, focusSibling } = props;
+  const { message, fresh, mine, botName, botId, bot, byId, children, onReact, onReply, onQuote, onChanged, announce, focusSibling, onOpenTask } = props;
   const ref = useRef<HTMLElement>(null);
   const reactRef = useRef<HTMLButtonElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
@@ -193,6 +195,7 @@ export function MessageItem(props: MessageItemProps) {
 
       {!mine ? <div className="mb-1 flex items-center gap-2 text-xs"><BotAvatar botId={bot?.id} shape={bot?.shape} color={bot?.color} size={20} primary={bot?.primary} /><span data-testid="bot-name-label" className="font-medium text-bot-text">{botName}</span></div> : null}
       <div>{children}</div>
+      {!mine && message.childTasks?.length ? <BriefCard message={message} onOpenTask={onOpenTask} /> : null}
       {(message.reactions ?? []).length > 0 ? (
         <div className="mt-1 flex flex-wrap gap-1">
           {message.reactions?.map(reaction => {

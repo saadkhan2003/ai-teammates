@@ -51,6 +51,7 @@ export type ChatMessage = {
   taskStatus?: string | null;
   replyToMessageId?: string | null;
   kind?: string;
+  childTasks?: Array<{ taskId: string; title: string; status: string; hasBrief: boolean }>;
 };
 
 export type MessagePartView =

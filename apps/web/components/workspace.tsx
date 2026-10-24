@@ -357,6 +357,7 @@ export function Workspace({ botId }: { botId: string }) {
           </p>
         ) : null}
         <ChatPane
+          onOpenTask={() => { setDetailTab("tasks"); setPaneRaw(true); }}
           onEditMemory={(id) => { setMemoryFocusId(id); setDetailTab("memory"); setPaneRaw(true); }}
           onMemoryChanged={() => void loadAux(["memories"])}
           editRequest={routineEditRequest}
