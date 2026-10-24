@@ -48,10 +48,11 @@ RUN groupadd --system desk \
     && useradd --system --gid desk --create-home --home-dir /data/home/desk --shell /usr/sbin/nologin desk \
     && python3 -m venv /opt/desk/venv \
     && /opt/desk/venv/bin/pip install --no-cache-dir \
-        fastapi==0.115.6 \
+        fastapi==0.162.0 \
+        starlette==1.9.0 \
         uvicorn==0.34.0 \
         playwright==1.49.1 \
-        pillow==11.1.0 \
+        pillow==13.0.0 \
         httpx==0.28.1 \
     && /opt/desk/venv/bin/pip install --no-cache-dir websockets==15.0.1
 
