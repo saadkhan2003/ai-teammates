@@ -92,7 +92,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
                 SET result=CAST(@result AS jsonb), ok=@ok, finished_at=now()
                 WHERE task_id=@taskId AND tool=@tool AND result @> CAST(@marker AS jsonb)
                   AND EXISTS (SELECT 1 FROM tasks WHERE id=@taskId AND bot_id=@botId AND status='running' AND lease_epoch=@epoch)
-                """, new { taskId, botId, epoch, tool = session.Tool, result = safeJson,
+                """, new { taskId, botId, epoch, ok, tool = session.Tool, result = safeJson,
                 marker = JsonSerializer.Serialize(new { videoSession = sessionId }) });
             return updated == 1 ? Results.Json(new { ok = true }) : Results.StatusCode(409);
         }
