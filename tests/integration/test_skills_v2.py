@@ -1,4 +1,5 @@
 """Skills v2 owner privacy, revision and DLP acceptance coverage (mock stack)."""
+import json
 import uuid
 import pytest
 from test_acceptance import OPENROUTER, _psql, login, submit, wait_task
@@ -19,15 +20,21 @@ def test_owner_skill_crud_revision_and_sensitive_body_rejection():
     client = login()
     bot = _bot(client, "Skills" + uuid.uuid4().hex[:5])
     try:
-        payload = {"name":"review-orders", "title":"Review orders", "whenToUse":"When checking the queue", "body":"# Review\nCheck the queue."}
+        payload = {"name":"review-orders", "title":"Review orders", "whenToUse":"When checking the queue", "body":"# Review\nCheck the queue.", "files":{"examples/queue.txt":"Open orders\nExceptions"}}
         status, created = client.call("POST", f"/api/bots/{bot}/skill-library", payload)
         assert status == 200, created
         sid = created["id"]
         assert client.call("GET", f"/api/skill-library/{sid}")[1]["body"] == payload["body"]
+        assert worker_call("GET", f"/internal/skills/{bot}/review-orders")["files"]["examples/queue.txt"] == "Open orders\nExceptions"
+        assert worker_call("GET", f"/internal/skills/{bot}/review-orders/files/examples/queue.txt")["content"] == "Open orders\nExceptions"
         changed = dict(payload, body="# Review v2\nCheck carefully.")
         assert client.call("PUT", f"/api/skill-library/{sid}", changed)[0] == 200
         revisions = client.call("GET", f"/api/skill-library/{sid}/revisions")[1]
         assert revisions[0]["version"] == 1 and revisions[0]["body"] == payload["body"]
+        snapshot_files = revisions[0]["files"]
+        if isinstance(snapshot_files, str):
+            snapshot_files = json.loads(snapshot_files)
+        assert snapshot_files["examples/queue.txt"] == "Open orders\nExceptions"
         assert revisions[-1]["version"] == 0 and revisions[-1]["body"] == ""
         assert client.call("POST", f"/api/skill-library/{sid}/revert/1")[0] == 200
         assert client.call("GET", f"/api/skill-library/{sid}")[1]["body"] == payload["body"]
@@ -85,28 +92,25 @@ def test_bot_edit_permission_defaults_off_and_owner_can_enable_it():
         _cleanup(client, bot)
 
 
-def test_bot_private_guide_wins_over_shared_guide_for_load_and_write():
+def test_owner_shared_guide_is_available_and_writable_by_every_bot():
     client = login()
     bot = _bot(client, "SkillScope" + uuid.uuid4().hex[:5])
     shared_id = None
     try:
         name = "scope-" + uuid.uuid4().hex[:8]
-        shared = {"name": name, "title": "Shared", "whenToUse": "When reviewing", "body": "Shared guide"}
+        shared = {"name": name, "title": "Shared", "whenToUse": "When reviewing", "body": "Shared guide", "allowBotEdit": True}
         status, created = client.call("POST", f"/api/bots/{bot}/skill-library", shared)
         assert status == 200, created
         shared_id = created["id"]
-        private = dict(shared, botId=bot, title="Private", body="Private guide", allowBotEdit=True)
-        status, created = client.call("POST", f"/api/bots/{bot}/skill-library", private)
-        assert status == 200, created
-        private_id = created["id"]
-        loaded = worker_call("GET", f"/internal/skills/{bot}/{name}")
-        assert loaded["body"] == "Private guide"
+        second_bot = _bot(client, "SkillScopeSecond" + uuid.uuid4().hex[:5])
+        loaded = worker_call("GET", f"/internal/skills/{second_bot}/{name}")
+        assert loaded["body"] == "Shared guide"
         catalog = worker_call("GET", f"/internal/skills/{bot}/catalog")["catalog"]
         assert len([line for line in catalog if line.startswith(name + ":")]) == 1
-        envelope = _skill_task(client, bot, {"name": name, "title": "Updated", "when_to_use": "When reviewing", "body": "Private update"})
+        envelope = _skill_task(client, second_bot, {"name": name, "title": "Updated", "when_to_use": "When reviewing", "body": "Shared update"})
         result = worker_call("POST", "/internal/tools/execute", envelope)
-        assert result["ok"] is True and result["output"]["id"] == private_id
-        assert client.call("GET", f"/api/skill-library/{shared_id}")[1]["body"] == "Shared guide"
+        assert result["ok"] is True and result["output"]["id"] == shared_id
+        assert client.call("GET", f"/api/skill-library/{shared_id}")[1]["body"] == "Shared update"
         with pytest.raises(AssertionError, match="409"):
             worker_call("POST", "/internal/tools/execute", dict(envelope, epoch=0))
         other = _bot(client, "ScopeOther" + uuid.uuid4().hex[:5])
@@ -119,7 +123,7 @@ def test_bot_private_guide_wins_over_shared_guide_for_load_and_write():
     finally:
         if shared_id:
             client.call("POST", f"/api/skill-library/{shared_id}/archive")
-        _cleanup(client, bot)
+        _cleanup(client, bot, second_bot if "second_bot" in locals() else None)
 
 
 def test_direct_skill_write_honors_owner_deny_and_ask_policy():
@@ -137,7 +141,7 @@ def test_direct_skill_write_honors_owner_deny_and_ask_policy():
             result = worker_call("POST", f"/internal/skills/{bot}/write", envelope)
             assert result["ok"] is False
             assert result["status"] == ("denied" if mode == "deny" else "waiting_approval")
-            assert _psql(f"SELECT count(*) FROM skill_library WHERE bot_id='{bot}' AND name='{name}'") == "0"
+            assert _psql(f"SELECT count(*) FROM skill_library WHERE owner_id=(SELECT owner_id FROM bots WHERE id='{bot}') AND name='{name}'") == "0"
             action = "tool.denied" if mode == "deny" else "approval.required"
             assert int(_psql(f"SELECT count(*) FROM audit_events WHERE task_id='{envelope['taskId']}' AND action='{action}'") or "0") >= 1
     finally:

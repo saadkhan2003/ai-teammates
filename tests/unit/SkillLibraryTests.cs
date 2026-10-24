@@ -11,7 +11,7 @@ public sealed class SkillLibraryTests
         var owner = Guid.NewGuid(); var otherOwner = Guid.NewGuid(); var bot = Guid.NewGuid(); var otherBot = Guid.NewGuid();
         Assert.True(SkillLibraryRoutes.VisibleToBot(owner, owner, null, bot));
         Assert.True(SkillLibraryRoutes.VisibleToBot(owner, owner, bot, bot));
-        Assert.False(SkillLibraryRoutes.VisibleToBot(owner, owner, otherBot, bot));
+        Assert.True(SkillLibraryRoutes.VisibleToBot(owner, owner, otherBot, bot));
         Assert.False(SkillLibraryRoutes.VisibleToBot(owner, otherOwner, null, bot));
     }
 
@@ -75,6 +75,8 @@ public sealed class SkillLibraryTests
         Assert.False(SkillLibraryRoutes.Valid("safe-guide", "Safe guide", "When needed", "api_key=sk-or-v1-12345678901234567890"));
         Assert.False(SkillLibraryRoutes.Valid("safe-guide", "Safe guide", "When needed", "api_key=sk_live_12345678901234567890"));
         Assert.False(SkillLibraryRoutes.Valid("safe-guide", "Safe guide", "When needed", new string('x', SkillLibraryRoutes.MaxBodyLength - 3) + "💡"));
+        Assert.False(SkillLibraryRoutes.Valid("Not Valid", "Safe guide", "When needed", "safe"));
+        Assert.False(SkillLibraryRoutes.Valid("safe-guide", "Safe guide", "token=sk-or-v1-12345678901234567890", "safe"));
     }
     [Theory]
     [InlineData("load_skill", ActionClasses.Read)]

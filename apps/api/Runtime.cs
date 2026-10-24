@@ -571,7 +571,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         if (BotMessaging.IsTool(tool)) return await BotMessaging.Run(platform, owner, botId, taskId, tool, args, ct);
         // Guide tools use the database only and share the same gated execution path.
         if (tool == "load_skill") return await SkillLibraryRoutes.Load(platform, owner, botId, Arg(args, "name"), ct);
-        if (tool == "read_skill_file") return await SkillLibraryRoutes.ReadFile(platform, owner, botId, Arg(args, "name"), Arg(args, "path"), ct) ?? throw new ToolHalt("unknown_skill_file", "No helper file with that path.");
+        if (tool == "read_skill_file") return await SkillLibraryRoutes.ReadFile(platform, owner, botId, Arg(args, "name"), Arg(args, "path"), ct);
         if (tool is "write_skill" or "save_skill") return await SkillLibraryRoutes.Write(platform, owner, botId, taskId, args, ct);
         if (tool == "delete_skill") return await SkillLibraryRoutes.Delete(platform, owner, botId, taskId, Arg(args, "name"), ct);
         var placement = await platform.PlacementForBot(botId, ct);
