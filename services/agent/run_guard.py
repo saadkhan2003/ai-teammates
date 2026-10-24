@@ -72,6 +72,16 @@ class RunGuard:
             return "invalid_repeat"
         return None
 
+    async def preexec(self, request, tool: str, args: dict) -> dict:
+        """Call the API pre-execution gate; any transport or response error denies."""
+        try:
+            body = await request(tool, args)
+            if not isinstance(body, dict) or body.get("decision") not in {"allow", "ask", "deny"}:
+                return {"decision": "deny", "reason": "gate_unavailable"}
+            return body
+        except Exception:
+            return {"decision": "deny", "reason": "gate_unavailable"}
+
     def _bump(self, key: str) -> bool:
         count = self._seen.get(key, 0) + 1
         self._seen[key] = count

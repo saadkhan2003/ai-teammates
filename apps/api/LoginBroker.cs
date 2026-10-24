@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Dapper;
+using Npgsql;
 
 namespace Teammates.Api;
 
@@ -14,11 +16,76 @@ public sealed class SecretField(string kind, byte[] value) : IDisposable
 
 public sealed class LoginBroker
 {
-    private readonly byte[] _key = RandomNumberGenerator.GetBytes(32);
+    private readonly byte[] _key;
+    private readonly NpgsqlDataSource? _data;
     private readonly object _gate = new();
     private readonly Dictionary<Guid, Slot> _slots = new();
 
     public TimeSpan Ttl { get; set; } = TimeSpan.FromMinutes(5);
+
+    public LoginBroker(NpgsqlDataSource? data = null, byte[]? sharedKey = null)
+    {
+        _data = data;
+        _key = sharedKey?.ToArray() ?? RandomNumberGenerator.GetBytes(32);
+        if (_key.Length != 32) throw new ArgumentException("Login broker key must be 32 bytes", nameof(sharedKey));
+    }
+
+    public async Task HoldAsync(Guid id, IReadOnlyList<SecretField> fields, bool saveToVault)
+    {
+        if (_data == null) { Hold(id, fields, saveToVault); return; }
+        var plain = Pack(fields); var nonce = RandomNumberGenerator.GetBytes(12); var cipher = new byte[plain.Length]; var tag = new byte[16]; byte[]? stored = null;
+        try
+        {
+            using var aes = new AesGcm(_key, 16);
+            aes.Encrypt(nonce, plain, cipher, tag, id.ToByteArray());
+            stored = new byte[cipher.Length + tag.Length]; Buffer.BlockCopy(cipher, 0, stored, 0, cipher.Length); Buffer.BlockCopy(tag, 0, stored, cipher.Length, tag.Length);
+            await using var conn = await _data.OpenConnectionAsync();
+            await conn.ExecuteAsync("""
+                INSERT INTO login_broker_slots(id,nonce,ciphertext,save_to_vault,created_at) VALUES(@id,@nonce,@stored,@save,clock_timestamp())
+                ON CONFLICT(id) DO UPDATE SET nonce=EXCLUDED.nonce,ciphertext=EXCLUDED.ciphertext,save_to_vault=EXCLUDED.save_to_vault,created_at=clock_timestamp()
+                """, new { id, nonce, stored, save = saveToVault });
+        }
+        finally { CryptographicOperations.ZeroMemory(plain); CryptographicOperations.ZeroMemory(cipher); CryptographicOperations.ZeroMemory(tag); if (stored != null) CryptographicOperations.ZeroMemory(stored); }
+    }
+
+    public async Task<(List<SecretField>? Fields, bool Save)> TryTakeAsync(Guid id)
+    {
+        if (_data == null) { var ok = TryTake(id, out var fields, out var save); return (ok ? fields : null, save); }
+        await using var conn = await _data.OpenConnectionAsync();
+        var row = await conn.QuerySingleOrDefaultAsync<(byte[] Nonce, byte[] Ciphertext, bool Save)>("""
+            DELETE FROM login_broker_slots WHERE id=@id AND created_at > clock_timestamp()-@ttl
+            RETURNING nonce AS "Nonce",ciphertext AS "Ciphertext",save_to_vault AS "Save"
+            """, new { id, ttl = Ttl });
+        if (row.Nonce == null)
+        {
+            await conn.ExecuteAsync("DELETE FROM login_broker_slots WHERE id=@id", new { id });
+            return (null, false);
+        }
+        var plain = new byte[row.Ciphertext.Length - 16];
+        try
+        {
+            using var aes = new AesGcm(_key, 16);
+            aes.Decrypt(row.Nonce, row.Ciphertext.AsSpan(0, plain.Length), row.Ciphertext.AsSpan(plain.Length, 16), plain, id.ToByteArray());
+            return (Unpack(plain), row.Save);
+        }
+        catch (CryptographicException) { return (null, false); }
+        finally { CryptographicOperations.ZeroMemory(plain); CryptographicOperations.ZeroMemory(row.Nonce); CryptographicOperations.ZeroMemory(row.Ciphertext); }
+    }
+
+    public async Task DropAsync(Guid id)
+    {
+        Drop(id);
+        if (_data == null) return;
+        await using var conn = await _data.OpenConnectionAsync();
+        await conn.ExecuteAsync("DELETE FROM login_broker_slots WHERE id=@id", new { id });
+    }
+
+    public async Task<bool> IsHeldAsync(Guid id)
+    {
+        if (_data == null) return IsHeld(id);
+        await using var conn = await _data.OpenConnectionAsync();
+        return await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM login_broker_slots WHERE id=@id AND created_at > clock_timestamp()-@ttl)", new { id, ttl = Ttl });
+    }
 
     public void Hold(Guid id, IReadOnlyList<SecretField> fields, bool saveToVault)
     {

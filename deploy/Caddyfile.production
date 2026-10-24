@@ -23,17 +23,29 @@
 	request_body {
 		max_size 32MB
 	}
+	handle /internal/* {
+		respond 404
+	}
+	handle /metrics {
+		respond 404
+	}
 	handle /api/events {
 		reverse_proxy api:8080 {
 			flush_interval -1
+			stream_timeout 24h
+			stream_close_delay 5m
 			transport http {
 				read_timeout 0
 				write_timeout 0
+				keepalive 30s
 			}
 		}
 	}
 	handle /api/* {
-		reverse_proxy api:8080
+		reverse_proxy api:8080 {
+			# Relay clients should send the same X-Relay-Affinity value for both WS ends.
+			lb_policy header X-Relay-Affinity
+		}
 	}
 	handle /health {
 		reverse_proxy api:8080
@@ -41,9 +53,12 @@
 	handle /vnc/* {
 		reverse_proxy api:8080 {
 			flush_interval -1
+			stream_timeout 24h
+			stream_close_delay 5m
 			transport http {
 				read_timeout 0
 				write_timeout 0
+				keepalive 30s
 			}
 		}
 	}

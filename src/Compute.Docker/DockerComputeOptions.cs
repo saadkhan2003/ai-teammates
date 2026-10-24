@@ -2,6 +2,7 @@ namespace Teammates.Compute;
 
 public sealed record DockerComputeOptions
 {
+    public int EgressProxyPort { get; init; }
     public string DockerHost { get; init; } = "unix:///var/run/docker.sock";
     public string ImageRef { get; init; } = "teammates-computer:dev";
     public string? NetworkName { get; init; }
@@ -10,6 +11,8 @@ public sealed record DockerComputeOptions
     public string IsolationToken { get; init; } = "";
     public string? SeccompPath { get; init; }
     public int MaxComputers { get; init; } = 2;
+    /// <summary>Compose project name; scopes which containers on a shared Docker daemon this provider owns.</summary>
+    public string? Stack { get; init; }
     public string ComputerToken { get; init; } = "";
     public string ComputerDns { get; init; } = Environment.GetEnvironmentVariable("COMPUTER_DNS") ?? "1.1.1.1,8.8.8.8";
     public bool SecondDisplay { get; init; } = !string.Equals(Environment.GetEnvironmentVariable("COMPUTER_SECOND_DISPLAY"), "false", StringComparison.OrdinalIgnoreCase);

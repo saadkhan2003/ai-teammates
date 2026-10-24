@@ -47,6 +47,7 @@ var compute = new DockerComputeProvider(new DockerComputeOptions
     ImageRef = config["COMPUTE_IMAGE"] ?? "teammates-computer:dev",
     NetworkName = string.IsNullOrWhiteSpace(config["COMPUTE_NETWORK"]) ? null : config["COMPUTE_NETWORK"],
     SeccompPath = config["SECCOMP_PROFILE"],
+    Stack = string.IsNullOrWhiteSpace(config["COMPUTE_STACK"]) ? null : config["COMPUTE_STACK"],
     MaxComputers = HostBudget.MaxComputers(HostBudget.ReadMemTotalBytes(), config["MAX_COMPUTERS"]),
     ComputerToken = config["COMPUTER_TOKEN"] ?? "",
     DisplayGeometry = config["DISPLAY_GEOMETRY"] ?? "1920x1200",
@@ -56,6 +57,7 @@ var compute = new DockerComputeProvider(new DockerComputeOptions
     CgroupParent = string.IsNullOrWhiteSpace(config["CGROUP_PARENT"]) ? null : config["CGROUP_PARENT"],
     CgroupRoot = string.IsNullOrWhiteSpace(config["CGROUP_ROOT"]) ? "/sys/fs/cgroup" : config["CGROUP_ROOT"]!,
     IdlePower = ComputerPower.ParseMode(config["IDLE_POWER"]),
+    EgressProxyPort = BoxContract.EgressProxy,
     IdleSuspend = int.TryParse(config["IDLE_SUSPEND_MINUTES"], out var suspendMinutes) && suspendMinutes >= 0 ? TimeSpan.FromMinutes(suspendMinutes) : TimeSpan.FromMinutes(10),
     IdleHibernate = int.TryParse(config["IDLE_HIBERNATE_MINUTES"], out var hibernateMinutes) && hibernateMinutes > 0 ? TimeSpan.FromMinutes(hibernateMinutes) : TimeSpan.FromMinutes(30),
     ResumeTarget = int.TryParse(config["IDLE_RESUME_TARGET_SECONDS"], out var resumeSeconds) && resumeSeconds > 0 ? TimeSpan.FromSeconds(resumeSeconds) : TimeSpan.FromSeconds(15)
@@ -71,7 +73,7 @@ var platform = new Platform(data, master, compute, s3, config);
 compute.MissingComputer = platform.BeginComputerRecovery;
 compute.OnComputerRestored = platform.ResumeRecoveringTasks;
 secrets.Platform = platform;
-var loginBroker = new LoginBroker();
+var loginBroker = new LoginBroker(data, master);
 var loginFlow = new LoginFlow(platform, loginBroker);
 var runtime = new Runtime(platform, loginFlow);
 builder.Services.AddSingleton(platform);
@@ -81,9 +83,12 @@ builder.Services.AddSingleton(new DeviceGate(data));
 builder.Services.AddSingleton(loginBroker);
 builder.Services.AddSingleton(loginFlow);
 builder.Services.AddSingleton(runtime);
+builder.Services.AddSingleton(data);
 builder.Services.AddHostedService<Maintenance>();
 builder.Services.AddHostedService<PluginCatalogJob>();
 builder.Services.AddHostedService<LibraryThumbnailWorker>();
+builder.Services.AddHostedService<TicketCleanupService>();
+builder.Services.AddHostedService<DesktopLeaseSweepService>();
 
 var app = builder.Build();
 app.UseExceptionHandler(handler => handler.Run(async ctx =>
@@ -126,7 +131,7 @@ app.Use(async (ctx, next) =>
     Interlocked.Add(ref platform.HttpMicros, (long)(DateTimeOffset.UtcNow - started).TotalMicroseconds);
     Interlocked.Increment(ref platform.HttpCount);
 });
-app.UseWebSockets();
+app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(25), KeepAliveTimeout = TimeSpan.FromSeconds(15) });
 var ownerPassword = config["OWNER_PASSWORD"];
 OwnerPasswordGuard.Ensure(string.Equals(config["REQUIRE_OWNER_PASSWORD"], "true", StringComparison.OrdinalIgnoreCase), ownerPassword);
 await platform.MigrateAndSeed(config["OWNER_USERNAME"] ?? "saad", string.IsNullOrWhiteSpace(ownerPassword) ? OwnerPasswordGuard.DevDefault : ownerPassword);
@@ -140,10 +145,16 @@ catch (Exception ex)
     app.Logger.LogError("computer isolation alert: computers will not start ({Message})", ex.Message);
 }
 Routes.Map(app, platform, runtime);
+TeachRoutes.Map(app, platform);
+VncTicketRoutes.Map(app, platform);
 SecurityRoutes.Map(app, platform, loginFlow);
+WebBotAuthRoutes.Map(app, platform);
 BotMessaging.Map(app, platform);
 Devices.Map(app, platform);
 DeviceCommandRoutes.Map(app, platform, app.Services.GetRequiredService<DeviceHub>());
+app.MapNetworkPolicyRoutes(platform);
+EgressRelay.Map(app, platform);
+app.MapEgressControlRoutes(platform);
 Feedback.Map(app, platform);
 app.Run();
 
@@ -236,6 +247,36 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
                     }
                 }
                 await Reliability.SweepExpiredLeases(platform, platform.MaxAutoResumesPerHour);
+                var expiredLeaseUsers = (await conn.QueryAsync<Guid>("""
+                    WITH expired AS (
+                      UPDATE desktop_lease SET holder_kind='none', holder_user_id=NULL, tab_id=NULL,
+                        epoch=epoch+1, expires_at=clock_timestamp(), updated_at=clock_timestamp()
+                      WHERE holder_kind='human' AND expires_at <= clock_timestamp()
+                      RETURNING computer_id
+                    ) SELECT DISTINCT uc.user_id FROM expired e JOIN user_computers uc ON uc.computer_id=e.computer_id
+                    """)).ToHashSet();
+                var databaseExpired = await conn.QueryAsync<Guid>("SELECT DISTINCT b.owner_id FROM bots b JOIN control_locks l ON l.bot_id=b.id WHERE l.holder='human' AND l.updated_at < now() - interval '45 seconds'");
+                expiredLeaseUsers.UnionWith(databaseExpired);
+                foreach (var userId in expiredLeaseUsers)
+                {
+                    await conn.ExecuteAsync("""
+                        UPDATE control_locks SET holder='agent', epoch=GREATEST(epoch, COALESCE((
+                          SELECT MAX(l.epoch) FROM desktop_lease l JOIN user_computers uc ON uc.computer_id=l.computer_id
+                          WHERE uc.user_id=@user), epoch)), updated_at=now()
+                        WHERE bot_id IN (SELECT id FROM bots WHERE owner_id=@user)
+                        """, new { user = userId });
+                    var resumed = await conn.ExecuteAsync("UPDATE tasks SET waiting_reason='await_continue', lease_owner=NULL, lease_until=NULL, updated_at=now() WHERE bot_id IN (SELECT id FROM bots WHERE owner_id=@user) AND status='waiting_human' AND waiting_reason IN ('takeover','captcha_or_mfa','You''re in control — tell me when to continue')", new { user = userId });
+                    var computer = await conn.ExecuteScalarAsync<Guid?>("SELECT computer_id FROM user_computers WHERE user_id=@user", new { user = userId });
+                    if (computer != null)
+                    {
+                        var epoch = await conn.ExecuteScalarAsync<long?>("SELECT epoch FROM control_locks WHERE bot_id IN (SELECT desktop_bot_id FROM user_computers WHERE user_id=@user)", new { user = userId }) ?? 1;
+                        try { await platform.Compute.SetHolderAsync(new ComputerId(computer.Value.ToString()), "fenced", (ulong)epoch, stoppingToken); }
+                        catch (Exception ex) { logger.LogDebug("expired desktop lease release deferred {Message}", OutputRedactor.Redact(ex.Message)); }
+                    }
+                    await platform.Audit(userId.ToString(), "desktop.lease.expire", null, null, new { expired = true });
+                    await platform.Publish(new { type = "computer.mode", mode = "watching" });
+                }
+                await ReconcileDesktopLeases(conn, stoppingToken);
                 await ResumeRecoveredComputers(stoppingToken);
                 if (++_tick % 10 == 0) await SampleComputers(stoppingToken);
                 if (_tick % 15 == 0)
@@ -307,6 +348,33 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
                 await platform.ResumeRecoveringTasks(computer);
             else
                 await platform.BeginComputerRecovery(computer, ct);
+        }
+    }
+
+    private async Task ReconcileDesktopLeases(NpgsqlConnection conn, CancellationToken ct)
+    {
+        await conn.ExecuteAsync("""
+            UPDATE desktop_lease SET expires_at=clock_timestamp()+interval '90 seconds', updated_at=clock_timestamp()
+            WHERE holder_kind='agent'
+            """);
+        var leases = await conn.QueryAsync<(Guid ComputerId, Guid DesktopBotId, string HolderKind, long Epoch)>("""
+            SELECT uc.computer_id AS "ComputerId", uc.desktop_bot_id AS "DesktopBotId",
+                   l.holder_kind AS "HolderKind", l.epoch AS "Epoch"
+            FROM user_computers uc JOIN desktop_lease l ON l.computer_id=uc.computer_id AND l.display=1
+            """);
+        foreach (var lease in leases)
+        {
+            var holder = lease.HolderKind switch { "human" => "human", "agent" => "agent", _ => "fenced" };
+            try
+            {
+                await conn.ExecuteAsync("UPDATE control_locks SET holder=@holder, epoch=GREATEST(epoch,@epoch), updated_at=now() WHERE bot_id=@bot", new { holder, epoch = lease.Epoch, bot = lease.DesktopBotId });
+                await platform.Compute.SetHolderAsync(new ComputerId(lease.ComputerId.ToString()), holder, (ulong)lease.Epoch, ct);
+            }
+            catch (Exception ex)
+            {
+                // Keep the computer fenced when the API cannot converge its cached state.
+                logger.LogDebug("desktop lease reconciliation deferred {Message}", OutputRedactor.Redact(ex.Message));
+            }
         }
     }
 

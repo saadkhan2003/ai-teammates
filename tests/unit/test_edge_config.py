@@ -19,8 +19,8 @@ def test_default_caddyfile_hides_internal_and_metrics():
 
 def test_production_caddyfile_is_https_and_still_closed():
     text = _text("deploy/Caddyfile.production")
-    assert "handle /internal/*" not in text
-    assert "handle /metrics" not in text
+    assert "handle /internal/*" in text and "respond 404" in text
+    assert "handle /metrics" in text and "respond 404" in text
     assert "example.com" in text
     assert "email admin@example.com" in text
     assert "issuer acme" in text
@@ -58,3 +58,18 @@ def test_test_caddyfile_is_opt_in():
     makefile = _text("Makefile")
     assert "deploy/compose.test.yml" in makefile
     assert "API_URL" in makefile
+
+
+def test_production_caddy_explicitly_hides_internal_metrics_and_keeps_streams_alive():
+    text = _text("deploy/Caddyfile.production")
+    assert "handle /internal/*" in text and "respond 404" in text
+    assert "handle /metrics" in text and "respond 404" in text
+    assert "stream_timeout" in text
+    assert "keepalive" in text
+    assert "KeepAliveInterval" in _text("apps/api/Program.cs")
+    assert "flush_interval -1" in text
+
+
+def test_production_compose_does_not_publish_vnc_or_novnc_ports():
+    text = _text("deploy/compose.production.yml")
+    assert "5900:" not in text and "6080:" not in text

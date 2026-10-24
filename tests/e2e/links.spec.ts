@@ -1,12 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
-
-const owner = process.env.OWNER_USERNAME ?? "saad";
-const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
-
-async function login(page: Page) {
-  const response = await page.request.post("/api/auth/login", { data: { username: owner, password } });
-  expect(response.ok()).toBeTruthy();
-}
+import { expect, test } from "@playwright/test";
+import { login } from "./helpers";
 
 async function collect(page: Page, paths: Set<string>) {
   const hrefs = await page.locator("a[href]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("href") || ""));

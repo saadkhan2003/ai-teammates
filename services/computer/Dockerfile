@@ -21,8 +21,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         xdotool xterm procps \
         fonts-dejavu-core fonts-liberation \
         git ripgrep patch \
-        imagemagick librsvg2-bin poppler-utils \
-        util-linux ffmpeg \
+        tmux imagemagick librsvg2-bin poppler-utils \
+        util-linux ffmpeg nftables \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL -o /tmp/node.tar.xz "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
@@ -51,10 +51,15 @@ RUN groupadd --system desk \
         fastapi==0.115.6 \
         uvicorn==0.34.0 \
         playwright==1.49.1 \
-        pillow==11.1.0
+        pillow==11.1.0 \
+        httpx==0.28.1 \
+    && /opt/desk/venv/bin/pip install --no-cache-dir websockets==15.0.1
 
 COPY s6/s6-rc.d/ /etc/s6-overlay/s6-rc.d/
 COPY s6/user-bundles.d/ /etc/s6-overlay/user-bundles.d/
+COPY scripts/start-window /usr/local/bin/start-window
+COPY scripts/stop-window /usr/local/bin/stop-window
+COPY scripts/box-bounded-log /usr/local/bin/box-bounded-log
 COPY scripts/bots-init /etc/s6-overlay/scripts/bots-init
 COPY src/ /opt/desk/src/
 COPY fixtures/ /opt/fixtures/www/
@@ -71,7 +76,7 @@ COPY desktop/launch-terminal /opt/desk/bin/launch-terminal
 COPY desktop/chromium.desktop /opt/desk/applications/chromium.desktop
 COPY desktop/files.desktop /opt/desk/applications/files.desktop
 COPY desktop/terminal.desktop /opt/desk/applications/terminal.desktop
-RUN chmod +x /etc/s6-overlay/scripts/bots-init /opt/desk/bin/start-panels /opt/desk/bin/start-wm /opt/desk/bin/browser-window \
+RUN chmod +x /etc/s6-overlay/scripts/bots-init /usr/local/bin/start-window /usr/local/bin/stop-window /usr/local/bin/box-bounded-log /opt/desk/bin/start-panels /opt/desk/bin/start-wm /opt/desk/bin/browser-window \
         /opt/desk/bin/launch-browser /opt/desk/bin/launch-files /opt/desk/bin/launch-terminal \
     && find /etc/s6-overlay/s6-rc.d -name run -exec chmod +x {} \; \
     && chmod 0755 /opt/desk/src \
@@ -84,6 +89,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends e2fsprogs \
     && rm -rf /var/lib/apt/lists/*
 
 ENV S6_VERBOSITY=1 \
+    COMPUTER_BOT_NFT=required \
     S6_CMD_WAIT_FOR_SERVICES_MAXTIME=60000 \
     PYTHONUNBUFFERED=1 \
     MALLOC_ARENA_MAX=2 \

@@ -1,0 +1,3 @@
+#!/command/with-contenv sh
+export PYTHONPATH=/opt/desk/src
+exec /opt/desk/venv/bin/python -m egress.proxy

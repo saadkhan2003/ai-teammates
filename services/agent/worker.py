@@ -13,7 +13,8 @@ from typing import Any
 import httpx
 
 from browser import BrowserHub
-from guard import invalid_reason, login_result, present_tool, scrub, should_halt, strip_text
+from web_bot_auth import CURRENT_AUTH_CONFIG, fingerprint_browser_settings, geo_browser_settings
+from guard import invalid_reason, login_result, present_tool, scrub, should_halt, stamp_actor, strip_text
 from plugins import call_allowed, enabled_names
 from run_guard import RunGuard
 from grounding import check_answer, observed_urls
@@ -164,12 +165,14 @@ class ComputerRecovering(Exception):
 
 
 class Worker:
-    def __init__(self) -> None:
+    def __init__(self, *, exit_ip: str | None = None, geo_lookup=None) -> None:
         self.api_url = os.environ.get("API_URL", "http://api:8080").rstrip("/")
         self.token = os.environ.get("WORKER_TOKEN", "")
         self.worker_id = os.environ.get("WORKER_ID", "worker-1")
         self.max_parallel = parallel_limit(os.environ)
         self.browser = BrowserHub()
+        self.browser_exit_ip = exit_ip
+        self.geo_lookup = geo_lookup
         self.client: httpx.AsyncClient | None = None
         self.inflight: set[asyncio.Task] = set()
         self.inflight_ids: set[str] = set()
@@ -203,6 +206,11 @@ class Worker:
             except httpx.HTTPStatusError:
                 await asyncio.sleep(1)
                 continue
+            except httpx.TransportError:
+                # The API is restarting or briefly unreachable; keep the worker alive.
+                log.warning("lease failed: API unreachable, retrying")
+                await asyncio.sleep(2)
+                continue
             tasks = _parse_tasks(payload)
             if not tasks:
                 # The API waits for a notification. A fast empty reply means it did not.
@@ -235,12 +243,19 @@ class Worker:
         task_id = _task_id(task)
         stop = asyncio.Event()
         lost = asyncio.Event()
-        heartbeat = asyncio.create_task(self._heartbeat(task, stop, lost))
+        execution = asyncio.create_task(self.execute(task, lost))
+        heartbeat = asyncio.create_task(self._heartbeat(task, stop, lost, execution))
         try:
-            await self.execute(task, lost)
+            await execution
+        except asyncio.CancelledError:
+            if not lost.is_set():
+                raise
         except ComputerRecovering:
             await self._status(task, "waiting_resource", reason=RECOVERING)
         except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 409 and _desktop_busy(exc.response):
+                await self._status(task, "waiting_human", reason="You're in control — tell me when to continue")
+                return
             if exc.response.status_code in LEASE_GONE or lost.is_set():
                 log.info("lease gone id=%s status=%s", task_id, exc.response.status_code)
             else:
@@ -263,7 +278,7 @@ class Worker:
             if nxt is not None:
                 self._start(nxt)
 
-    async def _heartbeat(self, task: dict, stop: asyncio.Event, lost: asyncio.Event) -> None:
+    async def _heartbeat(self, task: dict, stop: asyncio.Event, lost: asyncio.Event, execution: asyncio.Task | None = None) -> None:
         task_id = _task_id(task)
         while not stop.is_set():
             try:
@@ -284,6 +299,8 @@ class Worker:
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code in LEASE_GONE:
                     lost.set()
+                    if execution is not None and not execution.done():
+                        execution.cancel()
                     return
                 log.warning("heartbeat status=%s id=%s", exc.response.status_code, task_id)
             if not stop.is_set() and 'response' in locals():
@@ -297,7 +314,7 @@ class Worker:
             if stop.is_set():
                 return
             try:
-                await asyncio.wait_for(stop.wait(), timeout=5)
+                await asyncio.wait_for(stop.wait(), timeout=0.5)
                 return
             except asyncio.TimeoutError:
                 continue
@@ -333,6 +350,7 @@ class Worker:
                 {"role": "system", "content": system},
                 user,
             ]
+        _fold_feedback(messages, _feedback_note(task.get("feedback")))
         previous_message_count = len(messages)
         messages, _ = apply_resume(messages, task.get("resume"), task.get("attempt"))
         if len(messages) != previous_message_count:
@@ -695,20 +713,36 @@ class Worker:
                 if observed == "stop":
                     return None
             return output
+        if authorize:
+            async def gate_request(name, payload):
+                return await self.request_json("POST", "/internal/tools/preexec", {
+                    "workerId": self.worker_id,
+                    "taskId": _task_id(task),
+                    "botId": _bot_id(task),
+                    "epoch": _epoch(task),
+                    "tool": name,
+                    "args": payload,
+                })
+            gate = await RunGuard().preexec(gate_request, name, args)
+            if gate.get("decision") == "ask" or gate.get("status") == "waiting_approval":
+                await self._status(task, "waiting_approval", reason=gate.get("reason"))
+                return None
+            if gate.get("decision") != "allow":
+                return {"ok": False, "status": "denied", "reason": gate.get("reason") or "gate_unavailable"}
         return await self._execute_api(task, name, args)
 
     async def _authorize(self, task: dict, tool: str, args: dict):
         body = await self.request_json(
             "POST",
             "/internal/tools/authorize",
-            {
+            stamp_actor({
                 "workerId": self.worker_id,
                 "taskId": _task_id(task),
                 "botId": _bot_id(task),
                 "epoch": _epoch(task),
                 "tool": tool,
                 "args": args,
-            },
+            }, self.worker_id),
         )
         if not isinstance(body, dict):
             return {"ok": False, "reason": "denied"}
@@ -752,7 +786,32 @@ class Worker:
         if method is None:
             return {"ok": False, "reason": "unknown_browser_tool"}
         try:
-            output = await method(cdp_url, args)
+            private_policy = await self.request_json("GET", f"/internal/tasks/{_task_id(task)}/private-hosts")
+            blocked_hosts = private_policy.get("hosts", []) if isinstance(private_policy, dict) else []
+            if not isinstance(blocked_hosts, list) or len(blocked_hosts) > 500:
+                return {"ok": False, "reason": "private_host_policy_unavailable"}
+            hosts = [host.strip() for host in os.environ.get("WEB_BOT_AUTH_ALLOWED_HOSTS", "").split(",") if host.strip()]
+            agent = os.environ.get("WEB_BOT_AUTH_SIGNATURE_AGENT", "")
+            config = None
+            if hosts and agent:
+                async def signer(url: str, signature_agent: str):
+                    return await self.request_json("POST", "/internal/web-bot-auth/sign", {
+                        "taskId": str(task.get("id") or task.get("taskId") or task.get("task_id") or ""),
+                        "url": url,
+                        "signatureAgent": signature_agent,
+                    })
+                config = {"allowed_hosts": hosts, "signature_agent": agent, "signer": signer, "blocked_hosts": blocked_hosts}
+            elif blocked_hosts:
+                config = {"blocked_hosts": blocked_hosts}
+            if self.browser_exit_ip and self.geo_lookup:
+                geo = geo_browser_settings(self.browser_exit_ip, self.geo_lookup)
+                fingerprint = fingerprint_browser_settings(geo["country"], geo["locale"])
+                config = dict(config or {}, geo_settings=geo, accept_language=fingerprint["acceptLanguage"], user_agent=fingerprint["userAgent"])
+            auth_token = CURRENT_AUTH_CONFIG.set(config)
+            try:
+                output = await method(cdp_url, args)
+            finally:
+                CURRENT_AUTH_CONFIG.reset(auth_token)
         except Exception as exc:
             log.warning("browser tool=%s type=%s", tool, type(exc).__name__)
             return {"ok": False, "reason": "browser_failed"}
@@ -781,7 +840,7 @@ class Worker:
             body = await self.request_json(
                 "POST",
                 "/internal/tools/execute",
-                {
+                stamp_actor({
                     "workerId": self.worker_id,
                     "taskId": _task_id(task),
                     "botId": _bot_id(task),
@@ -789,7 +848,7 @@ class Worker:
                     "tool": tool,
                     "idempotencyKey": _idempotency_key(task, tool, args),
                     "args": args,
-                },
+                }, self.worker_id),
             )
         except ComputerRecovering:
             log.info("computer recovering task=%s", _task_id(task))
@@ -883,6 +942,18 @@ class Worker:
             return {}
 
 
+def _desktop_busy(response: httpx.Response) -> bool:
+    try:
+        payload = response.json()
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    detail = payload.get("detail")
+    return (payload.get("code") == "DESKTOP_BUSY" or
+            isinstance(detail, dict) and detail.get("code") == "DESKTOP_BUSY")
+
+
 def _computer_recovering(response: httpx.Response) -> bool:
     """409 and 503 both mean the computer is being rebuilt. A bare 503 is still retried."""
     if response.status_code not in {409, 503}:
@@ -963,6 +1034,18 @@ def scoped_rule_context(task: dict, tool: str, args: dict | None = None) -> tupl
     if not blocks:
         return "", ""
     return "|".join(matched_scopes), "\n".join(blocks)
+def _fold_feedback(messages: list, note: str) -> None:
+    """A retry or resumed task already has a transcript. Fold the new reaction into its system prompt
+    so tool-call ordering stays valid, and never add the same note twice."""
+    if not note or not messages:
+        return
+    if any(isinstance(m, dict) and note in str(m.get("content") or "") for m in messages):
+        return
+    first = messages[0]
+    if isinstance(first, dict) and first.get("role") == "system":
+        first["content"] = str(first.get("content") or "") + "\n" + note
+    else:
+        messages.insert(0, {"role": "system", "content": SYSTEM + "\n" + note})
 
 
 def _parse_tasks(payload) -> list[dict]:

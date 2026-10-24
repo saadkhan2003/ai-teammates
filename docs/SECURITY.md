@@ -1,6 +1,8 @@
 # v0.4 reliability security notes
 
-PolicyGate, DLP, TEAMS-ISO firewall enforcement, per-bot Linux UIDs and private workspace modes remain required. Reliability guards do not bypass any of those controls.
+PolicyGate, DLP, per-bot isolation (Bot Isolation Policy: per-bot network and files, bots talk only via the messaging layer), per-bot Linux UIDs and private workspace modes remain required. Reliability guards do not bypass any of those controls.
+
+VNC and terminal API tickets are stored by SHA-256 hash in Postgres and consumed by one atomic update. The database clock decides their 60-second lifetime, and user, bot, and (for VNC) IP bindings are checked during consumption so a wrong claim does not burn a ticket. VNC session tokens carried between API instances are AES-GCM encrypted with the shared API master key. Expired ticket rows are removed by every instance's safe periodic cleanup.
 
 Browser consent is scoped to the task and the full origin (scheme, hostname, port). Opening a new origin creates an Allow once / Deny approval, including trusted test portals. A previous task's `seen_domains` rows no longer authorize browsing. Skill replay uses the same authorization path. Browser approval does not grant credential use. Persistent credential grants continue to apply only to credential actions; there is no implicit persistent browser grant.
 

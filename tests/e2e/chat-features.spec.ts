@@ -120,7 +120,7 @@ test("hover toolbar: react, reply, menu, delete with confirm, also on user messa
     assistant("a1", "Hi! How can I help?"),
   ] });
   await page.goto(`/bots/${A}`);
-  const reply = page.locator("[data-message-id='a1']");
+  const reply = page.locator("article[data-message-id='a1']");
   await reply.hover();
   await expect(reply.getByTestId("message-toolbar")).toBeVisible();
   // react via popover

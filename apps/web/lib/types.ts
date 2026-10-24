@@ -220,4 +220,5 @@ export type SecretTestResult = {
 export type DesktopToken = {
   token: string;
   mode: string;
+  epoch?: number;
 };

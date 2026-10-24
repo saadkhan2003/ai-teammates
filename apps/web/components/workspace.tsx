@@ -134,6 +134,7 @@ export function Workspace({ botId }: { botId: string }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [desktopFull, setDesktopFull] = useState(false);
   const [autoControlKey, setAutoControlKey] = useState(0);
+  const [handBackKey, setHandBackKey] = useState(0);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [files, setFiles] = useState<ListState<FileEntry>>(emptyList);
@@ -293,6 +294,7 @@ export function Workspace({ botId }: { botId: string }) {
     botId,
     conversationId: workspace?.conversationId,
     onBegin: () => { setDesktopFull(true); setAutoControlKey(value => value + 1); },
+    onEnd: () => setHandBackKey(value => value + 1),
     onSent: () => void loadWorkspace(),
   });
 
@@ -508,6 +510,7 @@ export function Workspace({ botId }: { botId: string }) {
                   fullscreen={desktopFull}
                   recording={teach.recording}
                   autoControlKey={autoControlKey}
+                  handBackKey={handBackKey}
                   onHandedBack={() => void teach.finish()}
                   onExpand={() => setDesktopFull(true)}
                   onExitFullscreen={() => setDesktopFull(false)}

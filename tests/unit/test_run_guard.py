@@ -69,3 +69,17 @@ def test_ledger_seeds_cumulative_and_per_attempt_budgets():
     timed = RunGuard(max_steps=20, max_seconds=30, seconds_used=25, max_attempt_seconds=8, repeat_limit=9, clock=lambda: clock["now"])
     clock["now"] = 19
     assert timed.note("read_file", {"path": "a"}) == "attempt_time_budget"
+
+
+def test_preexec_gate_denies_errors_and_requires_explicit_allow():
+    import asyncio
+    guard = RunGuard()
+    async def allow(tool, args):
+        return {"decision": "allow"}
+    async def malformed(tool, args):
+        return {"status": "ok"}
+    async def unavailable(tool, args):
+        raise OSError("offline")
+    assert asyncio.run(guard.preexec(allow, "shell", {"command": "true"})) == {"decision": "allow"}
+    assert asyncio.run(guard.preexec(malformed, "shell", {}))["decision"] == "deny"
+    assert asyncio.run(guard.preexec(unavailable, "shell", {}))["decision"] == "deny"

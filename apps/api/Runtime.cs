@@ -11,10 +11,11 @@ using Teammates.Compute;
 
 namespace Teammates.Api;
 
-public sealed class Runtime(Platform platform, LoginFlow logins)
+public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer? reviewer = null)
 {
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(90) };
     private readonly MemoryStore _memory = new(platform);
+    private readonly IActionReviewer _reviewer = reviewer ?? new RuleBasedActionReviewer();
 
     public async Task<IResult> Model(JsonElement body, CancellationToken ct)
     {
@@ -75,11 +76,48 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
                 return Results.StatusCode(409);
             return Results.Json(new { decision = "ask", status = "waiting_approval", riskClass = gated.RiskClass, summary = gated.Summary });
         }
+        await platform.Audit("policy", "tool.allowed", botId, taskId,
+            new { tool, reason = gated.Reason, riskClass = gated.RiskClass });
         if (tool == "browser_open" && Uri.TryCreate(Arg(args, "url"), UriKind.Absolute, out var uri))
         {
+            try
+            {
+                await PrivateHosts.PropagateBotAsync(platform, botId, ct);
+            }
+            catch
+            {
+                return Results.Json(new { error = "private host policy could not be applied" }, statusCode: 503);
+            }
             await using var conn = await platform.Data.OpenConnectionAsync(ct);
             await conn.ExecuteAsync("INSERT INTO task_browser_origins (task_id, origin) VALUES (@task, @origin) ON CONFLICT DO NOTHING", new { task = taskId, origin = uri.GetLeftPart(UriPartial.Authority) });
         }
+        return Results.Json(new { decision = "allow" });
+    }
+
+    public async Task<IResult> PreExec(JsonElement body, CancellationToken ct)
+    {
+        if (body.GetRawText().Length > 48_000 || !body.TryGetProperty("taskId", out var taskNode) || !taskNode.TryGetGuid(out var taskId)
+            || !body.TryGetProperty("botId", out var botNode) || !botNode.TryGetGuid(out var botId)
+            || !body.TryGetProperty("tool", out var toolNode) || toolNode.ValueKind != JsonValueKind.String
+            || !body.TryGetProperty("args", out var args))
+            return Results.BadRequest(new { decision = "deny", reason = "invalid_preexec_request" });
+        if (!await HoldsLease(taskId, EpochOf(body), ct)) return Results.StatusCode(409);
+        var tool = toolNode.GetString()!;
+        var gated = await Gate(botId, taskId, tool, args, false, ct);
+        if (gated.Decision == PolicyEngine.Deny)
+        {
+            await platform.Audit("policy", "tool.denied", botId, taskId, new { tool, reason = gated.Reason, riskClass = gated.RiskClass });
+            return Results.Json(new { decision = "deny", reason = gated.Reason, riskClass = gated.RiskClass });
+        }
+        if (gated.Decision == PolicyEngine.Ask && !await HasApprovedUnconsumed(taskId, tool))
+        {
+            if (!await HasPendingApproval(taskId, tool)
+                && !await CreateApproval(botId, taskId, tool, TargetOf(args), args, gated.Summary, gated.RiskClass, gated.Summary, EpochOf(body), ct))
+                return Results.StatusCode(409);
+            return Results.Json(new { decision = "ask", status = "waiting_approval", riskClass = gated.RiskClass, summary = gated.Summary });
+        }
+        await platform.Audit("policy", "tool.allowed", botId, taskId,
+            new { tool, reason = gated.Reason, riskClass = gated.RiskClass });
         return Results.Json(new { decision = "allow" });
     }
 
@@ -103,6 +141,10 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
             await Step(taskId, tool, args, "deny", false, new { reason = blocked, riskClass = ActionClasses.BotManage }, EpochOf(body));
             return Results.Json(new { ok = false, status = "denied", reason = blocked, riskClass = ActionClasses.BotManage });
         }
+        var actorId = body.TryGetProperty("actor_id", out var actorValue) ? actorValue.GetString() ?? "" : "";
+        var desktopEpoch = await AgentDesktopEpoch(botId, ct);
+        if ((tool is "browser_open" or "browser_extract" or "browser_click" or "browser_screenshot" or "type_secret" or "request_login" or "shell" or "setup_env" or "computer_screenshot" or "computer_click" or "computer_type" or "computer_key" or "computer_scroll" or "record_start" or "record_stop") && desktopEpoch == null)
+            return Results.Json(new { code = "DESKTOP_BUSY", reason = "You're in control — tell me when to continue" }, statusCode: 409);
         var gated = await Gate(botId, taskId, tool, args, false, ct);
         var decision = gated.Decision;
         if (decision == PolicyEngine.Deny)
@@ -166,7 +208,13 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         object? snapshot = null;
         try
         {
-            var output = await Dispatch(owner, botId, taskId, tool, args, ct);
+            var output = await Dispatch(owner, botId, taskId, tool, args, actorId, desktopEpoch ?? 0, ct);
+            if (output is JsonElement desktopResult && desktopResult.ValueKind == JsonValueKind.Object &&
+                desktopResult.TryGetProperty("code", out var desktopCode) && desktopCode.GetString() == "DESKTOP_BUSY")
+            {
+                await Step(taskId, tool, args, "DESKTOP_BUSY", false, new { status = "DESKTOP_BUSY" }, EpochOf(body));
+                return Results.Json(new { code = "DESKTOP_BUSY" }, statusCode: 409);
+            }
             if (tool.StartsWith("computer_", StringComparison.Ordinal) || tool.StartsWith("record_", StringComparison.Ordinal))
             {
                 using var result = JsonDocument.Parse(JsonSerializer.Serialize(output));
@@ -207,6 +255,12 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         catch (ComputeException ex) when (ex.IsRecovering)
         {
             return Results.Json(new { error = ComputeException.RecoveringMessage }, statusCode: 503);
+        }
+        catch (ComputeException ex) when (ex.Code == ComputeErrorCode.FailedPrecondition &&
+            (tool is "browser_open" or "browser_extract" or "browser_click" or "browser_screenshot" or "type_secret" or "shell" or "setup_env"))
+        {
+            await Step(taskId, tool, args, "DESKTOP_BUSY", false, new { status = "DESKTOP_BUSY" }, EpochOf(body));
+            return Results.Json(new { code = "DESKTOP_BUSY" }, statusCode: 409);
         }
         catch (ComputeException ex) when (ex.Code == ComputeErrorCode.PermissionDenied)
         {
@@ -333,7 +387,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         return Results.Json(new { status = "ok" });
     }
 
-    private async Task<object> Dispatch(Guid owner, Guid botId, Guid taskId, string tool, JsonElement args, CancellationToken ct)
+    private async Task<object> Dispatch(Guid owner, Guid botId, Guid taskId, string tool, JsonElement args, string actorId, long desktopEpoch, CancellationToken ct)
     {
         if (BotMessaging.IsTool(tool)) return await BotMessaging.Run(platform, owner, botId, taskId, tool, args, ct);
         var placement = await platform.PlacementForBot(botId, ct);
@@ -347,10 +401,13 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
             case "computer_scroll":
             case "record_start":
             case "record_stop":
-                return await ComputerTools.Run(platform, botId, taskId, computer, placement.Desktop, tool, args, ct);
+                return await ComputerTools.Run(platform, botId, taskId, computer, placement.Desktop, tool, args, actorId, desktopEpoch, ct);
             case "write_file":
-                await Run(computer, botId, ["python3", "-c", BotFs.Script("write_file(sys.argv[1], sys.argv[2])"), Arg(args, "path"), Arg(args, "content")], null, ct);
+            {
+                var (writeCode, _, writeErr) = await Run(computer, botId, ["python3", "-c", BotFs.Script("write_file(sys.argv[1], sys.argv[2])"), Arg(args, "path"), Arg(args, "content")], null, ct);
+                if (writeCode != 0) throw new ToolHalt("failed", "write_failed " + (writeErr.Length > 300 ? writeErr[..300] : writeErr));
                 return new { ok = true, path = Arg(args, "path") };
+            }
             case "read_file":
             {
                 var (code, stdout, _) = await Run(computer, botId, ["python3", "-c", BotFs.Script("read_file(sys.argv[1])"), Arg(args, "path")], null, ct);
@@ -378,13 +435,15 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
             case "shell":
             {
                 var command = Arg(args, "command");
-                var (code, stdout, stderr) = await Run(computer, botId, BotFs.ShellArgs(command), null, ct);
-                return new { exitCode = code, stdout = OutputRedactor.Redact(stdout), stderr = OutputRedactor.Redact(stderr) };
+                var response = await platform.Compute.ControlAsync(computer, $"/desktops/{placement.Desktop}/shell",
+                    JsonSerializer.Serialize(new { command, timeout = 30, actor_id = actorId, epoch = desktopEpoch }), ct);
+                using var shellResult = JsonDocument.Parse(response);
+                return shellResult.RootElement.Clone();
             }
             case "setup_env":
-                return await Setup(owner, botId, taskId, computer, args, ct);
+                return await Setup(owner, botId, taskId, computer, placement.Desktop, args, actorId, desktopEpoch, ct);
             case "type_secret":
-                return await TypeSecret(owner, botId, taskId, computer, args, ct);
+                return await TypeSecret(owner, botId, taskId, computer, args, actorId, desktopEpoch, ct);
             case "ask_user":
                 return await AskUser(botId, taskId, args);
             case "save_memory":
@@ -400,7 +459,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
             case "request_secret":
                 return await RequestSecret(owner, botId, taskId, args);
             case "request_login":
-                return await logins.Handle(owner, botId, taskId, args, ct);
+                return await logins.Handle(owner, botId, taskId, args, actorId, desktopEpoch, ct);
             case "search_tools":
                 return await PluginCatalog.SearchTools(platform, botId, Arg(args, "query"), ct);
             case "load_tool":
@@ -418,7 +477,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         }
     }
 
-    private async Task<object> Setup(Guid owner, Guid botId, Guid taskId, ComputerId computer, JsonElement args, CancellationToken ct)
+    private async Task<object> Setup(Guid owner, Guid botId, Guid taskId, ComputerId computer, string desktop, JsonElement args, string actorId, long desktopEpoch, CancellationToken ct)
     {
         var reference = Arg(args, "secret_ref");
         var command = Arg(args, "command");
@@ -439,19 +498,21 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
             value = "";
             throw new ToolHalt("denied", "command contains a resolved secret");
         }
-        var (code, stdout, stderr) = await Run(computer, botId, BotFs.ShellArgs(command), new Dictionary<string, string> { [envName] = value }, ct, [new SecretEnvBinding(envName, reference, botId.ToString())]);
+        var response = await platform.Compute.ControlAsync(computer, $"/desktops/{desktop}/setup-env",
+            JsonSerializer.Serialize(new { command, env = new Dictionary<string, string> { [envName] = value }, timeout = 30, actor_id = actorId, epoch = desktopEpoch }), ct);
         value = "";
-        return new { exitCode = code, stdout, stderr };
+        using var setupResult = JsonDocument.Parse(response);
+        return setupResult.RootElement.Clone();
     }
 
-    private async Task<object> TypeSecret(Guid owner, Guid botId, Guid taskId, ComputerId computer, JsonElement args, CancellationToken ct)
+    private async Task<object> TypeSecret(Guid owner, Guid botId, Guid taskId, ComputerId computer, JsonElement args, string actorId, long desktopEpoch, CancellationToken ct)
     {
         var reference = Arg(args, "secret_ref");
         var selector = Arg(args, "selector");
         if (string.IsNullOrWhiteSpace(selector)) selector = "#password";
         var target = Arg(args, "targetId");
         var desktop = (await platform.PlacementForBot(botId, ct)).Desktop;
-        var inspectBody = JsonSerializer.Serialize(new { targetId = target, selector });
+        var inspectBody = JsonSerializer.Serialize(new { targetId = target, selector, actor_id = actorId, epoch = desktopEpoch });
         var inspect = await platform.Compute.ControlAsync(computer, $"/desktops/{desktop}/browser/inspect", inspectBody, ct);
         using var doc = JsonDocument.Parse(inspect);
         var origin = doc.RootElement.TryGetProperty("frameOrigin", out var frame) ? frame.GetString() ?? "" : "";
@@ -462,7 +523,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         var secret = resolved.Value;
         var value = Encoding.UTF8.GetString(secret);
         CryptographicOperations.ZeroMemory(secret);
-        var payload = JsonSerializer.Serialize(new { targetId = target, selector, value, expectedOrigin = origin });
+        var payload = JsonSerializer.Serialize(new { targetId = target, selector, value, expectedOrigin = origin, actor_id = actorId, epoch = desktopEpoch });
         value = "";
         var typed = await platform.Compute.ControlAsync(computer, $"/desktops/{desktop}/browser/type-secret", payload, ct);
         using var result = JsonDocument.Parse(typed);
@@ -473,6 +534,42 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
             throw new ToolHalt("denied", reason ?? "inject_failed");
         }
         return new { ok = true };
+    }
+
+    private async Task<long?> AgentDesktopEpoch(Guid botId, CancellationToken ct)
+    {
+        var placement = await platform.PlacementForBot(botId, ct);
+        if (!Guid.TryParse(placement.Computer.Value, out var computerId)) return null;
+        await using var conn = await platform.Data.OpenConnectionAsync(ct);
+        // A computer created after migration 021 has no lease row yet; seed one with the agent holding the display.
+        await conn.ExecuteAsync(new CommandDefinition("""
+            INSERT INTO desktop_lease (computer_id, display, holder_kind, holder_user_id, epoch, expires_at, updated_at)
+            SELECT computer_id, 1, 'agent', user_id, 1, clock_timestamp() + interval '90 seconds', clock_timestamp()
+            FROM user_computers WHERE computer_id=@computerId
+            ON CONFLICT (computer_id, display) DO NOTHING
+            """, new { computerId }, cancellationToken: ct));
+        var current = await DesktopLeaseRepository.StateAsync(conn, computerId, 1, ct);
+        if (current?.HolderKind == "none")
+        {
+            var owner = await conn.ExecuteScalarAsync<Guid?>(new CommandDefinition(
+                "SELECT user_id FROM user_computers WHERE computer_id=@computerId", new { computerId }, cancellationToken: ct));
+            if (owner == null) return null;
+            var agentLease = await DesktopLeaseRepository.ResumeAgentAsync(conn, computerId, 1, owner.Value, current.Epoch, ct);
+            if (agentLease != null)
+            {
+                await conn.ExecuteAsync(new CommandDefinition(
+                    "UPDATE control_locks SET holder='agent', epoch=@epoch, updated_at=now() WHERE bot_id=@botId",
+                    new { botId, epoch = agentLease.Epoch }, cancellationToken: ct));
+                await platform.Compute.SetHolderAsync(placement.Computer, "agent", (ulong)agentLease.Epoch, ct);
+                await platform.Audit(owner.Value.ToString(), "desktop.lease.agent_claim", botId, null, new { });
+                return agentLease.Epoch;
+            }
+        }
+        return await conn.ExecuteScalarAsync<long?>(new CommandDefinition("""
+            SELECT epoch FROM desktop_lease
+            WHERE computer_id=@computerId AND display=1 AND holder_kind='agent'
+              AND expires_at > clock_timestamp()
+            """, new { computerId }, cancellationToken: ct));
     }
 
     private async Task<object> SaveMemory(Guid botId, Guid owner, Guid taskId, JsonElement args)
@@ -802,6 +899,11 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         if (PluginIds.IsPluginTool(tool)) hint = await PluginCatalog.Hint(platform, botId, tool, ct);
         var peerOrigin = await conn.ExecuteScalarAsync<bool>("SELECT (t.origin_thread_id IS NOT NULL OR t.origin_depth > 0 OR t.kind IN ('peer','peer_reply','peer_notice')) FROM tasks t WHERE t.id=@id", new { id = taskId });
         var decision = PolicyGate.Evaluate(tool, args, seen, policy, rules, instruction, approved, grants, hint, peerOrigin);
+        // An explicit ALLOW for starting a peer conversation is the user's own answer; the reviewer must not re-ask it.
+        var userAllowedPeerMessage = tool == "message_bot" && decision.Decision == PolicyEngine.Allow
+            && policy.Mode(decision.RiskClass) == PolicyEngine.Allow && !peerOrigin;
+        if (decision.Decision != PolicyEngine.Deny && !decision.HardDeny && !userAllowedPeerMessage && await _reviewer.ReviewAsync(tool, args, ct) == "ask")
+            decision = decision with { Decision = PolicyEngine.Ask, Reason = "review_required" };
         if (decision.Decision != PolicyEngine.Deny && await TypeSecretOffDomain(conn, owner, tool, args))
             decision = decision with { Decision = PolicyEngine.Deny, Reason = "domain_not_allowed" };
         if (policy.ModelAssist && !ActionClassifier.IsBuiltIn(tool) && !decision.HardDeny && decision.Decision != PolicyEngine.Deny)
@@ -811,9 +913,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         }
         // Persistent approval rules are consulted only after the complete policy path,
         // including model labels and every hard/legacy/user/DLP denial above.
-        if (decision.Decision != PolicyEngine.Ask) return decision;
-        if (await conn.ExecuteScalarAsync<bool>("SELECT (t.origin_thread_id IS NOT NULL OR t.origin_depth > 0 OR t.kind IN ('peer','peer_reply','peer_notice')) FROM tasks t WHERE t.id=@task", new { task = taskId })) return decision;
-        if (!ApprovalRules.AllowedClass(decision.RiskClass, tool)) return decision;
+        if (!ApprovalRules.CanApply(decision, tool, policy, peerOrigin)) return decision;
         var active = await conn.QueryAsync<(Guid Id, string Matcher)>("SELECT id, matcher::text FROM approval_rules WHERE owner_id=@owner AND revoked_at IS NULL AND (bot_id IS NULL OR bot_id=@bot) AND action_class=@class AND tool=@tool", new { owner, bot = botId, @class = decision.RiskClass, tool });
         foreach (var rule in active)
         {
@@ -901,6 +1001,18 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         return true;
     }
 
+    private async Task<bool> HasApprovedUnconsumed(Guid taskId, string tool)
+    {
+        await using var conn = await platform.Data.OpenConnectionAsync();
+        return await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM approvals WHERE task_id=@task AND action=@tool AND status='approved' AND consumed_at IS NULL", new { task = taskId, tool }) > 0;
+    }
+
+    private async Task<bool> HasPendingApproval(Guid taskId, string tool)
+    {
+        await using var conn = await platform.Data.OpenConnectionAsync();
+        return await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM approvals WHERE task_id=@task AND action=@tool AND status='pending'", new { task = taskId, tool }) > 0;
+    }
+
     private async Task<bool> CreateApproval(Guid botId, Guid taskId, string tool, string target, JsonElement args, string reason, string riskClass, string summary, int epoch, CancellationToken ct)
     {
         if (!await HoldsLease(taskId, epoch, ct)) return false;
@@ -909,6 +1021,8 @@ public sealed class Runtime(Platform platform, LoginFlow logins)
         await conn.ExecuteAsync(
             "INSERT INTO approvals (bot_id, task_id, action, target, proposed, reason, risk_class, summary) VALUES (@bot, @task, @tool, @target, @proposed::jsonb, @reason, @risk, @summary)",
             new { bot = botId, task = taskId, tool, target, proposed, reason, risk = riskClass, summary });
+        await platform.Audit("policy", "approval.required", botId, taskId,
+            new { tool, riskClass, decision = "ask" });
         var owner = await conn.ExecuteScalarAsync<Guid?>("SELECT owner_id FROM bots WHERE id=@id", new { id = botId });
         if (owner != null) await platform.Notify(owner.Value, "approval", "Approval needed", $"{tool} {target}".Trim());
         if (!await SetTask(taskId, "waiting_approval", tool, clearLease: true, epoch, ct))

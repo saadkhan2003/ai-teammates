@@ -48,6 +48,10 @@ COPY db/033_watchdog.sql /migrations/033_watchdog.sql
 COPY db/030_approval_rules.sql /migrations/030_approval_rules.sql
 COPY db/031_rule_scope.sql /migrations/031_rule_scope.sql
 COPY db/032_device_commands.sql /migrations/032_device_commands.sql
+COPY db/019_computer_windows.sql /migrations/019_computer_windows.sql
+COPY db/020_approval_rules.sql /migrations/020_approval_rules.sql
+COPY db/021_desktop_lease.sql /migrations/021_desktop_lease.sql
+COPY db/022_tickets_state.sql /migrations/022_tickets_state.sql
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
     DOTNET_gcServer=0 \
     DOTNET_GCHeapHardLimit=0x10000000

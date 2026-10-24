@@ -1,11 +1,10 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
-import { autoAllowBrowserOpens } from "./helpers";
+import { autoAllowBrowserOpens, login } from "./helpers";
 import { PG_CONTAINER, AGENT_CONTAINER, API_CONTAINER, MOCK_CONTAINER } from "./containers";
 
-const owner = process.env.OWNER_USERNAME ?? "saad";
-const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
+const STACK = process.env.STACK!;
 const LOGIN_CANARY = "CanaryLoginPassword9911";
 const POST = "Post this note to the public board: hello from the yard";
 const SIGNIN = "Sign in at the portal";
@@ -40,14 +39,6 @@ function resultText(task: TaskRow): string {
   } catch {
     return String(raw);
   }
-}
-
-async function login(page: Page) {
-  await page.goto("/login");
-  await page.getByTestId("login-username").fill(owner);
-  await page.getByTestId("login-password").fill(password);
-  await page.getByTestId("login-submit").click();
-  await expect(page.getByTestId("new-bot")).toBeVisible();
 }
 
 async function listTasks(page: Page, botId: string): Promise<TaskRow[]> {
@@ -144,7 +135,8 @@ test("policy card, data-policy block, and login form", async ({ page }) => {
     slug,
     "python3",
     "-c",
-    "import json,os,urllib.request; body=json.dumps({'selector':'#status'}).encode(); req=urllib.request.Request('http://127.0.0.1:7700/desktops/'+os.environ['COMPUTER_ID']+'/browser/extract', data=body, headers={'Authorization':'Bearer '+os.environ['COMPUTER_TOKEN'],'Content-Type':'application/json'}); print(urllib.request.urlopen(req).read().decode())",
+    // Desktop effects are fenced: read the agent epoch, pick the signin tab explicitly (extract defaults to the newest tracked tab), then extract.
+    "import json,os,urllib.request; base='http://127.0.0.1:7700/desktops/'+os.environ['COMPUTER_ID']; h={'Authorization':'Bearer '+os.environ['COMPUTER_TOKEN'],'Content-Type':'application/json'}; call=lambda p,b: json.loads(urllib.request.urlopen(urllib.request.Request(base+p, data=json.dumps(b).encode(), headers=h)).read().decode()); st=call('/lease', {'actorId':'e2e','action':'state'}); pg=json.loads(urllib.request.urlopen(urllib.request.Request(base+'/pages', headers=h)).read().decode())['pages']; tid=[x['targetId'] for x in pg if 'signin.html' in x['url']][-1]; print(json.dumps(call('/browser/extract', {'targetId':tid,'selector':'#status','actor_id':'agent:e2e','epoch':st['epoch']})))",
   ]);
   expect(pageText).toContain("logged in");
   expect(pageText).not.toContain(LOGIN_CANARY);

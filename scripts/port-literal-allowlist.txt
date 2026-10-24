@@ -1,0 +1,9 @@
+# Legacy literals retained unchanged; new code imports the generated contract.
+apps/api/Routes.cs:9222
+services/computer/Dockerfile:9222
+services/computer/Dockerfile:5900
+services/computer/src/desktops.py:9222
+services/computer/src/desktops.py:5900
+services/computer/src/cdp_proxy.py:9222
+services/computer/src/cdp_proxy.py:5900
+services/computer/src/cdp_proxy.py:9223

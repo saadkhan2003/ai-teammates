@@ -8,15 +8,18 @@ from __future__ import annotations
 
 import os
 
-PROJECT = os.environ.get("COMPOSE_PROJECT", "teammates")
-BASE = os.environ.get("BASE_URL", "http://127.0.0.1:18080").rstrip("/")
-API = os.environ.get("API_URL", "http://127.0.0.1:18081").rstrip("/")
-
-if PROJECT == "teammates" and not (BASE.endswith(":18080") and API.endswith(":18081")):
-    raise RuntimeError(
-        f"BASE_URL/API_URL ({BASE}, {API}) are not the default stack but COMPOSE_PROJECT is unset; "
-        "set COMPOSE_PROJECT to the compose project under test"
-    )
+projects = {os.environ[name] for name in ("COMPOSE_PROJECT", "STACK", "COMPUTE_STACK") if os.environ.get(name)}
+if len(projects) != 1:
+    raise RuntimeError("Set STACK or COMPOSE_PROJECT to one consistent isolated stack name")
+PROJECT = projects.pop()
+if PROJECT == "teammates":
+    raise RuntimeError("Integration tests require an isolated stack")
+if not os.environ.get("BASE_URL") or not os.environ.get("API_URL"):
+    raise RuntimeError("BASE_URL and API_URL are required for integration tests")
+BASE = os.environ["BASE_URL"].rstrip("/")
+API = os.environ["API_URL"].rstrip("/")
+SUBNET = os.environ.get("STACK_SUBNET", "")
+CHAIN = os.environ.get("ISOLATION_CHAIN", "")
 
 
 def container(service: str) -> str:

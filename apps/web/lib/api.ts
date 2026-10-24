@@ -249,6 +249,7 @@ export function readDesktopToken(data: unknown): DesktopToken {
   return {
     token: text(record.token),
     mode: text(record.mode) || "view",
+    epoch: typeof record.epoch === "number" ? record.epoch : undefined,
   };
 }
 

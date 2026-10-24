@@ -21,6 +21,7 @@ namespace Teammates.Compute;
 public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAuthority, IComputerDisplays, IComputerDesktopControl, IAsyncDisposable
 {
     private const string ManagedLabel = "teammates.managed";
+    private const string StackLabel = "teammates.stack";
     private readonly DockerComputeOptions _options;
     private readonly IExecSecretResolver _secrets;
     private readonly ISnapshotStore _snapshots;
@@ -779,12 +780,38 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
     {
         var row = await DemandAsync(id, ct);
         lock (_sync) if (epoch > row.Epoch) row.Epoch = epoch;
-        var payload = "{\"holder\":\"" + (holder == "human" ? "human" : "agent") + "\",\"epoch\":" + epoch + "}";
+        var safeHolder = holder is "human" or "agent" or "fenced" ? holder : "fenced";
+        var payload = "{\"holder\":\"" + safeHolder + "\",\"epoch\":" + epoch + "}";
         await ControlAsync(id, "/desktops/" + Uri.EscapeDataString(id.Value) + "/control", payload, ct);
     }
 
     public Task<string> ControlAsync(ComputerId id, string path, string json, CancellationToken ct) =>
         ControlAsync(id, path, Encoding.UTF8.GetBytes(json), ct);
+
+    /// <summary>POST to a computer control endpoint and return a bounded binary response.</summary>
+    public async Task<byte[]> ControlDownloadAsync(ComputerId id, string path, string json, int maxBytes, CancellationToken ct)
+    {
+        if (maxBytes is < 1 or > 60 * 1024 * 1024) throw new ArgumentOutOfRangeException(nameof(maxBytes));
+        var row = await DemandAsync(id, ct);
+        await WakeAsync(row, ct);
+        var host = await HostOf(id, row, ct);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "http://" + host + ":7700" + (path.StartsWith('/') ? path : "/" + path));
+        request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        if ((int)response.StatusCode == 409) throw ComputeException.Conflict("computer control conflict");
+        if (!response.IsSuccessStatusCode) throw ComputeException.FailedPrecondition("computer control rejected the call");
+        await using var input = await response.Content.ReadAsStreamAsync(ct);
+        using var output = new MemoryStream();
+        var buffer = new byte[64 * 1024];
+        while (true)
+        {
+            var read = await input.ReadAsync(buffer, ct);
+            if (read == 0) break;
+            if (output.Length + read > maxBytes) throw ComputeException.FailedPrecondition("computer response too large");
+            output.Write(buffer, 0, read);
+        }
+        return output.ToArray();
+    }
 
     public async Task<string> ControlAsync(ComputerId id, string path, ReadOnlyMemory<byte> json, CancellationToken ct)
     {
@@ -806,6 +833,7 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
                 var text = await response.Content.ReadAsStringAsync(ct);
                 if (response.IsSuccessStatusCode) return text;
                 var status = (int)response.StatusCode;
+                if (status == 409) throw ComputeException.Conflict("computer control conflict");
                 if (status is 404 or 500 or 503 && DateTimeOffset.UtcNow < deadline)
                 {
                     await Task.Delay(300, ct);
@@ -848,10 +876,22 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
             Binds = loopDisk
                 ? new List<string> { profile + ":/data" }
                 : new List<string> { workspace + ":/data/workspace", profile + ":/data/profiles" },
-            Tmpfs = new Dictionary<string, string> { ["/tmp"] = "rw,nosuid,nodev,size=64m" },
+            Tmpfs = new Dictionary<string, string>
+            {
+                ["/tmp"] = "rw,nosuid,nodev,size=64m",
+                ["/home/box/private"] = "rw,nosuid,nodev,noexec,size=64m"
+            },
             DNS = _options.DnsServers().ToList(),
             ShmSize = 64L * 1024 * 1024,
             SecurityOpt = security,
+            CapDrop = new List<string> { "ALL" },
+            // Root inside the computer creates bot uids and chowns their dirs (CHOWN, SETUID, SETGID, DAC_OVERRIDE, FOWNER, KILL)
+            // and loads the per-bot nftables rules (NET_ADMIN). Bot processes are unprivileged and no-new-privileges is set,
+            // so they never hold these.
+            CapAdd = new List<string> { "CHOWN", "SETUID", "SETGID", "DAC_OVERRIDE", "FOWNER", "KILL", "NET_ADMIN" },
+            // Counts threads, not just processes: Chromium uses ~17 threads per renderer and ~50 in the browser process,
+            // so 256 starved the desktop (fork/thread failures, unhealthy computer) at ~8 tabs. Memory is still capped separately.
+            PidsLimit = 1024,
             ExtraHosts = new List<string>
             {
                 "portal.example.edu:127.0.0.1",
@@ -862,6 +902,7 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
             Memory = spec.Limits.MemoryBytes > 0 ? (long)spec.Limits.MemoryBytes : _options.MemoryBytes,
             NanoCPUs = spec.Limits.VcpuMillis > 0 ? spec.Limits.VcpuMillis * 1_000_000L : _options.NanoCpus
         };
+        if (!security.Contains("no-new-privileges:true")) security.Add("no-new-privileges:true");
         host.MemorySwap = host.Memory;
         if (!string.IsNullOrWhiteSpace(_options.CgroupParent)) host.CgroupParent = _options.CgroupParent;
         if (loopDisk && quotaBytes > 0 && StorageOptSize())
@@ -875,6 +916,9 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
             {
                 "COMPUTER_ID=" + spec.Id.Value,
                 "COMPUTER_TOKEN=" + _options.ComputerToken,
+                "EGRESS_API_URL=http://api:8080",
+                // Dev fixture hostnames (ExtraHosts above) resolve to this computer's own loopback; the proxy may reach them on :8099 only.
+                "EGRESS_FIXTURE_HOSTS=portal.example.edu,auth.example.edu,evil.example,portal.example.edu.evil.test",
                 "COMPUTER_NAME=" + (spec.Labels.TryGetValue("name", out var label) ? label : "Teammate"),
                 "DISPLAY_NUM=1",
                 "COMPUTER_SECOND_DISPLAY=" + (_options.SecondDisplay ? "true" : "false"),
@@ -884,7 +928,17 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
                 "VNC_RW_PORT=6900",
                 "DISPLAY_GEOMETRY=" + _options.DisplayGeometry,
                 "DISPLAY_DEPTH=" + _options.DisplayDepth,
-                "HOME=/data/home/desk"
+                "HOME=/data/home/desk",
+                $"HTTP_PROXY=http://127.0.0.1:{_options.EgressProxyPort}",
+                $"HTTPS_PROXY=http://127.0.0.1:{_options.EgressProxyPort}",
+                $"ALL_PROXY=http://127.0.0.1:{_options.EgressProxyPort}",
+                $"http_proxy=http://127.0.0.1:{_options.EgressProxyPort}",
+                $"https_proxy=http://127.0.0.1:{_options.EgressProxyPort}",
+                $"all_proxy=http://127.0.0.1:{_options.EgressProxyPort}",
+                // Loopback services (Chrome CDP, the control API) must never be sent through the egress proxy:
+                // its default-deny policy answers 403 and the computer cannot reconnect to its own browser.
+                "NO_PROXY=localhost,127.0.0.1,::1",
+                "no_proxy=localhost,127.0.0.1,::1"
             },
             Labels = stamped,
             ExposedPorts = new Dictionary<string, EmptyStruct>
@@ -1457,6 +1511,7 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
         {
             if (item.Labels == null || !item.Labels.TryGetValue("teammates.computer_id", out var id) || string.IsNullOrWhiteSpace(id))
                 continue;
+            if (!OwnedByThisStack(item.Labels)) continue;
             item.Labels.TryGetValue("teammates.owner_id", out var owner);
             var labels = new Dictionary<string, string>(item.Labels);
             // The quota image is not bind-mounted, so Docker's mount list only has the data volume.
@@ -1550,13 +1605,25 @@ public sealed class DockerComputeProvider : IComputeProvider, IDesktopSessionAut
         throw ComputeException.Unavailable("computer has no reachable address");
     }
 
-    private static Dictionary<string, string> Labels(ComputerId id, string owner) => new()
+    private Dictionary<string, string> Labels(ComputerId id, string owner)
     {
-        [ManagedLabel] = "1",
-        ["teammates.computer_id"] = id.Value,
-        ["teammates.owner_id"] = owner,
-        ["teammates.role"] = "user-computer"
-    };
+        var labels = new Dictionary<string, string>
+        {
+            [ManagedLabel] = "1",
+            ["teammates.computer_id"] = id.Value,
+            ["teammates.owner_id"] = owner,
+            ["teammates.role"] = "user-computer"
+        };
+        if (!string.IsNullOrWhiteSpace(_options.Stack)) labels[StackLabel] = _options.Stack;
+        return labels;
+    }
+
+    /// <summary>Containers of another compose stack on the same Docker daemon are never adopted or counted.</summary>
+    private bool OwnedByThisStack(IDictionary<string, string> labels)
+    {
+        labels.TryGetValue(StackLabel, out var stack);
+        return string.Equals(stack ?? "", _options.Stack ?? "", StringComparison.Ordinal);
+    }
 
     public static string ContainerName(ComputerId id) => "tm" + Slug(id.Value);
 

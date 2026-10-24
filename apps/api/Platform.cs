@@ -15,6 +15,7 @@ public sealed class Platform
     private readonly LoginRateLimiter _loginLimits = new();
     public LoginRateLimiter PublicShareLimits { get; } = new();
     public NpgsqlDataSource Data { get; }
+    public IOneTimeTicketStore Tickets { get; }
     public byte[] MasterKey { get; }
     public DockerComputeProvider Compute { get; }
     public IAmazonS3 S3 { get; }
@@ -27,6 +28,7 @@ public sealed class Platform
     public string LlmProvider { get; }
     public string ModelName { get; }
     public IConfiguration Configuration { get; }
+    public IConfiguration Config => Configuration;
     public int MaxParallel { get; }
     public int MaxAutoResumesPerHour { get; }
     public int CodingRounds { get; }
@@ -49,6 +51,7 @@ public sealed class Platform
     public Platform(NpgsqlDataSource data, byte[] masterKey, DockerComputeProvider compute, IAmazonS3 s3, IConfiguration config)
     {
         Data = data;
+        Tickets = new PostgresOneTimeTicketStore(data);
         MasterKey = masterKey;
         Compute = compute;
         S3 = s3;
@@ -79,6 +82,15 @@ public sealed class Platform
         int.TryParse(config[key], out var value) ? Math.Clamp(value, min, max) : fallback;
 
     public async Task MigrateAndSeed(string ownerUser, string ownerPassword)
+    {
+        // Several API instances can start at once against one database; the first takes the lock and the rest wait for it.
+        await using var lockConn = await Data.OpenConnectionAsync();
+        await lockConn.ExecuteAsync("SELECT pg_advisory_lock(840020)");
+        try { await MigrateAndSeedLocked(ownerUser, ownerPassword); }
+        finally { await lockConn.ExecuteAsync("SELECT pg_advisory_unlock(840020)"); }
+    }
+
+    private async Task MigrateAndSeedLocked(string ownerUser, string ownerPassword)
     {
         var sql = await File.ReadAllTextAsync("/migrations/001_init.sql");
         await using var conn = await Data.OpenConnectionAsync();
@@ -148,7 +160,8 @@ public sealed class Platform
             await conn.ExecuteAsync(provider);
             await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('010') ON CONFLICT DO NOTHING");
         }
-        foreach (var (mid, file) in new[] { ("011", "011_devices.sql"), ("012", "012_reliability.sql"), ("013", "013_feedback.sql"), ("014", "014_avatar.sql"), ("015", "015_bot_messaging.sql"), ("016", "016_chat_actions.sql"), ("017", "017_primary.sql"), ("018", "018_bio.sql"), ("019", "019_coding_work.sql"), ("020", "020_coding_items.sql"), ("021", "021_routine_timezone.sql"), ("022", "022_routines_v2.sql"), ("023", "023_routine_test.sql"), ("024", "024_library.sql"), ("025", "025_library_actions.sql"), ("026", "026_library_shares.sql"), ("027", "027_memory_notes.sql"), ("028", "028_long_run_resume.sql"), ("029", "029_resume_timing.sql"), ("030", "030_tool_dedupe.sql"), ("031", "031_pause_on_budget.sql"), ("032", "032_transcript_archive.sql"), ("033", "033_watchdog.sql"), ("030", "030_approval_rules.sql"), ("031", "031_rule_scope.sql"), ("032", "032_device_commands.sql") })
+        foreach (var (mid, file) in new[] { ("011", "011_devices.sql"), ("012", "012_reliability.sql"), ("013", "013_feedback.sql"), ("014", "014_avatar.sql"), ("015", "015_bot_messaging.sql"), ("016", "016_chat_actions.sql"), ("017", "017_primary.sql"), ("018", "018_bio.sql"), ("019", "019_coding_work.sql"), ("020", "020_coding_items.sql"), ("021", "021_routine_timezone.sql"), ("022", "022_routines_v2.sql"), ("023", "023_routine_test.sql"), ("024", "024_library.sql"), ("025", "025_library_actions.sql"), ("026", "026_library_shares.sql"), ("027", "027_memory_notes.sql"), ("028", "028_long_run_resume.sql"), ("029", "029_resume_timing.sql"), ("030", "030_tool_dedupe.sql"), ("031", "031_pause_on_budget.sql"), ("032", "032_transcript_archive.sql"), ("033", "033_watchdog.sql"), ("020", "020_approval_rules.sql"), ("030", "030_approval_rules.sql"), ("031", "031_rule_scope.sql"), ("032", "032_device_commands.sql"), ("019", "019_computer_windows.sql"), ("021", "021_desktop_lease.sql"), ("022", "022_tickets_state.sql") })
+
         {
             if (await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id=@mid", new { mid }) != 0) continue;
             await conn.ExecuteAsync(await File.ReadAllTextAsync("/migrations/" + file));
@@ -193,11 +206,28 @@ public sealed class Platform
         return await conn.ExecuteScalarAsync<Guid?>("SELECT user_id FROM sessions WHERE token_hash=@h AND expires_at > now()", new { h = hash });
     }
 
-    public bool LoginBlocked(string ip) => _loginLimits.IsBlocked(ip, DateTimeOffset.UtcNow);
+    public async Task<bool> LoginBlocked(string ip)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(ip.Length <= 128 ? ip : ip[..128]));
+        await using var conn = await Data.OpenConnectionAsync();
+        return await conn.ExecuteScalarAsync<bool>("SELECT count(*) FILTER (WHERE failed) >= @failures OR count(*) >= @attempts FROM login_rate_events WHERE ip_hash=@hash AND created_at > clock_timestamp() - interval '10 minutes'", new { hash, failures = LoginRateLimiter.MaxFailures, attempts = LoginRateLimiter.MaxAttempts });
+    }
 
-    public void NoteLoginAttempt(string ip) => _loginLimits.NoteAttempt(ip, DateTimeOffset.UtcNow);
+    public async Task<long> NoteLoginAttempt(string ip)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(ip.Length <= 128 ? ip : ip[..128]));
+        await using var conn = await Data.OpenConnectionAsync();
+        var id = await conn.ExecuteScalarAsync<long>("INSERT INTO login_rate_events (ip_hash, failed) VALUES (@hash,false) RETURNING id", new { hash });
+        await conn.ExecuteAsync("DELETE FROM login_rate_events WHERE created_at < clock_timestamp() - interval '1 day'");
+        return id;
+    }
 
-    public void NoteLoginFailure(string ip) => _loginLimits.NoteFailure(ip, DateTimeOffset.UtcNow);
+    public async Task NoteLoginFailure(string ip, long attemptId)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(ip.Length <= 128 ? ip : ip[..128]));
+        await using var conn = await Data.OpenConnectionAsync();
+        await conn.ExecuteAsync("UPDATE login_rate_events SET failed=true WHERE id=@attemptId AND ip_hash=@hash", new { hash, attemptId });
+    }
 
     public async Task<string> CreateSession(Guid userId)
     {

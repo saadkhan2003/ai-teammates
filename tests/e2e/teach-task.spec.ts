@@ -1,11 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-const owner = process.env.OWNER_USERNAME ?? "saad";
-const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
-
 async function setup(page: import("@playwright/test").Page) {
-  const login = await page.request.post("/api/auth/login", { data: { username: owner, password } });
-  expect(login.ok()).toBeTruthy();
   const list = await (await page.request.get("/api/bots")).json();
   let bot = ((Array.isArray(list) ? list : list.bots) as { id: string; name: string }[])[0];
   if (!bot) {
@@ -57,7 +52,8 @@ test("teach a task: banner with timer and X, red outline on the desktop frame, Y
   await expect(page.getByTestId("control-pill")).toContainText("You're in control");
   await page.getByTestId("recording-cancel").click();
   await expect(banner).toHaveCount(0);
+  // The banner hides before the hand-back request returns, so wait for the holder to flip.
+  await expect.poll(async () => (await (await page.request.get(`/api/bots/${bot.id}/workspace`)).json()).holder, { timeout: 15_000 }).toBe("agent");
   const workspace = await (await page.request.get(`/api/bots/${bot.id}/workspace`)).json();
-  expect(workspace.holder).toBe("agent");
   expect((workspace.messages as { skill?: unknown }[]).filter(m => m.skill).length).toBe(before);
 });

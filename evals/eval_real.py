@@ -21,7 +21,14 @@ import time
 import urllib.error
 import urllib.request
 
-BASE = os.environ.get("BASE_URL", "http://127.0.0.1:18080").rstrip("/")
+def required_env(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"{name} is required to run the real eval")
+    return value
+
+STACK = required_env("STACK")
+BASE = required_env("BASE_URL").rstrip("/")
 TASKS = [
     "Open http://portal.example.edu:8099/article.html and tell me the page title and the first heading.",
     "Terminal: write the word pong into /workspace/notes/ping.txt",

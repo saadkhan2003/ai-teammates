@@ -1,0 +1,46 @@
+{
+  "maxWindows": 8,
+  "fixedPorts": {
+    "exec": 1337,
+    "pty": 1338,
+    "windowRouter": 1339,
+    "hostGateway": 1340,
+    "vncPrimary": 5900,
+    "novncPlain": 6080,
+    "novncTokened": 6081,
+    "egressTunnelWs": 8790,
+    "egressProxy": 8791,
+    "cdpBase": 9222,
+    "externalViewBase": 9400,
+    "tailnetChromeCdp": 9600
+  },
+  "displayPorts": {
+    "vnc": 5900,
+    "exec": 14000,
+    "pty": 13600,
+    "cdp": 9222,
+    "externalView": 9400
+  },
+  "binds": {
+    "exec": "internal",
+    "pty": "internal",
+    "windowRouter": "internal",
+    "hostGateway": "internal",
+    "vncPrimary": "loopback",
+    "novncPlain": "internal",
+    "novncTokened": "internal",
+    "egressTunnelWs": "internal",
+    "egressProxy": "loopback",
+    "cdp": "loopback",
+    "externalView": "loopback",
+    "tailnetChromeCdp": "loopback"
+  },
+  "screen": { "width": 1920, "height": 1200 },
+  "model": { "width": 1280, "height": 800, "scale": 1.5 },
+  "paths": {
+    "novncTokens": "/tmp/box-novnc-tokens.d",
+    "windowTokens": "/tmp/box-window-tokens.d",
+    "windowUsed": "/tmp/box-window-used.d",
+    "egressFailClosed": "/tmp/box-egress-fail-closed"
+  }
+}

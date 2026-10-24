@@ -66,15 +66,15 @@ public static class Routes
         app.MapPost("/api/auth/login", async (HttpContext ctx, JsonElement body) =>
         {
             var ip = ClientAddress.From(ctx);
-            if (platform.LoginBlocked(ip)) return Results.StatusCode(429);
-            platform.NoteLoginAttempt(ip);
+            if (await platform.LoginBlocked(ip)) return Results.StatusCode(429);
+            var loginAttemptId = await platform.NoteLoginAttempt(ip);
             var username = body.GetProperty("username").GetString() ?? "";
             var password = body.GetProperty("password").GetString() ?? "";
             await using var conn = await platform.Data.OpenConnectionAsync();
             var row = await conn.QuerySingleOrDefaultAsync<(Guid Id, string Hash, string Status)>("SELECT id, password_hash, coalesce(status, 'active') FROM users WHERE username=@username", new { username });
             if (row.Id == Guid.Empty || !Passwords.Verify(password, row.Hash ?? ""))
             {
-                platform.NoteLoginFailure(ip);
+                await platform.NoteLoginFailure(ip, loginAttemptId);
                 return Results.Json(new { error = "invalid credentials" }, statusCode: 401);
             }
             if (row.Status == "disabled") return Results.Json(new { error = "disabled" }, statusCode: 403);
@@ -162,6 +162,12 @@ public static class Routes
                     await conn.ExecuteAsync(
                         "INSERT INTO user_computers (user_id, computer_id, desktop_bot_id, status) VALUES (@user, @computer, @desktop, 'running') ON CONFLICT (user_id) DO NOTHING",
                         new { user, computer = id, desktop = id });
+                    // A new computer starts with the agent holding the display; the migration only seeded computers that existed then.
+                    await conn.ExecuteAsync(
+                        "INSERT INTO desktop_lease (computer_id, display, holder_kind, holder_user_id, epoch, expires_at, updated_at) " +
+                        "SELECT computer_id, 1, 'agent', user_id, 1, clock_timestamp() + interval '90 seconds', clock_timestamp() FROM user_computers WHERE user_id=@user " +
+                        "ON CONFLICT (computer_id, display) DO NOTHING",
+                        new { user });
                     var deadline = DateTimeOffset.UtcNow.AddSeconds(45);
                     while (DateTimeOffset.UtcNow < deadline && !ct.IsCancellationRequested)
                     {
@@ -677,11 +683,13 @@ public static class Routes
                     await Reliability.Event(platform, taskId.Value, "resumed", new { reason = "approval", source = "approval" });
                     platform.Tasks.Pulse();
                 }
+                await platform.Audit(user.Value.ToString(), "approval.allowed", null, taskId, new { decision = decision == "allow_always" ? "always_narrow" : decision });
             }
             else if (decision == "deny")
             {
                 await conn.ExecuteAsync("UPDATE approvals SET status='denied', decided_at=now() WHERE id=@id", new { id });
                 await conn.ExecuteAsync("UPDATE tasks SET status='failed', error_code='denied', error='The requested action was denied.', finished_at=now(), updated_at=now() WHERE id=@id", new { id = taskId });
+                await platform.Audit(user.Value.ToString(), "approval.denied", null, taskId, new { decision = "deny" });
                 await Reliability.Event(platform, taskId.Value, "error", new { error_code = "denied", error = "The requested action was denied." });
             }
             else
@@ -698,34 +706,83 @@ public static class Routes
         app.MapPost("/api/bots/{id:guid}/computer/hand-back", async (HttpContext ctx, Guid id, CancellationToken ct) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
+            if (!ctx.Request.HasJsonContentType()) return Results.BadRequest(new { error = "desktop tab required" });
+            JsonElement request;
+            try
+            {
+                request = await ctx.Request.ReadFromJsonAsync<JsonElement>(ct);
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                return Results.BadRequest(new { error = "desktop tab required" });
+            }
+            var tabId = request.ValueKind == JsonValueKind.Object && request.TryGetProperty("tabId", out var tab) ? tab.GetString() : null;
+            var expectedEpoch = request.ValueKind == JsonValueKind.Object && request.TryGetProperty("epoch", out var ep) && ep.TryGetInt64(out var parsed) ? parsed : -1;
+            if (string.IsNullOrWhiteSpace(tabId) || tabId.Length > 128) return Results.BadRequest(new { error = "desktop tab required" });
             await using var conn = await platform.Data.OpenConnectionAsync(ct);
-            var epoch = await conn.ExecuteScalarAsync<long>("UPDATE control_locks SET holder='agent', epoch=epoch+1, updated_at=now() WHERE bot_id=@id RETURNING epoch", new { id });
             var placement = await platform.PlacementForBot(id, ct);
-            await platform.Compute.SetHolderAsync(placement.Computer, "agent", (ulong)epoch, ct);
-            await conn.ExecuteAsync("UPDATE tasks SET status='queued', waiting_reason=NULL, lease_owner=NULL, lease_until=NULL, lease_epoch=lease_epoch+1, updated_at=now() WHERE bot_id=@id AND status='waiting_human' AND waiting_reason IN ('takeover', 'captcha_or_mfa')", new { id });
-            platform.Tasks.Pulse();
-            return Results.Json(new { ok = true, epoch });
+            if (!Guid.TryParse(placement.Computer.Value, out var computerId)) return Results.Conflict(new { error = "computer unavailable" });
+            var row = await DesktopLeaseRepository.ReleaseAsync(conn, computerId, 1, user.Value, tabId, expectedEpoch, ct);
+            if (row == null) return Results.Conflict(new { error = "lease changed" });
+            var epoch = row.Epoch;
+            await VncTicketStore.InvalidateLeaseAsync(platform, id, epoch, ct);
+            await conn.ExecuteAsync("UPDATE control_locks SET holder='agent', epoch=@epoch, updated_at=now() WHERE bot_id=@id", new { id, epoch });
+            await platform.Compute.SetHolderAsync(placement.Computer, "fenced", (ulong)epoch, ct);
+            await conn.ExecuteAsync("UPDATE tasks SET waiting_reason='await_continue', lease_owner=NULL, lease_until=NULL, updated_at=now() WHERE bot_id IN (SELECT id FROM bots WHERE owner_id=@owner) AND status='waiting_human' AND waiting_reason IN ('takeover', 'captcha_or_mfa', 'You''re in control — tell me when to continue')", new { owner = user.Value });
+            await platform.Audit(user.Value.ToString(), "desktop.lease.release", id, null, new { });
+            await platform.Publish(new { type = "computer.mode", botId = id, mode = "watching" });
+            return Results.Json(new { ok = true, epoch, continueRequired = true });
+        });
+
+        app.MapPost("/api/computers/{id:guid}/continue", async (HttpContext ctx, Guid id, CancellationToken ct) =>
+        {
+            var user = await RequireUser(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
+            await using var conn = await platform.Data.OpenConnectionAsync(ct);
+            var placement = await platform.PlacementForBot(id, ct);
+            if (!Guid.TryParse(placement.Computer.Value, out var computerId)) return Results.Conflict(new { error = "computer unavailable" });
+            var current = await DesktopLeaseRepository.StateAsync(conn, computerId, 1, ct);
+            if (current == null) return Results.Conflict(new { error = "lease missing" });
+            var agentEpoch = current.HolderKind == "agent" && current.ExpiresAt > DateTime.UtcNow
+                ? current.Epoch
+                : (await DesktopLeaseRepository.ResumeAgentAsync(conn, computerId, 1, user.Value, current.Epoch, ct))?.Epoch;
+            if (agentEpoch == null) return Results.Conflict(new { error = "lease changed" });
+            await conn.ExecuteAsync("UPDATE control_locks SET holder='agent', epoch=@epoch, updated_at=now() WHERE bot_id=@id", new { id, epoch = agentEpoch.Value });
+            await platform.Compute.SetHolderAsync(placement.Computer, "agent", (ulong)agentEpoch.Value, ct);
+            var resumed = await conn.ExecuteAsync("UPDATE tasks SET status='queued', waiting_reason=NULL, lease_epoch=lease_epoch+1, updated_at=now() WHERE bot_id IN (SELECT id FROM bots WHERE owner_id=@owner) AND status='waiting_human' AND waiting_reason='await_continue'", new { owner = user.Value });
+            await platform.Audit(user.Value.ToString(), "desktop.lease.continue", id, null, new { resumed });
+            if (resumed > 0) platform.Tasks.Pulse();
+            return Results.Json(new { ok = true, resumed });
         });
 
         app.MapPost("/api/bots/{id:guid}/computer/human-input", async (HttpContext ctx, Guid id, JsonElement body, CancellationToken ct) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             await using var conn = await platform.Data.OpenConnectionAsync(ct);
-            var holder = await conn.ExecuteScalarAsync<string>("SELECT holder FROM control_locks WHERE bot_id=@id", new { id });
-            if (holder != "human") return Results.Json(new { error = "human control is not held" }, statusCode: 403);
+            var tabId = body.TryGetProperty("tabId", out var tab) ? tab.GetString() : null;
+            var epoch = body.TryGetProperty("epoch", out var epochValue) && epochValue.TryGetInt64(out var parsedEpoch) ? parsedEpoch : -1;
+            if (string.IsNullOrWhiteSpace(tabId)) return Results.Json(new { error = "human control is not held" }, statusCode: 403);
+            var placement = await platform.PlacementForBot(id, ct);
+            if (!Guid.TryParse(placement.Computer.Value, out var computerId)) return Results.Conflict(new { error = "computer unavailable" });
+            var lease = await DesktopLeaseRepository.StateAsync(conn, computerId, 1, ct);
+            var dbNow = await DbClock.NowAsync(conn, ct);
+            if (!DesktopLeaseRepository.IsActiveFor(lease, user.Value, tabId, epoch, dbNow)) return Results.Json(new { error = "human control is not held" }, statusCode: 403);
             var selector = body.TryGetProperty("selector", out var sel) ? sel.GetString() : "#human-check";
             var target = body.TryGetProperty("targetId", out var tid) ? tid.GetString() : "";
-            var placement = await platform.PlacementForBot(id, ct);
-            var json = await platform.Compute.ControlAsync(placement.Computer, $"/desktops/{placement.Desktop}/human-input", JsonSerializer.Serialize(new { selector, targetId = target }), ct);
+            var json = await platform.Compute.ControlAsync(placement.Computer, $"/desktops/{placement.Desktop}/human-input", JsonSerializer.Serialize(new { selector, targetId = target, epoch }), ct);
             return Results.Text(json, "application/json");
         });
 
         app.MapGet("/api/bots/{id:guid}/files", async (HttpContext ctx, Guid id, string? path, CancellationToken ct) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             var folder = string.IsNullOrWhiteSpace(path) ? "/workspace" : path;
             var placement = await platform.PlacementForBot(id, ct);
             var (code, stdout, _) = await runtime.Run(placement.Computer, id, ["python3", "-c", BotFs.Script("list_dir(sys.argv[1])"), folder], null, ct);
@@ -736,27 +793,38 @@ public static class Routes
         app.MapPut("/api/bots/{id:guid}/files", async (HttpContext ctx, Guid id, CancellationToken ct) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             var path = ctx.Request.Headers["x-path"].ToString();
             if (string.IsNullOrWhiteSpace(path)) path = "/workspace/upload.bin";
-            using var memory = new MemoryStream();
-            await ctx.Request.Body.CopyToAsync(memory, ct);
-            var b64 = Convert.ToBase64String(memory.ToArray());
+            if (!BotFileTransfer.IsSafePathHeader(path)) return Results.BadRequest(new { error = "invalid_path" });
+            byte[] bytes;
+            try { bytes = await BotFileTransfer.ReadBoundedAsync(ctx.Request.Body, BotFileTransfer.MaximumBytes, ct); }
+            catch (FileTransferTooLargeException) { return Results.StatusCode(StatusCodes.Status413PayloadTooLarge); }
+            var b64 = Convert.ToBase64String(bytes);
             var placement = await platform.PlacementForBot(id, ct);
             var (code, _, _) = await runtime.Run(placement.Computer, id, ["python3", "-c", BotFs.Script(ctx.Request.Headers["x-append"] == "1" ? "append_b64(sys.argv[1], sys.argv[2])" : "write_b64(sys.argv[1], sys.argv[2])"), path, b64], null, ct);
             if (code != 0) return Results.Json(new { error = code == 4 ? "path_escapes_workspace" : "write_failed" }, statusCode: code == 4 ? 400 : 500);
-            return Results.Json(new { ok = true, path, size = memory.Length });
+            return Results.Json(new { ok = true, path, size = bytes.Length, contentType = BotFileTransfer.SniffContentType(path, bytes) });
         });
 
         app.MapGet("/api/bots/{id:guid}/files/raw", async (HttpContext ctx, Guid id, string path, CancellationToken ct) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
+            if (!BotFileTransfer.IsSafePathHeader(path)) return Results.BadRequest(new { error = "invalid_path" });
             var placement = await platform.PlacementForBot(id, ct);
             var (code, stdout, _) = await runtime.Run(placement.Computer, id, ["python3", "-c", BotFs.Script("read_b64(sys.argv[1])"), path], null, ct);
             if (code != 0 || string.IsNullOrWhiteSpace(stdout)) return Results.NotFound();
-            var bytes = Convert.FromBase64String(stdout.Trim());
-            return Results.File(bytes, "application/octet-stream", Path.GetFileName(path));
+            byte[] bytes;
+            try { bytes = Convert.FromBase64String(stdout.Trim()); }
+            catch (FormatException) { return Results.StatusCode(StatusCodes.Status502BadGateway); }
+            if (bytes.LongLength > BotFileTransfer.MaximumBytes) return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+            var content = BotFileTransfer.SniffContentType(path, bytes);
+            if (content.StartsWith("text/", StringComparison.Ordinal) && BotFileTransfer.BlockedByDlp(System.Text.Encoding.UTF8.GetString(bytes)))
+                return Results.Json(new { error = Dlp.Blocked }, statusCode: StatusCodes.Status403Forbidden);
+            return Results.File(bytes, content, Path.GetFileName(path));
         });
 
         app.MapGet("/api/bots/{id:guid}/memories", async (HttpContext ctx, Guid id) =>
@@ -989,7 +1057,8 @@ public static class Routes
         app.MapPost("/api/bots/{id:guid}/skills/from-task", async (HttpContext ctx, Guid id, JsonElement body) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             var taskId = body.GetProperty("taskId").GetGuid();
             var name = body.GetProperty("name").GetString() ?? "Skill";
             await using var conn = await platform.Data.OpenConnectionAsync();
@@ -1027,7 +1096,8 @@ public static class Routes
         app.MapGet("/api/bots/{id:guid}/skills", async (HttpContext ctx, Guid id) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             await using var conn = await platform.Data.OpenConnectionAsync();
             var rows = await conn.QueryAsync("SELECT id, name, description, deterministic FROM skills WHERE bot_id=@id ORDER BY created_at", new { id });
             return Results.Json(rows.Select(Platform.ToDict));
@@ -1059,7 +1129,8 @@ public static class Routes
         app.MapGet("/api/bots/{id:guid}/routines", async (HttpContext ctx, Guid id) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             await using var conn = await platform.Data.OpenConnectionAsync();
             return Results.Json(await RoutineService.List(conn, id));
         });
@@ -1136,7 +1207,8 @@ public static class Routes
         app.MapGet("/api/bots/{id:guid}/artifacts", async (HttpContext ctx, Guid id) =>
         {
             var user = await RequireUser(ctx, platform);
-            if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+            if (user == null) return Results.Unauthorized();
+            if (!await Owns(platform, user.Value, id)) return Results.NotFound();
             await using var conn = await platform.Data.OpenConnectionAsync();
             var rows = await conn.QueryAsync("SELECT id, name, mime, size_bytes, created_at FROM artifacts WHERE bot_id=@id ORDER BY created_at DESC", new { id });
             return Results.Json(rows.Select(Platform.ToDict));
@@ -1176,34 +1248,62 @@ public static class Routes
         });
 
         MapSecrets(app, platform);
+        TerminalTickets.Map(app, platform);
         PluginModel.Map(app, platform);
         PluginCatalog.Map(app, platform);
         Beta.Map(app, platform);
         Templates.Map(app, platform);
         CodingItems.Map(app, platform);
         MapInternal(app, platform, runtime);
+        Reliability.MapComputerDoctor(app, platform);
+        ComputerWindows.Map(app, platform);
 
         app.Map("/vnc/websockify", async (HttpContext ctx) =>
         {
             if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = 400; return; }
             var token = ctx.Request.Query["token"].ToString();
-            DesktopEndpoint endpoint;
-            try { endpoint = platform.Compute.RequireSession(token, DateTimeOffset.UtcNow); }
-            catch (ComputeException) { ctx.Response.StatusCode = 401; return; }
+            if (!Guid.TryParse(ctx.Request.Query["window"], out var windowId)) { ctx.Response.StatusCode = 401; return; }
+            var user = await RequireUser(ctx, platform);
+            var ipHash = VncTicketStore.ClientIpHash(platform.MasterKey, ctx.Connection.RemoteIpAddress);
+            var consumed = await VncTicketStore.ConsumeAsync(platform, token, windowId, user ?? Guid.Empty, ipHash, ctx.RequestAborted);
+            var ticket = consumed.Ticket;
+            if (ticket == null) { ctx.Response.StatusCode = consumed.FailureStatus; return; }
+            var endpoint = ticket.Endpoint;
+            if (ticket.Role == "control")
+            {
+                await using var leaseConn = await platform.Data.OpenConnectionAsync(ctx.RequestAborted);
+                var lease = await DesktopLeaseRepository.StateAsync(leaseConn, ticket.LeaseId, 1, ctx.RequestAborted);
+                var dbNow = await DbClock.NowAsync(leaseConn, ctx.RequestAborted);
+                if (!DesktopLeaseRepository.IsActiveFor(lease, ticket.UserId, ticket.TabId, ticket.Epoch, dbNow))
+                { ctx.Response.StatusCode = 409; return; }
+            }
             await platform.Compute.EnsureAwakeAsync(endpoint.ComputerId, ctx.RequestAborted);
             platform.Compute.NoteViewer(endpoint.ComputerId);
+            var isControl = ticket.Role == "control";
+            var leaseLogger = ctx.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("DesktopLease");
             using var socket = await ctx.WebSockets.AcceptWebSocketAsync();
             using var tcp = new System.Net.Sockets.TcpClient();
             await tcp.ConnectAsync(endpoint.Host, endpoint.Port);
+            var rwConnectionId = Guid.NewGuid();
+            if (isControl) await DesktopRwConnections.RegisterAsync(platform.Data, ticket.LeaseId, ticket.Epoch, rwConnectionId, ctx.RequestAborted);
             await using var stream = tcp.GetStream();
             var toTcp = Task.Run(async () =>
             {
                 var buffer = new byte[8192];
+                var filter = endpoint.Mode == DesktopMode.View ? new RfbClientStreamFilter("watch") : null;
                 while (socket.State == WebSocketState.Open)
                 {
                     var result = await socket.ReceiveAsync(buffer, ctx.RequestAborted);
                     if (result.MessageType == WebSocketMessageType.Close) break;
-                    await stream.WriteAsync(buffer.AsMemory(0, result.Count), ctx.RequestAborted);
+                    if (endpoint.Mode == DesktopMode.Interactive)
+                    {
+                        await using var leaseConn = await platform.Data.OpenConnectionAsync(ctx.RequestAborted);
+                        var lease = await DesktopLeaseRepository.StateAsync(leaseConn, ticket.LeaseId, 1, ctx.RequestAborted);
+                        var dbNow = await DbClock.NowAsync(leaseConn, ctx.RequestAborted);
+                        if (!DesktopLeaseRepository.IsActiveFor(lease, ticket.UserId, ticket.TabId, ticket.Epoch, dbNow)) break;
+                    }
+                    var forwarded = filter?.Feed(buffer.AsSpan(0, result.Count)) ?? buffer.AsSpan(0, result.Count).ToArray();
+                    if (forwarded.Length > 0) await stream.WriteAsync(forwarded, ctx.RequestAborted);
                 }
             });
             var toWs = Task.Run(async () =>
@@ -1216,14 +1316,37 @@ public static class Routes
                     await socket.SendAsync(buffer.AsMemory(0, read), WebSocketMessageType.Binary, true, ctx.RequestAborted);
                 }
             });
-            await Task.WhenAny(toTcp, toWs);
+            var leaseMonitor = isControl ? Task.Run(async () =>
+            {
+                while (socket.State == WebSocketState.Open && !ctx.RequestAborted.IsCancellationRequested)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(1), ctx.RequestAborted);
+                    await DesktopRwConnections.HeartbeatAsync(platform.Data, ticket.LeaseId, ticket.Epoch, rwConnectionId, ctx.RequestAborted);
+                    await using var leaseConn = await platform.Data.OpenConnectionAsync(ctx.RequestAborted);
+                    var lease = await DesktopLeaseRepository.StateAsync(leaseConn, ticket.LeaseId, 1, ctx.RequestAborted);
+                    var dbNow = await DbClock.NowAsync(leaseConn, ctx.RequestAborted);
+                    if (!DesktopLeaseRepository.IsActiveFor(lease, ticket.UserId, ticket.TabId, ticket.Epoch, dbNow))
+                    {
+                        socket.Abort();
+                        tcp.Close();
+                        break;
+                    }
+                }
+            }) : Task.CompletedTask;
+            Task[] forwarders = isControl ? [toTcp, toWs, leaseMonitor] : [toTcp, toWs];
+            await Task.WhenAny(forwarders);
             // Finish the RFB connection while x11vnc is still reading, then stop the
             // viewer, and only then complete the websocket close. The browser waits
             // on that close before it opens another socket, so a pane toggle cannot
             // leave a CLOSE_WAIT backlog behind a process that ignores SIGTERM.
             try { tcp.Close(); } catch { /* already closed */ }
             try { await Task.WhenAll(toTcp, toWs).WaitAsync(TimeSpan.FromSeconds(2)); } catch { /* copy loops end once the sockets close */ }
-            try { await platform.Compute.ReleaseViewerAsync(token, CancellationToken.None); } catch { /* the view server stops on its own */ }
+            if (isControl)
+            {
+                try { await DesktopRwConnections.DisconnectedAsync(platform.Data, ticket.LeaseId, ticket.Epoch, rwConnectionId); }
+                catch (Exception ex) { leaseLogger.LogDebug("desktop websocket close registration failed {Type}", ex.GetType().Name); }
+            }
+            else try { await platform.Compute.ReleaseViewerAsync(ticket.SessionToken, CancellationToken.None); } catch { /* viewer session closes with its websocket */ }
             try { await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None); } catch { /* already closed */ }
         });
 
@@ -1301,6 +1424,8 @@ public static class Routes
             var name = body.GetProperty("name").GetString() ?? "";
             var type = PluginModel.NormalizeSecretType(body.GetProperty("type").GetString());
             var value = body.GetProperty("value").GetString() ?? "";
+            if (provider.Equals("web_bot_auth", StringComparison.OrdinalIgnoreCase))
+                return Results.Json(new { error = "reserved namespace" }, statusCode: 403);
             if (!SecretRef.TryParse($"secret://{provider}/{name}", out _, out _))
                 return Results.BadRequest(new { error = "invalid reference" });
             var tools = ReadStrings(body, "allowedTools");
@@ -1494,8 +1619,13 @@ public static class Routes
                 var injectRole = bool.TryParse(platform.Configuration["Memory:InjectRole"], out var configuredInjectRole) ? configuredInjectRole : true;
                 var feedback = (await conn.QueryAsync<(Guid MessageId, string Emoji, string Action)>(
                     """
-                    UPDATE bot_feedback SET consumed_at=now(), task_id=@task
-                    WHERE id IN (SELECT id FROM bot_feedback WHERE bot_id=@bot AND consumed_at IS NULL ORDER BY created_at FOR UPDATE)
+                    UPDATE bot_feedback SET task_id=@task
+                    WHERE id IN (
+                        SELECT f.id FROM bot_feedback f
+                        WHERE f.bot_id=@bot AND f.consumed_at IS NULL
+                          AND (f.task_id IS NULL OR f.task_id=@task
+                               OR NOT EXISTS (SELECT 1 FROM tasks o WHERE o.id=f.task_id AND o.status IN ('queued','running')))
+                        ORDER BY f.created_at FOR UPDATE)
                     RETURNING message_id, emoji, action
                     """,
                     new { task = id, bot = task.BotId }, tx)).Select(note => new { messageId = note.MessageId, emoji = note.Emoji, action = note.Action }).ToList();
@@ -1654,6 +1784,8 @@ public static class Routes
                         toolCallId = message.ToolCallId, name = message.Name
                     }, tx);
             }
+            // Feedback is consumed only once the note is durable in the transcript, so a retry re-delivers it.
+            await conn.ExecuteAsync("UPDATE bot_feedback SET consumed_at=now() WHERE task_id=@id AND consumed_at IS NULL", new { id }, tx);
             await tx.CommitAsync();
             if (hasEpoch)
                 await conn.ExecuteAsync("UPDATE tasks SET last_progress_at=now(),blocked_reason=NULL WHERE id=@id AND status='running' AND lease_epoch=@epoch", new { id, epoch });
@@ -1863,8 +1995,9 @@ public static class Routes
                       AND EXISTS (
                         SELECT 1 FROM messages
                         WHERE task_id=@id AND kind='question'
-                          AND jsonb_typeof(content::jsonb -> 'answer') = 'array'
-                          AND jsonb_array_length(content::jsonb -> 'answer') > 0
+                          AND CASE WHEN jsonb_typeof(content::jsonb -> 'answer') = 'array'
+                                   THEN jsonb_array_length(content::jsonb -> 'answer')
+                                   ELSE 0 END > 0
                       )
                     """,
                     new { id });
@@ -1902,8 +2035,9 @@ public static class Routes
                     @status = 'waiting_human' AND coalesce(@reason, '') = 'ask_user' AND EXISTS (
                       SELECT 1 FROM messages
                       WHERE task_id=@id AND kind='question'
-                        AND jsonb_typeof(content::jsonb -> 'answer') = 'array'
-                        AND jsonb_array_length(content::jsonb -> 'answer') > 0
+                        AND CASE WHEN jsonb_typeof(content::jsonb -> 'answer') = 'array'
+                                 THEN jsonb_array_length(content::jsonb -> 'answer')
+                                 ELSE 0 END > 0
                     )
                   )
                 """,
@@ -1933,6 +2067,7 @@ public static class Routes
 
         app.MapPost("/internal/model/complete", (HttpContext ctx, JsonElement body, CancellationToken ct) => Worker(ctx, platform) ? runtime.Model(body, ct) : Task.FromResult<IResult>(Results.Unauthorized()));
         app.MapPost("/internal/tools/authorize", (HttpContext ctx, JsonElement body, CancellationToken ct) => Worker(ctx, platform) ? runtime.Authorize(body, ct) : Task.FromResult<IResult>(Results.Unauthorized()));
+        app.MapPost("/internal/tools/preexec", (HttpContext ctx, JsonElement body, CancellationToken ct) => Worker(ctx, platform) ? runtime.PreExec(body, ct) : Task.FromResult<IResult>(Results.Unauthorized()));
         app.MapPost("/internal/tools/execute", (HttpContext ctx, JsonElement body, CancellationToken ct) => Worker(ctx, platform) ? runtime.Execute(body, ct) : Task.FromResult<IResult>(Results.Unauthorized()));
         app.MapPost("/internal/tools/observe", (HttpContext ctx, JsonElement body, CancellationToken ct) => Worker(ctx, platform) ? runtime.Observe(body, ct) : Task.FromResult<IResult>(Results.Unauthorized()));
 
@@ -1950,7 +2085,9 @@ public static class Routes
     private static async Task<IResult> Desktop(HttpContext ctx, Platform platform, Guid id, bool control, CancellationToken ct)
     {
         var user = await RequireUser(ctx, platform);
-        if (user == null || !await Owns(platform, user.Value, id)) return Results.Unauthorized();
+        if (user == null) return Results.Unauthorized();
+        if (!await Owns(platform, user.Value, id)) return Results.NotFound();
+        if (control) return Results.Conflict(new { error = "control_requires_lease_ticket" });
         await using var conn = await platform.Data.OpenConnectionAsync(ct);
         long hinted;
         if (control)

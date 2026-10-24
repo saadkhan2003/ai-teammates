@@ -16,12 +16,14 @@ public static class ApprovalRules
     public static bool AllowedClass(string actionClass, string tool) =>
         !Never.Contains(actionClass) && (actionClass is ActionClasses.Read or ActionClasses.Write or ActionClasses.SendMessage)
         && tool is not ("type_secret" or "browser.type_secret" or "request_secret" or "setup_env")
+        && !tool.Contains("secret", StringComparison.OrdinalIgnoreCase)
+        && !tool.Contains("credential", StringComparison.OrdinalIgnoreCase)
         && !tool.Contains("vault", StringComparison.OrdinalIgnoreCase)
         && tool != "external_post";
 
     public static (string Class, string Tool, string Matcher, string Display)? Build(string actionClass, string tool, JsonElement args)
     {
-        if (!AllowedClass(actionClass, tool) || args.ValueKind != JsonValueKind.Object || TouchesSecretsOrVault(args)) return null;
+        if (!AllowedClass(actionClass, tool) || args.ValueKind != JsonValueKind.Object || TouchesSecretsOrVault(args) || Dlp.HasStrict(args.GetRawText())) return null;
         if (tool == "browser_open" && Uri.TryCreate(Value(args, "url"), UriKind.Absolute, out var uri)
             && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps) && !CredentialSites.IsLookAlike(uri.Host))
         {
@@ -30,9 +32,11 @@ public static class ApprovalRules
         }
         if (ShellTools.Contains(tool) || CodingTools.Contains(tool))
         {
-            var command = ShellTools.Contains(tool) ? NormalizeCommand(Value(args, "command")) : tool + ":" + CanonicalArgs(args);
+            var shape = ShellTools.Contains(tool) ? CommandShapeHash(tool, args) : null;
+            if (ShellTools.Contains(tool) && shape == null) return null;
+            var command = ShellTools.Contains(tool) ? (Value(args, "command").Length > 0 ? NormalizeCommand(Value(args, "command")) : CanonicalArgs(args)) : tool + ":" + CanonicalArgs(args);
             if (command.Length == 0 || command.Contains("secret://", StringComparison.OrdinalIgnoreCase) || command.Contains("vault", StringComparison.OrdinalIgnoreCase)) return null;
-            var hash = CommandHash(command);
+            var hash = shape ?? CommandHash(command);
             var safeLabel = Dlp.Redact(ShellTools.Contains(tool) ? command : tool.Replace('_', ' '));
             if (safeLabel.Length > 80) safeLabel = safeLabel[..80];
             return (actionClass, tool, JsonSerializer.Serialize(new { kind = "command", sha256 = hash }), $"Always allow {safeLabel} in this bot");
@@ -56,7 +60,7 @@ public static class ApprovalRules
 
     public static bool Matches(string actionClass, string tool, string matcherJson, JsonElement args)
     {
-        if (!AllowedClass(actionClass, tool) || args.ValueKind != JsonValueKind.Object || TouchesSecretsOrVault(args)) return false;
+        if (!AllowedClass(actionClass, tool) || args.ValueKind != JsonValueKind.Object || TouchesSecretsOrVault(args) || Dlp.HasStrict(args.GetRawText())) return false;
         try
         {
             using var doc = JsonDocument.Parse(matcherJson);
@@ -66,7 +70,7 @@ public static class ApprovalRules
             {
                 "host" => Uri.TryCreate(Value(args, "url"), UriKind.Absolute, out var uri) &&
                     string.Equals(uri.IdnHost, root.GetProperty("host").GetString(), StringComparison.OrdinalIgnoreCase),
-                "command" => (ShellTools.Contains(tool) || CodingTools.Contains(tool)) && CommandHash(ShellTools.Contains(tool) ? NormalizeCommand(Value(args, "command")) : tool + ":" + CanonicalArgs(args)) == root.GetProperty("sha256").GetString(),
+                "command" => (ShellTools.Contains(tool) ? MatchesShellMatcher(root.GetProperty("sha256").GetString(), tool, args) : CodingTools.Contains(tool) && CommandHash(tool + ":" + CanonicalArgs(args)) == root.GetProperty("sha256").GetString()),
                 "recipient" => tool == "send_message" && NormalizeRecipient(Value(args, "to")) == root.GetProperty("recipient").GetString(),
                 "prefix" => IsWithin(NormalizeTarget(Target(args)), root.GetProperty("prefix").GetString() ?? ""),
                 _ => false
@@ -110,4 +114,69 @@ public static class ApprovalRules
     private static bool TouchesSecretsOrVault(JsonElement args) => System.Text.RegularExpressions.Regex.IsMatch(args.GetRawText(), @"\b(?:secret|secrets|vault|credential|credentials)\b|secret://", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     private static string Target(JsonElement args) => Value(args, "path") is { Length: > 0 } path ? path : Value(args, "url");
     private static string Value(JsonElement args, string key) => args.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
+    private static readonly char[] ShellSyntax = [';', '|', '&', '<', '>', '$', '`', '(', ')', '\\', '\'', '"', '*', '?', '[', ']', '{', '}', '~', '#', '!', '\r', '\n'];
+
+    public static bool MayOverrideReviewerAsk(string personalMode) => personalMode == PolicyEngine.Allow;
+
+    public static bool CanApply(PolicyDecision decision, string tool, UserPolicy policy, bool peerOrigin) =>
+        decision.Decision == PolicyEngine.Ask && !decision.HardDeny && AllowedClass(decision.RiskClass, tool)
+        && MayOverrideReviewerAsk(policy.Mode(decision.RiskClass)) && !peerOrigin;
+
+    public static string? CommandShapeHash(string tool, JsonElement args)
+    {
+        if (tool != "shell" || args.ValueKind != JsonValueKind.Object || TouchesSecretsOrVault(args) || Dlp.HasStrict(args.GetRawText())) return null;
+        // These represent different execution forms. Never hash one while the
+        // executor could run the other.
+        if (args.TryGetProperty("argv", out _) && args.TryGetProperty("command", out _)) return null;
+        var argv = new List<string>();
+        if (args.TryGetProperty("argv", out var supplied) && supplied.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var part in supplied.EnumerateArray())
+            {
+                if (part.ValueKind != JsonValueKind.String) return null;
+                argv.Add(part.GetString() ?? "");
+            }
+        }
+        else if (args.TryGetProperty("command", out var command) && command.ValueKind == JsonValueKind.String)
+        {
+            argv.Add("/bin/sh");
+            argv.Add("-lc");
+            var raw = command.GetString() ?? "";
+            if (raw.IndexOfAny(ShellSyntax) >= 0) return null;
+            argv.Add(NormalizeCommand(raw));
+        }
+        if (argv.Count is < 1 or > 128 || argv.Any(x => string.IsNullOrWhiteSpace(x) || x.Length > 4096 || x.Contains('\0')))
+            return null;
+        // Remembered approvals are for direct, inert command shapes only. Shell syntax,
+        // quoting and expansions are never eligible for persistent allow rules.
+        if (argv.Any(x => x.IndexOfAny(ShellSyntax) >= 0)) return null;
+        argv = argv.Select(x => x.Trim()).ToList();
+        if (argv.Sum(x => x.Length) > 16384) return null;
+        var canonical = JsonSerializer.Serialize(argv);
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+    }
+
+    private static bool MatchesShellMatcher(string? storedHash, string tool, JsonElement args)
+    {
+        // Both branches persisted command hashes. Retain existing inert rules,
+        // but revalidate syntax/secrets/DLP before trying either historical format.
+        if (CommandShapeHash(tool, args) == null) return false;
+        if (Matches(storedHash, tool, args)) return true;
+        var command = Value(args, "command");
+        if (command.Length == 0) return false;
+        return HashEquals(storedHash, CommandHash(NormalizeCommand(command)))
+            || HashEquals(storedHash, CommandHash(JsonSerializer.Serialize(new[] { "/bin/sh", "-lc", command.Trim() })));
+    }
+
+    private static bool HashEquals(string? storedHash, string? current)
+    {
+        if (storedHash is null || current is null || storedHash.Length != current.Length) return false;
+        try { return CryptographicOperations.FixedTimeEquals(Convert.FromHexString(storedHash), Convert.FromHexString(current)); }
+        catch (FormatException) { return false; }
+    }
+
+    public static bool Matches(string? storedHash, string tool, JsonElement args)
+    {
+        return HashEquals(storedHash, CommandShapeHash(tool, args));
+    }
 }

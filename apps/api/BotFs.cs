@@ -80,7 +80,7 @@ public static class BotFs
     }
 
     private static ExecSpec RootSpec(ComputerId computer, IReadOnlyList<string> argv, TimeSpan timeout) =>
-        new(computer, argv, "/", new Dictionary<string, string>(), [], "", timeout, 32_768, false);
+        new(computer, argv, "/", new Dictionary<string, string> { ["PYTHONPATH"] = "/opt/desk/src" }, [], "", timeout, 32_768, false);
 
     public static async Task<(int Code, string Stdout, string Stderr)> Capture(IComputeProvider compute, ExecSpec spec, CancellationToken ct)
     {

@@ -14,21 +14,21 @@ public static class ComputerTools
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(90) };
     private const int MaxArtifactBytes = 50_000_000;
 
-    public static async Task<object> Run(Platform platform, Guid botId, Guid taskId, ComputerId computer, string desktop, string tool, JsonElement args, CancellationToken ct)
+    public static async Task<object> Run(Platform platform, Guid botId, Guid taskId, ComputerId computer, string desktop, string tool, JsonElement args, string actorId, long desktopEpoch, CancellationToken ct)
     {
         var session = await platform.Compute.GetDesktopSessionAsync(computer, new DesktopAccess(DesktopMode.View, 0, TimeSpan.FromSeconds(2), false), ct);
         var baseUrl = new UriBuilder("http", session.Host, 7700).Uri;
         var route = "/desktops/" + Uri.EscapeDataString(desktop);
         if (tool == "record_stop")
         {
-            var stopped = await SendJson(platform, baseUrl, route + "/record/stop", new { botId }, ct);
+            var stopped = await SendJson(platform, baseUrl, route + "/record/stop", new { botId, actor_id = actorId, epoch = desktopEpoch }, ct);
             if (!stopped.Ok) return stopped.Result;
             using var details = JsonDocument.Parse(stopped.Text);
             var recordedPath = details.RootElement.GetProperty("path").GetString() ?? "";
             var fileRoute = route + "/recordings/raw?workspace_bot_id=" + botId + "&path=" + Uri.EscapeDataString(recordedPath);
             using var request = Request(platform, HttpMethod.Get, new Uri(baseUrl, fileRoute));
             using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-            if (response.StatusCode == HttpStatusCode.Locked) return new { ok = false, reason = "paused: user is in control" };
+            if (response.StatusCode is HttpStatusCode.Locked or HttpStatusCode.Conflict) return new { ok = false, status = "needs_human", code = "DESKTOP_BUSY", reason = "You're in control — tell me when to continue" };
             response.EnsureSuccessStatusCode();
             if (response.Content.Headers.ContentLength is long length && length > MaxArtifactBytes)
                 throw new ToolHalt("invalid", "recording exceeds 50 MB artifact limit");
@@ -49,6 +49,8 @@ public static class ComputerTools
         }
 
         var body = JsonSerializer.Deserialize<Dictionary<string, object?>>(args.GetRawText()) ?? new();
+        body["actor_id"] = actorId;
+        body["epoch"] = desktopEpoch;
         if (tool == "computer_click") body["coordinateSpace"] = "model";
         if (tool == "record_start") body["botId"] = botId;
         var path = tool switch
@@ -63,9 +65,9 @@ public static class ComputerTools
         };
         if (tool == "computer_screenshot")
         {
-            using var request = Request(platform, HttpMethod.Post, new Uri(baseUrl, path), "{}");
+            using var request = Request(platform, HttpMethod.Post, new Uri(baseUrl, path), JsonSerializer.Serialize(body));
             using var response = await Http.SendAsync(request, ct);
-            if (response.StatusCode == HttpStatusCode.Locked) return new { ok = false, reason = "paused: user is in control" };
+            if (response.StatusCode is HttpStatusCode.Locked or HttpStatusCode.Conflict) return new { ok = false, status = "needs_human", code = "DESKTOP_BUSY", reason = "You're in control — tell me when to continue" };
             response.EnsureSuccessStatusCode();
             var bytes = await response.Content.ReadAsByteArrayAsync(ct);
             if (bytes.Length > MaxArtifactBytes) throw new ToolHalt("invalid", "screenshot exceeds 50 MB artifact limit");
@@ -81,7 +83,7 @@ public static class ComputerTools
         using var request = Request(platform, HttpMethod.Post, new Uri(baseUrl, path), JsonSerializer.Serialize(body));
         using var response = await Http.SendAsync(request, ct);
         var text = await response.Content.ReadAsStringAsync(ct);
-        if (response.StatusCode == HttpStatusCode.Locked) return (false, text, new { ok = false, reason = "paused: user is in control" });
+        if (response.StatusCode is HttpStatusCode.Locked or HttpStatusCode.Conflict) return (false, text, new { ok = false, status = "needs_human", code = "DESKTOP_BUSY", reason = "You're in control — tell me when to continue" });
         if (!response.IsSuccessStatusCode) throw new ToolHalt("invalid", "computer tool failed");
         using var parsed = JsonDocument.Parse(text);
         return (true, text, parsed.RootElement.Clone());

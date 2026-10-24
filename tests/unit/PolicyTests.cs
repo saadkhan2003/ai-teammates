@@ -44,6 +44,74 @@ public class PolicyTests
     }
 
     [Fact]
+    public void RememberedShellApprovalMatchesOnlyTheSameNormalizedArgv()
+    {
+        var original = Args("""{"command":"echo hello"}""");
+        var same = Args("""{"command":"echo hello"}""");
+        var normalized = Args("""{"command":"  echo hello  "}""");
+        var altered = Args("""{"command":"echo hello; rm -rf /tmp"}""");
+        var hash = ApprovalRules.CommandShapeHash("shell", original);
+        Assert.NotNull(hash);
+        Assert.True(ApprovalRules.Matches(hash, "shell", same));
+        Assert.True(ApprovalRules.Matches(hash, "shell", normalized));
+        Assert.False(ApprovalRules.Matches(hash, "shell", altered));
+        Assert.False(ApprovalRules.Matches(hash, "write_file", same));
+        Assert.False(ApprovalRules.Matches("bad-hash", "shell", same));
+        var cat = Args("""{"command":"/bin/cat -n /tmp/a"}""");
+        var catHash = ApprovalRules.CommandShapeHash("shell", cat);
+        Assert.NotNull(catHash);
+        Assert.False(ApprovalRules.Matches(catHash, "shell", Args("""{"command":"/bin/cat -v /tmp/a"}""")));
+        Assert.False(ApprovalRules.Matches(catHash, "shell", Args("""{"command":"/bin/cat -n /tmp/b"}""")));
+        Assert.False(ApprovalRules.Matches(hash, "shell", Args("""{"argv":["/bin/rm","-rf","/tmp/demo"]}""")));
+        Assert.False(ApprovalRules.Matches(hash, "shell", Args("""{"argv":["/bin/rm","-f","/tmp/other"]}""")));
+        Assert.False(ApprovalRules.MayOverrideReviewerAsk(PolicyEngine.Ask));
+        Assert.True(ApprovalRules.MayOverrideReviewerAsk(PolicyEngine.Allow));
+    }
+
+    [Theory]
+    [InlineData("echo hello; id")]
+    [InlineData("echo $(id)")]
+    [InlineData("echo `id`")]
+    [InlineData("echo hello | cat")]
+    [InlineData("echo hello > /tmp/x")]
+    public void RememberedShellRulesRejectShellSyntax(string command)
+    {
+        var args = Args(JsonSerializer.Serialize(new { command }));
+        Assert.Null(ApprovalRules.CommandShapeHash("shell", args));
+    }
+
+    [Fact]
+    public void TeachUsesPersistedPromptAndPrivateMp4Attachment()
+    {
+        const string path = "/workspace/teach-sessions/teach-20261023T000000Z-acde/demo.mp4";
+        Assert.Equal("The recording is finished. Learn the task from it.", TeachRoutes.Prompt);
+        Assert.True(DemoSkill.ValidRecording(path));
+        Assert.Contains("video/mp4", DemoSkill.Metadata(path));
+        Assert.Contains(DemoSkill.Label, DemoSkill.Instruction(TeachRoutes.Prompt, path));
+    }
+
+    [Fact]
+    public void DemonstrationSkillAcceptsPrivateTeachMp4AndAttachesVideoMime()
+    {
+        const string path = "/workspace/teach-sessions/teach-20261023T000000Z-acde/demo.mp4";
+        Assert.True(DemoSkill.ValidRecording(path));
+        Assert.False(DemoSkill.ValidRecording("/workspace/teach-sessions/../secret.mp4"));
+        Assert.Contains("video/mp4", DemoSkill.Metadata(path));
+        Assert.Contains(DemoSkill.Label, DemoSkill.Instruction("", path));
+    }
+
+    [Fact]
+    public async Task DeterministicActionReviewerPausesRiskyShellAndComputerActions()
+    {
+        var reviewer = new RuleBasedActionReviewer();
+        Assert.Equal("ask", await reviewer.ReviewAsync("shell", Args("""{"command":"rm -rf /tmp/demo"}"""), default));
+        Assert.Equal("ask", await reviewer.ReviewAsync("computer_click", Args("{}"), default));
+        Assert.Equal("ask", await reviewer.ReviewAsync("write_file", Args("{}"), default));
+        Assert.Equal("ask", await reviewer.ReviewAsync("delegate", Args("{}"), default));
+        Assert.Null(await reviewer.ReviewAsync("read_file", Args("{}"), default));
+    }
+
+    [Fact]
     public void LegacyDecisionsStayTheSameThroughTheGate()
     {
         Assert.Equal(PolicyEngine.Ask, Gate("delete_file", "{\"path\":\"/workspace/secret.txt\"}").Decision);
@@ -295,5 +363,16 @@ public class PolicyTests
         untrusted.Connection.RemoteIpAddress = IPAddress.Parse("203.0.113.8");
         untrusted.Request.Headers["X-Forwarded-For"] = "198.51.100.4";
         Assert.Equal("203.0.113.8", ClientAddress.From(untrusted));
+    }
+    [Fact]
+    public void PrivateHostPolicyParsesBoundedSuffixesAndMatchesBoundaries()
+    {
+        var policy = UserPolicy.Parse("""{"privateHosts":["corp.example","*.internal.test","bad/path","too."],"classes":{}}""");
+        Assert.True(policy.IsPrivateHost("git.corp.example"));
+        Assert.True(policy.IsPrivateHost("corp.example"));
+        Assert.True(policy.IsPrivateHost("vpn.internal.test"));
+        Assert.False(policy.IsPrivateHost("evilcorp.example"));
+        Assert.False(policy.IsPrivateHost("internal.test.attacker"));
+        Assert.False(policy.IsPrivateHost("public.example"));
     }
 }

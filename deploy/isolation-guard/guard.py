@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reinstall TEAMS-ISO when Docker has cleared DOCKER-USER.
+"""Reinstall the isolation chain (TEAMS-ISO by default) when Docker has cleared DOCKER-USER.
 
 This process shares the host network namespace. iptables-legacy here is the
 host firewall. /ensure installs the rules only when they are missing, and
@@ -16,7 +16,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler
 
-from rules import rules
+from rules import CHAIN, rules
 
 SOCKET = os.environ.get("ISOLATION_SOCKET", "/run/teammates/isolation.sock")
 TOKEN = os.environ.get("ISOLATION_TOKEN", "")
@@ -40,12 +40,12 @@ def rules_present() -> bool:
     ipt = iptables()
     try:
         user = subprocess.check_output([ipt, "-S", "DOCKER-USER"], text=True, stderr=subprocess.DEVNULL)
-        chain = subprocess.check_output([ipt, "-S", "TEAMS-ISO"], text=True, stderr=subprocess.DEVNULL)
+        chain = subprocess.check_output([ipt, "-S", CHAIN], text=True, stderr=subprocess.DEVNULL)
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
-    if "-j TEAMS-ISO" not in user:
+    if f"-j {CHAIN}" not in user:
         return False
-    actual = [shlex.split(line)[2:] for line in chain.splitlines() if line.startswith("-A TEAMS-ISO ")]
+    actual = [shlex.split(line)[2:] for line in chain.splitlines() if line.startswith(f"-A {CHAIN} ")]
     # Exact order also rejects stale DNS exceptions and broad private-range allows.
     try:
         return actual == rules()
@@ -59,7 +59,7 @@ def install() -> None:
             return
         subprocess.check_call(["/bin/sh", SCRIPT])
         if not rules_present():
-            raise RuntimeError("TEAMS-ISO is not installed")
+            raise RuntimeError(f"{CHAIN} is not installed")
 
 
 class Handler(BaseHTTPRequestHandler):

@@ -109,16 +109,23 @@ def submit(client: Client, conversation: str, text: str, as_task=True) -> str:
     return body["taskId"]
 
 
+# The arch policy engine asks before write-class actions as well as new browser origins.
+# Anything the test decides itself (delete_file, type_secret, setup_env) stays out of this set.
+AUTO_ALLOW_ACTIONS = {"browser_open", "write_file", "edit_file"}
+
+
 def auto_allow_browser_opens(bot: str, stop: threading.Event) -> threading.Thread:
     """v0.4 asks for Allow once on every run that opens a new browser origin."""
     def loop() -> None:
-        helper_client = login()
+        helper_client = None
         while not stop.is_set():
             try:
+                # Login can be rate-limited late in a long run; keep trying instead of dying silently.
+                helper_client = helper_client or login()
                 status, workspace = helper_client.call("GET", f"/api/bots/{bot}/workspace")
                 if status == 200:
                     for item in workspace.get("approvals") or []:
-                        if item.get("action") == "browser_open":
+                        if item.get("action") in AUTO_ALLOW_ACTIONS:
                             helper_client.call("POST", f"/api/approvals/{item['id']}/decide", {"decision": "allow_once"})
             except Exception:
                 pass
@@ -342,8 +349,6 @@ def exercise_reactions(client: Client, bot_id: str, conversation: str, hello_tas
         item["role"] == "assistant" and not (item.get("content") or "").strip()
         for item in after_thanks["messages"]
     )
-    assert int(_psql("SELECT count(*) FROM task_transcript WHERE content LIKE '%Hidden feedback%'")) >= 1
-    assert int(_psql("SELECT count(*) FROM bot_feedback WHERE consumed_at IS NOT NULL")) >= 1
 
 
 def test_acceptance_suite():
@@ -393,6 +398,10 @@ def test_acceptance_suite():
     )
     assert status == 200, bot
     bot_id = bot["id"]
+    # The computer egress proxy is default-deny (team_only, no entries): the portal fixture host must be allowed.
+    status, policy = client.call("PUT", "/api/network-policy", {"mode": "team_only", "entries": ["portal.example.edu"], "groups": []})
+    assert status == 200, policy
+    time.sleep(12)  # the computer proxy pulls the policy every 10 s
     stop_browser_approvals = threading.Event()
     auto_allow_browser_opens(bot_id, stop_browser_approvals)
     conversation = bot["conversationId"]
@@ -456,6 +465,12 @@ def test_acceptance_suite():
     )
     assert code["status"] == "completed", code
     assert "passed" in result_text(code).lower()
+    # Hidden reaction feedback is consumed by the first model turn after the reaction; later tasks guarantee one ran.
+    feedback_deadline = time.time() + 20
+    while time.time() < feedback_deadline and int(_psql("SELECT count(*) FROM task_transcript WHERE content LIKE '%Hidden feedback%'")) < 1:
+        time.sleep(0.5)
+    assert int(_psql("SELECT count(*) FROM task_transcript WHERE content LIKE '%Hidden feedback%'")) >= 1
+    assert int(_psql("SELECT count(*) FROM bot_feedback WHERE consumed_at IS NOT NULL")) >= 1
 
     delete_id = submit(client, conversation, "Delete the file /workspace/secret.txt")
     approval = None
@@ -518,14 +533,22 @@ def test_acceptance_suite():
             break
         time.sleep(1)
     assert waiting and waiting["status"] == "waiting_human", waiting
-    status, taken = client.call("POST", f"/api/bots/{bot_id}/computer/take-control")
-    assert status == 200 and taken.get("token"), taken
-    status, clicked = client.call("POST", f"/api/bots/{bot_id}/computer/human-input", {"selector": "#human-check"})
+    # Legacy take-control is refused; control now needs a role ticket that carries the desktop lease.
+    status, legacy = client.call("POST", f"/api/bots/{bot_id}/computer/take-control")
+    assert status == 409 and legacy.get("error") == "control_requires_lease_ticket", legacy
+    tab = "acceptance-tab"
+    status, taken = client.call("POST", f"/api/computers/{bot_id}/vnc-ticket?role=control", headers={"X-Desktop-Tab": tab})
+    assert status == 200 and taken.get("token") and taken.get("role") == "control", taken
+    epoch = taken["epoch"]
+    status, clicked = client.call("POST", f"/api/bots/{bot_id}/computer/human-input", {"selector": "#human-check", "tabId": tab, "epoch": epoch})
     assert status == 200, clicked
     status, resolved = client.call("POST", f"/api/tasks/{captcha}/attention/resolve")
     assert status == 200, resolved
-    status, handed = client.call("POST", f"/api/bots/{bot_id}/computer/hand-back")
+    status, handed = client.call("POST", f"/api/bots/{bot_id}/computer/hand-back", {"tabId": tab, "epoch": epoch})
     assert status == 200, handed
+    # Hand-back leaves the desktop unowned and the task parked until the user explicitly continues.
+    status, resumed = client.call("POST", f"/api/computers/{bot_id}/continue")
+    assert status == 200 and resumed.get("ok"), resumed
     cleared = wait_task(client, bot_id, captcha, timeout=120)
     assert cleared["status"] == "completed", cleared
     assert "captcha" not in result_text(cleared).lower()

@@ -33,17 +33,19 @@ public static class Devices
 
     public static void Map(WebApplication app, Platform platform)
     {
-        var limiter = new LoginRateLimiter();
-        bool Limited(HttpContext ctx, string scope)
+        async Task<bool> Limited(HttpContext ctx, string scope)
         {
-            lock (limiter)
-            {
-                var key = scope + ":" + (ctx.Connection.RemoteIpAddress?.ToString() ?? "local");
-                var now = DateTimeOffset.UtcNow;
-                if (limiter.IsBlocked(key, now)) return true;
-                limiter.NoteAttempt(key, now);
-                return false;
-            }
+            var key = HMACSHA256.HashData(platform.MasterKey, Encoding.UTF8.GetBytes(scope + ":" + (ctx.Connection.RemoteIpAddress?.ToString() ?? "local")));
+            await using var conn = await platform.Data.OpenConnectionAsync(ctx.RequestAborted);
+            var count = await conn.ExecuteScalarAsync<int>("""
+                INSERT INTO api_rate_windows(scope_hash,window_started,request_count) VALUES(@key,clock_timestamp(),1)
+                ON CONFLICT(scope_hash) DO UPDATE SET
+                  window_started=CASE WHEN api_rate_windows.window_started<=clock_timestamp()-interval '10 minutes' THEN clock_timestamp() ELSE api_rate_windows.window_started END,
+                  request_count=CASE WHEN api_rate_windows.window_started<=clock_timestamp()-interval '10 minutes' THEN 1 ELSE api_rate_windows.request_count+1 END
+                RETURNING request_count
+                """, new { key });
+            await conn.ExecuteAsync("DELETE FROM api_rate_windows WHERE window_started<clock_timestamp()-interval '1 day'");
+            return count > LoginRateLimiter.MaxAttempts;
         }
         async Task<Guid?> Owner(HttpContext ctx)
         {
@@ -57,7 +59,7 @@ public static class Devices
         {
             var owner = await Owner(ctx);
             if (owner == null) return Results.StatusCode(403);
-            if (Limited(ctx, "issue:" + owner)) return Results.StatusCode(429);
+            if (await Limited(ctx, "issue:" + owner)) return Results.StatusCode(429);
             var code = DeviceCredentials.Create()[..12].ToUpperInvariant();
             var expiresAt = DateTimeOffset.UtcNow.AddMinutes(10);
             await using var conn = await platform.Data.OpenConnectionAsync();
@@ -79,7 +81,7 @@ public static class Devices
         });
         app.MapPost("/api/devices/pair/complete", async (HttpContext ctx, Registration body) =>
         {
-            if (Limited(ctx, "complete")) return Results.StatusCode(429);
+            if (await Limited(ctx, "complete")) return Results.StatusCode(429);
             if (string.IsNullOrWhiteSpace(body.Code) || body.Code.Length > 64 || string.IsNullOrWhiteSpace(body.Name) || body.Name.Length > 120 || string.IsNullOrWhiteSpace(body.Os) || body.Os.Length > 80 || string.IsNullOrWhiteSpace(body.Version) || body.Version.Length > 40) return Results.BadRequest(new { error = "Code, name, OS and version are required." });
             await using var conn = await platform.Data.OpenConnectionAsync();
             await using var tx = await conn.BeginTransactionAsync();

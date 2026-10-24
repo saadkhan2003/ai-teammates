@@ -51,11 +51,22 @@ def test_bots_have_separate_workspaces_and_delete_wipes():
     assert before.returncode == 0 and "bot-b" in before.stdout, before.stderr
 
     token = os.environ.get("COMPUTER_TOKEN", "dev-computer-token-change-me")
+    # Bots on one computer share its single desktop, keyed by the computer id and fenced by an epoch.
+    desktop = str(computer["computerId"])
+    ensure_status, ensured = computer_api(
+        name, "POST", "/desktops", token, json.dumps({"botId": desktop, "display": 1, "chrome": False})
+    )
+    assert ensure_status == "200", ensured
+    epoch = json.loads(ensured)["epoch"]
     other_file = f"/desktops/{left}/files/raw?path=/workspace/notes/own.txt"
     status_line, body = computer_api(name, "GET", other_file, token)
     assert status_line != "200" or "bot-b" not in body, body
-    shell_body = json.dumps({"command": f"id -u; cat /data/workspace/bots/{right.replace('-', '')}/notes/own.txt"})
-    shell_status, shell = computer_api(name, "POST", f"/desktops/{left}/shell", token, shell_body)
+    shell_body = json.dumps({
+        "command": f"id -u; cat /data/workspace/bots/{right.replace('-', '')}/notes/own.txt",
+        "actor_id": "agent:workspace-isolation-test",
+        "epoch": epoch,
+    })
+    shell_status, shell = computer_api(name, "POST", f"/desktops/{desktop}/shell", token, shell_body)
     assert shell_status == "200", shell
     parsed = json.loads(shell)
     assert "bot-b" not in parsed.get("stdout", ""), parsed
@@ -98,7 +109,7 @@ def test_bots_have_separate_workspaces_and_delete_wipes():
         text=True,
     )
     assert wm_uid == desktop_owner.stdout.strip() and wm_uid != "0", (openbox, desktop_owner.stdout)
-    assert owner.stdout.strip() == uid_line, (owner.stdout, shell)
+    assert desktop_owner.stdout.strip() == uid_line, (desktop_owner.stdout, shell)
     status, _ = client.call("DELETE", f"/api/bots/{right}")
     assert status == 204, status
     after = subprocess.run(["sudo", "docker", "exec", name, "cat", host_path], capture_output=True, text=True)

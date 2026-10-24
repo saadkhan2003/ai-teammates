@@ -1,11 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-const owner = process.env.OWNER_USERNAME ?? "saad";
-const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
-
 async function firstBot(page: import("@playwright/test").Page) {
-  const login = await page.request.post("/api/auth/login", { data: { username: owner, password } });
-  expect(login.ok()).toBeTruthy();
   const response = await page.request.get("/api/bots");
   expect(response.ok()).toBeTruthy();
   const raw = await response.json();
@@ -38,7 +33,7 @@ test("computer thumbnail opens a dark full view; collapse, minimise and Esc work
   await expect(topbar).toBeVisible();
   const root = page.getByTestId("computer-tab");
   const bg = await root.evaluate((el) => getComputedStyle(el).backgroundColor);
-  expect(bg).toBe("rgb(20, 20, 20)");
+  expect(bg).toBe("rgb(20, 20, 20)"); // bg-[#141414], the dark surface since 2637800
   await expect(page.getByTestId("control-pill")).toHaveAttribute("data-mode", "view");
   await expect(page.getByTestId("take-control")).toBeVisible();
 

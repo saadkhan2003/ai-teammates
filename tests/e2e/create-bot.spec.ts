@@ -1,11 +1,8 @@
 import { expect, test } from "@playwright/test";
+import { login } from "./helpers";
 
 test("create bot dialog selects a live avatar and submits with Enter", async ({ page }) => {
-  await page.goto("/login");
-  await page.getByTestId("login-username").fill(process.env.OWNER_USERNAME ?? "saad");
-  await page.getByTestId("login-password").fill(process.env.OWNER_PASSWORD ?? "teammates-dev");
-  await page.getByTestId("login-submit").click();
-  await expect(page.getByTestId("app-shell")).toBeVisible();
+  await login(page);
   await page.evaluate(() => window.dispatchEvent(new Event("teammates-open-create")));
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByText("Create New Bot")).toBeVisible();

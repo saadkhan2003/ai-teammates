@@ -4,7 +4,8 @@ from __future__ import annotations
 import subprocess
 import time
 
-from test_acceptance import BASE, login, result_text, submit, wait_task
+import threading
+from test_acceptance import BASE, auto_allow_browser_opens, login, result_text, submit, wait_task
 from stack import API_CONTAINER
 
 MARKER = "/workspace/notes/restore-marker.txt"
@@ -75,9 +76,13 @@ def test_deleted_container_recovers_on_the_next_tool_call():
     assert computer_id, computer
     name = _container(computer_id)
     _bring_up(client, name)
+    # write_file always passes the action reviewer, so the task waits for Allow once.
+    stop = threading.Event()
+    auto_allow_browser_opens(bot_id, stop)
     try:
         _run(client, bot_id, computer_id, name)
     finally:
+        stop.set()
         _restore_if_missing(client, name)
 
 

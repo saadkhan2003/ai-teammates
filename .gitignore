@@ -9,6 +9,7 @@ uploads/
 **/*.pyc
 .pytest_cache/
 test-results/
+tests/e2e/.auth/
 playwright-report/
 evals/out/
 backups/
@@ -16,3 +17,4 @@ docs/evidence/*.webm
 docs/evidence/playwright/
 *.log
 .DS_Store
+.stack-*.yml

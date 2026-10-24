@@ -2,11 +2,10 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { autoAllowBrowserOpens } from "./helpers";
+import { autoAllowBrowserOpens, login } from "./helpers";
 import { PG_CONTAINER, AGENT_CONTAINER, API_CONTAINER, MOCK_CONTAINER } from "./containers";
 
-const owner = process.env.OWNER_USERNAME ?? "saad";
-const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
+const STACK = process.env.STACK!;
 const OPENROUTER = "sk-or-v1-CANARYOPENROUTERKEY8Kx2";
 const GITHUB = "ghp_CANARYGITHUBTOKENVALUE99";
 const PORTAL_PASSWORD = "CanaryPasswordValueXYZ99";
@@ -81,19 +80,11 @@ function shot(page: Page, name: string) {
 function waitHealth() {
   const start = Date.now();
   while (Date.now() - start < 90_000) {
-    const result = spawnSync("curl", ["-fsS", `${process.env.BASE_URL ?? "http://127.0.0.1:18080"}/health`], { encoding: "utf8" });
+    const result = spawnSync("curl", ["-fsS", `${process.env.BASE_URL!}/health`], { encoding: "utf8" });
     if (result.status === 0 && (result.stdout || "").includes('"ok":true')) return;
     spawnSync("sleep", ["2"]);
   }
   throw new Error("API health did not return");
-}
-
-async function login(page: Page) {
-  await page.goto("/login");
-  await page.getByTestId("login-username").fill(owner);
-  await page.getByTestId("login-password").fill(password);
-  await page.getByTestId("login-submit").click();
-  await expect(page.getByTestId("new-bot")).toBeVisible();
 }
 
 const acceptanceBotName = /^(Clerk|Atlas) \d+$/;
@@ -219,6 +210,9 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
       "psql", "-U", "agent", "-d", "agent", "-c",
       "DELETE FROM credential_domain_grants",
     ]);
+    // Computer egress is default-deny (team_only, no entries); allow the portal fixture host like test_acceptance.py does.
+    const policy = await page.request.put("/api/network-policy", { data: { mode: "team_only", entries: ["portal.example.edu"], groups: [] } });
+    expect(policy.ok()).toBeTruthy();
   });
 
   await test.step("16 secrets BYOK before and after", async () => {
@@ -260,7 +254,8 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
     botUrl = page.url();
     botId = botUrl.split("/bots/")[1].split(/[?#]/)[0];
     createdBotIds.push(botId);
-    autoAllowBrowserOpens(page, botId);
+    // write_file always asks (RuleBasedActionReviewer); step 2 is about the burst, not that card.
+    autoAllowBrowserOpens(page, botId, ["browser_open", "write_file", "edit_file"]);
     await page.goto("/");
     await expect(page.getByTestId("sidebar").getByRole("link", { name })).toBeVisible();
     await shot(page, "bots-list");

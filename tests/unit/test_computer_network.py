@@ -90,7 +90,8 @@ def _rules():
 def test_dns_exceptions_are_only_resolver_port_53_before_private_drops():
     rules = _rules().rules("10.0.0.2,1.1.1.1")
     first_drop = next(i for i, rule in enumerate(rules) if "10.0.0.0/8" in rule)
-    exceptions = rules[3:first_drop]
+    assert rules[3] == ["-s", "172.30.28.0/24", "-d", "172.30.28.10/32", "-p", "tcp", "-m", "tcp", "--dport", "8080", "-j", "RETURN"]
+    exceptions = rules[4:first_drop]
     assert len(exceptions) == 6
     assert {r[r.index("-d") + 1] for r in exceptions} == {"10.0.0.2/32", "1.1.1.1/32", "127.0.0.11/32"}
     for rule in exceptions:

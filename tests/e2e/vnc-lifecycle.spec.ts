@@ -2,8 +2,6 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { expect, test } from "@playwright/test";
 
-const owner = process.env.OWNER_USERNAME ?? "saad";
-const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
 const CYCLES = 20;
 
 function capture(args: string[], timeout = 30_000): string {
@@ -74,8 +72,6 @@ fi
 
 test("opening and closing the computer view does not pile up x11vnc sockets", async ({ page }) => {
   test.setTimeout(360_000);
-  const login = await page.request.post("/api/auth/login", { data: { username: owner, password } });
-  expect(login.ok()).toBeTruthy();
   const botsResponse = await page.request.get("/api/bots");
   expect(botsResponse.ok()).toBeTruthy();
   const bots = (await botsResponse.json()) as { id?: string; name?: string }[];

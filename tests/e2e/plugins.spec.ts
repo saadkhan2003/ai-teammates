@@ -1,16 +1,6 @@
 import fs from "node:fs";
-import { expect, test, type Page } from "@playwright/test";
-
-const owner = process.env.OWNER_USERNAME ?? "saad";
-const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
-
-async function login(page: Page) {
-  await page.goto("/login");
-  await page.getByTestId("login-username").fill(owner);
-  await page.getByTestId("login-password").fill(password);
-  await page.getByTestId("login-submit").click();
-  await expect(page.getByTestId("app-shell")).toBeVisible();
-}
+import { expect, test } from "@playwright/test";
+import { login } from "./helpers";
 
 test("plugins settings search and empty state", async ({ page }, testInfo) => {
   await login(page);

@@ -1,20 +1,10 @@
 import fs from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
+import { login } from "./helpers";
 
-const owner = process.env.OWNER_USERNAME ?? "saad";
-const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
 const OPENROUTER = "sk-or-v1-CANARYOPENROUTERKEY8Kx2";
 
 const created: string[] = [];
-
-async function login(page: Page) {
-  await page.addInitScript(() => localStorage.setItem("teammates-theme", "light"));
-  await page.goto("/login");
-  await page.getByTestId("login-username").fill(owner);
-  await page.getByTestId("login-password").fill(password);
-  await page.getByTestId("login-submit").click();
-  await expect(page.getByTestId("app-shell")).toBeVisible();
-}
 
 async function makeBot(page: Page, name: string): Promise<string> {
   const response = await page.request.post("/api/bots", { data: { name, role: "test" } });
@@ -40,6 +30,7 @@ test.afterEach(async ({ page }) => {
 
 test("a bot asks first, messages its peer, and both chats show the thread row", async ({ page }) => {
   test.setTimeout(150_000);
+  await page.addInitScript(() => localStorage.setItem("teammates-theme", "light"));
   await login(page);
   const secret = await page.request.post("/api/secrets", { data: { namespace: "openrouter", name: "default", type: "API_KEY", value: OPENROUTER } });
   expect(secret.ok()).toBeTruthy();
@@ -81,6 +72,7 @@ test("a bot asks first, messages its peer, and both chats show the thread row", 
 
 test("a forced-ask approval from a peer shows in both chats and one decision clears both", async ({ page }) => {
   test.setTimeout(150_000);
+  await page.addInitScript(() => localStorage.setItem("teammates-theme", "light"));
   await login(page);
   expect((await page.request.post("/api/secrets", { data: { namespace: "openrouter", name: "default", type: "API_KEY", value: OPENROUTER } })).ok()).toBeTruthy();
   const tag = Math.random().toString(36).slice(2, 7);
