@@ -209,6 +209,9 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
       "psql", "-U", "agent", "-d", "agent", "-c",
       "DELETE FROM credential_domain_grants",
     ]);
+    // Computer egress is default-deny (team_only, no entries); allow the portal fixture host like test_acceptance.py does.
+    const policy = await page.request.put("/api/network-policy", { data: { mode: "team_only", entries: ["portal.example.edu"], groups: [] } });
+    expect(policy.ok()).toBeTruthy();
   });
 
   await test.step("16 secrets BYOK before and after", async () => {

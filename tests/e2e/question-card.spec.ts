@@ -2,6 +2,8 @@ import fs from "node:fs";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { login } from "./helpers";
 
+const owner = process.env.OWNER_USERNAME ?? "saad";
+
 const BOT_NAME = "Question card";
 const ASK = "Ask which Rakazo ideas should go in now";
 const PROMPT = "Which Rakazo ideas should go in now?";
