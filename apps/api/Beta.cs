@@ -165,7 +165,8 @@ public static class Beta
                 stuckTasks = stuck,
                 pendingApprovals = pending,
                 computerMemoryBytes = platform.ComputerMemory,
-                chromeProcesses = platform.ChromeProcesses
+                chromeProcesses = platform.ChromeProcesses,
+                computerMemory = await ComputerMemoryRows(conn, platform)
             });
         });
 
@@ -251,6 +252,28 @@ public static class Beta
                     && await conn.ExecuteScalarAsync<string>("SELECT status FROM user_computers WHERE user_id=@id", new { id = user }) == "stopped")
                     return Results.Json(new { status = "stopped", computerId = id, missing = true });
                 return Results.Json(new { status = "unknown", computerId = id, error = ex.Code.ToString() });
+            }
+        });
+
+        // Desktop state for the computer panel. Read-only: never wakes the computer or its desktop.
+        app.MapGet("/api/computer/desktop", async (HttpContext ctx, CancellationToken ct) =>
+        {
+            var user = await User(ctx, platform);
+            if (user == null) return Results.Unauthorized();
+            await using var conn = await platform.Data.OpenConnectionAsync(ct);
+            var id = await conn.ExecuteScalarAsync<Guid?>("SELECT computer_id FROM user_computers WHERE user_id=@id", new { id = user });
+            if (id == null) return Results.Json(new { desktop = "absent" });
+            var previous = DockerComputeProvider.QuietActivity.Value;
+            DockerComputeProvider.QuietActivity.Value = true;
+            try
+            {
+                var sample = await platform.Compute.ReadDesktopAsync(new ComputerId(id.Value.ToString()), ct);
+                if (sample is null) return Results.Json(new { desktop = "unknown", computerId = id });
+                return Results.Json(new { desktop = sample.Desktop, computerId = id, idleSeconds = sample.IdleSeconds, rssBytes = sample.RssBytes, desktopRssBytes = sample.DesktopRssBytes });
+            }
+            finally
+            {
+                DockerComputeProvider.QuietActivity.Value = previous;
             }
         });
 
@@ -508,4 +531,24 @@ public static class Beta
 
     private static string Hash(string token) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token))).ToLowerInvariant();
+
+    // Per-computer memory for admin health: desktop on or asleep, and process RSS.
+    private static async Task<object[]> ComputerMemoryRows(System.Data.Common.DbConnection conn, Platform platform)
+    {
+        var names = (await conn.QueryAsync<(Guid id, string name)>(
+            "SELECT uc.computer_id, u.username FROM user_computers uc JOIN users u ON u.id=uc.user_id"))
+            .ToDictionary(r => r.id, r => r.name);
+        return platform.ComputerSamples.Values.OrderBy(s => s.ComputerId).Select(s => (object)new
+        {
+            computerId = s.ComputerId,
+            owner = names.GetValueOrDefault(s.ComputerId, ""),
+            desktop = s.Desktop,
+            rssBytes = s.RssBytes,
+            desktopRssBytes = s.DesktopRssBytes,
+            containerBytes = s.ContainerBytes,
+            cgroupBytes = s.CgroupBytes,
+            chromeProcesses = s.ChromeProcesses,
+            sampledAt = s.SampledAt
+        }).ToArray();
+    }
 }

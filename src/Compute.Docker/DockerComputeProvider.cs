@@ -420,6 +420,35 @@ public sealed partial class DockerComputeProvider : IComputeProvider, IDesktopSe
         return await tcs.Task.WaitAsync(TimeSpan.FromSeconds(10), ct);
     }
 
+    /// <summary>Desktop state and memory as the computer reports it. Never wakes a sleeping
+    /// computer and never starts its desktop; returns null when the computer is asleep or unreachable.</summary>
+    public async Task<DesktopSample?> ReadDesktopAsync(ComputerId id, CancellationToken ct)
+    {
+        Row row;
+        try { row = Require(id); } catch { return null; }
+        lock (_sync)
+        {
+            if (row.Paused || row.Hibernated || row.Computer.State is not (ComputerState.Running or ComputerState.Idle)) return null;
+        }
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(4));
+            using var response = await _http.GetAsync($"http://{row.Name}:7700/metrics", timeout.Token);
+            if (!response.IsSuccessStatusCode) return null;
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(timeout.Token));
+            var root = doc.RootElement;
+            long Num(string name) => root.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt64() : 0;
+            var desktop = root.TryGetProperty("desktop", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString()! : (Num("chromeProcesses") > 0 ? "on" : "asleep");
+            long? cgroup = root.TryGetProperty("cgroupBytes", out var c) && c.ValueKind == JsonValueKind.Number ? c.GetInt64() : null;
+            return new DesktopSample(desktop, Num("memoryBytes"), Num("desktopRssBytes"), cgroup, (int)Num("chromeProcesses"), (int)Num("idleSeconds"));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public async Task<int> CountChromeAsync(ComputerId id, CancellationToken ct)
     {
         var row = await DemandAsync(id, ct);
@@ -2013,3 +2042,7 @@ public sealed partial class DockerComputeProvider : IComputeProvider, IDesktopSe
         public bool ViewerRunning { get; set; }
     }
 }
+
+/// <summary>What a computer reports about its desktop: "on" or "asleep", total process RSS,
+/// RSS of the desktop processes (Xvfb, window manager, VNC, Chrome), and cgroup memory.</summary>
+public sealed record DesktopSample(string Desktop, long RssBytes, long DesktopRssBytes, long? CgroupBytes, int ChromeProcesses, int IdleSeconds);

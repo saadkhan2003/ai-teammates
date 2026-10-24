@@ -456,9 +456,15 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
         {
             try
             {
-                memory += await platform.Compute.ReadMemoryBytesAsync(new ComputerId(id.ToString()), ct);
-                chrome += await platform.Compute.CountChromeAsync(new ComputerId(id.ToString()), ct);
+                var computerId = new ComputerId(id.ToString());
+                var container = await platform.Compute.ReadMemoryBytesAsync(computerId, ct);
+                memory += container;
+                chrome += await platform.Compute.CountChromeAsync(computerId, ct);
                 sampled++;
+                var desktop = await platform.Compute.ReadDesktopAsync(computerId, ct);
+                platform.ComputerSamples[id] = desktop is null
+                    ? new ComputerMemorySample(id, container == 0 ? "asleep" : "unknown", container, 0, 0, null, 0, DateTimeOffset.UtcNow)
+                    : new ComputerMemorySample(id, desktop.Desktop, container, desktop.RssBytes, desktop.DesktopRssBytes, desktop.CgroupBytes, desktop.ChromeProcesses, DateTimeOffset.UtcNow);
             }
             catch (Exception ex)
             {

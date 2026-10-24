@@ -53,6 +53,8 @@ public sealed class Platform
     public long HttpCount;
     public ulong ComputerMemory;
     public int ChromeProcesses;
+    /// <summary>Last per-computer sample: desktop on or asleep, process RSS, desktop RSS, and container memory.</summary>
+    public System.Collections.Concurrent.ConcurrentDictionary<Guid, ComputerMemorySample> ComputerSamples { get; } = new();
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(60) };
     private readonly IdempotencyStore _unused = new();
 
@@ -670,3 +672,5 @@ public sealed class Platform
         return parts[0] + string.Concat(parts.Skip(1).Select(part => part.Length == 0 ? "" : char.ToUpperInvariant(part[0]) + part[1..]));
     }
 }
+
+public sealed record ComputerMemorySample(Guid ComputerId, string Desktop, ulong ContainerBytes, long RssBytes, long DesktopRssBytes, long? CgroupBytes, int ChromeProcesses, DateTimeOffset SampledAt);
