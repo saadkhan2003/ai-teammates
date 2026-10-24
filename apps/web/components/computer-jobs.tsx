@@ -1,28 +1,26 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { parseAgentEvent, subscribeEvents } from "@/lib/events";
 import { cn, errorMessage } from "@/lib/utils";
+import { JobLogView } from "@/components/job-log-view";
 import { elapsedLabel, isActiveJob, jobStatusLabel, screenLastUsedLabel, showBackgroundPill } from "@/lib/usage-format.mjs";
 
 type Job = { id: string; botId: string; name: string; status: string; exitCode?: number | null; reason?: string | null; startedAt: string; elapsedSeconds: number; maxSeconds: number };
 type JobsResponse = { jobs: Job[]; running: number; screenLastUsedAt?: string | null };
-type LogResponse = { log: string; status: string; asleep?: boolean };
 
 const SCREEN_BUSY_MS = 90_000;
 
-/** Background jobs on the bot's computer: a "Working in background" pill, a live list with Stop, and a read-only log tail. */
+/** Background jobs on the bot's computer: a "Working in background" pill, a live list with Stop, and a live, read-only log. */
 export function ComputerJobs({ botId, controlled = false, dark = false }: { botId: string; controlled?: boolean; dark?: boolean }) {
   const [data, setData] = useState<JobsResponse | null>(null);
   const [loadedAt, setLoadedAt] = useState(() => Date.now());
   const [now, setNow] = useState(() => Date.now());
   const [open, setOpen] = useState<string | null>(null);
-  const [log, setLog] = useState<LogResponse | null>(null);
   const [confirm, setConfirm] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const logRef = useRef<HTMLPreElement>(null);
 
   const load = useCallback(async () => {
     try {
@@ -50,28 +48,6 @@ export function ComputerJobs({ botId, controlled = false, dark = false }: { botI
     const refresh = running > 0 ? window.setInterval(() => void load(), 10_000) : undefined;
     return () => { window.clearInterval(tick); if (refresh) window.clearInterval(refresh); };
   }, [running, load]);
-
-  const openStatus = data?.jobs.find((job) => job.id === open)?.status;
-  useEffect(() => {
-    if (!open) { setLog(null); return; }
-    let stopped = false;
-    const fetchLog = async () => {
-      try {
-        const next = await api<LogResponse>(`/api/jobs/${open}/log`);
-        if (!stopped) setLog(next);
-      } catch (caught) {
-        if (!stopped) setLog({ log: errorMessage(caught, "Could not read the log."), status: "unknown" });
-      }
-    };
-    void fetchLog();
-    const timer = openStatus && isActiveJob(openStatus) ? window.setInterval(() => void fetchLog(), 3000) : undefined;
-    return () => { stopped = true; if (timer) window.clearInterval(timer); };
-  }, [open, openStatus]);
-
-  useEffect(() => {
-    const el = logRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [log?.log]);
 
   const stop = async (id: string) => {
     if (confirm !== id) { setConfirm(id); return; }
@@ -124,10 +100,7 @@ export function ComputerJobs({ botId, controlled = false, dark = false }: { botI
                   ) : null}
                 </div>
                 {open === job.id ? (
-                  <pre ref={logRef} data-testid="job-log" aria-label={`${job.name} log`} aria-readonly="true" tabIndex={0}
-                    className={cn("mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md p-2 font-mono text-[11px] leading-4", dark ? "bg-black/40" : "bg-muted")}>
-                    {log ? (log.log || "No output yet.") : "Loading log…"}{log?.asleep ? "\n(The computer is asleep. Showing the last saved output.)" : ""}
-                  </pre>
+                  <JobLogView jobId={job.id} name={job.name} dark={dark} />
                 ) : null}
               </li>
             );

@@ -31,6 +31,7 @@ public sealed class Platform
     public AiModelRegistry AiRegistry { get; }
     public UsageMeter Usage { get; }
     public ComputerJobs Jobs { get; }
+    public JobLogStreams JobLogs { get; }
     public ResourceMeter Resources { get; }
     public WorkspaceSync Sync { get; }
     public CleanupService Cleanup { get; }
@@ -85,6 +86,7 @@ public sealed class Platform
         AiRegistry = new AiModelRegistry(this);
         Usage = new UsageMeter(this);
         Jobs = new ComputerJobs(this, Usage);
+        JobLogs = new JobLogStreams(this);
         Resources = new ResourceMeter(this);
         Sync = new WorkspaceSync(this, new S3ObjectStore(S3, Bucket)) { Enabled = !string.Equals(config["FILE_SYNC"], "off", StringComparison.OrdinalIgnoreCase) };
         Cleanup = new CleanupService(this, config);

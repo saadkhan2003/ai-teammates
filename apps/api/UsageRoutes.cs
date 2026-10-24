@@ -98,8 +98,26 @@ public static class UsageRoutes
             var job = await platform.Jobs.Get(conn, id);
             if (job == null || job.OwnerId != user) return Results.NotFound();
             var awake = platform.Compute.PowerSnapshot().FirstOrDefault(item => item.Id == job.ComputerId.ToString()).Power == "awake";
-            var log = awake ? await platform.Jobs.TailAsync(job, JobRules.LogTailBytes, ctx.RequestAborted) : null;
-            return Results.Json(new { id, status = job.Status, log = log ?? "", asleep = !awake });
+            // Reading a log is not use of the computer: it must not reset the idle clock.
+            Teammates.Compute.DockerComputeProvider.QuietActivity.Value = true;
+            try
+            {
+                var log = awake ? await platform.Jobs.TailAsync(job, JobRules.LogTailBytes, ctx.RequestAborted) : null;
+                return Results.Json(new { id, status = job.Status, log = log ?? "", asleep = !awake });
+            }
+            finally { Teammates.Compute.DockerComputeProvider.QuietActivity.Value = false; }
+        });
+
+        // Live tail over SSE. Never wakes the desktop or the computer; see JobLogStreams.
+        app.MapGet("/api/jobs/{id:guid}/log/stream", async (HttpContext ctx, Guid id) =>
+        {
+            var user = await Beta.User(ctx, platform);
+            if (user == null) { ctx.Response.StatusCode = 401; return; }
+            JobRow? job;
+            await using (var conn = await platform.Data.OpenConnectionAsync(ctx.RequestAborted))
+                job = await platform.Jobs.Get(conn, id);
+            if (job == null || job.OwnerId != user) { ctx.Response.StatusCode = 404; return; }
+            await platform.JobLogs.StreamAsync(ctx, job);
         });
 
         app.MapPost("/api/jobs/{id:guid}/cancel", async (HttpContext ctx, Guid id) =>
