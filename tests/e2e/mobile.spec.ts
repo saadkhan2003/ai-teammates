@@ -34,6 +34,12 @@ async function openPane(page: Page, tab: (typeof tabs)[number]) {
 
 test.describe.configure({ mode: "serial", timeout: 240_000 });
 
+// Bots this spec creates; deleted after each test so repeated runs stay under the bot quota.
+const createdBots: string[] = [];
+test.afterEach(async ({ page }) => {
+  for (const id of createdBots.splice(0)) await page.request.delete(`/api/bots/${id}`).catch(() => undefined);
+});
+
 test("phone layout, events, and live desktop", async ({ page }, testInfo) => {
   const project = testInfo.project.name;
   const dir = "/workspace/docs/evidence/mobile";
@@ -67,6 +73,7 @@ test("phone layout, events, and live desktop", async ({ page }, testInfo) => {
   // The phone run must not depend on bots left behind by other specs.
   const made = await page.request.post("/api/bots", { data: { name: `Clerk ${Date.now().toString().slice(-4)}` } });
   expect(made.ok()).toBeTruthy();
+  createdBots.push((await made.json() as { id: string }).id);
   await page.reload();
   await expect(page.getByTestId("app-shell")).toBeVisible();
   await noHorizontalScroll(page);

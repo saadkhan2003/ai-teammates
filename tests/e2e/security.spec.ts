@@ -74,6 +74,12 @@ async function assignTracked(page: Page, botId: string, text: string) {
   return created!.id;
 }
 
+// Bots this spec creates; deleted after each test so repeated runs stay under the bot quota.
+const createdBots: string[] = [];
+test.afterEach(async ({ page }) => {
+  for (const id of createdBots.splice(0)) await page.request.delete(`/api/bots/${id}`).catch(() => undefined);
+});
+
 test("policy card, data-policy block, and login form", async ({ page }) => {
   test.setTimeout(600_000);
   await login(page);
@@ -88,6 +94,7 @@ test("policy card, data-policy block, and login form", async ({ page }) => {
   await page.getByTestId("sidebar").getByRole("link", { name }).click({ timeout: 180_000 });
   await expect(page).toHaveURL(/\/bots\//);
   const botId = page.url().split("/bots/")[1].split(/[?#]/)[0];
+  createdBots.push(botId);
   autoAllowBrowserOpens(page, botId);
 
   const postId = await assignTracked(page, botId, POST);

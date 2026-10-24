@@ -53,7 +53,7 @@ def login() -> Client:
     return client
 
 
-def test_install_connect_call_and_audit():
+def test_install_connect_call_and_audit(bot_factory):
     owner = login()
     status, catalog = owner.call(
         "POST",
@@ -131,9 +131,7 @@ def test_install_connect_call_and_audit():
     if isinstance(bots, list) and bots:
         bot_id = bots[0]["id"]
     else:
-        status, bot = owner.call("POST", "/api/bots", {"name": "Plugin clerk", "role": "Calls plugins", "instructions": "Use tools."})
-        assert status == 200, bot
-        bot_id = bot["id"]
+        bot_id = bot_factory(owner, "Plugin clerk", "Calls plugins")
     status, enabled = owner.call("PUT", f"/api/plugins/{installed['id']}/bots/{bot_id}", {"enabled": True})
     assert status == 200 and enabled["enabled"] is True, enabled
 
