@@ -165,7 +165,8 @@ public sealed class UsageMeter(Platform platform)
                 "SELECT user_id FROM user_computers WHERE computer_id=@computer UNION ALL SELECT owner_id FROM bots WHERE id=@computer LIMIT 1", new { computer });
             if (owner is null) continue;
             var background = await conn.ExecuteScalarAsync<bool>(
-                "SELECT EXISTS (SELECT 1 FROM computer_jobs WHERE computer_id=@computer AND status IN ('starting','running'))", new { computer });
+                // A job shorter than the ~30 s tick still counts: include jobs that finished in the last minute.
+                "SELECT EXISTS (SELECT 1 FROM computer_jobs WHERE computer_id=@computer AND (status IN ('starting','running') OR finished_at > now() - interval '60 seconds'))", new { computer });
             await conn.ExecuteAsync("""
                 INSERT INTO computer_usage_minutes (computer_id, minute, owner_id, background) VALUES (@computer, @minute, @owner, @background)
                 ON CONFLICT (computer_id, minute) DO UPDATE SET background = computer_usage_minutes.background OR EXCLUDED.background
