@@ -1372,7 +1372,7 @@ public static class Routes
             {
                 // Flush a comment immediately so proxies and clients know the
                 // stream is open before the first real event.
-                await ctx.Response.WriteAsync(": connected\n\n", ctx.RequestAborted);
+                await ctx.Response.WriteAsync(": connected\n\nevent: ready\ndata: {}\n\n", ctx.RequestAborted);
                 await ctx.Response.Body.FlushAsync(ctx.RequestAborted);
                 var seen = resume ?? 0L;
                 if (resume != null)
@@ -1390,6 +1390,8 @@ public static class Routes
                     if (SseEventId(message) is long written) seen = written;
                     await ctx.Response.WriteAsync(message, ctx.RequestAborted);
                     await ctx.Response.Body.FlushAsync(ctx.RequestAborted);
+                    if (Random.Shared.Next(10) == 0 && SseEventId(message) is long delivered && platform.Events.PublishedAt(delivered) is long published)
+                        ctx.RequestServices.GetRequiredService<PerfRecorder>().Record("sse_fanout_ms", System.Diagnostics.Stopwatch.GetElapsedTime(published).TotalMilliseconds);
                 }
             }
             finally { platform.Sinks.TryRemove(id, out _); }

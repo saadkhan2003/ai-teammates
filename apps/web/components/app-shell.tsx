@@ -1,5 +1,6 @@
 "use client";
 
+import { initPerf } from "@/lib/perf";
 import { ListSkeleton } from "@/components/ui/skeleton";
 import { Bell, ChevronRight, CircleHelp, Info, Menu, PanelLeft, PanelLeftClose, Plug, Plus, Search, Settings, Upload, X } from "lucide-react";
 import Link from "next/link";
@@ -101,6 +102,7 @@ function initials(name: string) {
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
+  useEffect(() => { initPerf(); }, []);
   const pathname = usePathname();
   const router = useRouter();
   const [bots, setBots] = useState<RosterBot[]>([]);

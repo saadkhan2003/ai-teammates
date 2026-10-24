@@ -1,5 +1,6 @@
 "use client";
 
+import { beginSendPerf, endSendPerf, paintedPerf, chatPaintedPerf, initPerf } from "@/lib/perf";
 import { FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Markdown } from "@/components/markdown";
 import { RefreshNotice } from "@/components/refresh-notice";
@@ -69,6 +70,26 @@ export function ChatPane({
   events?: AgentEvent[];
   onStop?: () => Promise<void>;
 }) {
+  const perfTurn = useRef<{ id: string; conversation: string; messages: Set<string>; events: Set<AgentEvent>; working: boolean; at: number; task?: string; message?: string } | null>(null);
+  useEffect(() => { initPerf(); }, []);
+  useEffect(() => {
+    if (conversationId) chatPaintedPerf(botId);
+    const turn = perfTurn.current;
+    if (!turn) return;
+    if (turn.conversation !== conversationId || performance.now() - turn.at > 600000) {
+      endSendPerf(turn.id); perfTurn.current = null; return;
+    }
+    const fresh = messages.filter(m => !turn.messages.has(m.id));
+    const user = fresh.find(m => m.role === "user" && (!turn.message || m.id === turn.message));
+    const task = turn.task ?? user?.requestId;
+    const activity = events.filter(e => !turn.events.has(e) && task && e.taskId === task);
+    const reply = fresh.some(m => m.role === "assistant" && m.content.trim() && task && m.requestId === task);
+    const measure = (name: string) => paintedPerf(`${turn.id}:${name}`, name);
+    if (user) measure("echo_ms");
+    if ((!turn.working && working && task && (activeTaskId === task || (!activeTaskId && user))) || activity.length || reply) measure("ack_ms");
+    if (activity.some(e => ["tool", "tool_call", "tool_result"].includes(e.type))) measure("tool_chip_ms");
+    if (reply || activity.some(e => ["delta", "message.delta", "text_delta"].includes(e.type) && String(e.delta ?? e.text ?? "").trim())) measure("first_token_screen_ms");
+  }, [messages, events, working, conversationId, botId, activeTaskId]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   useEffect(() => { setAvatarMode(working ? "working" : "idle"); return () => setAvatarMode("idle"); }, [working]);
@@ -325,20 +346,24 @@ export function ChatPane({
       setError("This teammate does not have a conversation yet.");
       return;
     }
+    if (perfTurn.current) endSendPerf(perfTurn.current.id);
+    perfTurn.current = { id: beginSendPerf(), conversation: conversationId, messages: new Set(messages.map(m => m.id)), events: new Set(events), working, at: performance.now() };
     setSending(true);
     setError(null);
     setDlp(false);
     const rich = hasBlocks(parts);
     const text = parts.filter(p => p.type === "text").map(p => (p as { text: string }).text).join("\n").trim();
     try {
-      await api(`/api/conversations/${conversationId}/messages`, {
+      const sent = await api<{ taskId?: string; messageId?: string }>(`/api/conversations/${conversationId}/messages`, {
         method: "POST",
         body: JSON.stringify(rich ? { parts: toPayload(parts), asTask } : { content: text, asTask }),
       });
+      if (perfTurn.current) { perfTurn.current.task = sent?.taskId; perfTurn.current.message = sent?.messageId; }
       setParts(initialParts());
       draftsRef.current.delete(conversationId);
       onSent();
     } catch (caught) {
+      if (perfTurn.current) { endSendPerf(perfTurn.current.id); perfTurn.current = null; }
       const message = errorMessage(caught, "Could not send that message.");
       const blocked = (caught instanceof ApiError && caught.status === 422) || message.toLowerCase().includes("data policy");
       setDlp(blocked);

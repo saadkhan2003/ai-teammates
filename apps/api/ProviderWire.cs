@@ -4,7 +4,7 @@ using System.Text.Json;
 
 namespace Teammates.Api;
 
-public readonly record struct TokenUsage(int PromptTokens, int CompletionTokens, decimal CostUsd);
+public readonly record struct TokenUsage(int PromptTokens, int CompletionTokens, decimal CostUsd, int? CachedTokens = null, int? CacheWriteTokens = null);
 
 /// <summary>
 /// OpenAI chat-completions wire shape. The worker keeps an internal transcript
@@ -72,7 +72,17 @@ public static class ProviderWire
     {
         if (!root.TryGetProperty("usage", out var usage) || usage.ValueKind != JsonValueKind.Object)
             return new TokenUsage(0, 0, 0);
-        return new TokenUsage(Whole(usage, "prompt_tokens"), Whole(usage, "completion_tokens"), Money(usage));
+        var details = usage.TryGetProperty("prompt_tokens_details", out var d) && d.ValueKind == JsonValueKind.Object ? d : default;
+        int? Cache(string nested, string direct)
+        {
+            if (details.ValueKind == JsonValueKind.Object && details.TryGetProperty(nested, out var n) && n.ValueKind is JsonValueKind.Number or JsonValueKind.String)
+                return Math.Max(0, Whole(details, nested));
+            return usage.TryGetProperty(direct, out var v) && v.ValueKind is JsonValueKind.Number or JsonValueKind.String ? Math.Max(0, Whole(usage, direct)) : null;
+        }
+        return new TokenUsage(usage.TryGetProperty("prompt_tokens", out _) ? Whole(usage, "prompt_tokens")
+                : Whole(usage, "input_tokens") + Whole(usage, "cache_read_input_tokens") + Whole(usage, "cache_creation_input_tokens"),
+            usage.TryGetProperty("completion_tokens", out _) ? Whole(usage, "completion_tokens") : Whole(usage, "output_tokens"), Money(usage),
+            Cache("cached_tokens", "cache_read_input_tokens"), Cache("cache_write_tokens", "cache_creation_input_tokens"));
     }
 
     /// <summary>The ask_user id from a stored assistant toolCalls array. Never invents call_1.</summary>

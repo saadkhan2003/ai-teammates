@@ -34,13 +34,14 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         using var request = new HttpRequestMessage(HttpMethod.Post, platform.OpenRouterBase + "/chat/completions");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
         request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-        var started = DateTimeOffset.UtcNow;
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         using var response = await _http.SendAsync(request, ct);
         var raw = await response.Content.ReadAsStringAsync(ct);
+        var providerTotalMs = (int)System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         key = "";
         if (!response.IsSuccessStatusCode)
         {
-            await StoreModel(owner, botId, taskId, redacted, false, (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds, default, role);
+            await StoreModel(owner, botId, taskId, redacted, false, providerTotalMs, default, role);
             var contextError = raw.Contains("context_length", StringComparison.OrdinalIgnoreCase) || raw.Contains("maximum context", StringComparison.OrdinalIgnoreCase) || raw.Contains("too many tokens", StringComparison.OrdinalIgnoreCase);
             return Results.Json(new { status = "error", error = "provider rejected the request", errorCode = contextError ? "context_length" : "provider_error" });
         }
@@ -49,7 +50,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         var normalized = ProviderWire.Normalize(message);
         var normalizedText = OutputRedactor.Redact(normalized.GetRawText(), []);
         var usage = ProviderWire.ReadUsage(doc.RootElement);
-        await StoreModel(owner, botId, taskId, redacted, true, (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds, usage, role);
+        await StoreModel(owner, botId, taskId, redacted, true, providerTotalMs, usage, role);
         await using var conn = await platform.Data.OpenConnectionAsync(ct);
         await conn.ExecuteAsync("UPDATE tasks SET model_calls = model_calls + 1, updated_at=now() WHERE id=@id", new { id = taskId });
         return Results.Text("{\"status\":\"ok\",\"message\":" + normalizedText + ",\"promptTokens\":" + usage.PromptTokens.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}", "application/json");
@@ -202,19 +203,22 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
                 request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 timeout.CancelAfter(kind == "stt" ? TimeSpan.FromSeconds(55) : TimeSpan.FromSeconds(85));
+                var providerStarted = System.Diagnostics.Stopwatch.GetTimestamp();
                 using var response = await _http.SendAsync(request, timeout.Token);
                 if (!response.IsSuccessStatusCode) return Results.Json(new { status = "error", reason = "provider_error" }, statusCode: 502);
-                using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(timeout.Token));
+                var providerRaw = await response.Content.ReadAsStringAsync(timeout.Token);
+                var providerTotalMs = (int)System.Diagnostics.Stopwatch.GetElapsedTime(providerStarted).TotalMilliseconds;
+                using var doc = JsonDocument.Parse(providerRaw);
                 if (kind == "stt")
                 {
                     using var safePrompt = JsonDocument.Parse(JsonSerializer.Serialize(new { kind = "video_stt", model, audioBytes = (body.GetProperty("audio").GetString() ?? "").Length * 3 / 4 }));
-                    await StoreVideoModel(owner, botId, taskId, safePrompt.RootElement, model, default);
+                    await StoreVideoModel(owner, botId, taskId, safePrompt.RootElement, model, ProviderWire.ReadUsage(doc.RootElement), providerTotalMs);
                     await conn.ExecuteAsync("UPDATE tasks SET model_calls=model_calls+1,updated_at=now() WHERE id=@task", new { task = taskId });
                     return Results.Json(doc.RootElement.Clone());
                 }
                 var content = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content");
                 using var summaryPrompt = JsonDocument.Parse(JsonSerializer.Serialize(new { kind = "video_summary", model, multimodal = true }));
-                await StoreVideoModel(owner, botId, taskId, summaryPrompt.RootElement, model, ProviderWire.ReadUsage(doc.RootElement));
+                await StoreVideoModel(owner, botId, taskId, summaryPrompt.RootElement, model, ProviderWire.ReadUsage(doc.RootElement), providerTotalMs);
                 await conn.ExecuteAsync("UPDATE tasks SET model_calls=model_calls+1,updated_at=now() WHERE id=@task", new { task = taskId });
                 return Results.Json(new { content = content.ValueKind == JsonValueKind.String ? content.GetString() : content.GetRawText() });
             }
@@ -1488,23 +1492,24 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         return new { replayed = true, output };
     }
 
-    private async Task StoreModel(Guid owner, Guid botId, Guid taskId, JsonElement prompt, bool ok, int latency, TokenUsage usage, string role = "planner")
+    // Non-streaming: TTFT equals provider wall time. Phase 2 passes the first-token clock separately here.
+    private async Task StoreModel(Guid owner, Guid botId, Guid taskId, JsonElement prompt, bool ok, int latency, TokenUsage usage, string role = "planner", int? ttftMs = null)
     {
         await using var conn = await platform.Data.OpenConnectionAsync();
         await conn.ExecuteAsync(
             "INSERT INTO model_requests (owner_id, bot_id, task_id, provider, model, prompt_json) VALUES (@owner, @bot, @task, @provider, @model, @prompt::jsonb)",
             new { owner, bot = botId, task = taskId, provider = platform.LlmProvider, model = platform.ModelName, prompt = prompt.GetRawText() });
         await conn.ExecuteAsync(
-            "INSERT INTO model_calls (bot_id, task_id, owner_id, role, provider, model, latency_ms, prompt_tokens, completion_tokens, ok, cost_usd) VALUES (@bot, @task, @owner, @role, @provider, @model, @latency, @promptTokens, @completionTokens, @ok, @cost)",
-            new { bot = botId, task = taskId, owner, role, provider = platform.LlmProvider, model = platform.ModelName, latency, promptTokens = usage.PromptTokens, completionTokens = usage.CompletionTokens, ok, cost = usage.CostUsd });
+            "INSERT INTO model_calls (bot_id, task_id, owner_id, role, provider, model, latency_ms, ttft_ms, total_ms, cached_tokens, cache_write_tokens, prompt_tokens, completion_tokens, ok, cost_usd) VALUES (@bot, @task, @owner, @role, @provider, @model, @latency, @ttft, @latency, @cachedTokens, @cacheWriteTokens, @promptTokens, @completionTokens, @ok, @cost)",
+            new { bot = botId, task = taskId, owner, role, provider = platform.LlmProvider, model = platform.ModelName, latency, ttft = ttftMs ?? latency, cachedTokens = usage.CachedTokens, cacheWriteTokens = usage.CacheWriteTokens, promptTokens = usage.PromptTokens, completionTokens = usage.CompletionTokens, ok, cost = usage.CostUsd });
     }
 
-    private async Task StoreVideoModel(Guid owner, Guid botId, Guid taskId, JsonElement prompt, string model, TokenUsage usage)
+    private async Task StoreVideoModel(Guid owner, Guid botId, Guid taskId, JsonElement prompt, string model, TokenUsage usage, int totalMs)
     {
         await using var conn = await platform.Data.OpenConnectionAsync();
         var json = prompt.GetRawText();
         await conn.ExecuteAsync("INSERT INTO model_requests(owner_id,bot_id,task_id,provider,model,prompt_json) VALUES(@owner,@bot,@task,'openrouter',@model,CAST(@json AS jsonb))", new { owner, bot = botId, task = taskId, model, json });
-        await conn.ExecuteAsync("INSERT INTO model_calls(bot_id,task_id,owner_id,role,provider,model,latency_ms,prompt_tokens,completion_tokens,ok,cost_usd) VALUES(@bot,@task,@owner,'video','openrouter',@model,0,@promptTokens,@completionTokens,true,@cost)", new { bot = botId, task = taskId, owner, model, promptTokens = usage.PromptTokens, completionTokens = usage.CompletionTokens, cost = usage.CostUsd });
+        await conn.ExecuteAsync("INSERT INTO model_calls(bot_id,task_id,owner_id,role,provider,model,latency_ms,ttft_ms,total_ms,cached_tokens,cache_write_tokens,prompt_tokens,completion_tokens,ok,cost_usd) VALUES(@bot,@task,@owner,'video','openrouter',@model,@totalMs,@totalMs,@totalMs,@cachedTokens,@cacheWriteTokens,@promptTokens,@completionTokens,true,@cost)", new { bot = botId, task = taskId, owner, model, totalMs, cachedTokens = usage.CachedTokens, cacheWriteTokens = usage.CacheWriteTokens, promptTokens = usage.PromptTokens, completionTokens = usage.CompletionTokens, cost = usage.CostUsd });
     }
 
     private async Task<Guid> OwnerOf(Guid botId)

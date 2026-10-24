@@ -85,6 +85,8 @@ builder.Services.AddSingleton(loginBroker);
 builder.Services.AddSingleton(loginFlow);
 builder.Services.AddSingleton(runtime);
 builder.Services.AddSingleton(data);
+builder.Services.AddSingleton<PerfRecorder>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<PerfRecorder>());
 builder.Services.AddHostedService<Maintenance>();
 builder.Services.AddHostedService(sp => new TaskLeaseMaintenance(
     ct => TaskLeaseMaintenance.Sweep(platform, ct), sp.GetRequiredService<ILogger<TaskLeaseMaintenance>>()));
@@ -134,6 +136,18 @@ app.Use(async (ctx, next) =>
     Interlocked.Add(ref platform.HttpMicros, (long)(DateTimeOffset.UtcNow - started).TotalMicroseconds);
     Interlocked.Increment(ref platform.HttpCount);
 });
+app.Use(async (ctx, next) =>
+{
+    var clock = System.Diagnostics.Stopwatch.GetTimestamp();
+    try { await next(); }
+    finally
+    {
+        if (ctx.Request.Path.StartsWithSegments("/api") && ctx.Request.Path != "/api/events" && ctx.Request.Path != "/api/rum"
+            && ctx.Response.ContentType?.Contains("json", StringComparison.OrdinalIgnoreCase) == true
+            && ctx.GetEndpoint() is Microsoft.AspNetCore.Routing.RouteEndpoint endpoint)
+            ctx.RequestServices.GetRequiredService<PerfRecorder>().Api(endpoint.RoutePattern.RawText ?? "/api", System.Diagnostics.Stopwatch.GetElapsedTime(clock).TotalMilliseconds);
+    }
+});
 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(25), KeepAliveTimeout = TimeSpan.FromSeconds(15) });
 var ownerPassword = config["OWNER_PASSWORD"];
 OwnerPasswordGuard.Ensure(string.Equals(config["REQUIRE_OWNER_PASSWORD"], "true", StringComparison.OrdinalIgnoreCase), ownerPassword);
@@ -147,6 +161,7 @@ catch (Exception ex)
 {
     app.Logger.LogError("computer isolation alert: computers will not start ({Message})", ex.Message);
 }
+SpeedTelemetry.Map(app, platform);
 Routes.Map(app, platform, runtime);
 TeachRoutes.Map(app, platform);
 VncTicketRoutes.Map(app, platform);

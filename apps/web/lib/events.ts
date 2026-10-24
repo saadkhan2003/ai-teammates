@@ -52,13 +52,15 @@ export function subscribeEvents(onMessage: (data: string) => void, onStatus?: (s
         for (const chunk of chunks) {
           if (!chunk || chunk.startsWith(":")) continue;
           let id = "";
+          let eventName = "";
           const dataLines: string[] = [];
           for (const line of chunk.split("\n")) {
             if (line.startsWith("id:")) id = line.slice(3).trim();
+            else if (line.startsWith("event:")) eventName = line.slice(6).trim();
             else if (line.startsWith("data:")) dataLines.push(line.slice(5).replace(/^ /, ""));
           }
           if (id) lastId = id;
-          if (dataLines.length) {
+          if (dataLines.length && eventName !== "ready") {
             try { onMessage(dataLines.join("\n")); } catch { /* A malformed event must not disconnect the stream. */ }
           }
         }

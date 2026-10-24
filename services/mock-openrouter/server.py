@@ -4,6 +4,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections import OrderedDict
+from threading import Lock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from planner import plan
@@ -21,6 +23,23 @@ def authorized(header: str) -> str | None:
     if token.startswith("sk-or-") and len(token) >= 20:
         return token
     return None
+
+
+_prefixes: OrderedDict[str, None] = OrderedDict()
+_prefix_lock = Lock()
+
+
+def cached_usage(messages: list, prompt_tokens: int) -> int:
+    # Bounded hashes only: repeated system + first user prefix gets a deterministic 75% hit.
+    prefix = json.dumps(messages[:2], sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(prefix.encode()).hexdigest()
+    with _prefix_lock:
+        repeated = digest in _prefixes
+        _prefixes[digest] = None
+        _prefixes.move_to_end(digest)
+        while len(_prefixes) > 1024:
+            _prefixes.popitem(last=False)
+    return prompt_tokens * 3 // 4 if repeated else 0
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -69,7 +88,10 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(messages, list):
             messages = []
         print(f"messages={len(messages)}", flush=True)
-        self._send(200, plan(messages))
+        result = plan(messages)
+        usage = result.setdefault("usage", {})
+        usage["prompt_tokens_details"] = {"cached_tokens": cached_usage(messages, usage.get("prompt_tokens", 0))}
+        self._send(200, result)
 
     def _send(self, status: int, payload: dict) -> None:
         body = json.dumps(payload).encode("utf-8")

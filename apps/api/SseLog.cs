@@ -2,6 +2,7 @@ namespace Teammates.Api;
 
 public readonly record struct SseFrame(long Id, string Data)
 {
+    public long PublishedAt { get; init; }
     public string Format()
     {
         var lines = Data.Replace("\r\n", "\n").Split('\n');
@@ -23,11 +24,17 @@ public sealed class SseLog
     {
         lock (_gate)
         {
-            var frame = new SseFrame(_next++, data ?? "");
+            var frame = new SseFrame(_next++, data ?? "") { PublishedAt = System.Diagnostics.Stopwatch.GetTimestamp() };
             _recent.Enqueue(frame);
             while (_recent.Count > Capacity) _recent.Dequeue();
             return frame;
         }
+    }
+
+    public long? PublishedAt(long id)
+    {
+        lock (_gate) { foreach (var frame in _recent) if (frame.Id == id) return frame.PublishedAt; }
+        return null;
     }
 
     public IReadOnlyList<SseFrame> After(long id)

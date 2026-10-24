@@ -44,3 +44,12 @@ export function autoAllowBrowserOpens(page: Page, botId: string, actions: string
   })();
   return () => { stopped = true; };
 }
+
+/** Creates a disposable bot through the same API used by the create dialog. Caller cleans up the id. */
+export async function createBot(page: Page, name: string, role = "test"): Promise<{ id: string; name: string }> {
+  const response = await page.request.post("/api/bots", { data: { name, role } });
+  expect(response.ok(), `create bot: HTTP ${response.status()}`).toBeTruthy();
+  const bot = await response.json();
+  expect(typeof bot.id).toBe("string");
+  return bot;
+}
