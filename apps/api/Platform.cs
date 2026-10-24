@@ -163,22 +163,40 @@ public sealed class Platform
         "051_resources.sql",
     ];
 
-    private async Task MigrateAndSeedLocked(string ownerUser, string ownerPassword)
+    /// <summary>Applies every manifest file not yet recorded in schema_migrations (recorded by its three-digit prefix).</summary>
+    public static async Task ApplyMigrations(NpgsqlConnection conn, Func<string, Task<string>> read)
     {
-        var sql = await File.ReadAllTextAsync("/migrations/" + MigrationFiles[0]);
-        await using var conn = await Data.OpenConnectionAsync();
         var applied = await conn.ExecuteScalarAsync<bool>("SELECT to_regclass('public.schema_migrations') IS NOT NULL");
-        if (!applied) await conn.ExecuteAsync(sql);
+        if (!applied) await conn.ExecuteAsync(await read(MigrationFiles[0]));
         await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES ('001') ON CONFLICT DO NOTHING");
+        await ForgetSpeedPrefixes(conn);
         foreach (var file in MigrationFiles.Skip(1))
         {
             var mid = file[..3];
             if (await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM schema_migrations WHERE id=@mid", new { mid }) != 0) continue;
             await using var tx = await conn.BeginTransactionAsync();
-            await conn.ExecuteAsync(await File.ReadAllTextAsync("/migrations/" + file), transaction: tx);
+            await conn.ExecuteAsync(await read(file), transaction: tx);
             await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES (@mid) ON CONFLICT DO NOTHING", new { mid }, tx);
             await tx.CommitAsync();
         }
+    }
+
+    /// <summary>
+    /// The speed-v1 branch shipped usage_credits and resources as 047/048 before they became 050/051.
+    /// On such a database 047/048 are recorded but the brief tables are missing; forget those two ids so the
+    /// brief migrations run, and 050/051 (idempotent) re-apply over the tables that already exist.
+    /// </summary>
+    internal static Task ForgetSpeedPrefixes(NpgsqlConnection conn) =>
+        conn.ExecuteAsync("""
+            DELETE FROM schema_migrations WHERE id IN ('047','048')
+              AND to_regclass('public.billing_plans') IS NOT NULL
+              AND to_regclass('public.task_briefs') IS NULL
+            """);
+
+    private async Task MigrateAndSeedLocked(string ownerUser, string ownerPassword)
+    {
+        await using var conn = await Data.OpenConnectionAsync();
+        await ApplyMigrations(conn, file => File.ReadAllTextAsync("/migrations/" + file));
         var count = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM users");
         if (count == 0)
         {
