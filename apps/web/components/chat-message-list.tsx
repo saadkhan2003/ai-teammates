@@ -34,6 +34,12 @@ export const ChatMessageList = forwardRef<ChatMessageListHandle, {
       return indices.sort((a, b) => a - b);
     },
   });
+  // Compensate an estimate->actual delta only for rows wholly above the live
+  // scrollTop; the cached offset lags fast jumps and pushed the top row out of reach.
+  rows.shouldAdjustScrollPositionOnItemSizeChange = item => {
+    const top = scrollRef.current?.scrollTop ?? 0;
+    return top > 0 && item.start < top;
+  };
   useLayoutEffect(() => {
     const update = () => {
       const element = host.current;

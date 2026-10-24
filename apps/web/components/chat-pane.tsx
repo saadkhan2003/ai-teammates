@@ -181,6 +181,7 @@ export function ChatPane({
   }, []);
 
   const messageListRef = useRef<ChatMessageListHandle>(null);
+  const lastScrollTop = useRef(0);
   const prependAnchor = useRef<{ anchor: ChatAnchor; firstId?: string } | null>(null);
   const announced = useRef<{ conversation?: string; ids: string[] }>({ ids: [] });
   useEffect(() => {
@@ -190,7 +191,7 @@ export function ChatPane({
     if (text) setLive(text);
   }, [storedMessages, conversationId]);
   useLayoutEffect(() => {
-    stickRef.current = true;
+    stickRef.current = true; lastScrollTop.current = 0;
     prependAnchor.current = null;
     setScrolledUp(false);
   }, [conversationId]);
@@ -491,7 +492,12 @@ export function ChatPane({
       <div ref={scrollRef} data-testid="chat-scroll" className="min-h-0 flex-1 overflow-y-auto pt-12" style={{ overflowAnchor: "none" }} tabIndex={0} aria-label="Conversation history" onScroll={() => {
         const node = scrollRef.current;
         if (!node) return;
-        stickRef.current = nearChatBottom(node.scrollTop, node.scrollHeight, node.clientHeight);
+        // Only an upward scroll away from the bottom unsticks. Row measurement in the
+        // virtual list can move scrollTop while content grows; that must not drop follow.
+        const near = nearChatBottom(node.scrollTop, node.scrollHeight, node.clientHeight);
+        if (near) stickRef.current = true;
+        else if (node.scrollTop < lastScrollTop.current - 1) stickRef.current = false;
+        lastScrollTop.current = node.scrollTop;
         setScrolledUp(!stickRef.current);
       }}>
         <div ref={listRef} role="log" aria-label="Messages" aria-live="off" className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 py-4">
