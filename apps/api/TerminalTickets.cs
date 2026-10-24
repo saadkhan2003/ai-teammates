@@ -117,6 +117,8 @@ public static class TerminalTickets
             var owned = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM bots WHERE id=@bot AND owner_id=@user", new { bot, user });
             var mapped = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM user_computers WHERE user_id=@user AND computer_id=@id", new { user, id });
             if (owned == 0 || mapped == 0) return Results.NotFound();
+            if (await platform.Usage.WakeBlockAsync(user.Value, id.ToString(), ctx.RequestAborted) is { } paused)
+                return Results.Json(new { error = Credits.LimitCode, message = paused }, statusCode: 402);
             await platform.Compute.EnsureAwakeAsync(new Teammates.Compute.ComputerId(id.ToString()), ctx.RequestAborted);
             var token = Create(SecretFor(platform.ComputerToken, id.ToString()), id.ToString(), user.Value.ToString(), bot.ToString(), window, role);
             await platform.Tickets.IssueAsync(new OneTimeTicket(Guid.NewGuid(), "terminal", token, user.Value, bot, id,

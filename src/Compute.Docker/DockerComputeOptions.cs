@@ -28,6 +28,8 @@ public sealed record DockerComputeOptions
     public string DisplayGeometry { get; init; } = "1920x1200";
     public string DisplayDepth { get; init; } = "24";
     public long MemoryBytes { get; init; } = 640L * 1024 * 1024;
+    /// <summary>Soft memory reservation per computer. Limits above it are overcommitted across the host.</summary>
+    public long MemoryReservationBytes { get; init; }
     /// <summary>Relative CPU entitlement: 1024 shares per CPU, default two CPUs under contention.</summary>
     public long CpuShares { get; init; } = 2048;
     /// <summary>Burst ceiling; zero disables CFS quotas for test hosts.</summary>

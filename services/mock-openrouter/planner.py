@@ -304,6 +304,26 @@ def _steps(text: str, messages: list) -> list[Step]:
         ]
     if stripped.startswith("SPEED STREAM DEMO"):
         return [("final", "The first sentence is ready. " + "Here is another sentence arriving progressively. " * 8 + "The streamed reply is complete.")]
+    if stripped.startswith("JOB DEMO"):
+        seconds = _demo_number(stripped, 3)
+        command = f"for i in $(seq 1 {seconds}); do echo tick $i; sleep 1; done; echo finished | tee $JOB_RESULT_DIR/out.txt"
+        return [("tool", "job_start", {"command": command, "name": "Tick demo", "max_minutes": 5}),
+                ("final", lambda _messages: "Started in the background: " + _tool_text(_messages))]
+    if stripped.startswith("STORAGE DEMO"):
+        word = (stripped.split(None, 2)[2:] or ["saved"])[0][:80]
+        return [("tool", "write_file", {"path": "/workspace/notes/storage-demo.txt", "content": word + "\n"}),
+                ("final", lambda _messages: "Write result: " + _tool_text(_messages))]
+    if stripped.startswith("STORAGE READ DEMO"):
+        return [("tool", "read_file", {"path": "/workspace/notes/storage-demo.txt"}),
+                ("final", lambda _messages: "Read result: " + _tool_text(_messages))]
+    if stripped.startswith("JOB TIMEOUT DEMO"):
+        return [("tool", "job_start", {"command": "echo begin; sleep 600", "name": "Timeout demo", "max_minutes": 0.5}),
+                ("final", lambda _messages: "Started: " + _tool_text(_messages))]
+    if stripped.startswith("JOB LONG DEMO"):
+        return [("tool", "job_start", {"command": "while true; do echo working; sleep 1; done", "name": "Long demo", "max_minutes": 10}),
+                ("final", lambda _messages: "Started: " + _tool_text(_messages))]
+    if stripped.startswith("JOB STATUS DEMO"):
+        return [("tool", "job_status", {}), ("final", lambda _messages: "Jobs: " + _tool_text(_messages))]
     if stripped.startswith("SPEED TOOL DEMO"):
         return [("tool", "read_file", {"path": "/workspace/sample-repo/README.md"}), ("final", "The file has been checked. The task is complete.")]
     if stripped == "What should I call you?" or stripped.startswith("What should I call you?"):
@@ -513,6 +533,11 @@ def _steps(text: str, messages: list) -> list[Step]:
 
 
 _PEER_BODY = re.compile(r"<<<PEER\n(.*?)\n>>>", re.DOTALL)
+
+
+def _demo_number(text: str, default: int) -> int:
+    match = re.search(r"(\d+)", text)
+    return max(1, min(120, int(match.group(1)))) if match else default
 
 
 def _peer_body(text: str) -> str:

@@ -61,6 +61,9 @@ COPY db/042_video_analyses.sql /migrations/042_video_analyses.sql
 COPY db/043_speed_telemetry.sql /migrations/043_speed_telemetry.sql
 COPY db/044_ai_models.sql /migrations/044_ai_models.sql
 COPY db/045_ai_controls.sql /migrations/045_ai_controls.sql
+COPY db/046_computer_jobs.sql /migrations/046_computer_jobs.sql
+COPY db/047_usage_credits.sql /migrations/047_usage_credits.sql
+COPY db/048_resources.sql /migrations/048_resources.sql
 COPY evals/golden/ /app/evals/golden/
 COPY services/agent/skills/builtin/ /skills/builtin/
 ENTRYPOINT ["dotnet", "Teammates.Api.dll"]

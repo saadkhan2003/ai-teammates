@@ -160,11 +160,13 @@ public static class Routes
                 if (shared == null)
                 {
                     // Legacy 400m is the old default; use the configurable provider CPU budget.
-                    var cpu = quota.Cpu is 0 or 400 ? 0u : (uint)quota.Cpu;
-                    var memory = quota.Memory <= 0 ? 640UL * 1024 * 1024 : (ulong)quota.Memory;
+                    // An explicit user_quotas row wins; otherwise the user's plan sets RAM and CPU (8 GB, 2 cores on $30).
+                    var plan = await platform.Usage.PlanOfAsync(conn, user.Value);
+                    var cpu = quota.Cpu is 0 or 400 ? PlanLimits.CpuMillis(plan) : (uint)quota.Cpu;
+                    var memory = quota.Memory <= 0 ? PlanLimits.MemoryBytes(plan) : (ulong)quota.Memory;
                     var disk = (ulong)(quota.Disk <= 0 ? (long)DiskQuota.DefaultBytes : quota.Disk);
                     var computerId = new ComputerId(id.ToString());
-                    await platform.Compute.CreateComputerAsync(new CreateComputerSpec(computerId, "local", user.Value.ToString(), Environment.GetEnvironmentVariable("COMPUTE_IMAGE") ?? "teammates-computer:dev", IsolationClass.Docker, new ResourceLimits(cpu, memory, disk, 256), "", new Dictionary<string, string> { ["name"] = name }), IdempotencyKey.Require("create-" + id.ToString("n")), ct);
+                    await platform.Compute.CreateComputerAsync(new CreateComputerSpec(computerId, "local", user.Value.ToString(), platform.Compute.BaseImage, IsolationClass.Docker, new ResourceLimits(cpu, memory, disk, 256), "", new Dictionary<string, string> { ["name"] = name }), IdempotencyKey.Require("create-" + id.ToString("n")), ct);
                     await conn.ExecuteAsync(
                         "INSERT INTO user_computers (user_id, computer_id, desktop_bot_id, status) VALUES (@user, @computer, @desktop, 'running') ON CONFLICT (user_id) DO NOTHING",
                         new { user, computer = id, desktop = id });
@@ -1256,7 +1258,8 @@ public static class Routes
             var calls = await conn.ExecuteScalarAsync<long>("SELECT count(*) FROM model_calls WHERE owner_id=@id", new { id = user });
             var cost = await conn.ExecuteScalarAsync<decimal>("SELECT coalesce(sum(cost_usd),0) FROM model_calls WHERE owner_id=@id", new { id = user });
             var latency = await conn.ExecuteScalarAsync<double>("SELECT coalesce(avg(latency_ms),0)::float8 FROM model_calls WHERE owner_id=@id", new { id = user });
-            return Results.Json(new { modelCalls = calls, costUsd = cost, latencyMs = latency, computerMemoryBytes = platform.ComputerMemory, chromeProcesses = platform.ChromeProcesses });
+            var credits = await platform.Usage.SummaryAsync(user.Value, ctx.RequestAborted);
+            return Results.Json(new { credits, modelCalls = calls, costUsd = cost, latencyMs = latency, computerMemoryBytes = platform.ComputerMemory, chromeProcesses = platform.ChromeProcesses });
         });
 
         app.MapGet("/api/model-requests", async (HttpContext ctx) =>
@@ -1273,6 +1276,7 @@ public static class Routes
         PluginModel.Map(app, platform);
         PluginCatalog.Map(app, platform);
         Beta.Map(app, platform);
+        UsageRoutes.Map(app, platform);
         Templates.Map(app, platform);
         CodingItems.Map(app, platform);
         MapInternal(app, platform, runtime);
@@ -1298,6 +1302,8 @@ public static class Routes
                 if (!DesktopLeaseRepository.IsActiveFor(lease, ticket.UserId, ticket.TabId, ticket.Epoch, dbNow))
                 { ctx.Response.StatusCode = 409; return; }
             }
+            if (await platform.Usage.WakeBlockAsync(ticket.UserId, endpoint.ComputerId.Value, ctx.RequestAborted) != null)
+            { ctx.Response.StatusCode = 402; return; }
             await platform.Compute.EnsureAwakeAsync(endpoint.ComputerId, ctx.RequestAborted);
             platform.Compute.NoteViewer(endpoint.ComputerId);
             var isControl = ticket.Role == "control";
@@ -1680,7 +1686,8 @@ public static class Routes
                     resume = new { brief, interrupted = previousReason is "lease_expired" or "computer_recovered" or "network_interrupted" or "stalled" };
                 }
                 rows.Add(new { id = task.Id, botId = task.BotId, computerId = placement.Computer.Value, cdpUrl = $"http://{dns}:9222", instruction = task.Instruction, kind = task.Kind, attempt = task.Attempt, epoch = task.Epoch, checkpoint = checkpointJson, force_compact = task.ForceCompact, conversationId = task.ConversationId, messageId = task.SourceMessageId, role = injectRole ? botPrompt.Role : "", botInstructions = injectRole ? botPrompt.Instructions : "", memoryMode = notesFlag, botMemoryMode = memoryMode, standingRules = rules, scopedRules, ruleTokens, feedback, skill = skillJson, resume, budget = new { maxSteps = resolvedBudget.MaxSteps, maxSeconds = resolvedBudget.MaxSeconds, maxAttemptSteps = Math.Min(400, resolvedBudget.MaxSteps), maxAttemptSeconds = Math.Min(1800, resolvedBudget.MaxSeconds), maxRounds = modelRoundBudget.PerAttempt, maxRoundsCumulative = modelRoundBudget.Cumulative, pauseOnBudget, label = resolvedBudget.Label } });
-                wake.Add(placement.Computer.Value);
+                var wakeInfo = await conn.QuerySingleAsync<(string Kind, Guid? RoutineId)>("SELECT kind AS Kind, routine_id AS RoutineId FROM tasks WHERE id=@id", new { id = task.Id }, tx);
+                if (ComputerNeed.EagerWake(wakeInfo.Kind, wakeInfo.RoutineId)) wake.Add(placement.Computer.Value);
             }
             await tx.CommitAsync();
             foreach (var resumed in resumedEvents)
@@ -1690,6 +1697,9 @@ public static class Routes
             }
             foreach (var computerId in wake)
             {
+                // At 100% of the weekly allowance with no on-demand room, leases never wake the computer.
+                if (Guid.TryParse(computerId, out var wakeComputer) && await ComputerNeed.OwnerOfComputer(conn, wakeComputer) is { } wakeOwner
+                    && await platform.Usage.BlockReasonAsync(wakeOwner, ctx.RequestAborted) != null) continue;
                 try { await platform.Compute.EnsureAwakeAsync(new ComputerId(computerId), ctx.RequestAborted); }
                 catch { /* The agent reports a computer that will not wake. */ }
             }

@@ -62,6 +62,7 @@ public static class LibraryIngest
             if (!path.StartsWith("/workspace/uploads/", StringComparison.Ordinal) || LibraryKinds.IsDeniedName(path) || LibraryKinds.IsDeniedName(name)) continue;
             try
             {
+                if (await platform.OwnerOfBot(botId, ct) is { } storageOwner && (await platform.Resources.StorageAsync(storageOwner, ct)).State == StorageRules.Full) continue;
                 var placement = await platform.PlacementForBot(botId, ct);
                 var (code, output, _) = await runtime.Run(placement.Computer, botId, ["python3", "-c", BotFs.Script("read_b64(sys.argv[1])"), path], null, ct);
                 if (code != 0 || string.IsNullOrWhiteSpace(output)) continue;

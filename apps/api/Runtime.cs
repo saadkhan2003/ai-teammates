@@ -281,6 +281,50 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         conn.ExecuteAsync("UPDATE video_tool_sessions SET analysis=CAST(@card AS jsonb) WHERE id=@sessionId",
             new { sessionId, card = OutputRedactor.Redact(JsonSerializer.Serialize(VideoTools.Card(analysis))) });
 
+    /// <summary>Unified usage gate plus lazy wake. Heavy work (a new job, or waking a sleeping computer) pauses at 100%
+    /// of the weekly allowance when no on-demand room is left. Tools on an already-awake computer keep working.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, byte> _pausedNotified = new();
+
+    private async Task<(string Code, string Reason)?> HeavyWork(Guid botId, Guid taskId, string tool, CancellationToken ct)
+    {
+        if (StorageRules.Writes(tool))
+        {
+            var storage = await platform.Resources.StorageAsync(await OwnerOf(botId), ct);
+            if (storage.State == StorageRules.Full)
+            {
+                await platform.Audit("policy", "storage.full", botId, taskId, new { tool, code = StorageRules.FullCode, storage.UsedBytes, storage.QuotaBytes });
+                return (StorageRules.FullCode, StorageRules.FullMessage(storage));
+            }
+        }
+        if (!ComputerNeed.Needs(tool)) return null;
+        var placement = await platform.PlacementForBot(botId, ct);
+        var power = platform.Compute.PowerSnapshot().FirstOrDefault(item => item.Id == placement.Computer.Value).Power;
+        if (tool != "job_start" && power == "awake") return null;
+        if (await platform.Usage.BlockReasonAsync(await OwnerOf(botId), ct) is { } reason)
+        {
+            await platform.Audit("policy", "usage.paused", botId, taskId, new { tool, code = Credits.LimitCode });
+            if (_pausedNotified.TryAdd(taskId, 0))
+            {
+                if (_pausedNotified.Count > 10_000) _pausedNotified.Clear();
+                await using var conn = await platform.Data.OpenConnectionAsync(ct);
+                var conversation = await conn.ExecuteScalarAsync<Guid?>("SELECT conversation_id FROM tasks WHERE id=@taskId", new { taskId });
+                if (conversation is { } conv)
+                {
+                    await conn.ExecuteAsync("INSERT INTO messages(conversation_id,role,kind,content,task_id) VALUES(@conv,'assistant','text',@content,@taskId)",
+                        new { conv, content = reason, taskId });
+                    await platform.Publish(new { type = "message", conversationId = conv });
+                }
+            }
+            return (Credits.LimitCode, reason);
+        }
+        if (power != "awake")
+        {
+            try { await platform.Compute.EnsureAwakeAsync(placement.Computer, ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { /* the tool reports a computer that will not wake */ }
+        }
+        return null;
+    }
+
     public async Task<IResult> Authorize(JsonElement body, CancellationToken ct)
     {
         var taskId = body.GetProperty("taskId").GetGuid();
@@ -304,6 +348,8 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         }
         await platform.Audit("policy", "tool.allowed", botId, taskId,
             new { tool, reason = gated.Reason, riskClass = gated.RiskClass });
+        if (await HeavyWork(botId, taskId, tool, ct) is { } paused)
+            return Results.Json(new { decision = "deny", ok = false, code = paused.Code, reason = paused.Reason, riskClass = gated.RiskClass });
         if (tool == "browser_open" && Uri.TryCreate(Arg(args, "url"), UriKind.Absolute, out var uri))
         {
             try
@@ -349,6 +395,8 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         }
         await platform.Audit("policy", "tool.allowed", botId, taskId,
             new { tool, reason = gated.Reason, riskClass = gated.RiskClass });
+        if (await HeavyWork(botId, taskId, tool, ct) is { } paused)
+            return Results.Json(new { decision = "deny", code = paused.Code, reason = paused.Reason, riskClass = gated.RiskClass });
         return Results.Json(new { decision = "allow" });
     }
 
@@ -393,6 +441,11 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
             return Results.Json(new { ok = false, status = "waiting_approval", riskClass = gated.RiskClass, summary = gated.Summary });
         }
         if (decision == PolicyEngine.Ask) decision = PolicyEngine.Allow;
+        if (await HeavyWork(botId, taskId, tool, ct) is { } usagePaused)
+        {
+            await Step(taskId, tool, args, "deny", false, new { code = usagePaused.Code, reason = usagePaused.Reason }, EpochOf(body));
+            return Results.Json(new { ok = false, status = "blocked", code = usagePaused.Code, reason = usagePaused.Reason });
+        }
         var idempotencyKey = body.TryGetProperty("idempotencyKey", out var keyElement) && keyElement.ValueKind == JsonValueKind.String
             ? keyElement.GetString()
             : null;
@@ -630,6 +683,16 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         var computer = placement.Computer;
         switch (tool)
         {
+            case "job_start":
+                return await platform.Jobs.StartAsync(owner, botId, taskId, computer, args, ct);
+            case "job_status":
+                return await platform.Jobs.StatusAsync(owner, botId, args, ct);
+            case "job_logs":
+                return await platform.Jobs.LogsAsync(owner, botId, args, ct);
+            case "job_cancel":
+                return args.TryGetProperty("job_id", out var cancelId) && Guid.TryParse(cancelId.GetString(), out var cancelJob)
+                    ? await platform.Jobs.CancelAsync(owner, cancelJob, "bot", botId, ct)
+                    : new { ok = false, reason = "job_cancel requires job_id" };
             case "computer_screenshot":
             case "computer_click":
             case "computer_type":

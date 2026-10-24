@@ -29,6 +29,11 @@ public sealed class Platform
     public const string DefaultRealModel = "anthropic/claude-haiku-5.5";
     public string ModelName { get; }
     public AiModelRegistry AiRegistry { get; }
+    public UsageMeter Usage { get; }
+    public ComputerJobs Jobs { get; }
+    public ResourceMeter Resources { get; }
+    public WorkspaceSync Sync { get; }
+    public CleanupService Cleanup { get; }
     public IConfiguration Configuration { get; }
     public IConfiguration Config => Configuration;
     public int MaxParallel { get; }
@@ -78,6 +83,11 @@ public sealed class Platform
             ? TimeSpan.FromMinutes(idleMinutes)
             : TimeSpan.FromMinutes(10);
         AiRegistry = new AiModelRegistry(this);
+        Usage = new UsageMeter(this);
+        Jobs = new ComputerJobs(this, Usage);
+        Resources = new ResourceMeter(this);
+        Sync = new WorkspaceSync(this, new S3ObjectStore(S3, Bucket)) { Enabled = !string.Equals(config["FILE_SYNC"], "off", StringComparison.OrdinalIgnoreCase) };
+        Cleanup = new CleanupService(this, config);
         _ = _unused;
     }
 
@@ -145,6 +155,9 @@ public sealed class Platform
         "043_speed_telemetry.sql",
         "044_ai_models.sql",
         "045_ai_controls.sql",
+        "046_computer_jobs.sql",
+        "047_usage_credits.sql",
+        "048_resources.sql",
     ];
 
     private async Task MigrateAndSeedLocked(string ownerUser, string ownerPassword)
@@ -512,6 +525,12 @@ public sealed class Platform
         await conn.ExecuteAsync("UPDATE user_computers SET status='recovering' WHERE computer_id=@id", new { id = computerId });
         _ = ObserveRestore(Compute.RestoreComputerAsync(id, owner.Value.ToString(), null, false, name, CancellationToken.None));
         return true;
+    }
+
+    public async Task<Guid?> OwnerOfBot(Guid bot, CancellationToken ct)
+    {
+        await using var conn = await Data.OpenConnectionAsync(ct);
+        return await conn.ExecuteScalarAsync<Guid?>("SELECT owner_id FROM bots WHERE id=@bot", new { bot });
     }
 
     public async Task ResumeRecoveringTasks(ComputerId id)

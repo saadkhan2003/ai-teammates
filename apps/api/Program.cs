@@ -50,6 +50,9 @@ var compute = new DockerComputeProvider(new DockerComputeOptions
     Stack = string.IsNullOrWhiteSpace(config["COMPUTE_STACK"]) ? config["COMPOSE_PROJECT"] : config["COMPUTE_STACK"],
     MaxComputers = HostBudget.MaxComputers(HostBudget.ReadMemTotalBytes(), config["MAX_COMPUTERS"]),
     WarmPoolSize = int.TryParse(config["WARM_POOL_SIZE"], out var poolSize) ? poolSize : 0,
+    // Plan RAM is a ceiling (default 8 GB on the $30 plan); the reservation lets the host overcommit.
+    MemoryBytes = (long.TryParse(config["COMPUTER_MEMORY_MB"], out var memoryMb) && memoryMb >= 256 ? memoryMb : 8192) * 1024 * 1024,
+    MemoryReservationBytes = (long.TryParse(config["COMPUTER_MEMORY_RESERVATION_MB"], out var reserveMb) && reserveMb >= 0 ? reserveMb : 512) * 1024 * 1024,
     ReadinessDeadline = TimeSpan.FromSeconds(int.TryParse(config["COMPUTER_READINESS_TIMEOUT_SECONDS"], out var readySeconds) ? readySeconds : 45),
     ComputerToken = config["COMPUTER_TOKEN"] ?? "",
     DisplayGeometry = config["DISPLAY_GEOMETRY"] ?? "1920x1200",
@@ -74,7 +77,18 @@ var s3 = new AmazonS3Client(new BasicAWSCredentials(config["S3_ACCESS_KEY"] ?? "
 });
 var platform = new Platform(data, master, compute, s3, config);
 compute.MissingComputer = platform.BeginComputerRecovery;
-compute.OnComputerRestored = platform.ResumeRecoveringTasks;
+compute.OnComputerRestored = async id =>
+{
+    // A recreated computer starts from the shared base image: restore saved files before resuming its tasks.
+    try { await platform.Sync.PullAsync(id, CancellationToken.None); } catch (Exception) { /* logged per bot in workspace_sync */ }
+    await platform.ResumeRecoveringTasks(id);
+};
+compute.BeforeSleep = async (id, ct) =>
+{
+    await platform.Cleanup.CleanBeforeSleepAsync(id, ct);
+    await platform.Sync.PushAsync(id, ct);
+};
+compute.AfterWake = id => _ = platform.Sync.PullAsync(id, CancellationToken.None);
 secrets.Platform = platform;
 var loginBroker = new LoginBroker(data, master);
 var loginFlow = new LoginFlow(platform, loginBroker);
@@ -290,7 +304,17 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
                 }
                 await ReconcileDesktopLeases(conn, stoppingToken);
                 await ResumeRecoveredComputers(stoppingToken);
-                if (++_tick % 10 == 0) await SampleComputers(stoppingToken);
+                if (++_tick % 10 == 0)
+                {
+                    await SampleComputers(stoppingToken);
+                    try { await platform.Resources.SampleAndReconcileAsync(stoppingToken); }
+                    catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogDebug("resource sample skipped {Message}", OutputRedactor.Redact(ex.Message)); }
+                }
+                if (_tick % 30 == 7)
+                {
+                    try { await platform.Cleanup.TickAsync(stoppingToken); }
+                    catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning("cleanup skipped {Message}", OutputRedactor.Redact(ex.Message)); }
+                }
                 if (_tick % 15 == 0)
                 {
                     await SuspendIdle(conn, stoppingToken);
@@ -306,6 +330,16 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
             catch (Exception ex)
             {
                 logger.LogWarning("maintenance skipped {Message}", OutputRedactor.Redact(ex.Message));
+            }
+            if (_tick % 3 == 0)
+            {
+                try { await platform.Jobs.WatchAsync(stoppingToken); }
+                catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogDebug("job watch skipped {Message}", OutputRedactor.Redact(ex.Message)); }
+            }
+            if (_tick % 15 == 1)
+            {
+                try { await platform.Usage.TickAsync(stoppingToken); }
+                catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogDebug("usage meter skipped {Message}", OutputRedactor.Redact(ex.Message)); }
             }
             try { await logins.ExpirePending(); }
             catch (Exception ex) { logger.LogDebug("login sweep skipped {Message}", OutputRedactor.Redact(ex.Message)); }
@@ -403,6 +437,8 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
             UNION
             SELECT t.bot_id FROM tasks t
             WHERE t.status IN ('queued', 'running', 'planning', 'waiting_human', 'waiting_approval', 'waiting_resource')
+            UNION
+            SELECT j.computer_id FROM computer_jobs j WHERE j.status IN ('starting', 'running')
             """)).Select(id => id.ToString()).ToHashSet();
         await platform.Compute.SuspendIdleAsync(busy, platform.IdleSuspend, ct);
     }

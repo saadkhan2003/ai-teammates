@@ -185,7 +185,8 @@ public static class ActionClassifier
         "request_secret", "request_login", "react_to_message", "send_message", "external_post", "sign",
         "search_tools", "load_tool", "load_skill", "write_skill", "watch_video", "ask_video",
         "list_bots", "message_bot", "reply_to_bot", "thread_status", "create_bot", "update_bot", "list_routines", "create_routine", "get_routine", "update_routine", "pause_routine", "resume_routine", "delete_routine",
-        "plan_set", "plan_update", "git_status", "git_diff", "git_commit", "run_tests", "create_pr", "watch_ci", "spawn_child_task", "child_status"
+        "plan_set", "plan_update", "git_status", "git_diff", "git_commit", "run_tests", "create_pr", "watch_ci", "spawn_child_task", "child_status",
+        "job_start", "job_status", "job_logs", "job_cancel"
     };
 
     public static bool IsBuiltIn(string tool) => BuiltInTools.Contains(tool);
@@ -254,11 +255,15 @@ public static class ActionClassifier
             case "git_status":
             case "git_diff":
             case "watch_ci":
+            case "job_status":
+            case "job_logs":
             case "child_status":
                 return ActionClasses.Read;
             case "write_file":
             case "edit_file":
             case "shell":
+            case "job_start":
+            case "job_cancel":
             case "save_memory":
             case "update_memory":
             case "forget_memory":

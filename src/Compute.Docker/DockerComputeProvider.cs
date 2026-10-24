@@ -52,6 +52,12 @@ public sealed partial class DockerComputeProvider : IComputeProvider, IDesktopSe
 
     /// <summary>Runs after a restore is usable, so waiting tasks can be queued again.</summary>
     public Func<ComputerId, Task>? OnComputerRestored { get; set; }
+    /// <summary>Runs before an idle computer is paused or hibernated (save files to object storage, clean temp files).</summary>
+    public Func<ComputerId, CancellationToken, Task>? BeforeSleep { get; set; }
+    /// <summary>Runs in the background after a sleeping computer wakes (pull files it is missing). Never delays the wake.</summary>
+    public Action<ComputerId>? AfterWake { get; set; }
+    /// <summary>Exec calls made inside this scope do not count as user activity (so a save-before-sleep never keeps a computer awake).</summary>
+    public static readonly AsyncLocal<bool> QuietActivity = new();
 
     // API wires this to the nonblocking PerfRecorder without reversing project dependencies.
     public Action<string, double, object?>? RecordPerformance { get; set; }
@@ -542,6 +548,13 @@ public sealed partial class DockerComputeProvider : IComputeProvider, IDesktopSe
         await WakeAsync(await DemandAsync(id, ct), ct);
     }
 
+    /// <summary>Background work finished: restart the idle timer without marking the screen as viewed.</summary>
+    public void NoteActivity(ComputerId id)
+    {
+        lock (_sync)
+            if (_rows.TryGetValue(id.Value, out var row)) row.LastActivity = DateTimeOffset.UtcNow;
+    }
+
     public void NoteViewer(ComputerId id)
     {
         var now = DateTimeOffset.UtcNow;
@@ -581,6 +594,17 @@ public sealed partial class DockerComputeProvider : IComputeProvider, IDesktopSe
         }
     }
 
+    /// <summary>Power state of every known computer for the usage meter and job watcher: awake, paused or stopped.</summary>
+    public IReadOnlyList<(string Id, string Power, DateTimeOffset LastActivity)> PowerSnapshot()
+    {
+        lock (_sync)
+            return _rows.Values.Select(row => (row.Computer.Id.Value,
+                row.Hibernated || row.Computer.State is ComputerState.Stopped or ComputerState.Deleted ? "stopped"
+                : row.Paused ? "paused"
+                : row.Computer.State == ComputerState.Running ? "awake" : "stopped",
+                row.LastActivity)).ToList();
+    }
+
     public async Task SuspendIdleAsync(IReadOnlySet<string> busy, TimeSpan idle, CancellationToken ct)
     {
         if (idle <= TimeSpan.Zero && _options.IdlePower != IdlePowerMode.Hibernate) return;
@@ -599,6 +623,30 @@ public sealed partial class DockerComputeProvider : IComputeProvider, IDesktopSe
                     && ComputerPower.ShouldSuspend(now, row.LastActivity, row.ViewerUntil, isBusy, idle))
                     pause.Add(row);
             }
+        }
+        if (BeforeSleep is { } before && hibernate.Count + pause.Count > 0)
+        {
+            var saved = new HashSet<Row>();
+            foreach (var row in hibernate.Concat(pause))
+            {
+                var mark = row.LastActivity;
+                QuietActivity.Value = true;
+                try
+                {
+                    using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    budget.CancelAfter(TimeSpan.FromMinutes(3));
+                    await before(row.Computer.Id, budget.Token);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+                {
+                    _logger.LogWarning("before-sleep hook failed {ComputerId} {Message}", row.Computer.Id.Value, ex.Message);
+                }
+                finally { QuietActivity.Value = false; }
+                // Someone used the computer while its files were saving: stay awake.
+                lock (_sync) if (row.LastActivity == mark && !(row.ViewerUntil > DateTimeOffset.UtcNow)) saved.Add(row);
+            }
+            hibernate = hibernate.Where(saved.Contains).ToList();
+            pause = pause.Where(saved.Contains).ToList();
         }
         foreach (var row in hibernate)
         {
@@ -693,6 +741,9 @@ public sealed partial class DockerComputeProvider : IComputeProvider, IDesktopSe
                 ulong size = 0;
                 size += await SavePath(row.ContainerId, snapshotId, "workspace", "/data/workspace", ct);
                 size += await SavePath(row.ContainerId, snapshotId, "profile", "/data/profiles", ct);
+                // Backup retention groups snapshots by computer and keeps the newest N.
+                var meta = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new { computerId = id.Value, createdAt = DateTimeOffset.UtcNow, bytes = size, label = options.Label });
+                await _snapshots.SaveAsync(snapshotId, "meta.json", new MemoryStream(meta), ct);
                 var snapshot = new Snapshot(new SnapshotId(snapshotId), id, size, DateTimeOffset.UtcNow);
                 _idempotency.Remember(key, hash, snapshot);
                 _logger.LogInformation("snapshot {SnapshotId} computer {ComputerId} bytes {Bytes}", snapshotId, id.Value, size);
@@ -931,6 +982,8 @@ public sealed partial class DockerComputeProvider : IComputeProvider, IDesktopSe
         };
         if (!security.Contains("no-new-privileges:true")) security.Add("no-new-privileges:true");
         host.MemorySwap = host.Memory;
+        // Overcommit: the limit is a ceiling, the reservation is what the host promises under memory pressure.
+        if (_options.MemoryReservationBytes > 0) host.MemoryReservation = Math.Min(host.Memory, _options.MemoryReservationBytes);
         if (!string.IsNullOrWhiteSpace(_options.CgroupParent)) host.CgroupParent = _options.CgroupParent;
         if (loopDisk && quotaBytes > 0 && StorageOptSize())
             host.StorageOpt = new Dictionary<string, string> { ["size"] = quotaBytes.ToString() };
@@ -1697,6 +1750,67 @@ public sealed partial class DockerComputeProvider : IComputeProvider, IDesktopSe
         if (!OwnedByThisStack(labels)) throw ComputeException.PermissionDenied("computer belongs to another stack");
     }
 
+    /// <summary>Apply a plan's RAM ceiling and CPU burst to a live computer (no restart).</summary>
+    public async Task<bool> UpdateLimitsAsync(ComputerId id, long memoryBytes, long nanoCpus, CancellationToken ct)
+    {
+        Row? row;
+        lock (_sync) _rows.TryGetValue(id.Value, out row);
+        if (row == null || memoryBytes <= 0) return false;
+        var update = new ContainerUpdateParameters { Memory = memoryBytes, MemorySwap = memoryBytes };
+        if (_options.MemoryReservationBytes > 0) update.MemoryReservation = Math.Min(memoryBytes, _options.MemoryReservationBytes);
+        if (!_options.DisableCpuLimits && nanoCpus > 0) update.NanoCPUs = nanoCpus;
+        await _client.Containers.UpdateContainerAsync(row.ContainerId, update, ct);
+        return true;
+    }
+
+    public async Task<long> ReadMemoryLimitAsync(ComputerId id, CancellationToken ct)
+    {
+        Row? row;
+        lock (_sync) _rows.TryGetValue(id.Value, out row);
+        if (row == null) return 0;
+        var inspect = await _client.Containers.InspectContainerAsync(row.ContainerId, ct);
+        return inspect.HostConfig?.Memory ?? 0;
+    }
+
+    /// <summary>Copy a tar archive into a running computer (as root, like docker cp).</summary>
+    public async Task PutArchiveAsync(ComputerId id, string path, Stream tar, CancellationToken ct)
+    {
+        var row = Require(id);
+        await _client.Containers.ExtractArchiveToContainerAsync(row.ContainerId, new ContainerPathStatParameters { Path = path, AllowOverwriteDirWithFile = false }, tar, ct);
+    }
+
+    /// <summary>Read a path from a running computer as a tar stream (like docker cp).</summary>
+    public async Task<Stream> GetArchiveAsync(ComputerId id, string path, CancellationToken ct)
+    {
+        var row = Require(id);
+        var archive = await _client.Containers.GetArchiveFromContainerAsync(row.ContainerId, new GetArchiveFromContainerParameters { Path = path }, false, ct);
+        // Buffer the whole HTTP chunked body to a private temp file first: reading the
+        // daemon stream through nested tar readers can end early on some proxies.
+        var temp = Path.Combine(Path.GetTempPath(), "tm-arc-" + Guid.NewGuid().ToString("n"));
+        var file = new FileStream(temp, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 81920, FileOptions.DeleteOnClose);
+        try
+        {
+            await using (archive.Stream) await archive.Stream.CopyToAsync(file, ct);
+            file.Position = 0;
+            return file;
+        }
+        catch
+        {
+            await file.DisposeAsync();
+            throw;
+        }
+    }
+
+    /// <summary>Images in use by this host's computers. All computers share one base image.</summary>
+    public IReadOnlyList<string> ImagesInUse()
+    {
+        lock (_sync) return _rows.Values.Where(r => r.Computer.State is not ComputerState.Deleted).Select(r => r.Computer.ImageRef).Distinct().ToList();
+    }
+
+    public string BaseImage => _options.ImageRef;
+    public int MaxComputers => _options.MaxComputers;
+    public long MemoryCeilingBytes => (long)_options.MemoryBytes;
+
     public static string ContainerName(ComputerId id) => "tm" + Slug(id.Value);
 
     private static string Slug(string value)
@@ -1825,10 +1939,11 @@ public sealed partial class DockerComputeProvider : IComputeProvider, IDesktopSe
     private async Task WakeAsync(Row row, CancellationToken ct, int ownerLimit = int.MaxValue)
     {
         var gate = row.WakeGate;
+        var woke = false;
         await gate.WaitAsync(ct);
         try
         {
-            lock (_sync) row.LastActivity = DateTimeOffset.UtcNow;
+            if (!QuietActivity.Value) lock (_sync) row.LastActivity = DateTimeOffset.UtcNow;
             var total = Stopwatch.GetTimestamp();
             var inspect = await _client.Containers.InspectContainerAsync(row.ContainerId, ct);
             var sleeping = inspect.State.Paused || !inspect.State.Running;
@@ -1864,10 +1979,16 @@ public sealed partial class DockerComputeProvider : IComputeProvider, IDesktopSe
                 await WaitUntilUsable(row.ContainerId, ct, path);
                 MarkReady(row.Computer.Id);
                 if (sleeping) Stage("wake_paused_ms", total, path);
+                woke = sleeping;
                 return true;
             }, ct);
         }
         finally { gate.Release(); }
+        if (woke && AfterWake is { } after)
+        {
+            var id = row.Computer.Id;
+            _ = Task.Run(() => { try { after(id); } catch (Exception ex) { _logger.LogWarning("after-wake hook failed {Message}", ex.Message); } });
+        }
     }
 
     private sealed class Row
