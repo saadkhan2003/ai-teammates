@@ -8,8 +8,8 @@ public static class TaskErrors
 {
     public static (string Code, string Text) Describe(string? code) => code switch
     {
-        "connect_openrouter" or "no_openrouter_key" => ("no_openrouter_key", "No OpenRouter key set. Add one in Settings > Vault."),
-        "provider rejected the request" or "provider_error" => ("provider_error", "The model provider rejected the request. Check the key and model in Settings > Vault."),
+        "connect_openrouter" or "no_openrouter_key" => ("no_openrouter_key", "No AI service key set. Add one in Settings > Vault."),
+        "provider rejected the request" or "provider_error" => ("provider_error", "The AI service rejected the request. Check the key and model in Settings > Vault."),
         "step_budget" => ("step_budget", "The task reached its step limit. Raise the task budget or the bot's default work limit in Work settings."),
         "time_budget" => ("time_budget", "The task reached its time limit. Raise the task budget or the bot's default work limit in Work settings."),
         "repeat_loop" or "invalid_repeat" or "model round cap reached" => ("run_limit", "The task stopped after reaching a run limit. Try a smaller request."),
