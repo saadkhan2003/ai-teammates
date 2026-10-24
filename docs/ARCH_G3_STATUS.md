@@ -9,3 +9,11 @@ Results (honest):
 - Playwright and dedicated leak suite: NOT run in this pass.
 - Postgres ticket/lease store tests (.NET, G1): passed earlier in G1; not rerun here.
 Still open: I1 (gVisor/Firecracker, laptop); Cloudflare dashboard setup is manual; SSE buffers per API instance; IPv6 untested in nft probe; unit tests are sensitive to exported STACK/ISOLATION_CHAIN (run with env -u); acceptance needs DB+computer reset between runs. KVM: /dev/kvm works nested; ~6 microVMs at 2 GB fit; full 8vCPU/16GB spec does not.
+
+## arch/gaps follow-up (2026-10-24, archgaps stack)
+- Product fixes: lease re-delivers feedback until the transcript is persisted (6adf2b8, 6c9bdc4); the reviewer no longer overrides an explicit user ALLOW for message_bot (7520b75); the agent lease loop survives an API restart instead of exiting on TransportError (77c8cb6).
+- Test fixes (stale tests or environment): stdio port, workspace-isolation fence/uid, recovery auto-approver, egress default-deny, the network guard picking another stack's container (9e46dbd), auto-approver login retry (24a8e3e).
+- Integration: integ-full8 30 passed, 3 failed, 2 skipped. The 3 bot_messaging failures did not reproduce: 3/3 alone, 3/3 after an API restart, 10/10 acceptance+bot_messaging in one run. Treated as an unexplained timing flake.
+- acc9b: 1 passed (reset DB/computers).
+- Playwright: 27/54 passed on the first run, mostly login 429 (30 logins per IP per 10 min, successful ones included). With the limiter table cleared, the 27 re-ran: 11 passed, 16 failed (9 stuck on the login page with no error, several "task could not finish"). Not yet triaged.
+- Reset between runs must also clear login_rate_events, credential_domain_grants and approval_rules, and stop api/agent first.
