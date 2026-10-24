@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Teammates companion protocol v1",
+  "description": "Every frame is a JSON object with a string `type`. Unknown fields are ignored; unknown types are ignored by the receiver.",
+  "oneOf": [
+    {"properties": {"type": {"const": "hello"}, "version": {"type": "string", "maxLength": 40}, "protocol": {"const": 1}}, "required": ["type", "version", "protocol"]},
+    {"properties": {"type": {"const": "decision"}, "requestId": {"type": "string", "format": "uuid"}, "decision": {"enum": ["approved", "denied"]}, "reason": {"type": "string", "maxLength": 200}}, "required": ["type", "requestId", "decision"]},
+    {"properties": {"type": {"const": "result"}, "requestId": {"type": "string", "format": "uuid"}, "exitCode": {"type": "integer"}, "stdout": {"type": "string", "maxLength": 65536}, "stderr": {"type": "string", "maxLength": 65536}, "truncated": {"type": "boolean"}, "durationMs": {"type": "integer", "minimum": 0}, "timedOut": {"type": "boolean"}}, "required": ["type", "requestId", "exitCode", "stdout", "stderr", "truncated", "durationMs", "timedOut"]},
+    {"properties": {"type": {"const": "pong"}}, "required": ["type"]},
+    {"properties": {"type": {"const": "welcome"}, "permissions": {"$ref": "#/$defs/permissions"}, "latest": {"type": "string"}, "minCompatible": {"type": "string"}}, "required": ["type", "permissions", "latest", "minCompatible"]},
+    {"properties": {"type": {"const": "command"}, "requestId": {"type": "string", "format": "uuid"}, "command": {"type": "string", "minLength": 1, "maxLength": 4000}, "cwd": {"type": ["string", "null"], "maxLength": 1000}, "timeoutSec": {"type": "integer", "minimum": 1, "maximum": 600}, "expiresAt": {"type": "string", "format": "date-time"}}, "required": ["type", "requestId", "command", "timeoutSec", "expiresAt"]},
+    {"properties": {"type": {"const": "cancel"}, "requestId": {"type": "string", "format": "uuid"}}, "required": ["type", "requestId"]},
+    {"properties": {"type": {"const": "permissions"}, "permissions": {"$ref": "#/$defs/permissions"}}, "required": ["type", "permissions"]},
+    {"properties": {"type": {"const": "ping"}}, "required": ["type"]}
+  ],
+  "$defs": {
+    "permissions": {"type": "object", "properties": {"execution": {"enum": ["ask", "always", "off"]}, "routeTraffic": {"type": "boolean"}, "allowFiles": {"type": "boolean"}, "allowBrowser": {"type": "boolean"}}, "required": ["execution", "routeTraffic", "allowFiles", "allowBrowser"]}
+  }
+}

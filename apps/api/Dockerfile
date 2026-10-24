@@ -47,6 +47,7 @@ COPY db/032_transcript_archive.sql /migrations/032_transcript_archive.sql
 COPY db/033_watchdog.sql /migrations/033_watchdog.sql
 COPY db/030_approval_rules.sql /migrations/030_approval_rules.sql
 COPY db/031_rule_scope.sql /migrations/031_rule_scope.sql
+COPY db/032_device_commands.sql /migrations/032_device_commands.sql
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
     DOTNET_gcServer=0 \
     DOTNET_GCHeapHardLimit=0x10000000
