@@ -16,7 +16,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { ComposerPresence, WORKING_STATUS } from "@/components/avatar-motion/composer-presence";
 import { CodingJobsCard, JobMention, JobResultCard, LiveJobStep } from "@/components/coding-jobs";
+import { lastMessagePreview } from "@/lib/avatar-motion";
+import { publishAvatarPreview } from "@/lib/avatar-preview";
 import { ApiError, api, apiFetch } from "@/lib/api";
 import { liveJob, reactionTooltip, readableAccent, replySnippet, showsJobResult, splitJobMentions, visibleReactions, type CodingJob } from "@/lib/chat-ui";
 import { messageBlocks, type FormField, type MessageBlock, type QuestionOption } from "@/lib/message-blocks";
@@ -85,6 +88,20 @@ export function ChatPane({
   const paint = readableAccent(accent || avatarColor);
   const active = liveJob(codingJobs);
   const byId = new Map(messages.map((message) => [message.id, message]));
+
+  useEffect(() => {
+    if (!botId) return undefined;
+    let text = "";
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const content = messages[index]?.content?.trim();
+      if (content) {
+        text = lastMessagePreview(content);
+        break;
+      }
+    }
+    publishAvatarPreview(botId, text);
+    return undefined;
+  }, [botId, messages]);
 
   useEffect(() => {
     let live = true;
@@ -452,12 +469,6 @@ export function ChatPane({
             </div>
           ) : null}
           {active ? <LiveJobStep job={active} botId={botId} botName={botName} shape={avatarShape} color={avatarColor || accent} /> : null}
-          {working ? (
-            <p className="flex items-center gap-2 text-sm text-muted-foreground">
-              <img src="/favicon.svg" alt="" className="h-4 w-4 rounded-sm" />
-              {botName} is working
-            </p>
-          ) : null}
         </div>
       </div>
       {scrolledUp ? (
@@ -477,6 +488,9 @@ export function ChatPane({
           </button>
         </div>
       ) : null}
+      <div className="mx-auto w-full max-w-3xl px-4 pb-1">
+        <ComposerPresence botId={botId} name={botName} shape={avatarShape} color={avatarColor || accent} status={working ? WORKING_STATUS : null} />
+      </div>
       <form data-testid="composer-bar" className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]" onSubmit={onSubmit}>
         {reply ? (
           <div data-testid="reply-chip" className="flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-sm text-card-foreground">
