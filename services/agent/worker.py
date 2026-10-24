@@ -27,6 +27,10 @@ log = logging.getLogger("worker")
 
 SYSTEM = (
     "You are a teammate with a computer. Use tools. Never invent secret values. "
+    "Before delegating load_skill(name='writing-a-great-brief'). Use structured briefs for child tasks; "
+    "quote the user and why, bound scope, give checkable acceptance, gate and evidence report. "
+    "Fix brief_rejected fields and retry; brief_needs_rewrite gets ONE rewrite. "
+    "For needs_clarification, ask_user first and wait for the answer. "
     "Refer to secrets only as secret://namespace/name. Use type_secret or setup_env. "
     "Never put tokens in shell commands. "
     "You may react to a user message with react_to_message, one emoji per message. "
@@ -606,6 +610,10 @@ class Worker:
         await self._complete(task, "Skill finished.")
 
     async def _complete_model(self, task: dict, messages: list) -> Any:
+        if task.get("hasBrief"):
+            notes = await self.request_json("GET", f"/internal/tasks/{_task_id(task)}/brief/steering?epoch={_epoch(task)}")
+            fold_brief_steering(messages, notes.get("steering", []) if isinstance(notes, dict) else [])
+            await self._put_transcript(task, messages)
         if not task.get("_skill_catalog_added"):
             system = next((m for m in messages if isinstance(m, dict) and m.get("role") == "system"), None)
             # Keep the primary system prompt first: compaction pins it, and feedback folds into it.
@@ -1415,3 +1423,20 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+def fold_brief_steering(messages: list, notes: list) -> None:
+    """Read-before-next-step delivery; persisted markers prevent replay after a new lease."""
+    seen = {str(m.get("briefSteeringId")) for m in messages if isinstance(m, dict) and m.get("briefSteeringId")}
+    # The API transcript stores canonical role/content fields, so the durable id is in content too.
+    import re
+    for message in messages:
+        if isinstance(message, dict):
+            seen.update(re.findall(r"\[brief-steering:([^\]]+)\]", str(message.get("content") or "")))
+    for note in notes:
+        if not isinstance(note, dict) or not note.get("id") or str(note["id"]) in seen:
+            continue
+        text = strip_text(str(note.get("text") or ""))[:4000]
+        if text:
+            messages.append({"role": "user", "briefSteeringId": str(note["id"]), "content": "[brief-steering:" + str(note["id"]) + "] User steering for this brief: " + text})
+            seen.add(str(note["id"]))

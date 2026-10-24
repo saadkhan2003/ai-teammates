@@ -58,5 +58,7 @@ COPY db/039_desktop_lease.sql /migrations/039_desktop_lease.sql
 COPY db/040_tickets_state.sql /migrations/040_tickets_state.sql
 COPY db/041_skill_library.sql /migrations/041_skill_library.sql
 COPY db/042_video_analyses.sql /migrations/042_video_analyses.sql
+COPY db/047_task_briefs.sql /migrations/047_task_briefs.sql
+COPY db/048_brief_lessons.sql /migrations/048_brief_lessons.sql
 COPY services/agent/skills/builtin/ /skills/builtin/
 ENTRYPOINT ["dotnet", "Teammates.Api.dll"]

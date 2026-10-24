@@ -137,7 +137,7 @@ public static class RoutineService
               VALUES (@id, @botId, @name, @cron, @zoneId, @instruction, @next, @nominal, @kind, @runAt, @jitter, @expiresAt, @quiet, @watchKind, @watchRef, @creator, @depth)",
             new
             {
-                id, botId, name = spec.Name!.Trim(), cron, zoneId, instruction = spec.Instruction, next, nominal, kind, runAt = spec.RunAt, jitter, expiresAt = spec.ExpiresAt,
+                id, botId, name = spec.Name!.Trim(), cron, zoneId, instruction = spec.Instruction, next = next.ToUniversalTime(), nominal = nominal.ToUniversalTime(), kind, runAt = spec.RunAt?.ToUniversalTime(), jitter, expiresAt = spec.ExpiresAt?.ToUniversalTime(),
                 quiet = string.IsNullOrWhiteSpace(spec.QuietRule) ? null : spec.QuietRule.Trim(),
                 watchKind = spec.WatchKind is "http" or "memory" ? spec.WatchKind : "", watchRef = (spec.WatchRef ?? "")[..Math.Min((spec.WatchRef ?? "").Length, 500)],
                 creator = creatorBot, depth = originDepth
@@ -188,7 +188,7 @@ public static class RoutineService
         await conn.ExecuteAsync(
             @"UPDATE routines SET name=@name, instruction=@instruction, cron=@cron, timezone=@zoneId, kind=@kind, run_at=@runAt, quiet_rule=@quiet, expires_at=@expires,
                   jitter_seconds=@jitter, next_run_at=@next, nominal_next_at=CASE WHEN @scheduleChanged THEN @nominal ELSE nominal_next_at END WHERE id=@id",
-            new { id, name, instruction, cron, zoneId, kind, runAt, quiet, expires, jitter, next, nominal, scheduleChanged });
+            new { id, name, instruction, cron, zoneId, kind, runAt = runAt?.ToUniversalTime(), quiet, expires = expires?.ToUniversalTime(), jitter, next = next?.ToUniversalTime(), nominal = nominal?.ToUniversalTime(), scheduleChanged });
         dynamic after = (await Load(conn, id, owner))!;
         return new RoutineOutcome(true, null, id, new { before = Shape((object)before), after = Shape((object)after) });
     }

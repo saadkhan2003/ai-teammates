@@ -15,7 +15,7 @@ public sealed class RuleBasedActionReviewer : IActionReviewer
     private static readonly HashSet<string> ReviewTools = new(StringComparer.OrdinalIgnoreCase)
     {
         "launch_app", "open_app", "browser_click", "computer_click", "computer_type", "computer_key", "computer_use",
-        "write_file", "edit_file", "delete_file", "automation_write", "delegate", "message_bot",
+        "write_file", "edit_file", "delete_file", "automation_write", "delegate", "spawn_child_task", "message_bot",
         "create_bot", "create_routine", "update_routine"
     };
 
