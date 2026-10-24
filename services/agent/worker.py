@@ -19,6 +19,7 @@ from guard import invalid_reason, login_result, present_tool, scrub, should_halt
 from plugins import call_allowed, enabled_names
 from run_guard import RunGuard
 from grounding import check_answer, observed_urls
+from reply_text import humanize_reply
 from retry import send_with_retry
 from resume import apply_resume
 from compaction import apply_summary, archive_range, build_summary_prompt, estimate_tokens, mask_observations, should_compact, context_exhausted, split_for_summary
@@ -1056,7 +1057,7 @@ class Worker:
         await self.request("POST", f"/internal/tasks/{_task_id(task)}/status", body)
 
     async def _complete(self, task: dict, text: str) -> str | None:
-        body = {"workerId": self.worker_id, "epoch": _epoch(task), "text": text}
+        body = {"workerId": self.worker_id, "epoch": _epoch(task), "text": humanize_reply(text)}
         if isinstance(task.get("_video_analysis"), dict):
             body["videoAnalysis"] = task["_video_analysis"]
         response = await self.request(

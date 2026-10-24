@@ -321,22 +321,22 @@ def _steps(text: str, messages: list) -> list[Step]:
         seconds = _demo_number(stripped, 3)
         command = f"for i in $(seq 1 {seconds}); do echo tick $i; sleep 1; done; echo finished | tee $JOB_RESULT_DIR/out.txt"
         return [("tool", "job_start", {"command": command, "name": "Tick demo", "max_minutes": 5}),
-                ("final", lambda _messages: "Started in the background: " + _tool_text(_messages))]
+                ("final", lambda _messages: _job_started_text(_messages, "Tick demo"))]
     if stripped.startswith("STORAGE DEMO"):
         word = (stripped.split(None, 2)[2:] or ["saved"])[0][:80]
         return [("tool", "write_file", {"path": "/workspace/notes/storage-demo.txt", "content": word + "\n"}),
-                ("final", lambda _messages: "Write result: " + _tool_text(_messages))]
+                ("final", lambda _messages: _write_text(_messages))]
     if stripped.startswith("STORAGE READ DEMO"):
         return [("tool", "read_file", {"path": "/workspace/notes/storage-demo.txt"}),
-                ("final", lambda _messages: "Read result: " + _tool_text(_messages))]
+                ("final", lambda _messages: "Read result: " + (str(_tool_json(_messages).get("content") or "").strip() or _tool_text(_messages)))]
     if stripped.startswith("JOB TIMEOUT DEMO"):
         return [("tool", "job_start", {"command": "echo begin; sleep 600", "name": "Timeout demo", "max_minutes": 0.5}),
-                ("final", lambda _messages: "Started: " + _tool_text(_messages))]
+                ("final", lambda _messages: _job_started_text(_messages, "Timeout demo"))]
     if stripped.startswith("JOB LONG DEMO"):
         return [("tool", "job_start", {"command": "while true; do echo working; sleep 1; done", "name": "Long demo", "max_minutes": 10}),
-                ("final", lambda _messages: "Started: " + _tool_text(_messages))]
+                ("final", lambda _messages: _job_started_text(_messages, "Long demo"))]
     if stripped.startswith("JOB STATUS DEMO"):
-        return [("tool", "job_status", {}), ("final", lambda _messages: "Jobs: " + _tool_text(_messages))]
+        return [("tool", "job_status", {}), ("final", lambda _messages: _jobs_text(_messages))]
     if stripped.startswith("SPEED TOOL DEMO"):
         return [("tool", "read_file", {"path": "/workspace/sample-repo/README.md"}), ("final", "The file has been checked. The task is complete.")]
     if stripped == "What should I call you?" or stripped.startswith("What should I call you?"):
@@ -710,6 +710,39 @@ def _last_tool_content(messages: list):
         if item.get("role") == "tool":
             return item.get("content")
     return ""
+
+
+def _tool_json(messages: list) -> dict:
+    content = _last_tool_content(messages)
+    if isinstance(content, str):
+        try:
+            content = json.loads(content)
+        except ValueError:
+            return {}
+    return content if isinstance(content, dict) else {}
+
+
+def _job_started_text(messages: list, name: str) -> str:
+    """A friendly job_start reply; never the raw tool result."""
+    result = _tool_json(messages)
+    if result.get("ok") is False:
+        return f"I couldn't start {name}: {str(result.get('reason') or 'it did not start').rstrip('.')}."
+    return f"Started {result.get('name') or name} in the background. I'll tell you when it's done."
+
+
+def _write_text(messages: list) -> str:
+    result = _tool_json(messages)
+    if result.get("ok") is not True:
+        detail = result.get("message") or result.get("reason") or result.get("error")
+        return "Write result: " + str(detail or _tool_text(messages) or "the file was not saved")
+    return "Write result: saved " + str(result.get("path") or "the file") + "."
+
+
+def _jobs_text(messages: list) -> str:
+    jobs = [j for j in _tool_json(messages).get("jobs") or [] if isinstance(j, dict)]
+    if not jobs:
+        return "No background jobs right now."
+    return "Background jobs: " + "; ".join(f"{j.get('name') or 'job'} is {str(j.get('status') or 'unknown').replace('_', ' ')}" for j in jobs[:5]) + "."
 
 
 def _tool_text(messages: list) -> str:
