@@ -20,7 +20,7 @@ export function SettingsNav() {
       .catch(() => setRole("member"));
   }, []);
 
-  const isAdmin = role == null || role === "owner" || role === "admin";
+  const isAdmin = role === "owner" || role === "admin";
   const groups = settingsNavGroups as SettingsNavGroup[];
 
   return (
