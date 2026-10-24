@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ListSkeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 
 type Skill = { id: string; name: string; title: string; whenToUse: string; kind: string; source: string; version: number; body: string; files: Record<string, string> | string };
 type Revision = { version: number; title: string; whenToUse: string; body: string; files: Record<string, string>; author: string; createdAt: string };
@@ -69,7 +69,11 @@ export function SkillsSettings() {
       await load();
       if (selected) { const fresh = await api<Skill[]>("/api/skill-library"); const item = fresh.find(skill => skill.id === selected.id); if (item) await choose(item); }
       setMode("view");
-    } catch { setError("Could not save this skill. Check the name, description, and file contents."); }
+    } catch (caught) {
+      setError(caught instanceof ApiError && caught.status === 409 && caught.message === "skill_name_taken"
+        ? "A skill with this name already exists. Choose a different name."
+        : "Could not save this skill. Check the name, description, and file contents.");
+    }
     finally { setSaving(false); }
   }
   async function remove() {
@@ -81,7 +85,7 @@ export function SkillsSettings() {
   }
 
   return <div className="flex min-h-[540px] flex-col gap-5" data-testid="skills-settings">
-    <header className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-medium">Skills</h2><p className="mt-1 max-w-2xl text-sm text-muted-foreground">Reusable guides shared by your teammates. Built-in guides are read-only.</p></div><Button data-testid="skill-new" onClick={newSkill}><Plus />New skill</Button></header>
+    <header className="flex flex-wrap items-start justify-between gap-3 pr-8"><div><h2 className="text-lg font-medium">Skills</h2><p className="mt-1 max-w-2xl text-sm text-muted-foreground">Reusable guides shared by your teammates. Built-in guides are read-only.</p></div><Button data-testid="skill-new" onClick={newSkill}><Plus />New skill</Button></header>
     {error ? <div role="alert" className="rounded-md border border-clay/30 bg-clay/5 px-3 py-2 text-sm text-clay">{error}<button className="ml-2 underline" onClick={() => void load()}>Retry</button></div> : null}
     <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(280px,0.9fr)_minmax(0,1.35fr)]">
       <section className="overflow-hidden rounded-lg border border-line bg-paper">
@@ -100,7 +104,10 @@ export function SkillsSettings() {
         </div> : selected ? <div data-testid="skill-detail" className="flex h-full flex-col">
           <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line p-5"><div><p className="text-xs text-muted-foreground">{selected.source === "builtin" ? "Built-in guide" : selected.kind === "replay" ? "Replay skill" : "Shared skill"} · Version {selected.version}</p><h3 className="mt-1 text-xl font-semibold">{selected.title || selected.name}</h3><p className="mt-1 text-sm text-muted-foreground">{selected.whenToUse}</p></div><div className="flex gap-2">{selected.source !== "builtin" && selected.kind !== "replay" ? <><Button variant="outline" data-testid="skill-edit" onClick={() => setMode("edit")}><Pencil />Edit</Button><Button variant="outline" data-testid="skill-delete" onClick={() => setDialog("delete")}><Trash2 />Delete</Button></> : <span className="self-start rounded border border-line px-2 py-1 text-xs text-muted-foreground">Read-only</span>}</div></div>
           <div className="grid flex-1 gap-4 overflow-y-auto p-5 xl:grid-cols-[minmax(0,1fr)_220px]"><article className="min-w-0"><Markdown value={selected.body}/>{Object.entries(parseFiles(selected.files)).map(([path, content]) => <details key={path} className="mt-4 rounded-md border border-line p-3"><summary className="cursor-pointer text-sm font-medium">{path}</summary><pre className="mt-3 whitespace-pre-wrap text-xs text-muted-foreground">{content}</pre></details>)}</article>
-            <aside className="space-y-2"><h4 className="text-sm font-semibold">Version history</h4>{revisions.length ? revisions.map(revision => <div key={`${revision.version}-${revision.createdAt}`} className="rounded-md border border-line p-3"><p className="text-sm font-medium">Version {revision.version}</p><p className="mt-1 line-clamp-3 text-xs text-muted-foreground">{revision.body || "Initial version"}</p></div>) : <p className="text-xs text-muted-foreground">No previous versions.</p>}</aside></div>
+            <aside className="space-y-2"><h4 className="text-sm font-semibold">Version history</h4>{[
+              { version: selected.version, body: selected.body },
+              ...revisions.filter(revision => revision.version > 0 && revision.version < selected.version),
+            ].map(revision => <div key={revision.version} className="rounded-md border border-line p-3"><p className="text-sm font-medium">Version {revision.version}</p><p className="mt-1 line-clamp-3 text-xs text-muted-foreground">{revision.body || "Initial version"}</p></div>)}</aside></div>
         </div> : <div className="grid min-h-[420px] place-items-center p-8 text-center"><div><FileText className="mx-auto h-8 w-8 text-muted-foreground"/><h3 className="mt-3 font-medium">Choose a skill to preview</h3><p className="mt-1 text-sm text-muted-foreground">Select a guide from your library or create one.</p></div></div>}
       </section>
     </div>

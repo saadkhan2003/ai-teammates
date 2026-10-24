@@ -6,6 +6,15 @@ namespace Teammates.UnitTests;
 public sealed class SkillLibraryTests
 {
     [Fact]
+    public void DuplicateNamesMapToTheStableConflictResponseForCreatesAndRenames()
+    {
+        Assert.True(SkillLibraryRoutes.IsSkillNameConflict("23505", "skill_library_scope_name"));
+        Assert.False(SkillLibraryRoutes.IsSkillNameConflict("23505", "other_unique_key"));
+        Assert.False(SkillLibraryRoutes.IsSkillNameConflict("23503", "skill_library_scope_name"));
+        Assert.Equal("skill_name_taken", SkillLibraryRoutes.SkillNameTaken);
+    }
+
+    [Fact]
     public void BotVisibilityRequiresMatchingOwnerAndOptionalBotScope()
     {
         var owner = Guid.NewGuid(); var otherOwner = Guid.NewGuid(); var bot = Guid.NewGuid(); var otherBot = Guid.NewGuid();

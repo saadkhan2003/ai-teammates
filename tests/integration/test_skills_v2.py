@@ -19,14 +19,23 @@ def _skill_task(client, bot, args):
 def test_owner_skill_crud_revision_and_sensitive_body_rejection():
     client = login()
     bot = _bot(client, "Skills" + uuid.uuid4().hex[:5])
+    skill_ids = []
     try:
-        payload = {"name":"review-orders", "title":"Review orders", "whenToUse":"When checking the queue", "body":"# Review\nCheck the queue.", "files":{"examples/queue.txt":"Open orders\nExceptions"}}
+        payload = {"name":"review-orders-" + uuid.uuid4().hex[:10], "title":"Review orders", "whenToUse":"When checking the queue", "body":"# Review\nCheck the queue.", "files":{"examples/queue.txt":"Open orders\nExceptions"}}
         status, created = client.call("POST", f"/api/bots/{bot}/skill-library", payload)
         assert status == 200, created
         sid = created["id"]
+        skill_ids.append(sid)
+        assert client.call("POST", f"/api/bots/{bot}/skill-library", payload) == (409, {"error": "skill_name_taken"})
+        rename_payload = dict(payload, name="rename-candidate-" + uuid.uuid4().hex[:10])
+        rename_status, rename_result = client.call("POST", f"/api/bots/{bot}/skill-library", rename_payload)
+        assert rename_status == 200, rename_result
+        skill_ids.append(rename_result["id"])
+        rename_conflict = client.call("PUT", f"/api/skill-library/{rename_result['id']}", dict(rename_payload, name=payload["name"]))
+        assert rename_conflict == (409, {"error": "skill_name_taken"})
         assert client.call("GET", f"/api/skill-library/{sid}")[1]["body"] == payload["body"]
-        assert worker_call("GET", f"/internal/skills/{bot}/review-orders")["files"]["examples/queue.txt"] == "Open orders\nExceptions"
-        assert worker_call("GET", f"/internal/skills/{bot}/review-orders/files/examples/queue.txt")["content"] == "Open orders\nExceptions"
+        assert worker_call("GET", f"/internal/skills/{bot}/{payload['name']}")["files"]["examples/queue.txt"] == "Open orders\nExceptions"
+        assert worker_call("GET", f"/internal/skills/{bot}/{payload['name']}/files/examples/queue.txt")["content"] == "Open orders\nExceptions"
         changed = dict(payload, body="# Review v2\nCheck carefully.")
         assert client.call("PUT", f"/api/skill-library/{sid}", changed)[0] == 200
         revisions = client.call("GET", f"/api/skill-library/{sid}/revisions")[1]
@@ -42,34 +51,43 @@ def test_owner_skill_crud_revision_and_sensitive_body_rejection():
         assert client.call("POST", f"/api/bots/{bot}/skill-library", dict(payload, name="bad", body="api_key=sk_live_12345678901234567890"))[0] == 400
         other = _bot(client, "Other" + uuid.uuid4().hex[:5])
         try:
-            private = dict(payload, name="private-guide", botId=bot)
+            private = dict(payload, name="private-guide-" + uuid.uuid4().hex[:10], botId=bot)
             private_status, private_result = client.call("POST", f"/api/bots/{bot}/skill-library", private)
             assert private_status == 200
+            skill_ids.append(private_result["id"])
             assert private_result["id"] not in {row["id"] for row in client.call("GET", f"/api/bots/{other}/skill-library")[1]}
-            assert worker_call("GET", f"/internal/skills/{bot}/private-guide")["name"] == "private-guide"
+            assert worker_call("GET", f"/internal/skills/{bot}/{private['name']}")["name"] == private["name"]
             with pytest.raises(AssertionError, match="404"):
-                worker_call("GET", f"/internal/skills/{other}/private-guide")
+                worker_call("GET", f"/internal/skills/{other}/{private['name']}")
         finally:
             _cleanup(client, other)
         assert client.call("POST", f"/api/skill-library/{sid}/archive")[0] == 200
         assert client.call("GET", f"/api/skill-library/{sid}")[0] == 404
     finally:
+        for skill_id in skill_ids:
+            client.call("POST", f"/api/skill-library/{skill_id}/archive")
         _cleanup(client, bot)
 
 
 def test_bot_edit_permission_defaults_off_and_owner_can_enable_it():
     client = login()
     bot = _bot(client, "SkillPerm" + uuid.uuid4().hex[:5])
+    skill_id = None
     try:
-        payload = {"name":"owner-guide", "title":"Owner guide", "whenToUse":"When working", "body":"# Owner guide", "botId":bot}
+        skill_name = "owner-guide-" + uuid.uuid4().hex[:10]
+        payload = {"name":skill_name, "title":"Owner guide", "whenToUse":"When working", "body":"# Owner guide", "botId":bot}
         status, created = client.call("POST", f"/api/bots/{bot}/skill-library", payload)
         assert status == 200, created
-        write = {"name":"owner-guide", "title":"Updated guide", "when_to_use":"When working", "body":"# Updated"}
+        write = {"name":skill_name, "title":"Updated guide", "when_to_use":"When working", "body":"# Updated"}
         # A worker token and a bare guide body cannot bypass policy/lease checks.
         with pytest.raises(AssertionError, match="400"):
             worker_call("POST", f"/internal/skills/{bot}/write", write)
         sid = created["id"]
+        skill_id = sid
         assert created["version"] == 1
+        list_status, skill_rows = client.call("GET", f"/api/bots/{bot}/skill-library")
+        owner_row = next(row for row in skill_rows if row["id"] == sid)
+        assert list_status == 200 and owner_row["allowBotEdit"] is False and owner_row["whenToUse"] == payload["whenToUse"]
         status, revisions_before = client.call("GET", f"/api/skill-library/{sid}/revisions")
         assert status == 200
         envelope = _skill_task(client, bot, write)
@@ -77,7 +95,7 @@ def test_bot_edit_permission_defaults_off_and_owner_can_enable_it():
         assert denied["ok"] is False and denied["status"] == "denied"
         status, unchanged = client.call("GET", f"/api/skill-library/{sid}")
         assert status == 200 and unchanged["version"] == 1
-        assert unchanged["body"] == payload["body"] and unchanged["allow_bot_edit"] is False
+        assert unchanged["body"] == payload["body"] and unchanged["allowBotEdit"] is False
         assert client.call("GET", f"/api/skill-library/{sid}/revisions") == (200, revisions_before)
         assert _psql(f"SELECT count(*) FROM audit_events WHERE action='skill.bot_write' AND detail::text LIKE '%{sid}%'") == "0"
         status, updated = client.call("PUT", f"/api/skill-library/{sid}", dict(payload, allowBotEdit=True))
@@ -89,6 +107,8 @@ def test_bot_edit_permission_defaults_off_and_owner_can_enable_it():
         assert _psql(f"SELECT count(*) FROM skill_revisions WHERE skill_id='{created['id']}' AND author='{bot}' AND reason='bot update'") == "1"
         assert int(_psql(f"SELECT count(*) FROM audit_events WHERE action='skill.bot_write' AND detail::text LIKE '%{created['id']}%'") or "0") == 1
     finally:
+        if skill_id:
+            client.call("POST", f"/api/skill-library/{skill_id}/archive")
         _cleanup(client, bot)
 
 
@@ -120,6 +140,9 @@ def test_owner_shared_guide_is_available_and_writable_by_every_bot():
                     worker_call("POST", f"/internal/tools/{endpoint}", dict(envelope, botId=other))
         finally:
             _cleanup(client, other)
+        _cleanup(client, bot)
+        assert client.call("GET", f"/api/skill-library/{shared_id}")[0] == 200
+        assert any(line.startswith(name + ":") for line in worker_call("GET", f"/internal/skills/{second_bot}/catalog")["catalog"])
     finally:
         if shared_id:
             client.call("POST", f"/api/skill-library/{shared_id}/archive")

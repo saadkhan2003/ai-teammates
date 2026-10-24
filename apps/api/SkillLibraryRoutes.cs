@@ -8,6 +8,9 @@ namespace Teammates.Api;
 
 public static class SkillLibraryRoutes
 {
+    public const string SkillNameTaken = "skill_name_taken";
+    public static bool IsSkillNameConflict(string sqlState, string? constraint) =>
+        sqlState == "23505" && constraint == "skill_library_scope_name";
     public const int MaxBodyLength = 32 * 1024;
     public const int MaxFilesBytes = 24 * 1024;
     public const int MaxCatalogEntries = 60;
@@ -88,7 +91,7 @@ public static class SkillLibraryRoutes
                 await tx.CommitAsync(); await platform.Audit(owner.Value.ToString(), "skill.create", null, null, new { id, name });
                 return Results.Json(new { id, version = 1 });
             }
-            catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505") { return Results.Conflict(new { error = "skill_name_exists" }); }
+            catch (Npgsql.PostgresException ex) when (IsSkillNameConflict(ex.SqlState, ex.ConstraintName)) { return Results.Conflict(new { error = SkillNameTaken }); }
         });
         app.MapGet("/api/bots/{id:guid}/skill-library", async (HttpContext ctx, Guid id) =>
         {
@@ -97,7 +100,7 @@ public static class SkillLibraryRoutes
             await using var c = await platform.Data.OpenConnectionAsync();
             await SeedBuiltins(c, owner.Value);
             var rows = await c.QueryAsync("""
-                SELECT id,name,title,when_to_use,kind,source,version,allow_bot_edit,created_by,created_at,updated_at,bot_id
+                SELECT id,name,title,when_to_use AS "whenToUse",kind,source,version,allow_bot_edit AS "allowBotEdit",created_by AS "createdBy",created_at AS "createdAt",updated_at AS "updatedAt",bot_id AS "botId"
                 FROM skill_library WHERE owner_id=@owner AND archived_at IS NULL
                 ORDER BY CASE source WHEN 'builtin' THEN 0 WHEN 'user' THEN 1 ELSE 2 END, name LIMIT 60
                 """, new { owner, id });
@@ -129,15 +132,22 @@ public static class SkillLibraryRoutes
                 bot = botValue;
             }
             if (bot is not null && (bot != id || !await Routes.Owns(platform, owner.Value, bot.Value))) return Results.BadRequest(new { error = "invalid_bot_scope" });
-            await using var c = await platform.Data.OpenConnectionAsync(); await using var tx = await c.BeginTransactionAsync();
-            var sid = await c.ExecuteScalarAsync<Guid>("""
-                INSERT INTO skill_library(owner_id,tenant_id,bot_id,name,title,when_to_use,body,files,source,created_by,allow_bot_edit)
-                VALUES(@owner,NULL,NULL,@name,@title,@hint,@body,@files::jsonb,'user',@actor,@allowBotEdit) RETURNING id
-                """, new { owner = owner.Value, bot, name, title, hint, body, files = FilesJson(files), actor = owner.Value.ToString(), allowBotEdit }, tx);
-            await c.ExecuteAsync("INSERT INTO skill_revisions(skill_id,version,body,files,title,when_to_use,author,reason) VALUES(@sid,0,'','{}',@title,@hint,@author,'initial creation')", new { sid, title, hint, author = owner.Value.ToString() }, tx);
-            await tx.CommitAsync();
-            await platform.Audit(owner.Value.ToString(), "skill.create", bot, null, new { id = sid, name });
-            return Results.Json(new { id = sid, version = 1 });
+            try
+            {
+                await using var c = await platform.Data.OpenConnectionAsync(); await using var tx = await c.BeginTransactionAsync();
+                var sid = await c.ExecuteScalarAsync<Guid>("""
+                    INSERT INTO skill_library(owner_id,tenant_id,bot_id,name,title,when_to_use,body,files,source,created_by,allow_bot_edit)
+                    VALUES(@owner,NULL,NULL,@name,@title,@hint,@body,@files::jsonb,'user',@actor,@allowBotEdit) RETURNING id
+                    """, new { owner = owner.Value, bot, name, title, hint, body, files = FilesJson(files), actor = owner.Value.ToString(), allowBotEdit }, tx);
+                await c.ExecuteAsync("INSERT INTO skill_revisions(skill_id,version,body,files,title,when_to_use,author,reason) VALUES(@sid,0,'','{}',@title,@hint,@author,'initial creation')", new { sid, title, hint, author = owner.Value.ToString() }, tx);
+                await tx.CommitAsync();
+                await platform.Audit(owner.Value.ToString(), "skill.create", bot, null, new { id = sid, name });
+                return Results.Json(new { id = sid, version = 1 });
+            }
+            catch (Npgsql.PostgresException ex) when (IsSkillNameConflict(ex.SqlState, ex.ConstraintName))
+            {
+                return Results.Conflict(new { error = SkillNameTaken });
+            }
         });
 
         app.MapPut("/api/skill-library/{id:guid}", async (HttpContext ctx, Guid id, JsonElement b) =>
@@ -146,17 +156,24 @@ public static class SkillLibraryRoutes
             var name = Get(b, "name"); var title = Get(b, "title"); var hint = Get(b, "description"); if (hint.Length == 0) hint = Get(b, "whenToUse"); var body = Get(b, "body");
             var files = b.TryGetProperty("files", out var fileNode) ? fileNode : default;
             if (!Valid(name, title, hint, body) || !ValidFiles(files)) return Results.BadRequest(new { error = "invalid_skill_or_sensitive_content" }); body = OutputRedactor.Redact(body);
-            await using var c = await platform.Data.OpenConnectionAsync(); await using var tx = await c.BeginTransactionAsync();
-            var current = await c.QuerySingleOrDefaultAsync<(Guid? BotId, string Source, int Version, string Body)>("SELECT bot_id,source,version,body FROM skill_library WHERE id=@id AND owner_id=@owner AND archived_at IS NULL FOR UPDATE", new { id, owner }, tx);
-            if (current.Version == 0) return Results.NotFound();
-            if (!CanOwnerMutate(current.Source)) return Results.Json(new { error = "builtin_skills_are_read_only" }, statusCode: 403);
-            var oldFiles = await c.ExecuteScalarAsync<string>("SELECT files::text FROM skill_library WHERE id=@id", new { id }, tx);
-            await c.ExecuteAsync("INSERT INTO skill_revisions(skill_id,version,body,files,title,when_to_use,author,reason) SELECT id,@version,body,@files::jsonb,title,when_to_use,@author,'owner update' FROM skill_library WHERE id=@id", new { id, version = current.Version, files = oldFiles ?? "{}", author = owner.ToString() }, tx);
-            var allowBotEdit = b.TryGetProperty("allowBotEdit", out var abe) && abe.ValueKind == JsonValueKind.True;
-            await c.ExecuteAsync("UPDATE skill_library SET name=@name,title=@title,when_to_use=@hint,body=@body,files=@files::jsonb,allow_bot_edit=@allowBotEdit,version=version+1,updated_at=now() WHERE id=@id", new { id, name, title, hint, body, files = FilesJson(files), allowBotEdit }, tx);
-            await tx.CommitAsync();
-            await platform.Audit(owner.Value.ToString(), "skill.update", current.BotId, null, new { id, name });
-            return Results.Ok(new { version = current.Version + 1 });
+            try
+            {
+                await using var c = await platform.Data.OpenConnectionAsync(); await using var tx = await c.BeginTransactionAsync();
+                var current = await c.QuerySingleOrDefaultAsync<(Guid? BotId, string Source, int Version, string Body)>("SELECT bot_id,source,version,body FROM skill_library WHERE id=@id AND owner_id=@owner AND archived_at IS NULL FOR UPDATE", new { id, owner }, tx);
+                if (current.Version == 0) return Results.NotFound();
+                if (!CanOwnerMutate(current.Source)) return Results.Json(new { error = "builtin_skills_are_read_only" }, statusCode: 403);
+                var oldFiles = await c.ExecuteScalarAsync<string>("SELECT files::text FROM skill_library WHERE id=@id", new { id }, tx);
+                await c.ExecuteAsync("INSERT INTO skill_revisions(skill_id,version,body,files,title,when_to_use,author,reason) SELECT id,@version,body,@files::jsonb,title,when_to_use,@author,'owner update' FROM skill_library WHERE id=@id", new { id, version = current.Version, files = oldFiles ?? "{}", author = owner.ToString() }, tx);
+                var allowBotEdit = b.TryGetProperty("allowBotEdit", out var abe) && abe.ValueKind == JsonValueKind.True;
+                await c.ExecuteAsync("UPDATE skill_library SET name=@name,title=@title,when_to_use=@hint,body=@body,files=@files::jsonb,allow_bot_edit=@allowBotEdit,version=version+1,updated_at=now() WHERE id=@id", new { id, name, title, hint, body, files = FilesJson(files), allowBotEdit }, tx);
+                await tx.CommitAsync();
+                await platform.Audit(owner.Value.ToString(), "skill.update", current.BotId, null, new { id, name });
+                return Results.Ok(new { version = current.Version + 1 });
+            }
+            catch (Npgsql.PostgresException ex) when (IsSkillNameConflict(ex.SqlState, ex.ConstraintName))
+            {
+                return Results.Conflict(new { error = SkillNameTaken });
+            }
         });
 
         app.MapPost("/api/skill-library/{id:guid}/archive", async (HttpContext ctx, Guid id) =>
