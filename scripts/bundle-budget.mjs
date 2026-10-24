@@ -11,7 +11,9 @@ export function bundleBudget(nextDir) {
   const pages = read(join(nextDir, "build-manifest.json"));
   if (!app && !pages) throw new Error(`No build manifests in ${nextDir}; build the web image first`);
   const output = {};
-  const common = js([...(pages?.polyfillFiles ?? []), ...(pages?.rootMainFiles ?? [])]);
+  // polyfillFiles are served with <script noModule>: modern browsers never fetch them, and Next's own
+  // "First Load JS" excludes them. Report them separately as legacy_polyfill_kb instead.
+  const common = js([...(pages?.rootMainFiles ?? [])]);
   const measure = files => {
     const chunks = [...new Set(files)].sort();
     // gzip per resource matches transferred JS; summing compressed sizes preserves resource boundaries.
@@ -34,6 +36,8 @@ export function bundleBudget(nextDir) {
     output[route] = measure(chunks);
   }
   if (!Object.keys(output).length) throw new Error("No route entries found in build manifests");
+  const legacy = js(pages?.polyfillFiles ?? []);
+  if (legacy.length) Object.defineProperty(output, "legacy_polyfill_kb", { value: legacy.reduce((n, f) => n + gzipSync(readFileSync(join(nextDir, f)), { level: 9 }).length, 0) / 1024, enumerable: false });
   return output;
 }
 export function run(args = process.argv.slice(2)) {
@@ -41,10 +45,13 @@ export function run(args = process.argv.slice(2)) {
   const nextDir = resolve(option("--next", "apps/web/.next"));
   const destination = resolve(option("--out", "test-results/bundle-budget.json"));
   const routes = bundleBudget(nextDir);
-  console.table(Object.entries(routes).map(([route, result]) => ({ route, "first-load gzip KB": result.gzip_kb.toFixed(2), budget: 200, pass: result.gzip_kb <= 200 })));
+  // /_error is the Pages Router fallback; App Router routes never load it (they use app/error and not-found).
+  const enforced = route => route !== "/_error";
+  console.table(Object.entries(routes).map(([route, result]) => ({ route, "first-load gzip KB": result.gzip_kb.toFixed(2), budget: enforced(route) ? 200 : "info", pass: !enforced(route) || result.gzip_kb <= 200 })));
+  if (routes.legacy_polyfill_kb) console.log(`legacy noModule polyfills (not in first load): ${routes.legacy_polyfill_kb.toFixed(2)} KB gzip`);
   mkdirSync(dirname(destination), { recursive: true });
-  writeFileSync(destination, JSON.stringify({ generated_at: new Date().toISOString(), budget_kb: 200, routes }, null, 2) + "\n");
-  return args.includes("--enforce") && Object.values(routes).some(r => r.gzip_kb > 200) ? 1 : 0;
+  writeFileSync(destination, JSON.stringify({ generated_at: new Date().toISOString(), budget_kb: 200, legacy_polyfill_kb: routes.legacy_polyfill_kb ?? 0, routes }, null, 2) + "\n");
+  return args.includes("--enforce") && Object.entries(routes).some(([route, r]) => enforced(route) && r.gzip_kb > 200) ? 1 : 0;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try { process.exitCode = run(); } catch (error) { console.error(error.message); process.exitCode = 1; }
