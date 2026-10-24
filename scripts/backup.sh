@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 mkdir -p backups
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 out="backups/agent-${stamp}.dump"
-sudo docker exec teammates-postgres-1 pg_dump -U "${POSTGRES_USER:-agent}" -d "${POSTGRES_DB:-agent}" -Fc > "$out"
+sudo docker exec "${PG_CONTAINER:-teammates-postgres-1}" pg_dump -U "${POSTGRES_USER:-agent}" -d "${POSTGRES_DB:-agent}" -Fc > "$out"
 if cmp -s secrets/secrets_master_key <(dd if="$out" bs=32 count=1 2>/dev/null); then
   echo "refusing to keep a dump that starts with the master key" >&2
   exit 1

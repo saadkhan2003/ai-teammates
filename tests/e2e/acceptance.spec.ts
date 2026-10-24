@@ -706,7 +706,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
       "SELECT coalesce(string_agg(content,' '),'') FROM messages; SELECT coalesce(string_agg(prompt_json::text,' '),'') FROM model_requests; SELECT coalesce(string_agg(result::text,' '),'') FROM task_steps;",
     ]);
     assertClean("database text", columns);
-    const restore = spawnSync("python3", [path.join(__dirname, "restore_check.py")], { encoding: "utf8", timeout: 180_000 });
+    const restore = spawnSync("python3", [path.join(__dirname, "restore_check.py")], { encoding: "utf8", timeout: 180_000, env: { ...process.env, PG_CONTAINER } });
     expect(restore.stdout || "").toContain("restore-ok");
     expect(restore.status).toBe(0);
   });
