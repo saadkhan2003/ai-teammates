@@ -62,3 +62,37 @@ def test_model_endpoints_require_auth(mock_server):
     with pytest.raises(urllib.error.HTTPError) as caught:
         call(mock_server, "/p2/v1/models", authenticated=False)
     assert caught.value.code == 401
+
+
+@pytest.mark.parametrize("path,anthropic", [("/api/v1/chat/completions", False), ("/p2/v1/chat/completions", False), ("/anthropic/v1/messages", True)])
+def test_streaming_has_progressive_text_and_final_usage(mock_server, monkeypatch, path, anthropic):
+    monkeypatch.setenv("MOCK_STREAM_DELAY_MS", "1")
+    headers = {"Content-Type": "application/json", "x-api-key" if anthropic else "Authorization": ("" if anthropic else "Bearer ") + "sk-or-mock-test-only-123456789"}
+    payload = {"stream": True, "messages": [{"role": "user", "content": "SPEED STREAM DEMO"}]}
+    req = urllib.request.Request(mock_server + path, data=json.dumps(payload).encode(), headers=headers)
+    with urllib.request.urlopen(req, timeout=3) as response:
+        assert response.headers["Content-Type"] == "text/event-stream"
+        frames = [line.decode().removeprefix("data: ").strip() for line in response if line.startswith(b"data:")]
+    values = [json.loads(frame) for frame in frames if frame != "[DONE]"]
+    if anthropic:
+        assert values[0]["type"] == "message_start"
+        assert sum(v["type"] == "content_block_delta" for v in values) > 5
+        assert values[-1]["type"] == "message_stop"
+        assert values[-2]["usage"]["output_tokens"] > 0
+    else:
+        assert sum(bool(v.get("choices") and v["choices"][0]["delta"].get("content")) for v in values) > 5
+        assert values[-1]["usage"]["completion_tokens"] > 0
+        assert frames[-1] == "[DONE]"
+
+
+def test_tool_stream_has_name_before_incremental_arguments():
+    response = {"choices": [{"message": {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "function": {"name": "read_file", "arguments": '{"path":"/workspace/a"}'}}]}}], "usage": {"prompt_tokens": 5, "completion_tokens": 2, "prompt_tokens_details": {"cached_tokens": 3}}}
+    frames = list(server.stream_frames(response))
+    calls = [f["choices"][0]["delta"]["tool_calls"][0] for f in frames if isinstance(f, dict) and f.get("choices") and "tool_calls" in f["choices"][0]["delta"]]
+    assert calls[0]["function"]["name"] == "read_file"
+    assert "name" not in calls[1]["function"]
+    assert "".join(c["function"]["arguments"] for c in calls) == '{"path":"/workspace/a"}'
+    native = list(server.stream_frames(response, True))
+    assert native[0]["message"]["usage"]["input_tokens"] == 2
+    assert native[0]["message"]["usage"]["cache_read_input_tokens"] == 3
+    assert any(f.get("delta", {}).get("type") == "input_json_delta" for f in native)

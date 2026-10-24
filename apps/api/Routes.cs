@@ -89,6 +89,7 @@ public static class Routes
 
         app.MapPost("/api/auth/logout", async (HttpContext ctx) =>
         {
+            await platform.RevokeSession(ctx.Request.Cookies["teammates_session"]);
             ctx.Response.Cookies.Delete("teammates_session");
             return Results.Json(new { ok = true });
         });
@@ -196,6 +197,7 @@ public static class Routes
                 ctx.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Compute").LogWarning("computer create failed {Code}: {Message}", ex.Code, ex.Message);
                 return Results.Json(new { error = ex.Code.ToString(), id, conversationId = conversation }, statusCode: 503);
             }
+            await platform.Publish(new { type = "bot.updated", botId = id });
             return Results.Json(new { id, name, role, instructions, conversationId = conversation, avatarShape, avatarColor, botToken });
         });
 
@@ -304,9 +306,17 @@ public static class Routes
             }
             if (botId != null && LibraryIngest.HasDeniedAttachment(content))
                 return Results.Json(new { error = Dlp.Blocked }, statusCode: 422);
-            var messageId = await conn.ExecuteScalarAsync<Guid>("INSERT INTO messages (conversation_id, role, content, metadata, reply_to_message_id) VALUES (@id, 'user', @content, @metadata::jsonb, @replyTo) RETURNING id", new { id, content, metadata, replyTo });
-            if (botId is Guid indexedBotId)
-                await LibraryIngest.IndexMessageAttachments(platform, runtime, indexedBotId, messageId, content, ctx.RequestAborted);
+            var clientId = body.TryGetProperty("client_id", out var client) && client.ValueKind == JsonValueKind.String && client.TryGetGuid(out var parsedClient) ? parsedClient : Guid.NewGuid();
+            var messageId = clientId;
+            await using var sendTx = await conn.BeginTransactionAsync();
+            var inserted = await conn.ExecuteScalarAsync<Guid?>(MessageAcceptance.InsertSql, new { messageId, id, content, metadata, replyTo, clientId }, sendTx);
+            if (inserted == null)
+            {
+                var existing = await conn.QuerySingleOrDefaultAsync<(Guid MessageId, Guid? TaskId)>("SELECT m.id, t.id FROM messages m LEFT JOIN tasks t ON t.source_message_id=m.id OR t.id=m.task_id WHERE m.id=@messageId AND m.conversation_id=@id AND m.role='user' LIMIT 1", new { messageId, id }, sendTx);
+                await sendTx.CommitAsync();
+                return existing.MessageId == Guid.Empty ? Results.Conflict() : Results.Json(new { messageId, taskId = existing.TaskId, client_id = clientId });
+            }
+
             var pausedTask = await conn.QuerySingleOrDefaultAsync<(Guid Id, string Reason)>("""
                 SELECT t.id,t.waiting_reason FROM tasks t JOIN bots b ON b.id=t.bot_id
                 WHERE t.bot_id=@bot AND t.conversation_id=@conversation AND b.owner_id=@owner
@@ -330,9 +340,13 @@ public static class Routes
                     if (pausedTask.Reason == "budget_reached")
                         await platform.Audit(user.Value.ToString(), "task.budget_continue", botId, pausedTask.Id, new { source = "user_message", extraSteps = 200, extraSeconds = 3600 });
                     await Reliability.Event(platform, pausedTask.Id, "resumed", new { reason = "user_message", source = "user_message" });
+                    await conn.ExecuteAsync("UPDATE messages SET task_id=@task WHERE id=@messageId", new { task = pausedTask.Id, messageId }, sendTx);
+                    await sendTx.CommitAsync();
+                    await platform.Publish(MessageAcceptance.Started(botId, pausedTask.Id, messageId, clientId));
+                    await LibraryIngest.IndexMessageAttachments(platform, runtime, botId.Value, messageId, content, ctx.RequestAborted);
                     await platform.Publish(new { type = "task", taskId = pausedTask.Id, status = "queued" });
                     platform.Tasks.Pulse();
-                    return Results.Json(new { messageId, taskId = pausedTask.Id, status = "queued", resumed = true });
+                    return Results.Json(new { messageId, taskId = pausedTask.Id, client_id = clientId, status = "queued", resumed = true });
                 }
             }
             var kind = asTask ? "work" : "chat";
@@ -340,9 +354,11 @@ public static class Routes
             var taskId = await conn.ExecuteScalarAsync<Guid>(
                 "INSERT INTO tasks (bot_id, conversation_id, title, instruction, kind, priority, status, source_message_id) VALUES (@bot, @conversation, @title, @instruction, @kind, @priority, 'queued', @message) RETURNING id",
                 new { bot = botId, conversation = id, title, instruction, kind, priority, message = messageId });
-            await platform.Publish(new { type = "task", taskId });
+            await sendTx.CommitAsync();
+            await platform.Publish(MessageAcceptance.Started(botId, taskId, messageId, clientId));
+            await LibraryIngest.IndexMessageAttachments(platform, runtime, botId.Value, messageId, content, ctx.RequestAborted);
             platform.Tasks.Pulse();
-            return Results.Json(new { messageId, taskId, status = "queued" });
+            return Results.Json(new { messageId, taskId, client_id = clientId, status = "queued" });
         });
 
         app.MapPost("/api/messages/{id:guid}/answer", async (HttpContext ctx, Guid id, JsonElement body) =>
@@ -1377,10 +1393,13 @@ public static class Routes
                 var seen = resume ?? 0L;
                 if (resume != null)
                 {
+                    if (platform.Events.HasGap(resume.Value))
+                        await ctx.Response.WriteAsync("data: {\"type\":\"stream.gap\"}\n\n", ctx.RequestAborted);
                     foreach (var frame in platform.Events.After(resume.Value))
                     {
-                        await ctx.Response.WriteAsync(frame.Format(), ctx.RequestAborted);
                         seen = frame.Id;
+                        if (!EventProjection.Visible(frame.Format(), user.Value)) continue;
+                        await ctx.Response.WriteAsync(frame.Format(), ctx.RequestAborted);
                     }
                     await ctx.Response.Body.FlushAsync(ctx.RequestAborted);
                 }
@@ -1388,6 +1407,7 @@ public static class Routes
                 {
                     if (SseEventId(message) is long eventId && eventId <= seen) continue;
                     if (SseEventId(message) is long written) seen = written;
+                    if (!EventProjection.Visible(message, user.Value)) continue;
                     await ctx.Response.WriteAsync(message, ctx.RequestAborted);
                     await ctx.Response.Body.FlushAsync(ctx.RequestAborted);
                     if (Random.Shared.Next(10) == 0 && SseEventId(message) is long delivered && platform.Events.PublishedAt(delivered) is long published)
@@ -2080,6 +2100,7 @@ public static class Routes
                 await Reliability.Event(platform, id, "error", new { error_code = failure.Code, error = failure.Text });
                 await Reliability.ResumeKeyWaiters(platform, owner);
             }
+            if (n > 0) await platform.Publish(new { type = "task", taskId = id, status });
             return n == 0 ? Results.StatusCode(409) : Results.Json(new { ok = true });
         });
 
@@ -2098,6 +2119,7 @@ public static class Routes
             var password = body.GetProperty("password").GetString() ?? "";
             await using var conn = await platform.Data.OpenConnectionAsync();
             var id = await conn.ExecuteScalarAsync<Guid>("INSERT INTO users (username, password_hash) VALUES (@username, @hash) ON CONFLICT (username) DO UPDATE SET password_hash=EXCLUDED.password_hash RETURNING id", new { username, hash = Passwords.Hash(password) });
+            await platform.SessionChanged(id);
             return Results.Json(new { id, username });
         });
     }
@@ -2157,7 +2179,7 @@ public static class Routes
     /// <summary>One page of a chat, oldest first. `before` pages back from that message. hasMore says older messages exist.</summary>
     internal static async Task<(List<Dictionary<string, object?>> Rows, bool HasMore)> LoadMessages(NpgsqlConnection conn, Guid conversationId, Guid? before, int limit)
     {
-        var messages = (await conn.QueryAsync("SELECT m.id, m.role, m.content, m.created_at, m.metadata::text AS metadata, m.reply_to_message_id, m.deleted_at, m.kind, COALESCE(m.task_id, (SELECT t.id FROM tasks t WHERE t.source_message_id=m.id ORDER BY t.created_at DESC LIMIT 1)) AS request_id, (SELECT t.status FROM tasks t WHERE t.id = COALESCE(m.task_id, (SELECT t2.id FROM tasks t2 WHERE t2.source_message_id=m.id ORDER BY t2.created_at DESC LIMIT 1))) AS task_status FROM messages m WHERE m.conversation_id=@conversation AND (@before::uuid IS NULL OR (m.created_at, m.id) < (SELECT b.created_at, b.id FROM messages b WHERE b.id=@before AND b.conversation_id=@conversation)) ORDER BY m.created_at DESC, m.id DESC LIMIT @lim", new { conversation = conversationId, before, lim = limit + 1 })).Select(Platform.ToDict).ToList();
+        var messages = (await conn.QueryAsync("SELECT m.id, m.role, m.content, m.created_at, m.metadata->>'client_id' AS client_id, m.metadata::text AS metadata, m.reply_to_message_id, m.deleted_at, m.kind, COALESCE(m.task_id, (SELECT t.id FROM tasks t WHERE t.source_message_id=m.id ORDER BY t.created_at DESC LIMIT 1)) AS request_id, (SELECT t.status FROM tasks t WHERE t.id = COALESCE(m.task_id, (SELECT t2.id FROM tasks t2 WHERE t2.source_message_id=m.id ORDER BY t2.created_at DESC LIMIT 1))) AS task_status FROM messages m WHERE m.conversation_id=@conversation AND (@before::uuid IS NULL OR (m.created_at, m.id) < (SELECT b.created_at, b.id FROM messages b WHERE b.id=@before AND b.conversation_id=@conversation)) ORDER BY m.created_at DESC, m.id DESC LIMIT @lim", new { conversation = conversationId, before, lim = limit + 1 })).Select(Platform.ToDict).ToList();
         var reactionRows = (await conn.QueryAsync("SELECT r.id, r.message_id, r.actor_type::text AS actor_type, r.actor_id, r.emoji, r.created_at FROM message_reactions r JOIN messages m ON m.id=r.message_id WHERE m.conversation_id=@conversation ORDER BY r.created_at", new { conversation = conversationId })).Select(Platform.ToDict).ToList();
         foreach (var message in messages)
         {

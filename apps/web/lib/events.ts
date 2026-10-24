@@ -8,7 +8,7 @@ export type StreamStatus = {
 // Reads the app event stream and resumes with Last-Event-ID after the phone
 // backgrounds the tab or the network returns. A new EventSource cannot set
 // that header, so this uses fetch.
-export function subscribeEvents(onMessage: (data: string) => void, onStatus?: (status: StreamStatus) => void): () => void {
+function connectEvents(onMessage: (data: string) => void, onStatus?: (status: StreamStatus) => void): () => void {
   let lastId = "";
   let stopped = false;
   let generation = 0;
@@ -59,7 +59,7 @@ export function subscribeEvents(onMessage: (data: string) => void, onStatus?: (s
             else if (line.startsWith("event:")) eventName = line.slice(6).trim();
             else if (line.startsWith("data:")) dataLines.push(line.slice(5).replace(/^ /, ""));
           }
-          if (id) lastId = id;
+          if (id) { lastId = id; report("open"); }
           if (dataLines.length && eventName !== "ready") {
             try { onMessage(dataLines.join("\n")); } catch { /* A malformed event must not disconnect the stream. */ }
           }
@@ -105,6 +105,25 @@ export function subscribeEvents(onMessage: (data: string) => void, onStatus?: (s
   };
 }
 
+type Listener = { message: (data: string) => void; status?: (status: StreamStatus) => void };
+const listeners = new Set<Listener>();
+let disconnect: (() => void) | null = null;
+let latest: StreamStatus = { state: "closed", lastId: "" };
+export function streamIsOpen() { return latest.state === "open"; }
+export function subscribeEvents(onMessage: (data: string) => void, onStatus?: (status: StreamStatus) => void): () => void {
+  const listener = { message: onMessage, status: onStatus };
+  listeners.add(listener);
+  onStatus?.(latest);
+  if (!disconnect) disconnect = connectEvents(
+    data => { for (const subscriber of [...listeners]) { try { subscriber.message(data); } catch { /* Isolate subscribers. */ } } },
+    status => { latest = status; for (const subscriber of [...listeners]) subscriber.status?.(status); },
+  );
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) { disconnect?.(); disconnect = null; latest = { state: "closed", lastId: "" }; }
+  };
+}
+
 export type AgentEvent = { type: string; botId?: string; taskId?: string; [key: string]: unknown };
 export function parseAgentEvent(data: string): AgentEvent | null {
   try {
@@ -117,8 +136,14 @@ export function parseAgentEvent(data: string): AgentEvent | null {
 }
 
 export function mergeAgentEvent(current: AgentEvent[], event: AgentEvent): AgentEvent[] {
+  if (event.type === "model.started" || event.type === "model.error")
+    return current.filter(item => item.taskId !== event.taskId || !["delta", "message.delta", "text_delta", "tool.delta", "task.started"].includes(item.type));
+  if (event.type === "tool.delta") {
+    const index = current.findIndex(item => item.type === "tool.delta" && item.taskId === event.taskId && item.roundId === event.roundId && item.index === event.index);
+    if (index >= 0) return current.map((item, i) => i === index ? { ...item, ...event } : item);
+  }
   if (["delta", "message.delta", "text_delta"].includes(event.type)) {
-    const index = current.findIndex(item => item.taskId === event.taskId && ["delta", "message.delta", "text_delta"].includes(item.type));
+    const index = current.findIndex(item => item.taskId === event.taskId && item.roundId === event.roundId && ["delta", "message.delta", "text_delta"].includes(item.type));
     const incoming = typeof event.delta === "string" ? event.delta : typeof event.text === "string" ? event.text : "";
     if (index >= 0) return current.map((item, i) => i === index ? { ...item, ...event, delta: (String(item.delta ?? item.text ?? "") + incoming).slice(0, 1_000_000) } : item);
   }

@@ -90,6 +90,7 @@ builder.Services.AddSingleton(data);
 builder.Services.AddSingleton<PerfRecorder>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<PerfRecorder>());
 builder.Services.AddHostedService<Maintenance>();
+builder.Services.AddHostedService<SessionCacheInvalidator>();
 builder.Services.AddHostedService(sp => new TaskLeaseMaintenance(
     ct => TaskLeaseMaintenance.Sweep(platform, ct), sp.GetRequiredService<ILogger<TaskLeaseMaintenance>>()));
 builder.Services.AddHostedService<PluginCatalogJob>();

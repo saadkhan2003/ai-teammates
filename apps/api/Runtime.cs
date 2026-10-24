@@ -13,7 +13,7 @@ namespace Teammates.Api;
 
 public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer? reviewer = null)
 {
-    private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(90) };
+    private readonly HttpClient _http = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(90) };
     private readonly MemoryStore _memory = new(platform);
     private readonly IActionReviewer _reviewer = reviewer ?? new RuleBasedActionReviewer();
 
@@ -23,25 +23,58 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         var botId = body.GetProperty("botId").GetGuid();
         var owner = await OwnerOf(botId);
         var role = body.TryGetProperty("role", out var roleElement) && roleElement.GetString() is "compactor" or "quick" or "vision" or "coding" ? roleElement.GetString()! : "planner";
-        var messages = body.GetProperty("messages");
-        await using var sessionConn = await platform.Data.OpenConnectionAsync(ct);
-        var sessionId = await sessionConn.ExecuteScalarAsync<Guid>("SELECT conversation_id FROM tasks WHERE id=@taskId", new { taskId });
+        var messages = PromptOrder.Build(body.GetProperty("messages"), body.TryGetProperty("liveState", out var liveState) ? liveState : null);
+        (Guid Id, Guid? Conversation, string Kind, Guid? Routine, int Epoch, string Status) task;
+        await using (var sessionConn = await platform.Data.OpenConnectionAsync(ct))
+            task = await sessionConn.QuerySingleOrDefaultAsync<(Guid Id, Guid? Conversation, string Kind, Guid? Routine, int Epoch, string Status)>("SELECT id,conversation_id,kind,routine_id,lease_epoch,status FROM tasks WHERE id=@taskId AND bot_id=@botId", new { taskId, botId });
+        if (task.Id == Guid.Empty) return Results.NotFound();
+        if (body.TryGetProperty("epoch",out var leaseEpoch) && !EpochFence.Accepts(true,leaseEpoch.GetInt32(),task.Epoch,task.Status)) return Results.StatusCode(409);
+        var sessionId = task.Conversation ?? task.Id;
+        var displayStream = task.Conversation != null && task.Kind != "peer" && task.Routine == null;
         var routingRole = role;
-        if (role == "planner" && await sessionConn.ExecuteScalarAsync<string>("SELECT kind FROM tasks WHERE id=@taskId", new { taskId }) == "coding") routingRole = "coding";
+        if (role == "planner" && task.Kind == "coding") routingRole = "coding";
         var resolution = await platform.AiRegistry.Resolve(routingRole, owner, taskId, botId, ct);
         var started = DateTimeOffset.UtcNow;
-        var call = await AiGateway.Complete(_http, resolution, RedactMessages(messages, ""), role == "compactor" ? Array.Empty<object>() : await ToolsFor(botId, ct), sessionId, ct);
+        var tools = role == "compactor" ? Array.Empty<object>() : await ToolsFor(botId, ct);
+        var streaming = role != "compactor" && body.TryGetProperty("stream", out var streamFlag) && streamFlag.ValueKind == JsonValueKind.True;
+        int? ttftMs = null;
+        int? streamTotalMs = null;
+        AiCallResult call;
+        if (streaming && task.Status != "running") return Results.StatusCode(409);
+        if (streaming)
+        {
+            var roundId = Guid.NewGuid();
+            if (displayStream) await platform.PublishTo(owner, new { type = "model.started", botId, taskId, roundId });
+            async Task PublishDelta(ModelDelta delta)
+            {
+                if (!await HoldsLease(taskId, task.Epoch, ct, botId)) throw new OperationCanceledException("lease_lost");
+                if (!displayStream) return;
+                await platform.PublishTo(owner, delta.Text != null
+                    ? (object)new { type = "message.delta", botId, taskId, roundId, delta = delta.Text }
+                    : new { type = "tool.delta", botId, taskId, roundId, index = delta.Index, name = delta.Name });
+            }
+            ModelStreamResult streamed;
+            try { streamed = await AiStreamingGateway.Stream(_http, resolution, RedactMessages(messages, ""), tools, sessionId, PublishDelta, ct, PromptCaching.MaxTokens(resolution, routingRole)); }
+            catch
+            {
+                if (displayStream) await platform.PublishTo(owner, new { type = "model.error", botId, taskId, roundId });
+                throw;
+            }
+            call = streamed.Call; ttftMs = streamed.TtftMs; streamTotalMs = streamed.TotalMs;
+            if (displayStream) await platform.PublishTo(owner, new { type = call.Ok ? "model.finished" : "model.error", botId, taskId, roundId });
+        }
+        else call = await AiGateway.Complete(_http, resolution, RedactMessages(messages, ""), tools, sessionId, ct);
         if (call.MissingKey) return Results.Json(new { status = "waiting_resource", reason = "connect_openrouter" });
         if (!call.Ok)
         {
-            await StoreModel(owner, botId, taskId, call.Prompt, false, (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds, default, role, resolution, call.Served);
+            await StoreModel(owner, botId, taskId, call.Prompt, false, streamTotalMs ?? (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds, default, role, resolution, call.Served, ttftMs, streaming);
             return Results.Json(new { status = "error", error = "provider rejected the request", errorCode = call.ContextError ? "context_length" : "provider_error" });
         }
         var message = call.Response.GetProperty("choices")[0].GetProperty("message");
         var normalized = ProviderWire.Normalize(message);
         var normalizedText = OutputRedactor.Redact(normalized.GetRawText(), []);
         var usage = ProviderWire.ReadUsage(call.Response);
-        await StoreModel(owner, botId, taskId, call.Prompt, true, (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds, usage, role, resolution, call.Served);
+        await StoreModel(owner, botId, taskId, call.Prompt, true, streamTotalMs ?? (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds, usage, role, resolution, call.Served, ttftMs, streaming);
         await using var conn = await platform.Data.OpenConnectionAsync(ct);
         await conn.ExecuteAsync("UPDATE tasks SET model_calls = model_calls + 1, updated_at=now() WHERE id=@id", new { id = taskId });
         return Results.Text("{\"status\":\"ok\",\"message\":" + normalizedText + ",\"promptTokens\":" + usage.PromptTokens.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}", "application/json");
@@ -1248,7 +1281,9 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         var json = result is JsonElement element ? element.GetRawText() : JsonSerializer.Serialize(result);
         json = InjectionFilter.ScrubJson(json);
         await using var conn = await platform.Data.OpenConnectionAsync();
-        var seq = await conn.ExecuteScalarAsync<int>("SELECT coalesce(max(seq),0)+1 FROM task_steps WHERE task_id=@id", new { id = taskId });
+        await using var stepTx = await conn.BeginTransactionAsync();
+        await conn.ExecuteAsync("SELECT id FROM tasks WHERE id=@taskId FOR UPDATE", new { taskId }, stepTx);
+        var seq = await conn.ExecuteScalarAsync<int>("SELECT coalesce(max(seq),0)+1 FROM task_steps WHERE task_id=@id", new { id = taskId }, stepTx);
         var safeArgs = InjectionFilter.ScrubJson(args.ValueKind == JsonValueKind.Undefined ? "{}" : args.GetRawText());
         await conn.ExecuteAsync(
             "INSERT INTO task_steps (task_id, seq, tool, args, result, policy, ok, finished_at) VALUES (@task, @seq, @tool, @args::jsonb, @result::jsonb, @policy, @ok, now())",
@@ -1285,6 +1320,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
             }
             catch (JsonException) { }
         }
+        await stepTx.CommitAsync();
     }
 
     public async Task RecoverOutbound(CancellationToken ct)
@@ -1483,8 +1519,8 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         return new { replayed = true, output };
     }
 
-    // Non-streaming: TTFT equals provider wall time. Phase 2 passes the first-token clock separately here.
-    private async Task StoreModel(Guid owner, Guid botId, Guid taskId, JsonElement prompt, bool ok, int latency, TokenUsage usage, string role, AiResolution resolution, AiEndpoint served, int? ttftMs = null)
+    // Stream calls pass the real first content/tool delta clock; complete calls use wall time.
+    private async Task StoreModel(Guid owner, Guid botId, Guid taskId, JsonElement prompt, bool ok, int latency, TokenUsage usage, string role, AiResolution resolution, AiEndpoint served, int? ttftMs = null, bool streaming = false)
     {
         await using var conn = await platform.Data.OpenConnectionAsync();
         await conn.ExecuteAsync(
@@ -1492,7 +1528,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
             new { owner, bot = botId, task = taskId, provider = served.Kind, model = served.Model, prompt = prompt.GetRawText() });
         await conn.ExecuteAsync(
             "INSERT INTO model_calls (bot_id, task_id, owner_id, role, provider, model, latency_ms, ttft_ms, total_ms, cached_tokens, cache_write_tokens, prompt_tokens, completion_tokens, ok, cost_usd, provider_id, config_version, credits) VALUES (@bot, @task, @owner, @role, @provider, @model, @latency, @ttft, @latency, @cachedTokens, @cacheWriteTokens, @promptTokens, @completionTokens, @ok, @cost, @providerId, @configVersion, @credits)",
-            new { bot = botId, task = taskId, owner, role, provider = served.Kind, model = served.Model, providerId = served.ProviderId == Guid.Empty ? (Guid?)null : served.ProviderId, configVersion = resolution.ConfigVersion, credits = AiModelRegistry.Credits(resolution.Config, "default", served.Model, usage), latency, ttft = ttftMs ?? latency, cachedTokens = usage.CachedTokens, cacheWriteTokens = usage.CacheWriteTokens, promptTokens = usage.PromptTokens, completionTokens = usage.CompletionTokens, ok, cost = usage.CostUsd });
+            new { bot = botId, task = taskId, owner, role, provider = served.Kind, model = served.Model, providerId = served.ProviderId == Guid.Empty ? (Guid?)null : served.ProviderId, configVersion = resolution.ConfigVersion, credits = AiModelRegistry.Credits(resolution.Config, "default", served.Model, usage), latency, ttft = streaming ? ttftMs : ttftMs ?? latency, cachedTokens = usage.CachedTokens, cacheWriteTokens = usage.CacheWriteTokens, promptTokens = usage.PromptTokens, completionTokens = usage.CompletionTokens, ok, cost = usage.CostUsd });
     }
 
     private async Task StoreVideoModel(Guid owner, Guid botId, Guid taskId, JsonElement prompt, string model, TokenUsage usage, int totalMs)

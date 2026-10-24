@@ -69,8 +69,8 @@ public static partial class ProviderWire
         }
         if (caching.Enabled && caching.AnthropicCacheControl)
         {
-            var anchor = system.LastOrDefault() ?? definitions.LastOrDefault();
-            if (anchor is JsonObject obj) obj["cache_control"] = new JsonObject { ["type"] = "ephemeral", ["ttl"] = caching.Ttl };
+            foreach (var anchor in new[] { definitions.LastOrDefault(), system.FirstOrDefault(), system.LastOrDefault() }.Distinct())
+                if (anchor is JsonObject obj) obj["cache_control"] = new JsonObject { ["type"] = "ephemeral", ["ttl"] = caching.Ttl };
         }
         var payload = new JsonObject { ["model"] = model, ["max_tokens"] = MaxTokens, ["messages"] = output };
         if (system.Count > 0) payload["system"] = system;
@@ -126,13 +126,14 @@ public static class AiGateway
                 else
                 {
                     var completion = ProviderWire.Completion(endpoint.Model, prompt, tools);
+                    completion["messages"] = PromptCaching.Messages((JsonElement)completion["messages"]!, resolution.Caching, endpoint.Kind);
                     if (endpoint.Kind is not ("openrouter" or "mock")) completion.Remove("usage");
                     if (JsonSerializer.SerializeToElement(tools).GetArrayLength() == 0) completion.Remove("tools");
                     if (resolution.Caching.Enabled && resolution.Caching.SessionIdPerConversation) completion["prompt_cache_key"] = sessionId.ToString("D");
                     if (endpoint.Kind == "openrouter")
                     {
                         if (resolution.Caching.SessionIdPerConversation) completion["session_id"] = sessionId.ToString("D");
-                        if (resolution.Latency.PreferredMaxLatencyMs is { } ms) completion["provider"] = new { max_latency = ms / 1000.0 };
+                        if (resolution.Latency.PreferredMaxLatencyMs is { } ms) completion["provider"] = new { preferred_max_latency = ms / 1000.0 };
                     }
                     payload = completion;
                 }

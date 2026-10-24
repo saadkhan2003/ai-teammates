@@ -193,12 +193,37 @@ public sealed class Platform
         }
     }
 
+    public SessionUserCache SessionUsers { get; } = new();
+
     public async Task<Guid?> UserForSession(string? token)
     {
         if (string.IsNullOrWhiteSpace(token)) return null;
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token))).ToLowerInvariant();
+        if (SessionUsers.TryGet(hash, out var cached)) return cached;
+        var generation = SessionUsers.Generation;
         await using var conn = await Data.OpenConnectionAsync();
-        return await conn.ExecuteScalarAsync<Guid?>("SELECT user_id FROM sessions WHERE token_hash=@h AND expires_at > now()", new { h = hash });
+        var row = await conn.QuerySingleOrDefaultAsync<(Guid User, DateTimeOffset Expires)>("SELECT s.user_id, s.expires_at FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=@h AND s.expires_at > now() AND u.status='active'", new { h = hash });
+        if (row.User == Guid.Empty) return null;
+        SessionUsers.Set(hash, row.User, row.Expires, generation);
+        return row.User;
+    }
+
+    public async Task RevokeSession(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return;
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token))).ToLowerInvariant();
+        SessionUsers.Invalidate(hash: hash);
+        await using var conn = await Data.OpenConnectionAsync();
+        await conn.ExecuteAsync("DELETE FROM sessions WHERE token_hash=@hash", new { hash });
+        SessionUsers.Invalidate(hash: hash);
+        await conn.ExecuteAsync("SELECT pg_notify('session_user_changed', @payload)", new { payload = "hash:" + hash });
+    }
+
+    public async Task SessionChanged(Guid user)
+    {
+        SessionUsers.Invalidate(user);
+        await using var conn = await Data.OpenConnectionAsync();
+        await conn.ExecuteAsync("SELECT pg_notify('session_user_changed', @payload)", new { payload = "user:" + user.ToString("D") });
     }
 
     public async Task<bool> LoginBlocked(string ip, bool testLogin = false)
@@ -443,7 +468,8 @@ public sealed class Platform
 
     public async Task Notify(Guid userId, string kind, string title, string body)
     {
-        var text = body.Length > 240 ? body[..240] : body;
+        var safeBody = Dlp.Redact(body);
+        var text = safeBody.Length > 240 ? safeBody[..240] : safeBody;
         await using var conn = await Data.OpenConnectionAsync();
         var enabled = await conn.ExecuteScalarAsync<bool?>(
             """
@@ -451,9 +477,12 @@ public sealed class Platform
             """,
             new { id = userId });
         if (enabled == false) return;
-        await conn.ExecuteAsync(
-            "INSERT INTO notifications (user_id, kind, title, body) VALUES (@user, @kind, @title, @body)",
+        text = Dlp.Redact(text);
+        title = Dlp.Redact(title);
+        var notificationId = await conn.ExecuteScalarAsync<Guid>(
+            "INSERT INTO notifications (user_id, kind, title, body) VALUES (@user, @kind, @title, @body) RETURNING id",
             new { user = userId, kind, title, body = text });
+        await PublishTo(userId, new { type = "notification.created", notification = new { id = notificationId, title, body = text, readAt = (string?)null } });
     }
 
     public async Task SweepSecretExpiry()
@@ -515,13 +544,24 @@ public sealed class Platform
         catch (Exception) { /* DockerComputeProvider logs the failed restore. */ }
     }
 
-    public Task Publish(object payload)
+    public async Task Publish(object payload)
     {
-        var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web));
-        var frame = Events.Append(json).Format();
-        foreach (var sink in Sinks.Values)
-            sink.Writer.TryWrite(frame);
+        try { PublishJson((await EventProjection.Enrich(Data, payload)).ToJsonString()); }
+        catch (Exception) { PublishJson("{\"type\":\"invalidate\"}"); } // An event projection must not fail a committed action.
+    }
+
+    public Task PublishTo(Guid owner, object payload)
+    {
+        var node = JsonSerializer.SerializeToNode(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web))!.AsObject();
+        node["ownerId"] = owner;
+        PublishJson(node.ToJsonString());
         return Task.CompletedTask;
+    }
+
+    private void PublishJson(string json)
+    {
+        var frame = Events.Append(json).Format();
+        foreach (var sink in Sinks.Values) sink.Writer.TryWrite(frame);
     }
 
     public System.Threading.Channels.Channel<string> Listen()

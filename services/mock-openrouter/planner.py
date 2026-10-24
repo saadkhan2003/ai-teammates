@@ -302,6 +302,10 @@ def _steps(text: str, messages: list) -> list[Step]:
             ("tool", "record_stop", {}),
             ("final", "Captured a desktop screenshot and recording as evidence."),
         ]
+    if stripped.startswith("SPEED STREAM DEMO"):
+        return [("final", "The first sentence is ready. " + "Here is another sentence arriving progressively. " * 8 + "The streamed reply is complete.")]
+    if stripped.startswith("SPEED TOOL DEMO"):
+        return [("tool", "read_file", {"path": "/workspace/sample-repo/README.md"}), ("final", "The file has been checked. The task is complete.")]
     if stripped == "What should I call you?" or stripped.startswith("What should I call you?"):
         return [("final", "I'm your teammate. Call me whatever fits the work.")]
     if stripped == "thanks!":

@@ -52,7 +52,8 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { api, asList } from "@/lib/api";
-import { subscribeEvents } from "@/lib/events";
+import { patchRoster } from "@/lib/event-patches";
+import { parseAgentEvent, streamIsOpen, subscribeEvents } from "@/lib/events";
 import { applyTheme, type ThemeMode } from "@/lib/theme";
 import { cn, errorMessage } from "@/lib/utils";
 import { matchShortcut } from "@/lib/shortcuts";
@@ -108,6 +109,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   useEffect(() => { initPerf(); }, []);
   const pathname = usePathname();
   const router = useRouter();
+  const authPage = pathname === "/login" || pathname === "/invite";
   const [bots, setBots] = useState<RosterBot[]>([]);
   const [botsLoaded, setBotsLoaded] = useState(false);
   const [username, setUsername] = useState("Account");
@@ -168,20 +170,22 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (pathname === "/login" || pathname === "/invite") return;
+    if (authPage) return;
     wireConnectionEvents();
     void load();
-    const timer = window.setInterval(() => void load(), 15_000);
+    const timer = window.setInterval(() => { if (!streamIsOpen()) void load(); }, 15_000);
     const refresh = () => void load();
     const openCreate = () => setCreateOpen(true);
     window.addEventListener("teammates-bots-changed", refresh);
     window.addEventListener(REFRESH_EVENT, refresh);
     window.addEventListener("teammates-open-create", openCreate);
-    let debounce = 0;
     const stopEvents = subscribeEvents(
-      () => {
-        window.clearTimeout(debounce);
-        debounce = window.setTimeout(() => void load(), 300);
+      data => {
+        const event = parseAgentEvent(data);
+        if (!event) return;
+        if (event.type === "notification.created" && event.notification) { setNotes(current => [event.notification as Note, ...current.filter(note => note.id !== (event.notification as Note).id)]); return; }
+        if (["stream.gap", "invalidate", "bots"].includes(event.type) || (!event.bot && !event.taskId && !event.botId)) { void load(); return; }
+        setBots(current => patchRoster(current, event) ?? current);
       },
       (status) => {
         setStreamState(status.state);
@@ -193,13 +197,12 @@ export function AppShell({ children }: { children: ReactNode }) {
     }
     return () => {
       window.clearInterval(timer);
-      window.clearTimeout(debounce);
       stopEvents();
       window.removeEventListener("teammates-bots-changed", refresh);
       window.removeEventListener(REFRESH_EVENT, refresh);
       window.removeEventListener("teammates-open-create", openCreate);
     };
-  }, [load, pathname]);
+  }, [load, authPage]);
 
   useEffect(() => {
     const root = document.documentElement;

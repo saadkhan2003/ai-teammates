@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx
 
+from parallel_reads import parallel_safe, run_calls
 from browser import BrowserHub
 from web_bot_auth import CURRENT_AUTH_CONFIG, fingerprint_browser_settings, geo_browser_settings
 from guard import invalid_reason, login_result, present_tool, scrub, should_halt, stamp_actor, strip_text
@@ -450,6 +451,32 @@ class Worker:
                             await self._put_transcript(task, messages)
                             continue
                     return
+            # Preflight the whole read batch against scoped rules and budgets before
+            # launching. Each invocation still traverses preexec + API PolicyGate/DLP.
+            parallel_results = None
+            read_batch = parallel_safe(pending_calls) and not any(scoped_rule_context(task, str(call.get("name") or ""), call.get("arguments") or {})[1] for call in pending_calls)
+            if read_batch and not lost.is_set():
+                for call in pending_calls:
+                    blocked = guard.note(str(call.get("name") or ""), call.get("arguments") or {})
+                    if blocked:
+                        if blocked in {"attempt_step_budget", "attempt_time_budget"}:
+                            await self._status(task, "queued", reason="attempt_limit")
+                        elif blocked in {"step_budget", "time_budget"} and budget.get("pauseOnBudget", True):
+                            await self._status(task, "waiting_human", reason="budget_reached")
+                        else:
+                            await self._fail(task, blocked)
+                        return
+                task["_stepsUsed"] = guard.steps
+                task["_toolInFlightSince"] = datetime.now(timezone.utc).isoformat()
+                task["_toolTimeoutSeconds"] = 120
+                async def invoke_read(call):
+                    isolated = dict(task)
+                    isolated["_callSlot"] = _call_slot(messages, call)
+                    return await self._invoke(isolated, call, authorize=True)
+                try:
+                    parallel_results = dict(zip((call["id"] for call in pending_calls), await run_calls(pending_calls, invoke_read)))
+                finally:
+                    task.pop("_toolInFlightSince", None)
             for pending in pending_calls:
                 if lost.is_set():
                     return
@@ -469,7 +496,7 @@ class Worker:
                             return
                         raise
                     continue
-                blocked = guard.note(str(pending.get("name") or ""), pending.get("arguments") if isinstance(pending.get("arguments"), dict) else {})
+                blocked = None if parallel_results is not None else guard.note(str(pending.get("name") or ""), pending.get("arguments") if isinstance(pending.get("arguments"), dict) else {})
                 if blocked:
                     if blocked in {"attempt_step_budget", "attempt_time_budget"}:
                         await self._status(task, "queued", reason="attempt_limit")
@@ -488,7 +515,7 @@ class Worker:
                 task["_toolTimeoutSeconds"] = 600 if pending.get("name") == "watch_video" else 120
                 task["_callSlot"] = _call_slot(messages, pending)
                 try:
-                    result = await self._invoke(task, pending, authorize=True)
+                    result = parallel_results[pending["id"]] if parallel_results is not None else await self._invoke(task, pending, authorize=True)
                 finally:
                     task.pop("_toolInFlightSince", None)
                     task.pop("_callSlot", None)
@@ -628,7 +655,7 @@ class Worker:
         payload = await self.request_json(
             "POST",
             "/internal/model/complete",
-            {"taskId": _task_id(task), "botId": _bot_id(task), "messages": messages},
+            {"taskId": _task_id(task), "botId": _bot_id(task), "messages": messages, "stream": True, "epoch": _epoch(task), "liveState": {"timeUtc": datetime.now(timezone.utc).isoformat(), "status": "running", "stepsUsed": task.get("_stepsUsed", 0), "modelRounds": task.get("_modelRounds", 0), "budget": task.get("budget", {})}},
         )
         if not isinstance(payload, dict):
             await self._fail(task, "model response was empty")

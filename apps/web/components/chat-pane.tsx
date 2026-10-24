@@ -1,5 +1,9 @@
 "use client";
 
+import { StreamDraft } from "@/components/stream-draft";
+import { toolLabel } from "@/lib/tool-status";
+import { mergeOptimistic } from "@/lib/chat-speed";
+import { flushSync } from "react-dom";
 import { beginSendPerf, endSendPerf, paintedPerf, chatPaintedPerf, initPerf } from "@/lib/perf";
 import { FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Markdown } from "@/components/markdown";
@@ -14,7 +18,7 @@ import { parseBotRow, type BotThreadView } from "@/lib/bot-thread";
 import { MessageBody, MessageItem, plainTextOf } from "@/components/message-item";
 import { ShimmerText, workingStatus } from "@/components/shimmer-text";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { type ComposerPart, addQuote, canSend, hasBlocks, initialParts, normalizeSelection, pillPosition, removePart, setReply, toPayload } from "@/lib/chat-parts";
+import { type ComposerPart, flatten, addQuote, canSend, hasBlocks, initialParts, normalizeSelection, pillPosition, removePart, setReply, toPayload } from "@/lib/chat-parts";
 import { setAvatarMode } from "@/lib/avatar-motion";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -31,7 +35,7 @@ type TaskPlan = { taskId: string; title: string; status: string; items: { title:
 
 export function ChatPane({
   conversationId,
-  messages,
+  messages: storedMessages,
   botName,
   onSent,
   extras,
@@ -70,6 +74,29 @@ export function ChatPane({
   events?: AgentEvent[];
   onStop?: () => Promise<void>;
 }) {
+  type Pending = ChatMessage & { conversation: string; payload: Record<string, unknown> };
+  const [pending, setPending] = useState<Pending[]>([]);
+  const visiblePending = pending.filter(m => m.conversation === conversationId);
+  const messages = mergeOptimistic(storedMessages, visiblePending);
+  useEffect(() => {
+    setPending(current => current.filter(m => m.conversation !== conversationId || !storedMessages.some(real => real.id === m.id || real.clientId === m.clientId)));
+  }, [storedMessages, conversationId]);
+  async function deliver(item: Pending) {
+    setSending(true);
+    setError(null);
+    setDlp(false);
+    setPending(current => current.map(m => m.id === item.id ? { ...m, sendState: "pending" } : m));
+    try {
+      const sent = await api<{ taskId?: string; messageId?: string }>(`/api/conversations/${item.conversation}/messages`, { method: "POST", body: JSON.stringify(item.payload) });
+      if (perfTurn.current) { perfTurn.current.task = sent?.taskId; perfTurn.current.message = sent?.messageId; }
+      onSent();
+    } catch (caught) {
+      setPending(current => current.map(m => m.id === item.id ? { ...m, sendState: "failed" } : m));
+      const detail = errorMessage(caught, "Could not send that message.");
+      setDlp(caught instanceof ApiError && caught.status === 422);
+      setError(detail);
+    } finally { setSending(false); }
+  }
   const perfTurn = useRef<{ id: string; conversation: string; messages: Set<string>; events: Set<AgentEvent>; working: boolean; at: number; task?: string; message?: string } | null>(null);
   useEffect(() => { initPerf(); }, []);
   useEffect(() => {
@@ -90,6 +117,8 @@ export function ChatPane({
     if (activity.some(e => ["tool", "tool_call", "tool_result"].includes(e.type))) measure("tool_chip_ms");
     if (reply || activity.some(e => ["delta", "message.delta", "text_delta"].includes(e.type) && String(e.delta ?? e.text ?? "").trim())) measure("first_token_screen_ms");
   }, [messages, events, working, conversationId, botId, activeTaskId]);
+  const streamTextPainted = useCallback(() => { if (perfTurn.current) paintedPerf(`${perfTurn.current.id}:first_token_screen_ms`, "first_token_screen_ms"); }, []);
+  const streamToolPainted = useCallback(() => { if (perfTurn.current) paintedPerf(`${perfTurn.current.id}:tool_chip_ms`, "tool_chip_ms"); }, []);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   useEffect(() => { setAvatarMode(working ? "working" : "idle"); return () => setAvatarMode("idle"); }, [working]);
@@ -353,24 +382,13 @@ export function ChatPane({
     setDlp(false);
     const rich = hasBlocks(parts);
     const text = parts.filter(p => p.type === "text").map(p => (p as { text: string }).text).join("\n").trim();
-    try {
-      const sent = await api<{ taskId?: string; messageId?: string }>(`/api/conversations/${conversationId}/messages`, {
-        method: "POST",
-        body: JSON.stringify(rich ? { parts: toPayload(parts), asTask } : { content: text, asTask }),
-      });
-      if (perfTurn.current) { perfTurn.current.task = sent?.taskId; perfTurn.current.message = sent?.messageId; }
-      setParts(initialParts());
-      draftsRef.current.delete(conversationId);
-      onSent();
-    } catch (caught) {
-      if (perfTurn.current) { endSendPerf(perfTurn.current.id); perfTurn.current = null; }
-      const message = errorMessage(caught, "Could not send that message.");
-      const blocked = (caught instanceof ApiError && caught.status === 422) || message.toLowerCase().includes("data policy");
-      setDlp(blocked);
-      setError(message);
-    } finally {
-      setSending(false);
-    }
+    const clientId = crypto.randomUUID();
+    const payload = { ...(rich ? { parts: toPayload(parts), asTask } : { content: text, asTask }), client_id: clientId };
+    const item: Pending = { id: clientId, clientId, conversation: conversationId, role: "user", content: flatten(parts), createdAt: new Date().toISOString(), sendState: "pending", payload };
+    // Commit before awaiting IO, so the echo is present for this submit frame.
+    flushSync(() => { setPending(current => [...current, item]); setParts(initialParts()); });
+    draftsRef.current.delete(conversationId);
+    await deliver(item);
   }
 
   async function answer(messageId: string, choices: string[], custom = "") {
@@ -402,6 +420,8 @@ export function ChatPane({
         setScrolledUp(!stickRef.current);
       }}>
         <div ref={listRef} className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 py-4">
+          {visiblePending.filter(m => m.sendState === "failed").map(m => <div key={`retry-${m.id}`} role="status" className="text-sm text-destructive">Message failed. <Button size="sm" variant="outline" data-testid="retry-send" onClick={() => void deliver(m)}>Retry</Button></div>)}
+          {events.some(event => event.type === "task.started" && !storedMessages.some(m => m.role === "assistant" && m.requestId === event.taskId)) ? <div data-testid="ack-chip" role="status" className="text-sm text-muted-foreground">On it</div> : null}
           {hasOlder ? <Button type="button" data-testid="load-older" variant="ghost" size="sm" className="mx-auto" disabled={loadingOlder} onClick={() => void loadEarlier()}>{loadingOlder ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : null}Load earlier messages</Button> : null}
           {extras}
           {messages.length === 0 ? <div data-testid="chat-empty" className="py-12 text-center"><p className="font-medium">Start a conversation with {botName}</p><p className="mt-2 text-sm text-muted-foreground">Ask a question, share an idea, or assign some work.</p></div> : null}
@@ -479,8 +499,8 @@ export function ChatPane({
               </figure>;
             })}</div>
           </section> : null}
-          {events.filter(event => !["delta", "message.delta", "text_delta"].includes(event.type)).map((event, i) => <EventCard key={`${conversationId}-${i}`} event={event} />)}
-          {working && events.some(event => ["delta", "message.delta", "text_delta"].includes(event.type)) ? <div data-testid="streaming-text" className="rounded-md bg-assistant-bubble p-3 text-sm"><Markdown text={events.filter(event => ["delta", "message.delta", "text_delta"].includes(event.type)).map(event => String(event.delta ?? event.text ?? "")).join("")} /><span aria-hidden className="inline-block h-4 w-1 animate-pulse bg-foreground" /></div> : null}
+          {events.filter(event => !["delta", "message.delta", "text_delta", "task.started", "model.started", "model.finished", "model.error"].includes(event.type)).map((event, i) => <EventCard key={`${conversationId}-${i}`} event={event} />)}
+          <StreamDraft botId={botId} completed={storedMessages.filter(m => m.role === "assistant" && m.requestId).map(m => m.requestId!)} onText={streamTextPainted} onTool={streamToolPainted} />
           {working ? (
             <div data-testid="working-row" role="status" className="flex items-center gap-2 px-1 py-1 text-sm">
               <BotAvatar animated size={22} botId={botId} shape={avatar?.shape} color={avatar?.color} />
@@ -823,5 +843,5 @@ function EventCard({ event }: { event: AgentEvent }) {
   if (event.type === "memory") return <MemoryNotice action={(["saved", "updated", "forgot", "suggested", "blocked"].includes(String(event.action)) ? String(event.action) : "saved") as "saved" | "updated" | "forgot" | "suggested" | "blocked"} text={String(event.content ?? "")} memoryId={String(event.memoryId ?? event.memory_id ?? "") || undefined} memoryKind={String(event.kind ?? "") || undefined} reason={String(event.reason ?? "") || undefined} />;
   const tool = String(event.tool ?? event.name ?? "Tool");
   const args = typeof event.args === "object" && event.args ? JSON.stringify(event.args) : String(event.args ?? "");
-  return <Collapsible data-testid="tool-call-card" className="rounded-md border border-border text-xs"><CollapsibleTrigger className="flex min-h-10 w-full items-center gap-2 px-3 text-left"><span aria-hidden>⌘</span><span className="font-medium">{tool}</span><span className="min-w-0 flex-1 truncate text-muted-foreground">{args.slice(0, 90)}</span><span>{String(event.status ?? (event.type === "tool_result" ? "Done" : "Running"))}</span></CollapsibleTrigger><CollapsibleContent><pre className="max-h-64 overflow-auto whitespace-pre-wrap border-t border-border p-3">{JSON.stringify({ args: event.args, result: event.result }, null, 2)}</pre></CollapsibleContent></Collapsible>;
+  return <Collapsible data-testid="tool-call-card" className="rounded-md border border-border text-xs"><CollapsibleTrigger className="flex min-h-10 w-full items-center gap-2 px-3 text-left"><span aria-hidden>⌘</span><span className="font-medium">{toolLabel(tool, event.args)}</span><span className="min-w-0 flex-1 truncate text-muted-foreground">{args.slice(0, 90)}</span><span>{String(event.status ?? (event.type === "tool_result" ? "Done" : "Running"))}</span></CollapsibleTrigger><CollapsibleContent><pre className="max-h-64 overflow-auto whitespace-pre-wrap border-t border-border p-3">{JSON.stringify({ args: event.args, result: event.result }, null, 2)}</pre></CollapsibleContent></Collapsible>;
 }
