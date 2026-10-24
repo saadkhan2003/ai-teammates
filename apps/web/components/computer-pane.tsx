@@ -869,7 +869,7 @@ export function ComputerPane({
         </p>
       ) : null}
       {waiting.length > 0 ? (
-        <div data-testid="attention-banner" role="status" className={cn("rounded-lg border border-border bg-card p-4", fullscreen && "fixed bottom-20 left-1/2 z-[90] w-[min(32rem,92vw)] -translate-x-1/2 border-white/10 bg-neutral-900 text-neutral-100 shadow-xl")}>
+        <div data-testid="attention-banner" role="status" className={cn("rounded-lg border border-border bg-card p-4", fullscreen && "mx-auto w-[min(32rem,92vw)] shrink-0 max-h-[40vh] overflow-y-auto border-white/10 bg-neutral-900 text-neutral-100 shadow-xl")}>
           <p className="font-medium">A task is waiting on you.</p>
           <p className="mt-1 text-sm">The bot waits for you to finish the human step and explicitly continue.</p>
           <ul className="mt-3 flex flex-col gap-3">
