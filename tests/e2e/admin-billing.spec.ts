@@ -27,6 +27,8 @@ test("admin edits plan allowance and sees the per-user AI / computer / storage b
     await page.getByTestId("billing-run-cleanup").click();
     await expect(page.getByRole("status").filter({ hasText: /Cleanup removed \d+ files/ })).toBeVisible();
     await expect(page.getByTestId("billing-last-cleanup")).toContainText("Last cleanup (admin)");
+    await expect(page.getByTestId("billing-run-cleanup")).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
     const standard = original.plans.find((p: { id: string }) => p.id === "standard");
     expect(standard.storageQuotaGb).toBe(50);
     expect(standard.ramMb).toBe(8192);
@@ -34,6 +36,8 @@ test("admin edits plan allowance and sees the per-user AI / computer / storage b
     await page.getByLabel("Pro Storage quota (GB)", { exact: true }).fill(String(pro.storageQuotaGb + 1));
     const field = page.getByLabel("Pro Weekly credits", { exact: true });
     await field.fill(String(pro.weeklyCredits + 1));
+    await expect(field).toHaveValue(String(pro.weeklyCredits + 1));
+    await expect(page.getByLabel("Pro Storage quota (GB)", { exact: true })).toHaveValue(String(pro.storageQuotaGb + 1));
     await page.getByTestId("save-plan-pro").click();
     await expect(page.getByRole("status").filter({ hasText: "Pro saved." })).toBeVisible();
     const after = await page.request.get("/api/admin/billing").then(r => r.json());

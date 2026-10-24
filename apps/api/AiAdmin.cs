@@ -15,6 +15,14 @@ public static partial class AiAdmin
     private static IResult Json(object value) => Results.Json(value, AiModelRegistry.Json);
     private static Guid Actor(HttpContext ctx) => (Guid)ctx.Items["ai_actor"]!;
     private static T Read<T>(JsonElement body) => body.Deserialize<T>(AiModelRegistry.Json) ?? throw new ArgumentException("invalid body");
+    // Create endpoints assign the id server-side; ignore any client id (the admin form sends "" for new rows).
+    private static T ReadNew<T>(JsonElement body)
+    {
+        if (body.ValueKind != JsonValueKind.Object) return Read<T>(body);
+        var node = System.Text.Json.Nodes.JsonObject.Create(body) ?? throw new ArgumentException("invalid body");
+        node.Remove("id"); node.Remove("Id");
+        return node.Deserialize<T>(AiModelRegistry.Json) ?? throw new ArgumentException("invalid body");
+    }
     private static void Check(bool condition, string error) { if (!condition) throw new ArgumentException(error); }
 
     public static async Task<IResult?> Guard(HttpContext ctx, Platform platform)
@@ -66,7 +74,7 @@ public static partial class AiAdmin
         });
         group.MapPost("/providers", (HttpContext ctx, JsonElement body) => Write(platform, Actor(ctx), "provider.created", async (conn, tx) =>
         {
-            var provider = Read<AiProvider>(body) with { Id = Guid.NewGuid() };
+            var provider = ReadNew<AiProvider>(body) with { Id = Guid.NewGuid() };
             ValidateProvider(provider);
             await conn.ExecuteAsync("INSERT INTO ai_providers(id,name,kind,base_url,enabled,models) VALUES(@Id,@Name,@Kind,@BaseUrl,@Enabled,CAST(@models AS jsonb))", new { provider.Id, provider.Name, provider.Kind, provider.BaseUrl, provider.Enabled, models = JsonSerializer.Serialize(provider.Models, AiModelRegistry.Json) }, tx);
             return new { id = provider.Id };

@@ -52,7 +52,7 @@ export default function AiModels() {
     event.preventDefault();
     setBusy(true); setError("");
     try {
-      const result = await api<{ id: string }>(`/api/admin/ai/providers${editor.id ? `/${editor.id}` : ""}`, { method: editor.id ? "PUT" : "POST", body: JSON.stringify(editor) });
+      const result = await api<{ id: string }>(`/api/admin/ai/providers${editor.id ? `/${editor.id}` : ""}`, { method: editor.id ? "PUT" : "POST", body: JSON.stringify(editor.id ? editor : (({ id: _id, ...rest }) => rest)(editor)) });
       // Keep the provider id if saving the key fails, so retry edits rather than duplicates it.
       setEditor(current => ({ ...current, id: result.id }));
       if (key) await api(`/api/admin/ai/providers/${result.id}/key`, { method: "PUT", body: JSON.stringify({ key }) });

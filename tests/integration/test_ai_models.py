@@ -224,3 +224,15 @@ def test_kill_switch_spend_cap_user_payloads_and_sse_have_no_model_branding(regi
         stop.set(); reader.join(6)
         request(owner, "PUT", "/kill-switch", {"mode": "off"})
         request(owner, "POST", f"/versions/{initial}/rollback")
+
+
+def test_create_provider_ignores_blank_client_id(registry):
+    # The admin form sends id:"" for a new provider; the server assigns the id.
+    owner = registry[0]
+    body = {"id": "", "name": f"ai-test-blank-{uuid.uuid4().hex[:8]}", "kind": "mock", "base_url": "http://mock-openrouter:8090/v1",
+            "enabled": False, "models": [{"id": "mock/planner", "label": "", "context_tokens": 0, "tools": True, "vision": False, "caching": False}]}
+    created = request(owner, "POST", "/providers", body)
+    try:
+        assert uuid.UUID(created["id"])
+    finally:
+        owner.call("DELETE", f"/api/admin/ai/providers/{created['id']}")

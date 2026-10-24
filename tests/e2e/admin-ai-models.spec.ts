@@ -19,7 +19,7 @@ test("owner configures a mock provider, saves and rolls back with theme evidence
     await page.getByRole("button", { name: "Add provider", exact: true }).click();
     const dialog = page.getByRole("dialog");
     await dialog.getByLabel("Provider name", { exact: true }).fill(name);
-    await dialog.getByLabel("Kind", { exact: true }).selectOption("mock");
+    await dialog.getByRole("combobox", { name: "Kind", exact: true }).selectOption("mock");
     await dialog.getByLabel("Base URL", { exact: true }).fill("http://mock-openrouter:8090/p2/v1");
     await dialog.getByLabel("API key", { exact: true }).fill("sk-or-browser-mock-only-000000");
     await dialog.getByLabel("id", { exact: true }).fill("mock/planner");

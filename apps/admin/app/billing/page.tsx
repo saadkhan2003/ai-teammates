@@ -67,12 +67,12 @@ export default function BillingPage() {
       {msg && <p role="status" className="text-sm text-green-600 dark:text-green-400">{msg}</p>}
     </section>
     {rates && <section className={card} data-testid="billing-rates"><h3 className="font-semibold">Credit rates</h3>
-      <div className="grid gap-3 sm:grid-cols-4">{rateFields.map(([k, label]) => <label key={k} className="text-sm">{label}<input className={input} type="number" step="any" min={0} value={rates[k]} onChange={e => setRates({ ...rates, [k]: Number(e.target.value) })} /></label>)}</div>
+      <div className="grid gap-3 sm:grid-cols-4">{rateFields.map(([k, label]) => <label key={k} className="text-sm">{label}<input className={input} type="number" step="any" min={0} value={rates[k]} onChange={e => setRates(current => current ? { ...current, [k]: Number(e.target.value) } : current)} /></label>)}</div>
       <button className={button} onClick={() => void saveRates()}>Save rates</button></section>}
     {plans.length > 0 && <section className={card} data-testid="billing-plans"><h3 className="font-semibold">Plans</h3>
       {plans.map((plan, i) => <div key={plan.id} data-testid="billing-plan" className="space-y-2 border-t border-border pt-3 first-of-type:border-t-0 first-of-type:pt-0">
         <p className="text-sm"><span className="font-semibold">{plan.name}</span> · ${Number(plan.priceUsd).toFixed(0)}/month{plan.upgradeTo ? ` · upgrades to ${plan.upgradeTo}` : ""}</p>
-        <div className="grid gap-3 sm:grid-cols-5">{planFields.map(([k, label]) => <label key={k} className="text-sm">{label}<input aria-label={`${plan.name} ${label}`} className={input} type="number" min={0} step="any" value={Number(plan[k])} onChange={e => setPlans(plans.map((p, j) => j === i ? { ...p, [k]: Number(e.target.value) } : p))} /></label>)}</div>
+        <div className="grid gap-3 sm:grid-cols-5">{planFields.map(([k, label]) => <label key={k} className="text-sm">{label}<input aria-label={`${plan.name} ${label}`} className={input} type="number" min={0} step="any" value={Number(plan[k])} onChange={e => setPlans(current => current.map((p, j) => j === i ? { ...p, [k]: Number(e.target.value) } : p))} /></label>)}</div>
         <button className={button} data-testid={`save-plan-${plan.id}`} onClick={() => void savePlan(plan)}>Save {plan.name}</button>
       </div>)}</section>}
     {resources && <section className={card} data-testid="billing-resources"><h3 className="font-semibold">Computers &amp; storage</h3>
