@@ -37,6 +37,7 @@ export type Reaction = {
 };
 
 export type ChatMessage = {
+  page?: { id: string; title: string; kind: string; version?: number } | null;
   id: string;
   role: string;
   content: string;

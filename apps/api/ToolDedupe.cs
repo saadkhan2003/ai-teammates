@@ -4,7 +4,7 @@ public static class ToolDedupe
 {
     private static readonly HashSet<string> NonIdempotentTools = new(StringComparer.Ordinal)
     {
-        "shell", "write_file", "edit_file", "delete_file", "git_commit", "setup_env", "run_tests", "write_skill"
+        "shell", "write_file", "edit_file", "delete_file", "git_commit", "setup_env", "run_tests", "write_skill", "write_page", "edit_page"
     };
 
     public static bool Applies(string tool, string? idempotencyKey) =>

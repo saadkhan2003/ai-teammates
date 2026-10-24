@@ -163,7 +163,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (pathname === "/login" || pathname === "/invite") return;
+    if (pathname === "/login" || pathname === "/invite" || pathname.startsWith("/p/")) return;
     wireConnectionEvents();
     void load();
     const timer = window.setInterval(() => void load(), 15_000);
@@ -273,7 +273,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => observer.disconnect();
   }, [accentColor]);
 
-  if (pathname === "/login" || pathname === "/invite") return <>{children}</>;
+  if (pathname === "/login" || pathname === "/invite" || pathname.startsWith("/p/")) return <>{children}</>;
 
   function go(href: string) {
     setPalette(false);

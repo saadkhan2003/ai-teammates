@@ -5,6 +5,7 @@ import { AudioLines, Copy, Download, FileArchive, FileCode, FileQuestion, FileTe
 import { toast } from "sonner";
 import { api, apiFetch } from "@/lib/api";
 import { formatAge, LIBRARY_FILTERS, libraryTypeParam, nextLibraryRowIndex, type LibraryFilter, type LibraryGroup, type LibraryItem, type LibraryResponse } from "@/lib/library";
+import { PagesLibrary } from "@/components/page-canvas";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -211,6 +212,8 @@ export function LibraryPane({ botId, botName, botShape, botColor }: { botId: str
     if (event.key === "Enter" && !["BUTTON", "A"].includes((event.target as HTMLElement).tagName)) { event.preventDefault(); const item = [...(searchItems ?? []), ...allItems].find(candidate => candidate.id === row.dataset.libraryItem); if (item) setPreview(item); }
     if (event.key === "Delete") { event.preventDefault(); const item = [...(searchItems ?? []), ...allItems].find(candidate => candidate.id === row.dataset.libraryItem); if (item) setDeleteTarget(item); }
   };
+
+  if (activeType === "Pages") return <div className="space-y-4"><Button variant="ghost" size="sm" onClick={() => setActiveType("All")}>← All library items</Button><PagesLibrary botId={botId} /></div>;
 
   return <div className="space-y-4" onKeyDown={keyNav}>
     <div className="space-y-2">

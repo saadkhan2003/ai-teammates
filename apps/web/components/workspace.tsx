@@ -43,6 +43,7 @@ import { HISTORY_PAGE, mergeHistory } from "@/lib/history";
 import { clampWorkBudget, WORK_BUDGET_LIMITS } from "@/lib/work-budget";
 import type { ChatMessage } from "@/lib/types";
 import { RefreshNotice } from "@/components/refresh-notice";
+import { PageCanvasHost } from "@/components/page-canvas";
 import { LibraryPane } from "@/components/library-pane";
 import { ShareMenu } from "@/components/share-menu";
 import { RecordingBanner, useTeachTask } from "@/components/teach-task";
@@ -439,6 +440,7 @@ export function Workspace({ botId }: { botId: string }) {
           }
         />
       </section>
+      <PageCanvasHost botId={botId} onOpen={() => { setPaneRaw(false); setSettingsOpen(false); }} />
       <div className={cn("contents md:block md:shrink-0 md:overflow-hidden md:transition-[width] md:duration-200 motion-reduce:md:transition-none", pane ? "md:w-[min(380px,42vw)]" : "md:w-0")}>
       {paneMounted ? (
         <aside

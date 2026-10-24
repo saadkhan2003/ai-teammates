@@ -42,6 +42,13 @@ def _plan(messages: list) -> dict:
         return _poison_step_plan(transcript)
     if "SHELL APPEND DEMO" in _first_user(transcript).upper():
         return _shell_append_plan(transcript)
+    instruction = _first_user(transcript).lower()
+    if "make a page" in instruction or "update the page" in instruction:
+        if any(item.get("role") == "tool" for item in transcript):
+            return _final("Your page is ready.")
+        if "update the page" in instruction:
+            return _tool("edit_page", {"edits": [{"find": "Quarterly overview", "replace": "Updated quarterly overview"}], "summary": "Updated the quarterly heading"})
+        return _tool("write_page", {"title": "Quarterly overview", "kind": "dashboard", "source": PAGE_DEMO})
     done = sum(1 for item in transcript if item.get("role") == "tool")
     steps = _steps(_first_user(transcript), transcript)
     if done >= len(steps):
@@ -766,3 +773,28 @@ def _final(text: str) -> dict:
         ],
         "usage": {"prompt_tokens": 12, "completion_tokens": 8},
     }
+
+
+PAGE_DEMO = '''# Quarterly overview
+
+A clear view of the work ahead.
+
+```page
+{"type":"grid","title":"Projects","columns":["Project","Status","Budget"],"rows":[["Beacon","Planning",1800],["Atlas","Active",2400],["Cedar","Complete",900]]}
+```
+```page
+{"type":"input","id":"price","label":"Price","kind":"number","value":20,"min":0}
+```
+```page
+{"type":"input","id":"quantity","label":"Quantity","kind":"number","value":3,"min":1}
+```
+```page
+{"type":"calculator","label":"Total","expression":"price * quantity"}
+```
+```page
+{"type":"chart","title":"Monthly progress","chart":"bar","data":[{"label":"Jan","value":12},{"label":"Feb","value":18},{"label":"Mar","value":24}]}
+```
+```page
+{"type":"progress","label":"Milestones","value":65}
+```
+'''
