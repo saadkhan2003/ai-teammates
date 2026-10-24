@@ -69,8 +69,9 @@ async function send(page: Page, text: string, asTask: boolean) {
 async function assignTracked(page: Page, botId: string, text: string) {
   const before = new Set((await listTasks(page, botId)).map((row) => row.id));
   await send(page, text, true);
-  const created = (await listTasks(page, botId)).find((row) => !before.has(row.id));
-  expect(created, "task was created").toBeTruthy();
+  // The composer clears optimistically, before the send lands, so wait for the task row.
+  let created: TaskRow | undefined;
+  await expect.poll(async () => (created = (await listTasks(page, botId)).find((row) => !before.has(row.id))) !== undefined, { message: "task was created", timeout: 15_000 }).toBe(true);
   return created!.id;
 }
 
