@@ -84,7 +84,7 @@ def test_seed_does_not_leak_and_only_seeds_once():
     output = io.StringIO()
     with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
         for _ in range(2):
-            assert module.seed({'OPENROUTER_API_KEY':fake_key}, opener=fake, credentials=lambda _:('owner','fake-password')) == 0
+            assert module.seed({'OPENROUTER_API_KEY':fake_key, 'SEED_API_URL':'http://seed.invalid'}, opener=fake, credentials=lambda _:('owner','fake-password')) == 0
     assert len(fake.saved) == 1 and fake.saved[0]['value'] == fake_key
     assert fake_key not in output.getvalue() and 'fake-password' not in output.getvalue()
 

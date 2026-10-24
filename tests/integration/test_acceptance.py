@@ -13,16 +13,23 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-# One compose project per live stack: STACK/STACK_SUBNET/ISOLATION_CHAIN default to the main `teammates` stack.
-STACK = os.environ.get("STACK", "teammates")
+def _require_environment() -> None:
+    required = ("STACK", "BASE_URL", "API_URL")
+    missing = [name for name in required if not os.environ.get(name)]
+    if missing:
+        raise RuntimeError("Required environment variable(s) missing for integration tests: " + ", ".join(missing))
+
+_require_environment()
+
+STACK = os.environ["STACK"]
 SUBNET = os.environ.get("STACK_SUBNET", "172.30.28")
 CHAIN = os.environ.get("ISOLATION_CHAIN", "TEAMS-ISO")
 
 
-BASE_URL = os.environ.get("BASE_URL", "http://127.0.0.1:18080")
+BASE_URL = os.environ["BASE_URL"]
 
-BASE = os.environ.get("BASE_URL", BASE_URL).rstrip("/")
-API = os.environ.get("API_URL", "http://127.0.0.1:18081").rstrip("/")
+BASE = os.environ["BASE_URL"].rstrip("/")
+API = os.environ["API_URL"].rstrip("/")
 OWNER = os.environ.get("OWNER_USERNAME", "saad")
 PASSWORD = os.environ.get("OWNER_PASSWORD", "teammates-dev")
 WORKER = os.environ.get("WORKER_TOKEN", "dev-worker-token-change-me")

@@ -6,6 +6,14 @@ import os
 
 from test_plugin_catalog import login
 
+def _require_environment() -> None:
+    required = ("STACK", "BASE_URL", "API_URL")
+    missing = [name for name in required if not os.environ.get(name)]
+    if missing:
+        raise RuntimeError("Required environment variable(s) missing for integration tests: " + ", ".join(missing))
+
+_require_environment()
+
 WORKER = os.environ.get("WORKER_TOKEN", "dev-worker-token-change-me")
 
 
@@ -37,7 +45,7 @@ def test_stdio_server_lists_and_stays_inside_caps():
     status, tools = owner.call(
         "GET",
         f"/internal/bots/{bot_id}/plugin-tools",
-        base=os.environ.get("API_URL", "http://127.0.0.1:18081"),
+        base=os.environ["API_URL"],
         headers={"Authorization": "Bearer " + WORKER},
     )
     assert status == 200, tools

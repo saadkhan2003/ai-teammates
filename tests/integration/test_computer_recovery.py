@@ -9,8 +9,15 @@ import threading
 from test_acceptance import BASE, auto_allow_browser_opens, login, result_text, submit, wait_task
 import os
 
-# One compose project per live stack: STACK/STACK_SUBNET/ISOLATION_CHAIN default to the main `teammates` stack.
-STACK = os.environ.get("STACK", "teammates")
+def _require_environment() -> None:
+    required = ("STACK", "BASE_URL")
+    missing = [name for name in required if not os.environ.get(name)]
+    if missing:
+        raise RuntimeError("Required environment variable(s) missing for integration tests: " + ", ".join(missing))
+
+_require_environment()
+
+STACK = os.environ["STACK"]
 SUBNET = os.environ.get("STACK_SUBNET", "172.30.28")
 CHAIN = os.environ.get("ISOLATION_CHAIN", "TEAMS-ISO")
 

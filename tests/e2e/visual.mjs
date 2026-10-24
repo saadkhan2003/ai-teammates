@@ -4,7 +4,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { chromium } from "./node_modules/playwright/index.mjs";
 
-const base = process.env.BASE_URL || "http://127.0.0.1:18080";
+for (const name of ["STACK", "BASE_URL"]) {
+  if (!process.env[name]) throw new Error(`${name} is required to run e2e visual capture`);
+}
+const base = process.env.BASE_URL;
 const owner = process.env.OWNER_USERNAME || "saad";
 const password = process.env.OWNER_PASSWORD || "teammates-dev";
 const outDir = path.resolve("docs/evidence/visual");

@@ -6,8 +6,16 @@ import os
 import urllib.error
 import urllib.request
 
-BASE = os.environ.get("BASE_URL", "http://127.0.0.1:18080").rstrip("/")
-API = os.environ.get("API_URL", "http://127.0.0.1:18081").rstrip("/")
+def _require_environment() -> None:
+    required = ("STACK", "BASE_URL", "API_URL")
+    missing = [name for name in required if not os.environ.get(name)]
+    if missing:
+        raise RuntimeError("Required environment variable(s) missing for integration tests: " + ", ".join(missing))
+
+_require_environment()
+
+BASE = os.environ["BASE_URL"].rstrip("/")
+API = os.environ["API_URL"].rstrip("/")
 OWNER = os.environ.get("OWNER_USERNAME", "saad")
 PASSWORD = os.environ.get("OWNER_PASSWORD", "teammates-dev")
 WORKER = os.environ.get("WORKER_TOKEN", "dev-worker-token-change-me")

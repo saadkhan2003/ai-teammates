@@ -3,7 +3,7 @@ import fs from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import { autoAllowBrowserOpens, login } from "./helpers";
 
-const STACK = process.env.STACK ?? "teammates";
+const STACK = process.env.STACK!;
 const LOGIN_CANARY = "CanaryLoginPassword9911";
 const POST = "Post this note to the public board: hello from the yard";
 const SIGNIN = "Sign in at the portal";

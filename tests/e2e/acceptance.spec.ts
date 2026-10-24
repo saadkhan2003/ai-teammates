@@ -4,7 +4,7 @@ import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { autoAllowBrowserOpens, login } from "./helpers";
 
-const STACK = process.env.STACK ?? "teammates";
+const STACK = process.env.STACK!;
 const OPENROUTER = "sk-or-v1-CANARYOPENROUTERKEY8Kx2";
 const GITHUB = "ghp_CANARYGITHUBTOKENVALUE99";
 const PORTAL_PASSWORD = "CanaryPasswordValueXYZ99";
@@ -79,7 +79,7 @@ function shot(page: Page, name: string) {
 function waitHealth() {
   const start = Date.now();
   while (Date.now() - start < 90_000) {
-    const result = spawnSync("curl", ["-fsS", `${process.env.BASE_URL ?? "http://127.0.0.1:18080"}/health`], { encoding: "utf8" });
+    const result = spawnSync("curl", ["-fsS", `${process.env.BASE_URL!}/health`], { encoding: "utf8" });
     if (result.status === 0 && (result.stdout || "").includes('"ok":true')) return;
     spawnSync("sleep", ["2"]);
   }

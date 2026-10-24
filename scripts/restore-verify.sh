@@ -3,16 +3,20 @@
 # Usage: scripts/restore-verify.sh backups/agent-....dump
 set -euo pipefail
 cd "$(dirname "$0")/.."
+STACK="${STACK:?STACK is required}"
 dump="${1:?dump path required}"
-sudo -n docker exec -i "${STACK:-teammates}-postgres-1" psql -U "${POSTGRES_USER:-agent}" -d postgres -c "DROP DATABASE IF EXISTS agent_restore"
-sudo -n docker exec -i "${STACK:-teammates}-postgres-1" psql -U "${POSTGRES_USER:-agent}" -d postgres -c "CREATE DATABASE agent_restore"
-sudo -n docker exec -i "${STACK:-teammates}-postgres-1" pg_restore -U "${POSTGRES_USER:-agent}" -d agent_restore --no-owner < "$dump"
+sudo -n docker exec -i "${STACK}-postgres-1" psql -U "${POSTGRES_USER:-agent}" -d postgres -c "DROP DATABASE IF EXISTS agent_restore"
+sudo -n docker exec -i "${STACK}-postgres-1" psql -U "${POSTGRES_USER:-agent}" -d postgres -c "CREATE DATABASE agent_restore"
+sudo -n docker exec -i "${STACK}-postgres-1" pg_restore -U "${POSTGRES_USER:-agent}" -d agent_restore --no-owner < "$dump"
 python3 - <<'PY'
 import os, subprocess
 from pathlib import Path
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 sql = "SELECT id::text, owner_user_id::text, type, key_version::text, encode(ciphertext,'hex'), encode(nonce,'hex') FROM secrets LIMIT 1"
-raw = subprocess.check_output(["sudo","-n","docker","exec",os.environ.get("STACK","teammates")+"-postgres-1","psql","-U","agent","-d","agent_restore","-tA","-c",sql], text=True).strip()
+if not os.environ.get("STACK"):
+    raise SystemExit("STACK is required")
+stack = os.environ['STACK']
+raw = subprocess.check_output(["sudo","-n","docker","exec",stack+"-postgres-1","psql","-U","agent","-d","agent_restore","-tA","-c",sql], text=True).strip()
 if not raw:
     raise SystemExit("no secrets in the restored database")
 secret_id, owner_id, secret_type, version, cipher_hex, nonce_hex = raw.split("|")

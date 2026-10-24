@@ -3,7 +3,7 @@ import path from "node:path";
 import { request } from "@playwright/test";
 
 async function globalSetup() {
-  const baseURL = process.env.BASE_URL ?? "http://127.0.0.1:18080";
+  const baseURL = process.env.BASE_URL!;
   const authPath = path.join(__dirname, ".auth", "owner.json");
   const context = await request.newContext({ baseURL });
   try {

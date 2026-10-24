@@ -1,12 +1,16 @@
 import { defineConfig, devices } from "@playwright/test";
 
+for (const name of ["STACK", "BASE_URL"]) {
+  if (!process.env[name]) throw new Error(`${name} is required to run e2e tests`);
+}
+
 export default defineConfig({
   globalSetup: "./global-setup.ts",
   testDir: ".",
   timeout: 1_200_000,
   expect: { timeout: 20_000 },
   use: {
-    baseURL: process.env.BASE_URL ?? "http://127.0.0.1:18080",
+    baseURL: process.env.BASE_URL!,
     storageState: "./.auth/owner.json",
     actionTimeout: 20_000,
     channel: "chrome",
