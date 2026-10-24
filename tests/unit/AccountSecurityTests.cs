@@ -15,7 +15,7 @@ public sealed class AccountSecurityTests
 
         // Accessing Endpoints forces minimal API RequestDelegateFactory to inspect every
         // mapped signature, including body inference rules, without starting dependencies.
-        var endpoints = app.DataSources.SelectMany(source => source.Endpoints).ToArray();
+        var endpoints = ((IEndpointRouteBuilder)app).DataSources.SelectMany(source => source.Endpoints).ToArray();
         Assert.Contains(endpoints, endpoint => endpoint is RouteEndpoint route && route.RoutePattern.RawText == "/api/account");
         Assert.Contains(endpoints, endpoint => endpoint is RouteEndpoint route && route.RoutePattern.RawText == "/api/support/tickets/{id:guid}");
     }

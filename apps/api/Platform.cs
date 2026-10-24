@@ -159,6 +159,17 @@ public sealed class Platform
             await conn.ExecuteAsync("INSERT INTO schema_migrations (id) VALUES (@mid) ON CONFLICT DO NOTHING", new { mid }, tx);
             await tx.CommitAsync();
         }
+        // 054 may already be recorded by databases created before billing was appended to
+        // that task-scoped migration. Keep this additive DDL idempotent for those databases.
+        await conn.ExecuteAsync("""
+            CREATE TABLE IF NOT EXISTS billing_configuration (
+                id boolean PRIMARY KEY DEFAULT true CHECK (id),
+                currency_rate_pkr_per_usd numeric(12,4),
+                plans jsonb NOT NULL DEFAULT '[]'::jsonb,
+                updated_by uuid REFERENCES users(id) ON DELETE SET NULL,
+                updated_at timestamptz NOT NULL DEFAULT now()
+            )
+            """);
         var count = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM users");
         if (count == 0)
         {
