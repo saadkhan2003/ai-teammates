@@ -14,6 +14,15 @@ async function makeBot(page: Page) {
   return (body.bot ?? body) as { id: string; name: string };
 }
 
+// Computers start headless: the card rests on "Desktop asleep" until someone presses Watch.
+async function wake(page: Page) {
+  const frame = page.getByTestId("desktop-frame");
+  await expect(frame).toHaveAttribute("data-phase", "desktop-asleep");
+  await expect(page.getByTestId("computer-state-title")).toHaveText("Desktop asleep");
+  await expect(page.getByTestId("computer-retry")).toHaveText("Watch");
+  await page.getByTestId("computer-retry").click();
+}
+
 async function open(page: Page, id: string) {
   await page.goto(`/bots/${id}`);
   await expect(page.getByTestId("bot-name-button")).toBeVisible();
@@ -29,6 +38,7 @@ test("computer card: waking, error with retry, sleeping, offline, click-through"
     const held = new Promise<void>((resolve) => { release = resolve; });
     await page.route(watchTicket, async (route) => { await held; await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "down" }) }); });
     await open(page, bot.id);
+    await wake(page);
     const frame = page.getByTestId("desktop-frame");
     await expect(frame).toHaveAttribute("data-phase", "connecting");
     await expect(page.getByTestId("computer-state-title")).toHaveText("Waking up…");
@@ -72,7 +82,7 @@ test("computer card: resting state and click opens the full view with the Watchi
     await open(page, bot.id);
     const frame = page.getByTestId("desktop-frame");
     await expect(frame).toBeVisible();
-    await expect(frame).toHaveAttribute("data-phase", /sleeping|live|connecting|error/);
+    await expect(frame).toHaveAttribute("data-phase", /desktop-asleep|sleeping|live|connecting|error/);
     await page.screenshot({ path: `${SHOTS}/12-computer-card.png` });
     await frame.click();
     await expect(page.getByTestId("computer-topbar")).toBeVisible();
@@ -91,6 +101,7 @@ test("computer card respects reduced motion", async ({ page }) => {
   try {
     await page.route(watchTicket, async () => { /* never answers */ });
     await open(page, bot.id);
+    await wake(page);
     await expect(page.getByTestId("desktop-frame")).toHaveAttribute("data-phase", "connecting");
     const names = await page.getByTestId("computer-state").locator("div.animate-pulse").evaluateAll((els) => els.map((el) => getComputedStyle(el).animationName));
     for (const name of names) expect(name).toBe("none");
