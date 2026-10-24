@@ -9,13 +9,65 @@ const VIDEO_QUESTION = "What happens in the attached video?";
 const attachment = "[attached: /workspace/uploads/video-watch.mp4]";
 const bot = { id: BOT, name: "ATLAS", role: "Chief of staff", section: "Teammates", avatar: "", avatarShape: "blob1", avatarColor: "#ff3045", isPrimary: true, bio: "Runs the day", attention: false };
 
+function sendIdleDesktopFrame(socket: import("@playwright/test").WebSocketRoute) {
+  const bytes = (...values: number[]) => new Uint8Array(values);
+  let stage = 0;
+  socket.send("RFB 003.008\n");
+  socket.onMessage((message) => {
+    if (typeof message === "string") {
+      socket.send(bytes(1, 1)); // One security type: no authentication.
+      return;
+    }
+    if (stage === 0) {
+      stage = 1;
+      socket.send(bytes(0, 0, 0, 0)); // SecurityResult: success.
+      return;
+    }
+    if (stage === 1) {
+      stage = 2;
+      const name = new TextEncoder().encode("Idle desktop");
+      const serverInit = new Uint8Array(24 + name.length);
+      const view = new DataView(serverInit.buffer);
+      view.setUint16(0, 320);
+      view.setUint16(2, 200);
+      serverInit.set([32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0], 4);
+      view.setUint32(20, name.length);
+      serverInit.set(name, 24);
+      socket.send(serverInit);
+      return;
+    }
+
+    // A simple neutral desktop frame: muted gray-blue background with a subtle
+    // darker band. This keeps the computer panel representative without a live stack.
+    const width = 320;
+    const height = 200;
+    const update = new Uint8Array(4 + 12 + width * height * 4);
+    const view = new DataView(update.buffer);
+    update[0] = 0; // FramebufferUpdate
+    view.setUint16(2, 1);
+    view.setUint16(6, width);
+    view.setUint16(8, height);
+    view.setUint32(10, 0); // Raw encoding
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const offset = 16 + (y * width + x) * 4;
+        const band = y > 145 && y < 154;
+        update[offset] = band ? 76 : 104;
+        update[offset + 1] = band ? 87 : 116;
+        update[offset + 2] = band ? 99 : 143;
+      }
+    }
+    socket.send(update);
+  });
+}
+
 async function openVideoChat(page: Page, theme: "light" | "dark") {
   await page.addInitScript((value) => localStorage.setItem("teammates-theme", value), theme);
   await page.route("**/api/bots", route => route.fulfill({ json: { bots: [bot] } }));
   await page.route("**/api/system/llm-status", route => route.fulfill({ json: { hasKey: true } }));
-  await page.route(`**/api/computers/${BOT}/**`, route => route.fulfill({ json: { state: "off", online: false, holder: null } }));
+  await page.route(`**/api/computers/${BOT}/**`, route => route.fulfill({ json: { state: "running", online: true, healthy: true, holder: null } }));
   await page.route(`**/api/computers/${BOT}/vnc-ticket**`, route => route.fulfill({ json: { token: "e2e-idle-desktop", mode: "view", epoch: 1 } }));
-  page.routeWebSocket("**/vnc/websockify**", socket => socket.close({ code: 1000, reason: "fixture complete" }));
+  page.routeWebSocket("**/vnc/websockify**", socket => sendIdleDesktopFrame(socket));
 
   const messages: Array<Record<string, unknown>> = [];
   let messageNo = 0;
@@ -47,6 +99,8 @@ async function openVideoChat(page: Page, theme: "light" | "dark") {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`/bots/${BOT}`);
   await expect(page.getByTestId("video-progress")).toContainText("Watching part 1/1");
+  await expect(page.getByText("Couldn't connect")).toHaveCount(0);
+  await expect(page.getByText("The computer isn't answering")).toHaveCount(0);
   await expect(page.getByText("The desktop session did not include a token.")).toHaveCount(0);
   await expect(page.getByText(/Raw channel missing property:/)).toHaveCount(0);
 }
@@ -63,6 +117,8 @@ async function captureAnswerState(page: Page, theme: "light" | "dark") {
   await expect(page.locator("body")).not.toContainText("/workspace/uploads");
   await expect(page.getByTestId("video-analysis-card")).toContainText("A person demonstrates a test scene.");
   await expect(page.getByText("The video shows a person demonstrating a test scene.")).toBeVisible();
+  await expect(page.getByText("Couldn't connect")).toHaveCount(0);
+  await expect(page.getByText("The computer isn't answering")).toHaveCount(0);
   const rows = page.getByTestId("message-item");
   const contents = await rows.allTextContents();
   const userIndex = contents.findIndex(text => text.includes(VIDEO_QUESTION));
