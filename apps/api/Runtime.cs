@@ -82,6 +82,20 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
             "SELECT tool, args::text, approved_class FROM video_tool_sessions WHERE id=@sessionId AND task_id=@taskId AND bot_id=@botId AND lease_epoch=@epoch",
             new { sessionId, taskId, botId, epoch });
         if (session.Tool == null) return Results.Json(new { error = "video_authorization_required" }, statusCode: 403);
+        if (operation == "finalize")
+        {
+            if (!body.TryGetProperty("result", out var finalResult) || finalResult.ValueKind != JsonValueKind.Object)
+                return Results.BadRequest(new { error = "video_result_required" });
+            var (safeJson, ok) = VideoTools.FinalVideoStep(finalResult);
+            var updated = await conn.ExecuteAsync("""
+                UPDATE task_steps
+                SET result=CAST(@result AS jsonb), ok=@ok, finished_at=now()
+                WHERE task_id=@taskId AND tool=@tool AND result @> CAST(@marker AS jsonb)
+                  AND EXISTS (SELECT 1 FROM tasks WHERE id=@taskId AND bot_id=@botId AND status='running' AND lease_epoch=@epoch)
+                """, new { taskId, botId, epoch, tool = session.Tool, result = safeJson,
+                marker = JsonSerializer.Serialize(new { videoSession = sessionId }) });
+            return updated == 1 ? Results.Json(new { ok = true }) : Results.StatusCode(409);
+        }
         using var invocation = JsonDocument.Parse(session.Args);
         var toolArgs = invocation.RootElement;
         var gated = await Gate(botId, taskId, session.Tool, toolArgs, false, ct);

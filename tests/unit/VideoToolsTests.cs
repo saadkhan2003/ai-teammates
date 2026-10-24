@@ -80,6 +80,20 @@ public sealed class VideoToolsTests
     }
 
     [Fact]
+    public void FinalVideoStepStoresRedactedJsonAndKeepsFailureStatus()
+    {
+        using var failure = JsonDocument.Parse("""{"ok":false,"reason":"video_unavailable","error":"sk-or-v1-CanarySecret123456"}""");
+        var (json, ok) = VideoTools.FinalVideoStep(failure.RootElement);
+        using var saved = JsonDocument.Parse(json);
+        Assert.False(ok);
+        Assert.Equal("video_unavailable", saved.RootElement.GetProperty("reason").GetString());
+        Assert.DoesNotContain("CanarySecret123456", json);
+
+        using var success = JsonDocument.Parse("""{"summary":"Clear result","timeline":[]}""");
+        Assert.True(VideoTools.FinalVideoStep(success.RootElement).Ok);
+    }
+
+    [Fact]
     public void VideoCacheIdentityChangesWithEffectiveModelsAndSettings()
     {
         var original = VideoTools.SettingsVersion(Teammates.Api.Platform.DefaultRealModel, "whisper", "provider-a", "chunk=300");

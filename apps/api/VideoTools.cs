@@ -7,6 +7,13 @@ namespace Teammates.Api;
 
 public static class VideoTools
 {
+    public static (string Json, bool Ok) FinalVideoStep(JsonElement result)
+    {
+        var safe = RedactJsonStrings(result);
+        using var parsed = JsonDocument.Parse(safe);
+        var ok = !parsed.RootElement.TryGetProperty("ok", out var flag) || flag.ValueKind != JsonValueKind.False;
+        return (InjectionFilter.ScrubJson(safe), ok);
+    }
     public const string UsageRole = "video";
     public const string UsageProvider = "video";
     public const string UsageLabel = "Video watching";

@@ -22,6 +22,7 @@ async function openVideoChat(page: Page, theme: "light" | "dark") {
     await route.fulfill({ json: { ok: true } });
   });
   await page.route(`**/api/bots/${BOT}/**`, route => route.fulfill({ json: [] }));
+  await page.route(`**/api/computers/${BOT}/**`, route => route.fulfill({ json: { state: "ready", holder: "agent" } }));
   await page.route(`**/api/bots/${BOT}/workspace`, route => route.fulfill({ json: {
     bot, conversationId: CONVERSATION, tasks: [{ id: TASK, title: "Watch attached video", status: "running" }],
     messages,
@@ -30,7 +31,7 @@ async function openVideoChat(page: Page, theme: "light" | "dark") {
   await page.route("**/api/events", route => route.fulfill({
     status: 200,
     contentType: "text/event-stream",
-    body: `data: ${JSON.stringify({ type: "video_progress", taskId: TASK, botId: BOT, stage: "Watching part", current: 1, total: 1 })}\n\n`,
+    body: `data: ${JSON.stringify({ type: "video_progress", taskId: TASK, botId: BOT, detail: { stage: "Watching part", current: 1, total: 1 } })}\n\n`,
   }));
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`/bots/${BOT}`);

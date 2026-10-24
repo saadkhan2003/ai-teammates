@@ -226,7 +226,7 @@ export function Workspace({ botId }: { botId: string }) {
     const stopEvents = subscribeEvents((data) => {
       const event = parseAgentEvent(data);
       const type = event?.type ?? "";
-      if (event && ["grounding", "tool", "tool_call", "tool_result", "delta", "message.delta", "text_delta", "memory"].includes(type)) {
+      if (event && ["grounding", "tool", "tool_call", "tool_result", "delta", "message.delta", "text_delta", "memory", "video_progress"].includes(type)) {
         // Events without bot/task attribution cannot safely be shown in this workspace.
         if (event.botId === botId || (typeof event.taskId === "string" && taskIds.current.has(event.taskId))) {
           const detail = event.detail && typeof event.detail === "object" ? event.detail as Record<string, unknown> : {};

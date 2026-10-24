@@ -763,6 +763,12 @@ class Worker:
             if not session:
                 return {"ok": False, "status": "denied", "reason": "video_authorization_required"}
             result = await self._video_tool(task, name, args, session)
+            # Authorization records the session marker first; replace it with the
+            # redacted tool outcome while the same lease still owns the task.
+            await self.request("POST", "/internal/video/finalize", {
+                "taskId": _task_id(task), "botId": _bot_id(task), "epoch": _epoch(task),
+                "videoSession": session, "result": result if isinstance(result, dict) else {"ok": False, "reason": "video_failed"},
+            })
             if name == "watch_video" and isinstance(result, dict) and result.get("ok") is not False:
                 task["_video_analysis"] = result
             return result
