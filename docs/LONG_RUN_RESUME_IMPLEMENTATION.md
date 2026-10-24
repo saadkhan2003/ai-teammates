@@ -8,6 +8,8 @@ Work tasks use their resolved step budget plus one final response as the cumulat
 
 Computers are shared per owner. Deleting a bot wipes its workspace but retains the computer; `POST /api/computer/stop` releases an authenticated owner's unused computer after all their bots have been deleted. It refuses computers with remaining bots and records `computer.stopped` in the audit trail. The provider's existing capacity check counts running/provisioning computers, so stopped computers release capacity. Disposable-owner integration fixtures delete their bots and stop the unused computer even when setup fails. Tests that use the suite owner's existing computer reuse it.
 
+Stall escalation and expired-task-lease recovery run every two seconds in their own `TaskLeaseMaintenance` hosted service. Computer reconciliation, recovery, sampling, isolation checks and outbound recovery remain in the separate housekeeping loop, so slow computer I/O cannot delay task lease sweeps. Desktop reconciliation renews leases and sends holder state only for owners with bots; it leaves unused stopped computers asleep and releases their capacity until the owner creates a bot again.
+
 `POST /internal/tools/execute` now records the worker idempotency key for non-idempotent local tools (`shell`, file writes/edits/deletes, commits, environment setup, and tests). A completed call replays its scrubbed result with `deduped: true`; a concurrent or unresolved claim returns HTTP 409 with `status: in_progress`. These entries are task scoped and removed with the task.
 
 ## Chaos test hook (TEST ONLY)

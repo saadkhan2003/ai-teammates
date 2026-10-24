@@ -86,6 +86,8 @@ builder.Services.AddSingleton(loginFlow);
 builder.Services.AddSingleton(runtime);
 builder.Services.AddSingleton(data);
 builder.Services.AddHostedService<Maintenance>();
+builder.Services.AddHostedService(sp => new TaskLeaseMaintenance(
+    ct => TaskLeaseMaintenance.Sweep(platform, ct), sp.GetRequiredService<ILogger<TaskLeaseMaintenance>>()));
 builder.Services.AddHostedService<PluginCatalogJob>();
 builder.Services.AddHostedService<LibraryThumbnailWorker>();
 builder.Services.AddHostedService<TicketCleanupService>();
@@ -228,26 +230,6 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
             {
                 await runtime.RecoverOutbound(stoppingToken);
                 await using var conn = await platform.Data.OpenConnectionAsync(stoppingToken);
-                var stalled = await conn.QueryAsync<(Guid Id, Guid BotId, string Title, Guid? ConversationId, bool ForceCompact, double IdleSeconds, bool ToolInFlight)>("""
-                    SELECT t.id,t.bot_id,t.title,t.conversation_id,t.force_compact,
-                           extract(epoch from now()-coalesce((t.checkpoint->>'lastProgressAt')::timestamptz,t.last_progress_at)),
-                           (CASE WHEN t.checkpoint ? 'inFlightToolStartedAt' THEN
-                               now() < (t.checkpoint->>'inFlightToolStartedAt')::timestamptz
-                                   + (greatest(1,least(600,coalesce((t.checkpoint->>'inFlightToolTimeoutSeconds')::int,120))) * interval '1 second')
-                               ELSE false END)
-                    FROM tasks t WHERE t.status='running' AND t.lease_until>now()
-                    """);
-                foreach (var task in stalled)
-                {
-                    var decision = StallEscalation.Decide(task.IdleSeconds, platform.StallSoftSeconds, platform.StallHardSeconds, task.ForceCompact);
-                    if (decision == StallEscalationDecision.ForceCompact)
-                        await conn.ExecuteAsync("UPDATE tasks SET force_compact=true WHERE id=@id AND status='running' AND force_compact=false", new { id = task.Id });
-                    else if (decision == StallEscalationDecision.Abandon && !task.ToolInFlight)
-                    {
-                        await conn.ExecuteAsync("UPDATE tasks SET lease_until=now(),checkpoint=jsonb_set(coalesce(checkpoint,'{}'::jsonb),'{stallEndReason}','\"stalled\"'::jsonb,true) WHERE id=@id AND status='running' AND lease_until>now()", new { id = task.Id });
-                    }
-                }
-                await Reliability.SweepExpiredLeases(platform, platform.MaxAutoResumesPerHour);
                 var expiredLeaseUsers = (await conn.QueryAsync<Guid>("""
                     WITH expired AS (
                       UPDATE desktop_lease SET holder_kind='none', holder_user_id=NULL, tab_id=NULL,
@@ -355,13 +337,15 @@ public sealed class Maintenance(Platform platform, LoginFlow logins, Runtime run
     private async Task ReconcileDesktopLeases(NpgsqlConnection conn, CancellationToken ct)
     {
         await conn.ExecuteAsync("""
-            UPDATE desktop_lease SET expires_at=clock_timestamp()+interval '90 seconds', updated_at=clock_timestamp()
-            WHERE holder_kind='agent'
+            UPDATE desktop_lease l SET expires_at=clock_timestamp()+interval '90 seconds', updated_at=clock_timestamp()
+            FROM user_computers uc WHERE l.computer_id=uc.computer_id AND l.holder_kind='agent'
+              AND EXISTS (SELECT 1 FROM bots b WHERE b.owner_id=uc.user_id)
             """);
         var leases = await conn.QueryAsync<(Guid ComputerId, Guid DesktopBotId, string HolderKind, long Epoch)>("""
             SELECT uc.computer_id AS "ComputerId", uc.desktop_bot_id AS "DesktopBotId",
                    l.holder_kind AS "HolderKind", l.epoch AS "Epoch"
             FROM user_computers uc JOIN desktop_lease l ON l.computer_id=uc.computer_id AND l.display=1
+            WHERE EXISTS (SELECT 1 FROM bots b WHERE b.owner_id=uc.user_id)
             """);
         foreach (var lease in leases)
         {

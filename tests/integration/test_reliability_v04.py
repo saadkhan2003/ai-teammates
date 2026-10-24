@@ -2,7 +2,7 @@
 import time
 import uuid
 
-from test_acceptance import Client, OPENROUTER, login, submit, wait_task, worker_call
+from test_acceptance import Client, OPENROUTER, _psql, login, submit, wait_task, worker_call
 from test_bot_messaging import _cleanup
 
 
@@ -95,3 +95,39 @@ def test_unused_computer_stop_requires_owner_session_and_refuses_live_bots(bot_f
     status, computer = client.call('GET', '/api/computer')
     assert status == 200 and computer['status'] == before['status']
     assert computer['computerId'] == before['computerId']
+
+
+def test_desktop_reconciliation_does_not_wake_a_stopped_unused_computer(bot_factory):
+    active = login()
+    bot_factory(active, 'Active reconciliation sentinel')
+    status, active_computer = active.call('GET', '/api/computer')
+    assert status == 200
+    active_id = str(uuid.UUID(active_computer['computerId']))
+
+    username = 'stop-regression-' + uuid.uuid4().hex[:12]
+    password = 'unit-stack-password-123'
+    worker_call('POST', '/internal/test/users', {'username': username, 'password': password})
+    client = Client()
+    assert client.call('POST', '/api/auth/login', {'username': username, 'password': password})[0] == 200
+    bot = bot_factory(client, 'Unused reconciliation regression')
+    _cleanup(client, bot)
+    status, stopped = client.call('GET', '/api/computer')
+    assert status == 200 and stopped['status'] == 'stopped'
+    stopped_id = str(uuid.UUID(stopped['computerId']))
+    stopped_lease = _psql(f"SELECT updated_at::text FROM desktop_lease WHERE computer_id='{stopped_id}' AND display=1")
+
+    # Observe real housekeeping passes through the active desktop, instead of
+    # assuming a sleep was long enough for reconciliation to run.
+    previous = _psql(f"SELECT updated_at::text FROM desktop_lease WHERE computer_id='{active_id}' AND display=1")
+    passes = 0
+    deadline = time.monotonic() + 30
+    while passes < 2 and time.monotonic() < deadline:
+        current = _psql(f"SELECT updated_at::text FROM desktop_lease WHERE computer_id='{active_id}' AND display=1")
+        if current != previous:
+            passes += 1
+            previous = current
+        status, computer = client.call('GET', '/api/computer')
+        assert status == 200 and computer['status'] == 'stopped', computer
+        assert _psql(f"SELECT updated_at::text FROM desktop_lease WHERE computer_id='{stopped_id}' AND display=1") == stopped_lease
+        time.sleep(0.25)
+    assert passes >= 2, 'desktop reconciliation did not run twice'

@@ -14,6 +14,8 @@ When a worker prepares a model call, it fetches a deterministic catalog ordered 
 
 Every create writes an empty version-zero prior-body snapshot. Every update and revert records the body and version being replaced in `skill_revisions`, then increments the active version. Create, update, bot write, archive, and revert operations append a `platform.Audit` event. Owners can view the guide, inspect revision bodies and authors, edit, revert to a prior body, or archive it in the bot Skills pane.
 
+An owner PUT that only enables `allowBotEdit` is still an update: a newly created guide moves from version 1 to 2, and the next authorized bot write produces version 3. A denied bot write leaves the guide and its revisions unchanged and creates no successful skill-write audit event.
+
 ## API
 
 - `GET /api/bots/{bot}/skill-library` lists the bot's visible guides and seeds built-ins.

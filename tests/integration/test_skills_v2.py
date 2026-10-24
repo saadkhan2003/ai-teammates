@@ -61,12 +61,22 @@ def test_bot_edit_permission_defaults_off_and_owner_can_enable_it():
         # A worker token and a bare guide body cannot bypass policy/lease checks.
         with pytest.raises(AssertionError, match="400"):
             worker_call("POST", f"/internal/skills/{bot}/write", write)
+        sid = created["id"]
+        assert created["version"] == 1
+        status, revisions_before = client.call("GET", f"/api/skill-library/{sid}/revisions")
+        assert status == 200
         envelope = _skill_task(client, bot, write)
         denied = worker_call("POST", f"/internal/skills/{bot}/write", envelope)
         assert denied["ok"] is False and denied["status"] == "denied"
-        assert client.call("PUT", f"/api/skill-library/{created['id']}", dict(payload, allowBotEdit=True))[0] == 200
+        status, unchanged = client.call("GET", f"/api/skill-library/{sid}")
+        assert status == 200 and unchanged["version"] == 1
+        assert unchanged["body"] == payload["body"] and unchanged["allow_bot_edit"] is False
+        assert client.call("GET", f"/api/skill-library/{sid}/revisions") == (200, revisions_before)
+        assert _psql(f"SELECT count(*) FROM audit_events WHERE action='skill.bot_write' AND detail::text LIKE '%{sid}%'") == "0"
+        status, updated = client.call("PUT", f"/api/skill-library/{sid}", dict(payload, allowBotEdit=True))
+        assert status == 200 and updated["version"] == 2
         result = worker_call("POST", f"/internal/skills/{bot}/write", envelope)
-        assert result["output"]["version"] == 2
+        assert result["output"]["version"] == 3
         replay = worker_call("POST", f"/internal/skills/{bot}/write", envelope)
         assert replay["deduped"] is True and replay["output"] == result["output"]
         assert _psql(f"SELECT count(*) FROM skill_revisions WHERE skill_id='{created['id']}' AND author='{bot}' AND reason='bot update'") == "1"
