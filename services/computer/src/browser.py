@@ -417,7 +417,18 @@ class BrowserHub:
             if target_id is None:
                 target_id = await self._target_id(context, page)
                 self.pages.setdefault(bot_id, {})[target_id] = page
-            rows.append({"targetId": target_id, "url": page.url, "title": await page.title()})
+            try:
+                title = await page.title()
+            except Exception:
+                # A renderer the OOM killer took leaves a crashed tab behind. Drop it so one dead
+                # tab cannot wedge every later tab listing, human-input and tool call.
+                self.pages.get(bot_id, {}).pop(target_id, None)
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+                continue
+            rows.append({"targetId": target_id, "url": page.url, "title": title})
         return rows
 
     async def _resolve_page(self, bot_id: str, target_id: str | None):
