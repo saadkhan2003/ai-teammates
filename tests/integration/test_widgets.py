@@ -1,7 +1,7 @@
 """Typed widget messages and owner-scoped widget actions use the mock planner only."""
 import uuid
-from test_acceptance import _workspace, login, submit, wait_task
-from test_bot_messaging import _cleanup
+from test_acceptance import login, submit, wait_task
+from test_bot_messaging import _cleanup, _workspace
 
 
 def test_mock_bot_streams_every_widget_type():

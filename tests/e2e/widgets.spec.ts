@@ -25,7 +25,9 @@ test("renders every structured widget and keeps heavy widgets lazy", async ({ pa
   await page.getByLabel("Note *").fill("Keep the recap concise");
   await expect(page.getByTestId("widget-chart")).toBeVisible();
   await expect(page.getByTestId("widget-flow")).toBeVisible();
-  await expect(page.locator(".monaco-editor")).toBeVisible();
+  const codeWidget = page.getByTestId("widget-code-editor");
+  await expect(codeWidget).toHaveCount(1);
+  await expect(codeWidget.locator(".monaco-editor").first()).toBeVisible();
   for (const theme of ["light", "dark"] as const) {
     await setTheme(page, theme);
     await expect(page.getByTestId("widgets-gallery")).toBeVisible();
@@ -42,7 +44,7 @@ test("admin analytics chart loads on the usage page", async ({ page }) => {
   for (const theme of ["light", "dark"] as const) {
     await setTheme(page, theme);
     await page.goto("/settings/usage");
-    await expect(page.getByText("Usage", { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("tab", { name: /Usage/ })).toBeVisible();
     const chart = page.getByTestId("admin-analytics-chart");
     await expect(chart).toBeVisible();
     await page.screenshot({ path: `${shots}/02-admin-analytics-${theme}.png` });
