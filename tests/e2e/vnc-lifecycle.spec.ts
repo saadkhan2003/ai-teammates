@@ -132,6 +132,8 @@ test("opening and closing the computer view does not pile up x11vnc sockets", as
   async function openPane() {
     if (!(await paneOpen())) await page.getByTestId("bot-name-button").click();
     await expect(page.getByTestId("info-pane")).toBeVisible();
+    const computerTab = page.getByTestId("info-pane").getByRole("tab", { name: "Computer", exact: true });
+    await computerTab.click();
     await expect(page.getByTestId("computer-tab")).toBeVisible();
   }
 
@@ -167,7 +169,7 @@ test("opening and closing the computer view does not pile up x11vnc sockets", as
     await expect(page.getByTestId("computer-tab")).toHaveAttribute("data-vnc-state", "connected");
     expect(openSockets, `cycle ${cycle} computer tab`).toBe(1);
 
-    const overview = page.getByTestId("info-pane").getByRole("tab", { name: "Overview", exact: true });
+    const overview = page.getByTestId("info-pane").getByRole("tab", { name: "Details", exact: true });
     await overview.click();
     await expect(overview).toHaveAttribute("data-state", "active");
     await expect(page.getByTestId("computer-tab")).toHaveAttribute("data-vnc-state", "connected");

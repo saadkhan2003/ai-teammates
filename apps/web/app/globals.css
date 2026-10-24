@@ -135,6 +135,25 @@
   }
 }
 
+.info-tab[data-state="active"] {
+  background-color: var(--bot-accent, var(--foreground)) !important;
+  color: var(--on-accent) !important;
+  box-shadow: none !important;
+}
+
+.bot-toggle[data-state="checked"] {
+  background-color: var(--bot-accent, var(--foreground)) !important;
+}
+
+.bot-toggle[data-state="unchecked"] {
+  background-color: var(--input) !important;
+}
+
+.computer-open-label {
+  background-color: var(--bot-accent, var(--foreground)) !important;
+  color: var(--on-accent) !important;
+}
+
 [data-testid="desktop-stage"]:fullscreen {
   box-sizing: border-box;
   display: flex;

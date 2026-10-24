@@ -1,8 +1,9 @@
 "use client";
 
-import { Settings, X } from "lucide-react";
+import { Settings, Share, X } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Approvals } from "@/components/approvals";
 import { PluginsPane } from "@/components/plugins-pane";
@@ -17,6 +18,7 @@ import { SkillsPane } from "@/components/skills-pane";
 import { StateMessage } from "@/components/state-message";
 import { TasksPane } from "@/components/tasks-pane";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -32,11 +34,12 @@ import {
   normalizeRoutines,
   normalizeSkills,
 } from "@/lib/api";
-import { applyCodingJob, normalizeCodingJob, readableAccent, type CodingJob } from "@/lib/chat-ui";
+import { applyCodingJob, copyBotName, normalizeCodingJob, readableAccent, templateShareUrl, type CodingJob } from "@/lib/chat-ui";
 import { mergeAgentEvent, parseAgentEvent, subscribeEvents, type AgentEvent } from "@/lib/events";
 import { StatusBadge } from "@/lib/status";
 import type { Artifact, FileEntry, LoginRequest, MemoryItem, Routine, SecretRequest, Skill, Workspace as WorkspaceData } from "@/lib/types";
 import { cn, errorMessage } from "@/lib/utils";
+import { toast } from "sonner";
 import { BotAvatar } from "@/components/bot-avatar";
 import { BotAvatarPicker } from "@/components/bot-avatar-picker";
 import { defaultBotAvatar } from "@/lib/avatars";
@@ -80,10 +83,14 @@ async function loadList<T>(path: string, normalize: (data: unknown) => T[]): Pro
 }
 
 const INFO_TABS = [
-  ["overview", "Overview"],
+  ["details", "Details"],
+  ["library", "Library"],
   ["computer", "Computer"],
-  ["routines", "Routines"],
+] as const;
+
+const LIBRARY_TABS = [
   ["files", "Files/Media"],
+  ["routines", "Routines"],
   ["skills", "Skills"],
   ["memory", "Memory"],
   ["tasks", "Tasks"],
@@ -91,6 +98,7 @@ const INFO_TABS = [
 ] as const;
 
 export function Workspace({ botId }: { botId: string }) {
+  const router = useRouter();
   const [workspace, setWorkspace] = useState<WorkspaceData | null>(null);
   const [pane, setPane] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -102,7 +110,8 @@ export function Workspace({ botId }: { botId: string }) {
   const [skills, setSkills] = useState<ListState<Skill>>(emptyList);
   const [routines, setRoutines] = useState<ListState<Routine>>(emptyList);
   const [artifacts, setArtifacts] = useState<ListState<Artifact>>(emptyList);
-  const [detailTab, setDetailTab] = useState("overview");
+  const [detailTab, setDetailTab] = useState("details");
+  const [librarySection, setLibrarySection] = useState("files");
   const [openJob, setOpenJob] = useState<CodingJob | null>(null);
   const [finishedLogins, setFinishedLogins] = useState<LoginRequest[]>([]);
   const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
@@ -111,7 +120,9 @@ export function Workspace({ botId }: { botId: string }) {
   const seq = useRef(0);
   const auxSeq = useRef(0);
   const tabRef = useRef(detailTab);
+  const libraryRef = useRef(librarySection);
   tabRef.current = detailTab;
+  libraryRef.current = librarySection;
 
   const loadWorkspace = useCallback(async () => {
     const ticket = ++seq.current;
@@ -203,9 +214,10 @@ export function Workspace({ botId }: { botId: string }) {
       if (type !== "task" && type !== "artifact") return;
       const extra: Array<"files" | "memories" | "skills" | "routines" | "artifacts"> = ["artifacts", "routines"];
       const tab = tabRef.current;
-      if (tab === "files") extra.push("files");
-      if (tab === "memory") extra.push("memories");
-      if (tab === "skills") extra.push("skills");
+      const section = libraryRef.current;
+      if (tab === "library" && section === "files") extra.push("files");
+      if (tab === "library" && section === "memory") extra.push("memories");
+      if (tab === "library" && section === "skills") extra.push("skills");
       void loadAux(extra);
     });
     const slow = window.setInterval(() => {
@@ -225,7 +237,7 @@ export function Workspace({ botId }: { botId: string }) {
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        if (document.querySelector("[role='dialog']")) return;
+        if (document.querySelector("[role='dialog'], [role='menu']")) return;
         setDesktopFull(false);
         setSettingsOpen(false);
         setPane(false);
@@ -241,11 +253,11 @@ export function Workspace({ botId }: { botId: string }) {
 
   useEffect(() => {
     if (!pane) return;
-    if (detailTab === "files") void loadAux(["files", "artifacts"]);
-    if (detailTab === "memory") void loadAux(["memories"]);
-    if (detailTab === "skills") void loadAux(["skills"]);
-    if (detailTab === "routines") void loadAux(["routines"]);
-  }, [pane, detailTab, loadAux]);
+    if (detailTab === "details" || (detailTab === "library" && librarySection === "routines")) void loadAux(["routines"]);
+    if (detailTab === "library" && librarySection === "files") void loadAux(["files", "artifacts"]);
+    if (detailTab === "library" && librarySection === "memory") void loadAux(["memories"]);
+    if (detailTab === "library" && librarySection === "skills") void loadAux(["skills"]);
+  }, [pane, detailTab, librarySection, loadAux]);
 
   if (!ready) {
     return (
@@ -274,7 +286,48 @@ export function Workspace({ botId }: { botId: string }) {
   const provider = workspace.llmProvider || "";
   const bot = workspace.bot;
   const requests = (workspace.secretRequests ?? []) as SecretRequest[];
-  const computerExpanded = desktopFull || detailTab === "computer";
+  const accent = readableAccent(bot?.avatarColor || defaultBotAvatar(botId).color);
+  const avatarShape = bot?.avatarShape || defaultBotAvatar(bot?.id || botId).shape;
+  const avatarColor = bot?.avatarColor || defaultBotAvatar(bot?.id || botId).color;
+  const jobs = (workspace.codingJobs ?? []).map((job, index) => normalizeCodingJob(job, index)).filter((job): job is CodingJob => job !== null);
+
+  async function createCopy() {
+    try {
+      const created = await api<{ id?: string }>("/api/bots", {
+        method: "POST",
+        body: JSON.stringify({
+          name: copyBotName(bot?.name || "Teammate"),
+          role: bot?.role || "",
+          instructions: bot?.instructions || "",
+          avatarShape,
+          avatarColor,
+        }),
+      });
+      toast.success("Copy created.");
+      window.dispatchEvent(new Event("teammates-bots-changed"));
+      if (created?.id) router.push(`/bots/${created.id}`);
+    } catch (caught) {
+      toast.error(errorMessage(caught, "Could not create a copy."));
+    }
+  }
+
+  async function shareTemplate() {
+    const url = templateShareUrl(window.location.origin, botId);
+    try {
+      await navigator.clipboard.writeText(url);
+      toast.success("Template link copied.");
+    } catch {
+      toast.error("Could not copy the template link.");
+    }
+  }
+
+  function toggleRoutine(routine: (typeof routines.items)[number], enabled: boolean) {
+    setRoutines((current) => ({ ...current, items: current.items.map((item) => (item.id === routine.id ? { ...item, enabled } : item)) }));
+    void api(`/api/routines/${routine.id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }).catch((caught) => {
+      setRoutines((current) => ({ ...current, items: current.items.map((item) => (item.id === routine.id ? { ...item, enabled: !enabled } : item)) }));
+      setWorkspaceError(errorMessage(caught, "Could not update that routine."));
+    });
+  }
 
   return (
     <div className="flex h-full min-h-0">
@@ -378,28 +431,35 @@ export function Workspace({ botId }: { botId: string }) {
       {pane ? (
         <aside
           data-testid="info-pane"
-          data-view="details"
-          className="fixed inset-0 z-30 flex w-full min-w-0 flex-col border-border bg-background pt-[env(safe-area-inset-top)] md:static md:z-0 md:w-[380px] md:max-w-[42vw] md:border-l md:pt-0"
+          data-view={detailTab}
+          className="fixed inset-0 z-30 flex w-full min-w-0 flex-col bg-sidebar pt-[env(safe-area-inset-top)] text-sidebar-foreground md:static md:z-0 md:w-[260px] md:max-w-[42vw] md:border-l md:border-sidebar-border md:pt-0"
+          style={{ ["--bot-accent" as string]: accent }}
         >
-          <div className="flex h-11 items-center gap-1 border-b border-border px-2">
-            <p className="min-w-0 flex-1 truncate px-1 text-sm font-medium">{bot?.name}</p>
-            <Button
-              type="button"
-              data-testid="bot-settings-gear"
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              aria-label="Teammate settings"
-              onClick={() => setSettingsOpen(true)}
-            >
+          <div className="flex h-11 items-center justify-end gap-1 px-2">
+            <Button type="button" data-testid="bot-settings-gear" variant="ghost" size="icon" className="size-8 rounded-full" aria-label="Teammate settings" onClick={() => setSettingsOpen(true)}>
               <Settings />
             </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" data-testid="info-share" variant="ghost" size="icon" className="size-8 rounded-full" aria-label="Share">
+                  <Share />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent data-testid="info-share-menu" align="end">
+                <DropdownMenuItem data-testid="share-create-copy" onSelect={() => void createCopy()}>
+                  Create a copy
+                </DropdownMenuItem>
+                <DropdownMenuItem data-testid="share-template-link" onSelect={() => void shareTemplate()}>
+                  Share a template link
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               type="button"
               data-testid="info-pane-close"
               variant="ghost"
               size="icon"
-              className="h-8 w-8"
+              className="size-8 rounded-full"
               aria-label="Close"
               onClick={() => {
                 setPane(false);
@@ -418,104 +478,113 @@ export function Workspace({ botId }: { botId: string }) {
               instructions={bot?.instructions || ""}
               model={(bot as { model?: string } | undefined)?.model || ""}
               avatar={(bot as { avatar?: string } | undefined)?.avatar || ""}
-              avatarShape={bot?.avatarShape || defaultBotAvatar(bot?.id || botId).shape}
-              avatarColor={bot?.avatarColor || defaultBotAvatar(bot?.id || botId).color}
+              avatarShape={avatarShape}
+              avatarColor={avatarColor}
               notifications={(bot as { notificationsEnabled?: boolean } | undefined)?.notificationsEnabled !== false}
               onClose={() => setSettingsOpen(false)}
               onSaved={() => void loadWorkspace()}
             />
           ) : (
             <div className={cn("min-h-0 flex-1 overflow-y-auto", desktopFull && "overflow-visible")}>
-              <div className={cn("border-b border-border", !computerExpanded && "p-3", computerExpanded && "flex min-h-[max(480px,70dvh)] flex-col")}>
-                <ComputerPane
-                  botId={botId}
-                  tasks={workspace.tasks ?? []}
-                  pages={workspace.pages ?? []}
-                  holder={workspace.holder}
-                  compact={!computerExpanded}
-                  caption={bot?.name || "Teammate"}
-                  fullscreen={desktopFull}
-                  onExpand={() => setDesktopFull(true)}
-                  onExitFullscreen={() => setDesktopFull(false)}
-                  onChanged={() => void loadWorkspace()}
-                />
+              <div data-testid="info-identity" className="flex flex-col items-center px-3 pb-3 text-center">
+                <BotAvatar botId={bot?.id || botId} shape={avatarShape} color={avatarColor} size={56} />
+                <p data-testid="info-bot-name" className="mt-2 text-sm font-semibold">{bot?.name || "Teammate"}</p>
+                <p data-testid="info-bot-title" className="max-w-full truncate px-2 text-xs text-muted-foreground">{bot?.role || "No title yet."}</p>
               </div>
-              <CodingPanel
-                jobs={(workspace.codingJobs ?? []).map((job, index) => normalizeCodingJob(job, index)).filter((job): job is CodingJob => job !== null)}
-                routines={routines.items}
-                accent={readableAccent(bot?.avatarColor || defaultBotAvatar(botId).color)}
-                botId={botId}
-                avatarShape={bot?.avatarShape}
-                avatarColor={bot?.avatarColor}
-                onOpenJob={setOpenJob}
-                onToggleRoutine={(routine, enabled) => {
-                  setRoutines((current) => ({ ...current, items: current.items.map((item) => (item.id === routine.id ? { ...item, enabled } : item)) }));
-                  void api(`/api/routines/${routine.id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }).catch((caught) => {
-                    setRoutines((current) => ({ ...current, items: current.items.map((item) => (item.id === routine.id ? { ...item, enabled: !enabled } : item)) }));
-                    setWorkspaceError(errorMessage(caught, "Could not update that routine."));
-                  });
+              <Tabs
+                value={detailTab}
+                onValueChange={(value) => {
+                  setDetailTab(value);
+                  if (value !== "computer") setDesktopFull(false);
                 }}
-              />
-              <Collapsible data-testid="connect-apps" className="border-b border-border">
-                <CollapsibleTrigger className="flex min-h-11 w-full items-center px-3 text-left text-sm font-medium">Connect apps</CollapsibleTrigger>
-                <CollapsibleContent className="px-3 pb-3">
-                  <PluginsPane mode="catalog" />
-                </CollapsibleContent>
-              </Collapsible>
-              <section data-testid="channels" className="border-b border-border px-3 py-3">
-                <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Channels</h2>
-                <p className="mt-2 text-sm text-muted-foreground">No channels. Group chats will list them here.</p>
-              </section>
-              <section data-testid="members" className="border-b border-border px-3 py-3">
-                <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Members</h2>
-                <p className="mt-2 text-sm text-muted-foreground">Just you and {bot?.name || "this teammate"}.</p>
-              </section>
-              <Tabs value={detailTab} onValueChange={setDetailTab} className="flex flex-col">
-                <TabsList aria-label="Bot details" className="mx-1 h-auto w-auto justify-start gap-0 overflow-x-auto rounded-none bg-transparent p-0">
+                className="flex flex-col"
+              >
+                <TabsList aria-label="Bot details" className="mx-3 grid h-auto grid-cols-3 gap-1 rounded-full bg-card p-1">
                   {INFO_TABS.map(([value, label]) => (
-                    <TabsTrigger
-                      key={value}
-                      value={value}
-                      className="min-h-11 shrink-0 rounded-none border-b border-transparent px-2.5 shadow-none data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none"
-                    >
+                    <TabsTrigger key={value} value={value} className="info-tab min-h-11 rounded-full px-2 text-xs text-muted-foreground shadow-none">
                       {label}
                     </TabsTrigger>
                   ))}
                 </TabsList>
-                <div className="px-3 pb-6">
-                  <TabsContent value="overview">
-                    <div className="flex flex-col gap-2 text-sm">
-                      <p>{bot?.role || "No title yet."}</p>
-                      <p className="text-muted-foreground">{bot?.instructions || "No description yet."}</p>
-                      <p className="text-muted-foreground">Provider: {provider || "unknown"}</p>
-                      {provider.toLowerCase() === "mock" ? <p>Provider is mock. This teammate is not calling OpenRouter.</p> : null}
-                    </div>
-                  </TabsContent>
-                  <TabsContent value="computer">
-                    <p className="text-sm text-muted-foreground">The live desktop is above. Take control when you need the pointer.</p>
-                  </TabsContent>
-                  <TabsContent value="routines">
-                    <RoutinesPane botId={botId} routines={routines.items} error={routines.error} loaded={routines.loaded} onChanged={() => void loadAux(["routines"])} />
-                  </TabsContent>
-                  <TabsContent value="files">
-                    <div className="flex flex-col gap-6">
-                      <FilesPane botId={botId} files={files.items} error={files.error} loaded={files.loaded} onChanged={() => void loadAux(["files"])} />
-                      <ArtifactsPane artifacts={artifacts.items} error={artifacts.error} loaded={artifacts.loaded} onRetry={() => void loadAux(["artifacts"])} />
-                    </div>
-                  </TabsContent>
-                  <TabsContent value="skills">
-                    <SkillsPane skills={skills.items} error={skills.error} loaded={skills.loaded} onChanged={() => void loadAux(["skills"])} />
-                  </TabsContent>
-                  <TabsContent value="memory">
-                    <MemoryPane botId={botId} memories={memories.items} error={memories.error} loaded={memories.loaded} onChanged={() => void loadAux(["memories"])} />
-                  </TabsContent>
-                  <TabsContent value="tasks">
-                    <TasksPane botId={botId} tasks={workspace.tasks ?? []} openrouterConnected={workspace.openrouterConnected !== false} onChanged={() => void loadWorkspace()} />
-                  </TabsContent>
-                  <TabsContent value="plugins">
-                    <PluginsPane />
-                  </TabsContent>
-                </div>
+                <TabsContent value="details" className="px-3 pb-6">
+                  <CodingPanel
+                    jobs={jobs}
+                    routines={routines.items}
+                    accent={accent}
+                    botId={botId}
+                    avatarShape={avatarShape}
+                    avatarColor={avatarColor}
+                    onOpenJob={setOpenJob}
+                    onToggleRoutine={toggleRoutine}
+                  />
+                  <div className="mt-3 flex flex-col gap-2 text-sm">
+                    <p className="text-muted-foreground">{bot?.instructions || "No description yet."}</p>
+                    <p className="text-muted-foreground">Provider: {provider || "unknown"}</p>
+                    {provider.toLowerCase() === "mock" ? <p>Provider is mock. This teammate is not calling OpenRouter.</p> : null}
+                  </div>
+                  <Collapsible data-testid="connect-apps" className="mt-4">
+                    <CollapsibleTrigger className="flex min-h-11 w-full items-center text-left text-sm font-medium">Connect apps</CollapsibleTrigger>
+                    <CollapsibleContent className="pb-3">
+                      <PluginsPane mode="catalog" />
+                    </CollapsibleContent>
+                  </Collapsible>
+                  <section data-testid="channels" className="py-3">
+                    <h2 className="text-xs font-medium text-muted-foreground">Channels</h2>
+                    <p className="mt-2 text-sm text-muted-foreground">No channels. Group chats will list them here.</p>
+                  </section>
+                  <section data-testid="members" className="py-3">
+                    <h2 className="text-xs font-medium text-muted-foreground">Members</h2>
+                    <p className="mt-2 text-sm text-muted-foreground">Just you and {bot?.name || "this teammate"}.</p>
+                  </section>
+                </TabsContent>
+                <TabsContent value="library" className="px-3 pb-6">
+                  <Tabs value={librarySection} onValueChange={setLibrarySection}>
+                    <TabsList aria-label="Library sections" className="h-auto w-full justify-start gap-1 overflow-x-auto bg-transparent p-0">
+                      {LIBRARY_TABS.map(([value, label]) => (
+                        <TabsTrigger key={value} value={value} className="min-h-11 shrink-0 rounded-full px-2.5 text-xs">
+                          {label}
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                    <TabsContent value="files">
+                      <div className="flex flex-col gap-6">
+                        <FilesPane botId={botId} files={files.items} error={files.error} loaded={files.loaded} onChanged={() => void loadAux(["files"])} />
+                        <ArtifactsPane artifacts={artifacts.items} error={artifacts.error} loaded={artifacts.loaded} onRetry={() => void loadAux(["artifacts"])} />
+                      </div>
+                    </TabsContent>
+                    <TabsContent value="routines">
+                      <RoutinesPane botId={botId} routines={routines.items} error={routines.error} loaded={routines.loaded} onChanged={() => void loadAux(["routines"])} />
+                    </TabsContent>
+                    <TabsContent value="skills">
+                      <SkillsPane skills={skills.items} error={skills.error} loaded={skills.loaded} onChanged={() => void loadAux(["skills"])} />
+                    </TabsContent>
+                    <TabsContent value="memory">
+                      <MemoryPane botId={botId} memories={memories.items} error={memories.error} loaded={memories.loaded} onChanged={() => void loadAux(["memories"])} />
+                    </TabsContent>
+                    <TabsContent value="tasks">
+                      <TasksPane botId={botId} tasks={workspace.tasks ?? []} openrouterConnected={workspace.openrouterConnected !== false} onChanged={() => void loadWorkspace()} />
+                    </TabsContent>
+                    <TabsContent value="plugins">
+                      <PluginsPane />
+                    </TabsContent>
+                  </Tabs>
+                </TabsContent>
+                <TabsContent value="computer" forceMount className="px-3 pb-6 data-[state=inactive]:hidden">
+                  <ComputerPane
+                    botId={botId}
+                    tasks={workspace.tasks ?? []}
+                    pages={workspace.pages ?? []}
+                    holder={workspace.holder}
+                    compact={!desktopFull}
+                    caption={bot?.name || "Teammate"}
+                    avatarShape={avatarShape}
+                    avatarColor={avatarColor}
+                    fullscreen={desktopFull}
+                    onExpand={() => setDesktopFull(true)}
+                    onExitFullscreen={() => setDesktopFull(false)}
+                    onChanged={() => void loadWorkspace()}
+                  />
+                </TabsContent>
               </Tabs>
             </div>
           )}

@@ -111,6 +111,7 @@ async function openChat(page: Page, mode: "light" | "dark" | "system", saved: { 
   await expect(page.getByTestId("job-result-card")).toBeVisible();
   await expect(page.getByTestId("attachment-card")).toBeVisible();
   await expect(page.getByTestId("question-card")).toBeVisible();
+  await page.getByRole("tab", { name: "Computer", exact: true }).click();
   await expect(page.getByTestId("computer-asleep")).toBeVisible();
   await page.getByTestId("reaction-pill").hover();
   await expect(page.getByRole("tooltip", { name: "Ada reacted with 👍" })).toBeVisible();

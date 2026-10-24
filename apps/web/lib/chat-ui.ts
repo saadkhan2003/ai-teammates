@@ -89,8 +89,34 @@ export function jobCountLabel(jobs: { status: string }[]): string {
 export function jobSubtitle(job: Pick<CodingJob, "status" | "prNumber">): string | null {
   if (job.status === "merged") return job.prNumber ? `Merged · #${job.prNumber}` : "Merged";
   if (job.status === "failed") return "Failed";
-  if (job.status === "finished") return "Finished";
+  if (job.status === "finished") return job.prNumber ? `Ready for review · #${job.prNumber}` : "Finished";
+  if (job.prNumber && isActiveJob(job.status)) return `Ready for review · #${job.prNumber}`;
   return null;
+}
+
+export type JobIconKind = "spinner" | "pr" | "merged" | "failed" | "finished";
+
+export function jobIconKind(job: Pick<CodingJob, "status" | "prNumber" | "prUrl">): JobIconKind {
+  if (isActiveJob(job.status)) return "spinner";
+  if (job.status === "merged") return "merged";
+  if (job.status === "failed") return "failed";
+  if (job.prNumber || job.prUrl) return "pr";
+  return "finished";
+}
+
+export function controlActionLabel(mode: "view" | "control", needsHelp: boolean): "Take control" | "Stop" | "I'm done" {
+  if (mode === "view") return "Take control";
+  return needsHelp ? "I'm done" : "Stop";
+}
+
+export function copyBotName(name: string): string {
+  const base = name.trim() || "Teammate";
+  return / copy$/i.test(base) ? base : `${base} copy`;
+}
+
+export function templateShareUrl(origin: string, botId: string): string {
+  const root = origin.replace(/\/$/, "");
+  return `${root}/bots/${botId}?template=1`;
 }
 
 export function isActiveJob(status: string): boolean {

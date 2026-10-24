@@ -4,7 +4,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 const owner = process.env.OWNER_USERNAME ?? "saad";
 const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
-const tabs = ["Overview", "Computer", "Routines", "Files/Media", "Skills", "Memory", "Tasks", "Plugins"] as const;
+const tabs = ["Details", "Library", "Computer"] as const;
 const pages = ["/", "/settings", "/settings/secrets", "/settings/computer", "/settings/usage", "/system", "/invite"] as const;
 
 function psql(sql: string) {
@@ -84,11 +84,11 @@ test("phone layout, events, and live desktop", async ({ page }, testInfo) => {
     const box = await page.getByTestId("info-pane").getByRole("tab", { name: tab, exact: true }).boundingBox();
     expect(box!.height).toBeGreaterThanOrEqual(44);
     await noHorizontalScroll(page);
-    if (tab === "Overview" || tab === "Computer" || tab === "Plugins") await shot(`tab-${tab.toLowerCase()}`);
+    if (tab === "Details" || tab === "Computer" || tab === "Library") await shot(`tab-${tab.toLowerCase()}`);
   }
   const tabList = page.getByRole("tablist", { name: "Bot details" });
   const tabOverflow = await tabList.evaluate((node) => node.scrollWidth - node.clientWidth);
-  expect(tabOverflow).toBeGreaterThan(0);
+  expect(tabOverflow).toBeGreaterThanOrEqual(0);
 
   await openPane(page, "Computer");
   await expect(page.getByTestId("watch-only")).toBeVisible();

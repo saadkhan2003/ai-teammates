@@ -291,7 +291,8 @@ test("asleep computer card offers wake", async ({ page }) => {
   );
   await page.route(`**/api/bots/${bot}/computer/power`, (route) => route.fulfill({ json: { status: "hibernated" } }));
   await page.goto(`/bots/${bot}`);
-  await expect(page.getByTestId("computer-asleep")).toContainText("The computer is asleep.");
+  await page.getByRole("tab", { name: "Computer", exact: true }).click();
+  await expect(page.getByTestId("computer-asleep")).toContainText("Computer is asleep");
   await expect(page.getByTestId("computer-wake")).toBeVisible();
   await expect(page.getByTestId("computer-control-pill")).toContainText("Watching");
   await page.getByTestId("computer-asleep").scrollIntoViewIfNeeded();

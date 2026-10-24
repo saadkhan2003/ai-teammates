@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, Box, Check, ChevronRight, Cloud, Eye, GitBranch, X } from "lucide-react";
+import { ArrowUpRight, Box, Check, ChevronRight, Cloud, Eye, GitBranch, GitPullRequest, X } from "lucide-react";
 import { useState } from "react";
 import { BotAvatar } from "@/components/bot-avatar";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -10,6 +10,7 @@ import {
   filesChangedLabel,
   isActiveJob,
   jobCountLabel,
+  jobIconKind,
   jobOpenHref,
   jobSubtitle,
   liveStepText,
@@ -19,19 +20,24 @@ import {
 import type { Routine } from "@/lib/types";
 
 export function JobMark({ job, accent }: { job: CodingJob; accent: string }) {
-  if (isActiveJob(job.status)) {
-    return <span data-testid="job-spinner" className="job-spinner" style={{ ["--bot-accent" as string]: accent }} role="img" aria-label="Running" />;
+  const kind = jobIconKind(job);
+  const paint = { ["--bot-accent" as string]: accent };
+  if (kind === "spinner") {
+    return <span data-testid="job-spinner" className="job-spinner" style={paint} role="img" aria-label="Running" />;
   }
-  if (job.status === "merged") {
+  if (kind === "pr") {
+    return <GitPullRequest data-testid="job-pr" className="size-4 text-[color:var(--bot-accent)]" style={paint} aria-label="Pull request" />;
+  }
+  if (kind === "merged") {
     return (
-      <span data-testid="job-merged" className="grid h-4 w-4 place-items-center rounded-full border border-emerald-600 text-emerald-600" role="img" aria-label="Merged">
+      <span data-testid="job-merged" className="grid h-4 w-4 place-items-center rounded-full border border-success text-success" role="img" aria-label="Merged">
         <Check className="h-2.5 w-2.5" />
       </span>
     );
   }
-  if (job.status === "failed") {
+  if (kind === "failed") {
     return (
-      <span data-testid="job-failed" className="grid h-4 w-4 place-items-center rounded-full border border-red-600 text-red-600" role="img" aria-label="Failed">
+      <span data-testid="job-failed" className="grid h-4 w-4 place-items-center rounded-full border border-destructive text-destructive" role="img" aria-label="Failed">
         <X className="h-2.5 w-2.5" />
       </span>
     );
@@ -46,11 +52,11 @@ export function JobMark({ job, accent }: { job: CodingJob; accent: string }) {
 export function JobSubtitle({ job }: { job: CodingJob }) {
   const text = jobSubtitle(job);
   if (!text) return null;
-  if (job.status === "failed") return <span className="text-xs text-red-600">{text}</span>;
+  if (job.status === "failed") return <span className="text-xs text-destructive">{text}</span>;
   if (job.status === "merged") {
     return (
       <span className="flex items-center gap-1 text-xs text-muted-foreground">
-        <Check className="h-3 w-3 text-emerald-600" aria-hidden />
+        <Check className="h-3 w-3 text-success" aria-hidden />
         {text}
       </span>
     );
@@ -74,7 +80,7 @@ export function CodingJobsCard({
   const open = (job: CodingJob) => (onOpenJob ? onOpenJob(job) : setLocal(job));
   return (
     <>
-      <section data-testid="coding-jobs-card" aria-label="Coding jobs" className="w-full max-w-md rounded-2xl border border-border bg-card px-3 py-3 text-card-foreground shadow-sm">
+      <section data-testid="coding-jobs-card" aria-label="Coding jobs" className="w-full max-w-md rounded-2xl border border-border bg-card px-3 py-3 text-card-foreground shadow-sm" style={{ ["--bot-accent" as string]: accent }}>
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Cloud className="h-4 w-4" aria-hidden />
           Coding jobs
@@ -98,7 +104,7 @@ export function CodingJobsCard({
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <a data-testid="coding-job-open" aria-label="Open" href={jobOpenHref(botId, job)} target="_blank" rel="noopener noreferrer" className="grid size-8 place-items-center rounded-md hover:bg-background">
+                    <a data-testid="coding-job-open" aria-label="Open" href={jobOpenHref(botId, job)} target="_blank" rel="noopener noreferrer" className="grid size-8 place-items-center rounded-md text-[color:var(--bot-accent)] hover:bg-background">
                       <ArrowUpRight className="h-4 w-4" />
                     </a>
                   </TooltipTrigger>
@@ -136,53 +142,75 @@ export function CodingPanel({
   return (
     <div className="border-b border-border px-3 py-3" style={{ ["--bot-accent" as string]: accent }}>
       <section data-testid="coding-list" aria-label="Coding">
-        <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Coding</h2>
+        <div className="flex items-baseline justify-between gap-2">
+          <h2 className="text-xs font-medium text-muted-foreground">Coding</h2>
+          {jobs.length > 0 ? (
+            <p data-testid="coding-count" className="text-xs text-muted-foreground">
+              {jobCountLabel(jobs)}
+            </p>
+          ) : null}
+        </div>
         {jobs.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">No coding jobs yet.</p> : null}
-        <ul className="mt-2 space-y-0.5">
-          {jobs.map((job) => (
-            <li key={job.id}>
-              <button
-                type="button"
-                data-testid="coding-panel-row"
-                data-status={job.status}
-                data-job-id={job.id}
-                className="flex w-full items-center gap-2 rounded-md px-1 py-1.5 text-left hover:bg-accent"
-                onClick={() => onOpenJob(job)}
-              >
-                <JobMark job={job} accent={accent} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm">{job.title}</span>
-                  <JobSubtitle job={job} />
+        {jobs.length > 0 ? (
+          <ul className="mt-2 rounded-xl bg-card p-1 text-card-foreground">
+            {jobs.map((job) => (
+              <li key={job.id} data-testid="coding-panel-row" data-status={job.status} data-job-id={job.id} className="group relative rounded-lg hover:bg-accent">
+                <button type="button" className="flex w-full items-center gap-2 px-2 py-2 text-left" aria-label={job.title} onClick={() => onOpenJob(job)}>
+                  <JobMark job={job} accent={accent} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm text-card-foreground">{job.title}</span>
+                    <JobSubtitle job={job} />
+                  </span>
+                  <ChevronRight className="size-4 shrink-0 text-muted-foreground group-hover:opacity-0 group-focus-within:opacity-0" aria-hidden />
+                </button>
+                <span className="pointer-events-none absolute inset-y-0 right-1 flex items-center gap-0.5 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button type="button" data-testid="coding-job-watch" aria-label="Watch" className="grid size-8 place-items-center rounded-md hover:bg-background" onClick={() => onOpenJob(job)}>
+                        <Eye className="h-4 w-4" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">Watch</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <a data-testid="coding-job-open" aria-label="Open" href={jobOpenHref(botId, job)} target="_blank" rel="noopener noreferrer" className="grid size-8 place-items-center rounded-md text-[color:var(--bot-accent)] hover:bg-background">
+                        <ArrowUpRight className="h-4 w-4" />
+                      </a>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">Open</TooltipContent>
+                  </Tooltip>
                 </span>
-                <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-              </button>
-            </li>
-          ))}
-        </ul>
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </section>
       <section data-testid="routines-list" aria-label="Routines" className="mt-4">
-        <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Routines</h2>
+        <h2 className="text-xs font-medium text-muted-foreground">Routines</h2>
         {routines.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">No routines yet.</p> : null}
-        <ul className="mt-2 space-y-2">
-          {routines.map((routine) => {
-            const enabled = routine.enabled !== false;
-            return (
-              <li key={routine.id} className="flex items-center gap-2">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm">{routine.name}</p>
-                  <p className="truncate text-xs text-muted-foreground">{routineSchedule(routine.cron)}</p>
-                </div>
-                <Switch
-                  data-testid="routine-toggle"
-                  checked={enabled}
-                  aria-label={`${routine.name} routine`}
-                  style={enabled ? { backgroundColor: accent } : undefined}
-                  onCheckedChange={(value) => onToggleRoutine(routine, value)}
-                />
-              </li>
-            );
-          })}
-        </ul>
+        {routines.length > 0 ? (
+          <ul className="mt-2 rounded-xl bg-card px-2.5 py-1 text-card-foreground">
+            {routines.map((routine) => {
+              const enabled = routine.enabled !== false;
+              return (
+                <li key={routine.id} className="flex items-center gap-2 py-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm text-card-foreground">{routine.name}</p>
+                    <p className="truncate text-xs text-muted-foreground">{routineSchedule(routine.cron)}</p>
+                  </div>
+                  <Switch
+                    data-testid="routine-toggle"
+                    className="bot-toggle"
+                    checked={enabled}
+                    aria-label={`${routine.name} routine`}
+                    onCheckedChange={(value) => onToggleRoutine(routine, value)}
+                  />
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
       </section>
       <span className="sr-only">
         <BotAvatar botId={botId} shape={avatarShape} color={avatarColor} size={1} />

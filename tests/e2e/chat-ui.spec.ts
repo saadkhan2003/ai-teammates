@@ -214,6 +214,7 @@ test("asleep computer offers a wake action", async ({ page }) => {
   await page.route(`**/api/bots/${bot}/computer/power`, (route) => route.fulfill({ json: { status: "hibernated" } }));
   await page.route("**/api/events", (route) => route.fulfill({ status: 200, headers: { "content-type": "text/event-stream" }, body: ": connected\n\n" }));
   await page.goto(`/bots/${bot}`);
+  await page.getByRole("tab", { name: "Computer", exact: true }).click();
   await expect(page.getByTestId("computer-asleep")).toBeVisible();
   await expect(page.getByTestId("computer-wake")).toBeVisible();
   await expect(page.getByTestId("computer-control-pill")).toContainText("Watching");
