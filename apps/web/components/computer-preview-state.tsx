@@ -12,14 +12,14 @@ export function Wallpaper({ className }: { className?: string }) {
     <svg aria-hidden viewBox="0 0 160 100" preserveAspectRatio="xMidYMid slice" className={cn("absolute inset-0 h-full w-full", className)}>
       <defs>
         <radialGradient id="wp-bg" cx="70%" cy="30%" r="90%">
-          <stop offset="0" stopColor="#2b2d33" />
-          <stop offset="0.55" stopColor="#17181c" />
-          <stop offset="1" stopColor="#0b0b0e" />
+          <stop offset="0" stopColor="var(--wallpaper-highlight)" />
+          <stop offset="0.55" stopColor="var(--wallpaper-mid)" />
+          <stop offset="1" stopColor="var(--wallpaper-shadow)" />
         </radialGradient>
         <linearGradient id="wp-swoosh" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#ffffff" stopOpacity="0" />
-          <stop offset="0.45" stopColor="#ffffff" stopOpacity="0.22" />
-          <stop offset="1" stopColor="#ffffff" stopOpacity="0" />
+          <stop offset="0" stopColor="var(--wallpaper-sheen)" stopOpacity="0" />
+          <stop offset="0.45" stopColor="var(--wallpaper-sheen)" stopOpacity="0.22" />
+          <stop offset="1" stopColor="var(--wallpaper-sheen)" stopOpacity="0" />
         </linearGradient>
       </defs>
       <rect width="160" height="100" fill="url(#wp-bg)" />
@@ -52,14 +52,14 @@ export function ComputerState({
       data-phase={phase}
       role="status"
       aria-live="polite"
-      className="motion-fade absolute inset-0 overflow-hidden bg-neutral-950 text-center"
+      className="motion-fade absolute inset-0 overflow-hidden bg-computer-background text-center"
     >
       <Wallpaper />
       <div className="relative grid h-full place-items-center px-3">
         <div className="flex flex-col items-center gap-1.5">
           <div className={cn("grid h-10 w-10 place-items-center", phase === "connecting" && "animate-pulse motion-reduce:animate-none")}>{avatar}</div>
-          <p data-testid="computer-state-title" className="text-xs font-medium text-neutral-300">{copy.title}</p>
-          <p data-testid="computer-state-sub" className="text-[11px] leading-none text-neutral-500">{copy.sub}</p>
+          <p data-testid="computer-state-title" className="text-xs font-medium text-computer-muted">{copy.title}</p>
+          <p data-testid="computer-state-sub" className="text-[11px] leading-none text-computer-muted">{copy.sub}</p>
           {phase === "error" || phase === "sleeping" ? (
             <Button
               type="button"

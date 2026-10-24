@@ -24,12 +24,13 @@ export function Terminal({ computerId, botId, windowNumber = 1, className }: Ter
     let socket: WebSocket | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
     let reconnects = 0;
+    const styles = getComputedStyle(document.documentElement);
     const terminal = new XTerm({
       cursorBlink: true,
       convertEol: true,
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+      fontFamily: styles.getPropertyValue("--font-mono").trim() || "monospace",
       fontSize: 13,
-      theme: { background: "#111318", foreground: "#e5e7eb" },
+      theme: { background: styles.getPropertyValue("--terminal-background").trim(), foreground: styles.getPropertyValue("--terminal-foreground").trim() },
     });
     terminal.open(mount.current);
 
@@ -93,7 +94,7 @@ export function Terminal({ computerId, botId, windowNumber = 1, className }: Ter
   return (
     <section className={className} aria-label="Terminal">
       <div className="mb-1 text-xs text-muted-foreground" role="status">{status}</div>
-      <div ref={mount} className="h-full min-h-64 w-full overflow-hidden rounded-md bg-[#111318] p-2" />
+      <div ref={mount} className="h-full min-h-64 w-full overflow-hidden rounded-md bg-terminal-background p-2" />
     </section>
   );
 }

@@ -242,7 +242,7 @@ export function ComputerPane({
     const resolved: DesktopMode = mobileRef.current && nextMode === "control" && !armedControl.current ? "view" : nextMode;
     rfb.scaleViewport = true;
     rfb.showDotCursor = true;
-    rfb.background = "#e7dccb";
+    rfb.background = getComputedStyle(document.documentElement).getPropertyValue("--computer-background").trim();
     rfb.viewOnly = resolved !== "control";
     modeRef.current = resolved;
     setMode(resolved);
@@ -754,19 +754,19 @@ export function ComputerPane({
       data-testid="computer-tab"
       data-vnc-state={vncState}
       data-desktop-mode={mode}
-      className={cn("flex min-h-0 min-w-0 flex-col gap-3", !compact && "md:flex-1", fullscreen && !exiting && "motion-pop", exiting && "motion-pop-out pointer-events-none", fullscreen && "dark fixed inset-0 z-[80] gap-0 overflow-hidden bg-[#141414] px-3 pb-[11px] pt-[33px] text-neutral-100 sm:px-6")}
+      className={cn("flex min-h-0 min-w-0 flex-col gap-3", !compact && "md:flex-1", fullscreen && !exiting && "motion-pop", exiting && "motion-pop-out pointer-events-none", fullscreen && "dark fixed inset-0 z-[80] gap-0 overflow-hidden bg-computer-background px-3 pb-[11px] pt-[33px] text-computer-foreground sm:px-6")}
     >
       <div ref={stageRef} data-testid="desktop-stage" className={cn("relative flex min-h-0 min-w-0 flex-col gap-2 bg-background", !compact && "md:min-h-[14rem] md:flex-1", fullscreen && "flex-1 gap-[3px] bg-transparent")}>
         {fullscreen ? (
           <div className="absolute inset-x-0 -top-8 flex h-7 items-center justify-end gap-1" data-testid="computer-topbar">
             <p className="sr-only">{caption || "Teammate"}&apos;s computer</p>
             <p data-testid="vnc-status" className="sr-only">{statusLabel(vncState)}</p>
-            {mode === "control" ? <Button type="button" data-testid="desktop-keyboard-toggle" variant="ghost" size="sm" className="h-7 px-2 text-xs text-neutral-300 hover:bg-white/10 hover:text-white" aria-pressed={keyboard} onClick={toggleKeyboard}>Keyboard</Button> : null}
-            {zoom > 1.01 ? <Button type="button" data-testid="desktop-fit" variant="ghost" size="sm" className="h-7 px-2 text-xs text-neutral-300 hover:bg-white/10 hover:text-white" onClick={fitWidth}>Fit</Button> : null}
-            <button type="button" data-testid="computer-minimise" className="inline-grid h-7 w-7 place-items-center rounded-md text-neutral-300 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/60" aria-label="Minimise to the panel" title="Minimise to the panel" onClick={() => { if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined); onExitFullscreen?.(); }}><Minimize2 className="h-4 w-4 text-[#e8a35a]" aria-hidden /></button>
-            <button type="button" data-testid="computer-collapse" className="inline-grid h-7 w-7 place-items-center rounded-md text-neutral-300 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/60" aria-expanded={!collapsedView} aria-controls="computer-frame-wrap" title={collapsedView ? "Restore" : "Collapse"} onClick={() => setCollapsedView(v => !v)}><Minus className="h-4 w-4" aria-hidden /><span className="sr-only">{collapsedView ? "Restore" : "Collapse"}</span></button>
-            <button type="button" data-testid="desktop-fullscreen" className="inline-grid h-7 w-7 place-items-center rounded-md text-neutral-300 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/60" aria-pressed={nativeFs} title={nativeFs ? "Exit full screen" : "Full screen"} onClick={() => void toggleFullscreen()}><Maximize2 className="h-4 w-4" aria-hidden /><span className="sr-only">{nativeFs ? "Compact" : "Full screen"}</span></button>
-            <button type="button" data-testid="computer-close" className="inline-grid h-7 w-7 place-items-center rounded-md text-neutral-300 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/60" aria-label="Close the computer" title="Close the computer" onClick={() => void closeView()}><X className="h-4 w-4" aria-hidden /></button>
+            {mode === "control" ? <Button type="button" data-testid="desktop-keyboard-toggle" variant="ghost" size="sm" className="h-7 px-2 text-xs text-computer-muted hover:bg-computer-foreground/10 hover:text-computer-background" aria-pressed={keyboard} onClick={toggleKeyboard}>Keyboard</Button> : null}
+            {zoom > 1.01 ? <Button type="button" data-testid="desktop-fit" variant="ghost" size="sm" className="h-7 px-2 text-xs text-computer-muted hover:bg-computer-foreground/10 hover:text-computer-background" onClick={fitWidth}>Fit</Button> : null}
+            <button type="button" data-testid="computer-minimise" className="inline-grid h-7 w-7 place-items-center rounded-md text-computer-muted transition-colors hover:bg-computer-foreground/10 hover:text-computer-background focus-visible:outline focus-visible:outline-2 focus-visible:outline-computer-foreground/60" aria-label="Minimise to the panel" title="Minimise to the panel" onClick={() => { if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined); onExitFullscreen?.(); }}><Minimize2 className="h-4 w-4 text-warning" aria-hidden /></button>
+            <button type="button" data-testid="computer-collapse" className="inline-grid h-7 w-7 place-items-center rounded-md text-computer-muted transition-colors hover:bg-computer-foreground/10 hover:text-computer-background focus-visible:outline focus-visible:outline-2 focus-visible:outline-computer-foreground/60" aria-expanded={!collapsedView} aria-controls="computer-frame-wrap" title={collapsedView ? "Restore" : "Collapse"} onClick={() => setCollapsedView(v => !v)}><Minus className="h-4 w-4" aria-hidden /><span className="sr-only">{collapsedView ? "Restore" : "Collapse"}</span></button>
+            <button type="button" data-testid="desktop-fullscreen" className="inline-grid h-7 w-7 place-items-center rounded-md text-computer-muted transition-colors hover:bg-computer-foreground/10 hover:text-computer-background focus-visible:outline focus-visible:outline-2 focus-visible:outline-computer-foreground/60" aria-pressed={nativeFs} title={nativeFs ? "Exit full screen" : "Full screen"} onClick={() => void toggleFullscreen()}><Maximize2 className="h-4 w-4" aria-hidden /><span className="sr-only">{nativeFs ? "Compact" : "Full screen"}</span></button>
+            <button type="button" data-testid="computer-close" className="inline-grid h-7 w-7 place-items-center rounded-md text-computer-muted transition-colors hover:bg-computer-foreground/10 hover:text-computer-background focus-visible:outline focus-visible:outline-2 focus-visible:outline-computer-foreground/60" aria-label="Close the computer" title="Close the computer" onClick={() => void closeView()}><X className="h-4 w-4" aria-hidden /></button>
           </div>
         ) : null}
         {compact ? null : fullscreen ? null : (
@@ -821,9 +821,9 @@ export function ComputerPane({
             fillWindow
               ? (fullscreen ? "aspect-[16/10] w-[min(100cqw,160cqh)]" : nativeFs ? "h-full w-full" : "aspect-[16/10] w-full md:aspect-auto md:h-full")
               : "aspect-[16/10] w-full",
-            compact && "cursor-pointer rounded-xl border border-border bg-black",
-            fullscreen && "rounded-lg border border-white/10 bg-black shadow-[0_8px_40px_rgba(0,0,0,0.55)]",
-            fullscreen && recording && "outline outline-2 outline-offset-2 outline-red-500",
+            compact && "cursor-pointer rounded-xl border border-border bg-computer-background",
+            fullscreen && "rounded-lg border border-computer-foreground/10 bg-computer-background shadow-overlay",
+            fullscreen && recording && "outline outline-2 outline-offset-2 outline-destructive",
             fullscreen && mode === "control" && !recording && "ring-2 ring-bot/70",
           )}
           data-recording={recording ? "true" : undefined}
@@ -854,22 +854,22 @@ export function ComputerPane({
         {compact && !fullscreen ? (
           <p className="text-center text-sm text-muted-foreground" data-testid="computer-caption">{caption || "Teammate"}&apos;s screen</p>
         ) : null}
-        {fullscreen && collapsedView ? <p className="grid flex-1 place-items-center text-sm text-neutral-400">The desktop is collapsed.</p> : null}
+        {fullscreen && collapsedView ? <p className="grid flex-1 place-items-center text-sm text-computer-muted">The desktop is collapsed.</p> : null}
         {fullscreen ? (
           <div data-testid="control-pill" data-mode={mode} role="status" className="flex shrink-0 justify-center">
-            <div className="flex h-10 items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] p-[3px] text-sm sm:h-[26px] sm:text-[11px]">
+            <div className="flex h-10 items-center gap-1 rounded-full border border-computer-foreground/10 bg-computer-foreground/[0.04] p-[3px] text-sm sm:h-[26px] sm:text-[11px]">
               {mode === "control" ? (
                 <>
                   <span className="ml-2 h-2 w-2 rounded-full bg-bot" aria-hidden />
                   <span className="px-1 font-medium">You&apos;re in control</span>
-                  <span className="hidden pr-1 text-xs text-neutral-400 sm:inline">{caption || "Teammate"} is paused</span>
-                  <Button data-testid="hand-back" size="sm" className="h-8 rounded-full bg-red-600 px-4 text-sm sm:h-5 sm:px-2.5 sm:text-[11px] text-white hover:bg-red-500" disabled={busy !== null} onClick={() => void handBack()}>Stop</Button>
+                  <span className="hidden pr-1 text-xs text-computer-muted sm:inline">{caption || "Teammate"} is paused</span>
+                  <Button data-testid="hand-back" size="sm" className="h-8 rounded-full bg-destructive px-4 text-sm sm:h-5 sm:px-2.5 sm:text-[11px] text-computer-background hover:bg-destructive/90" disabled={busy !== null} onClick={() => void handBack()}>Stop</Button>
                 </>
               ) : (
                 <>
-                  <Eye className="ml-2 h-3 w-3 text-neutral-500" aria-hidden />
-                  <span data-testid="watch-only" className="pl-1 pr-2 text-neutral-400">Watching</span>
-                  <Button data-testid="take-control" size="sm" className="h-8 rounded-full bg-white px-4 text-sm font-medium sm:h-5 sm:px-2.5 sm:text-[11px] text-neutral-900 hover:bg-neutral-200" disabled={busy !== null} onClick={() => void takeControl()}>Take control</Button>
+                  <Eye className="ml-2 h-3 w-3 text-computer-muted" aria-hidden />
+                  <span data-testid="watch-only" className="pl-1 pr-2 text-computer-muted">Watching</span>
+                  <Button data-testid="take-control" size="sm" className="h-8 rounded-full bg-computer-foreground px-4 text-sm font-medium sm:h-5 sm:px-2.5 sm:text-[11px] text-computer-background hover:bg-computer-foreground/90" disabled={busy !== null} onClick={() => void takeControl()}>Take control</Button>
                 </>
               )}
             </div>
@@ -903,7 +903,7 @@ export function ComputerPane({
         </p>
       ) : null}
       {waiting.length > 0 ? (
-        <div data-testid="attention-banner" role="status" className={cn("rounded-lg border border-border bg-card p-4", fullscreen && "mx-auto w-[min(32rem,92vw)] shrink-0 max-h-[40vh] overflow-y-auto border-white/10 bg-neutral-900 text-neutral-100 shadow-xl")}>
+        <div data-testid="attention-banner" role="status" className={cn("rounded-lg border border-border bg-card p-4", fullscreen && "mx-auto w-[min(32rem,92vw)] shrink-0 max-h-[40vh] overflow-y-auto border-computer-foreground/10 bg-computer-background text-computer-foreground shadow-xl")}>
           <p className="font-medium">A task is waiting on you.</p>
           <p className="mt-1 text-sm">The bot waits for you to finish the human step and explicitly continue.</p>
           <ul className="mt-3 flex flex-col gap-3">

@@ -30,7 +30,7 @@ export function SettingsNav() {
         if (!items.length) return null;
         return (
           <section key={group.heading} aria-label={group.heading} className="md:mb-2">
-            <h2 className="hidden px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#71767b] md:block">{group.heading}</h2>
+            <h2 className="hidden px-3 pb-1 pt-3 text-sm font-medium text-muted-foreground md:block">{group.heading}</h2>
             {items.map((item) => {
               const active = item.href && (item.exact ? pathname === item.href : pathname === item.href || pathname.startsWith(`${item.href}/`));
               if (!item.href) return <span key={item.id} data-settings-section={item.section} className="inline-flex min-h-11 shrink-0 items-center rounded-md px-3 text-sm text-muted-foreground md:w-full">{item.label}</span>;
