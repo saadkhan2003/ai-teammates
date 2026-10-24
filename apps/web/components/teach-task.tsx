@@ -24,7 +24,7 @@ async function upload(botId: string, path: string, blob: Blob) {
 }
 
 /** "Teach a task": records the live desktop while the user demonstrates, then asks the bot to learn the task from it. */
-export function useTeachTask({ botId, conversationId, onBegin, onSent }: { botId: string; conversationId?: string; onBegin: () => void; onSent: () => void }) {
+export function useTeachTask({ botId, conversationId, onBegin, onEnd, onSent }: { botId: string; conversationId?: string; onBegin: () => void; onEnd: () => void; onSent: () => void }) {
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const recorder = useRef<DemoRecorder | null>(null);
@@ -44,13 +44,13 @@ export function useTeachTask({ botId, conversationId, onBegin, onSent }: { botId
       const handle = canvas ? startDemoRecorder(canvas) : null;
       if (!handle) {
         toast.error(canvas ? "This browser cannot record the screen." : "The desktop is not connected yet. Try again in a moment.");
-        await api(`/api/bots/${botId}/computer/hand-back`, { method: "POST" }).catch(() => undefined);
+        onEnd();
         return;
       }
       recorder.current = handle;
       setStartedAt(Date.now());
     } finally { starting.current = false; setBusy(false); }
-  }, [botId, onBegin]);
+  }, [botId, onBegin, onEnd]);
 
   /** Stop, check the recording is not blank or idle, upload it and post the learn message as the user. */
   const finish = useCallback(async () => {
@@ -59,6 +59,7 @@ export function useTeachTask({ botId, conversationId, onBegin, onSent }: { botId
     recorder.current = null;
     setStartedAt(null);
     const { blob, verdict } = await handle.stop();
+    onEnd();
     if (!blob || verdict !== "ok") {
       toast.error(verdict === "blank" ? "The screen stayed blank, so nothing was recorded. Nothing was sent." : "Nothing changed on the screen, so there was nothing to learn from. Nothing was sent.");
       return;
@@ -71,16 +72,16 @@ export function useTeachTask({ botId, conversationId, onBegin, onSent }: { botId
       toast.success("Recording sent. I will learn the task from it.");
       onSent();
     } catch { toast.error("Could not send the recording. Try teaching the task again."); }
-  }, [botId, conversationId, onSent]);
+  }, [botId, conversationId, onEnd, onSent]);
 
   const cancel = useCallback(async () => {
     recorder.current?.cancel();
     recorder.current = null;
     setStartedAt(null);
-    await api(`/api/bots/${botId}/computer/hand-back`, { method: "POST" }).catch(() => undefined);
+    onEnd();
     toast("Recording discarded.");
     onSent();
-  }, [botId, onSent]);
+  }, [onEnd, onSent]);
 
   useEffect(() => () => { recorder.current?.cancel(); recorder.current = null; }, [botId]);
   return { recording: startedAt !== null, startedAt, busy, start, finish, cancel };

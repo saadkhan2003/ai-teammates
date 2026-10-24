@@ -124,6 +124,7 @@ export function ComputerPane({
   onExitFullscreen,
   recording = false,
   autoControlKey = 0,
+  handBackKey = 0,
   onHandedBack,
 }: {
   botId: string;
@@ -139,6 +140,8 @@ export function ComputerPane({
   recording?: boolean;
   /** Bumping this number takes control of the desktop (used when teaching a task). */
   autoControlKey?: number;
+  /** Bumping this number hands control back when this pane currently holds it. */
+  handBackKey?: number;
   onHandedBack?: () => void;
 }) {
   // Leaving the full view plays a short fade-and-shrink before the panel layout comes back.
@@ -438,6 +441,14 @@ export function ComputerPane({
     if (autoControlKey > 0) void takeControl();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoControlKey]);
+
+  const handBackKeyRef = useRef(handBackKey);
+  useEffect(() => {
+    if (handBackKey === handBackKeyRef.current) return;
+    handBackKeyRef.current = handBackKey;
+    if (handBackKey > 0 && modeRef.current === "control") void handBack();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handBackKey]);
 
   function place(nextZoom: number, nextPan: { x: number; y: number }) {
     const frame = frameRef.current;

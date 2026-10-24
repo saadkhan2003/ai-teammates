@@ -423,7 +423,16 @@ public static class Routes
             var user = await RequireUser(ctx, platform);
             if (user == null) return Results.Unauthorized();
             if (!await Owns(platform, user.Value, id)) return Results.NotFound();
-            var request = await ctx.Request.ReadFromJsonAsync<JsonElement>(ct);
+            if (!ctx.Request.HasJsonContentType()) return Results.BadRequest(new { error = "desktop tab required" });
+            JsonElement request;
+            try
+            {
+                request = await ctx.Request.ReadFromJsonAsync<JsonElement>(ct);
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                return Results.BadRequest(new { error = "desktop tab required" });
+            }
             var tabId = request.ValueKind == JsonValueKind.Object && request.TryGetProperty("tabId", out var tab) ? tab.GetString() : null;
             var expectedEpoch = request.ValueKind == JsonValueKind.Object && request.TryGetProperty("epoch", out var ep) && ep.TryGetInt64(out var parsed) ? parsed : -1;
             if (string.IsNullOrWhiteSpace(tabId) || tabId.Length > 128) return Results.BadRequest(new { error = "desktop tab required" });
