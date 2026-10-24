@@ -469,6 +469,11 @@ class DesktopManager:
             down=True,
         )
         await _rescan()
+        # After the idle reaper, these services are still supervised but wanted down, and a
+        # rescan does not restart them. Ask s6 to bring them up before waiting for X.
+        for service in ("xvfb", "wm", "panels"):
+            if (Path("/run/service") / f"{service}-{n}" / "supervise").exists():
+                await _svc("-u", f"/run/service/{service}-{n}")
         await asyncio.sleep(0.4)
         await _wait_x(n)
 
