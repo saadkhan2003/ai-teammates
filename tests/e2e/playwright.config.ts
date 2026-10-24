@@ -1,11 +1,13 @@
 import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
+  globalSetup: "./global-setup.ts",
   testDir: ".",
   timeout: 1_200_000,
   expect: { timeout: 20_000 },
   use: {
     baseURL: process.env.BASE_URL ?? "http://127.0.0.1:18080",
+    storageState: "./.auth/owner.json",
     actionTimeout: 20_000,
     channel: "chrome",
     screenshot: "only-on-failure",

@@ -1,11 +1,8 @@
 import { expect, test } from "@playwright/test";
+import { login } from "./helpers";
 
 test("name alone creates a teammate and empty names get inline validation", async ({ page }) => {
-  await page.goto("/login");
-  await page.getByTestId("login-username").fill(process.env.OWNER_USERNAME ?? "saad");
-  await page.getByTestId("login-password").fill(process.env.OWNER_PASSWORD ?? "teammates-dev");
-  await page.getByTestId("login-submit").click();
-  await expect(page.getByTestId("app-shell")).toBeVisible();
+  await login(page);
   await page.evaluate(() => window.dispatchEvent(new Event("teammates-open-create")));
   await expect(page.getByTestId("create-bot-title")).toHaveText("Create New Bot");
   await expect(page.getByTestId("avatar-picker")).toBeVisible();

@@ -1,11 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-const owner = process.env.OWNER_USERNAME ?? "saad";
-const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
-
 async function setup(page: import("@playwright/test").Page) {
-  const login = await page.request.post("/api/auth/login", { data: { username: owner, password } });
-  expect(login.ok()).toBeTruthy();
   const list = await (await page.request.get("/api/bots")).json();
   let bot = ((Array.isArray(list) ? list : list.bots) as { id: string; name: string }[])[0];
   if (!bot) {

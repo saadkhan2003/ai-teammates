@@ -2,10 +2,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { autoAllowBrowserOpens } from "./helpers";
+import { autoAllowBrowserOpens, login } from "./helpers";
 
-const owner = process.env.OWNER_USERNAME ?? "saad";
-const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
 const STACK = process.env.STACK ?? "teammates";
 const OPENROUTER = "sk-or-v1-CANARYOPENROUTERKEY8Kx2";
 const GITHUB = "ghp_CANARYGITHUBTOKENVALUE99";
@@ -86,14 +84,6 @@ function waitHealth() {
     spawnSync("sleep", ["2"]);
   }
   throw new Error("API health did not return");
-}
-
-async function login(page: Page) {
-  await page.goto("/login");
-  await page.getByTestId("login-username").fill(owner);
-  await page.getByTestId("login-password").fill(password);
-  await page.getByTestId("login-submit").click();
-  await expect(page.getByTestId("new-bot")).toBeVisible();
 }
 
 const acceptanceBotName = /^(Clerk|Atlas) \d+$/;

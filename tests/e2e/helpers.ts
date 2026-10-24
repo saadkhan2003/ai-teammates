@@ -1,11 +1,15 @@
 import { expect, type Page } from "@playwright/test";
 
 export async function login(page: Page) {
-  await page.goto("/login");
-  await page.getByTestId("login-username").fill(process.env.OWNER_USERNAME ?? "saad");
+  await page.goto("/");
+  const shell = page.getByTestId("app-shell");
+  const username = page.getByTestId("login-username");
+  await expect(shell.or(username)).toBeVisible();
+  if (await shell.isVisible()) return;
+  await username.fill(process.env.OWNER_USERNAME ?? "saad");
   await page.getByTestId("login-password").fill(process.env.OWNER_PASSWORD ?? "teammates-dev");
   await page.getByTestId("login-submit").click();
-  await expect(page.getByTestId("app-shell")).toBeVisible();
+  await expect(shell).toBeVisible();
 }
 
 // v0.4 asks for Allow once whenever a run opens a new browser origin. Long

@@ -9,6 +9,7 @@ uploads/
 **/*.pyc
 .pytest_cache/
 test-results/
+tests/e2e/.auth/
 playwright-report/
 evals/out/
 backups/

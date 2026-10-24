@@ -8,6 +8,8 @@ const STACK = process.env.STACK ?? "teammates";
 const tabs = ["Overview", "Computer", "Routines", "Files/Media", "Skills", "Memory", "Tasks", "Plugins"] as const;
 const pages = ["/", "/settings", "/settings/secrets", "/settings/computer", "/settings/usage", "/system", "/invite"] as const;
 
+test.use({ storageState: { cookies: [], origins: [] } });
+
 function psql(sql: string) {
   const args = ["exec", "-i", `${STACK}-postgres-1`, "psql", "-U", "agent", "-d", "agent", "-v", "ON_ERROR_STOP=1", "-c", sql];
   let result = spawnSync("docker", args, { encoding: "utf8" });

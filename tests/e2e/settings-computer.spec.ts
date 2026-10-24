@@ -1,13 +1,10 @@
 import { expect, test } from "@playwright/test";
+import { login } from "./helpers";
 
 test("pair once, edit device permissions, heartbeat and revoke", async ({ page, request }) => {
   // Anonymous management cannot list devices.
   expect((await request.get("/api/devices")).status()).toBe(403);
-  await page.goto("/login");
-  await page.getByTestId("login-username").fill(process.env.OWNER_USERNAME ?? "saad");
-  await page.getByTestId("login-password").fill(process.env.OWNER_PASSWORD ?? "teammates-dev");
-  await page.getByTestId("login-submit").click();
-  await expect(page.getByTestId("app-shell")).toBeVisible();
+  await login(page);
   await page.goto("/settings/computer");
   await expect(page.getByTestId("device-version")).toContainText("Latest companion");
   const issued = page.waitForResponse(response => response.url().endsWith("/api/devices/pair") && response.request().method() === "POST");
