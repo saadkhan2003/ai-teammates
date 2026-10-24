@@ -72,6 +72,8 @@ public static class Beta
                 new { hash = Hash(token) });
             if (invite.Id == Guid.Empty)
                 return Results.Json(new { error = "invitation is not valid" }, statusCode: 410);
+            var signups = await conn.ExecuteScalarAsync<bool?>("SELECT enabled FROM feature_flags WHERE key='signups_open'");
+            if (signups == false) return Results.Json(new { error = "signups are closed" }, statusCode: 403);
             Guid id;
             try
             {

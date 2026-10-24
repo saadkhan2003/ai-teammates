@@ -3,11 +3,11 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { cardClass, PageError, PageSkeleton, pillClass, SectionTitle } from "@/components/account/chrome";
 import { JobMark } from "@/components/coding-jobs";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
-import { jobSubtitle, liveStepText, normalizeCodingJob, readableAccent, type CodingJob } from "@/lib/chat-ui";
+import { filesChangedLabel, jobSubtitle, liveStepText, normalizeCodingJob, readableAccent, type CodingJob } from "@/lib/chat-ui";
 import { errorMessage } from "@/lib/utils";
 
 export default function CodingJobPage() {
@@ -23,7 +23,9 @@ export default function CodingJobPage() {
     api<unknown>(`/api/bots/${botId}/coding-jobs/${jobId}`)
       .then((body) => {
         if (!live) return;
-        setJob(normalizeCodingJob(body));
+        const next = normalizeCodingJob(body);
+        if (!next) setError("This coding job could not be loaded.");
+        else setJob(next);
       })
       .catch((caught) => {
         if (live) setError(errorMessage(caught, "This coding job could not be loaded."));
@@ -34,39 +36,53 @@ export default function CodingJobPage() {
   }, [botId, jobId]);
 
   const accent = readableAccent();
+
   return (
     <main data-testid="coding-job-page" className="mx-auto flex w-full max-w-[var(--content-width)] flex-col gap-[var(--space-section)] px-[var(--space-page)] py-[var(--space-page)]">
-      <Link href={botId ? `/bots/${botId}` : "/"} className="text-body-sm text-muted-foreground">
-        Back to chat
-      </Link>
-      {error ? (
-        <p role="alert" className="rounded-lg border border-border bg-card p-4 text-body-sm text-destructive">
-          {error}
-        </p>
-      ) : null}
-      {job ? (
-        <header className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h1 className="flex items-center gap-2 text-title font-medium">
-              <JobMark job={job} accent={accent} />
-              {job.title}
-            </h1>
-            <p className="mt-1 text-body-sm text-muted-foreground">{jobSubtitle(job) ?? liveStepText(job)}</p>
-          </div>
-          {job.prUrl ? (
-            <Button asChild>
-              <a href={job.prUrl} target="_blank" rel="noopener noreferrer">
-                Open pull request
-              </a>
-            </Button>
-          ) : null}
-        </header>
-      ) : error ? null : (
-        <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading coding job">
-          <Skeleton className="h-6 w-48" />
-          <Skeleton className="h-4 w-32" />
+      <header className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="flex gap-4 text-body-sm text-muted-foreground">
+            <Link href={botId ? `/bots/${botId}/jobs` : "/"} className="underline">
+              All coding jobs
+            </Link>
+            <Link href={botId ? `/bots/${botId}` : "/"} className="underline">Back to chat</Link>
+          </p>
+          <h1 className="mt-2 flex items-center gap-2 text-title">{job ? <JobMark job={job} accent={accent} /> : null}{job?.title ?? "Coding job"}</h1>
+          {job ? <p className="mt-1 text-body-sm text-muted-foreground">{jobSubtitle(job) ?? liveStepText(job)}</p> : null}
         </div>
-      )}
+        {job?.prUrl ? (
+          <Button asChild className={pillClass}>
+            <a href={job.prUrl} target="_blank" rel="noopener noreferrer">
+              Open pull request
+            </a>
+          </Button>
+        ) : null}
+      </header>
+      {error ? <PageError title="This coding job could not be loaded." detail={error} /> : null}
+      {!job && !error ? <PageSkeleton /> : null}
+      {job ? (
+        <>
+          <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {[
+              ["Status", job.status],
+              ["Files", filesChangedLabel(job.filesChanged)],
+              ["Additions", `+${job.additions}`],
+              ["Deletions", `−${job.deletions}`],
+            ].map(([label, value]) => (
+              <article key={label} className={`${cardClass} p-4`}>
+                <p className="text-meta font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+                <p className="mt-2 text-h2 capitalize tabular-nums">{value}</p>
+              </article>
+            ))}
+          </section>
+          <section className={`${cardClass} flex flex-col gap-3 p-4`}>
+            <SectionTitle>Progress</SectionTitle>
+            <p className="text-body-sm">{job.step || "Waiting for the next step."}</p>
+            <p className="text-body-sm text-muted-foreground">{job.branch ? `Branch ${job.branch}` : "No branch yet."}</p>
+            {job.prNumber ? <p className="text-body-sm tabular-nums">Pull request #{job.prNumber}</p> : null}
+          </section>
+        </>
+      ) : null}
     </main>
   );
 }

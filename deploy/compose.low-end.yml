@@ -11,6 +11,10 @@ services:
     mem_limit: 192m
     cpus: 0.15
     cgroup_parent: /teammates-lowend
+  admin:
+    mem_limit: 192m
+    cpus: 0.15
+    cgroup_parent: /teammates-lowend
   api:
     mem_limit: 384m
     cpus: 0.25

@@ -13,7 +13,7 @@ public class ReliabilityTests
 
     [Theory]
     [InlineData("connect_openrouter", "no_openrouter_key", "Settings > Vault")]
-    [InlineData("provider_error", "provider_error", "provider")]
+    [InlineData("provider_error", "provider_error", "rejected")]
     [InlineData("Traceback: secret sensitive exception", "worker_error", "could not finish")]
     public void ErrorsAreReadableAndDoNotEchoDetails(string input, string code, string text)
     {

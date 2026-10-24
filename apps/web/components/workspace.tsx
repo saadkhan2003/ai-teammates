@@ -33,7 +33,7 @@ import {
   normalizeRoutines,
   normalizeSkills,
 } from "@/lib/api";
-import { applyCodingJob, copyBotName, displayModelName, normalizeCodingJob, readableAccent, templateShareUrl, type CodingJob } from "@/lib/chat-ui";
+import { applyCodingJob, copyBotName, normalizeCodingJob, readableAccent, templateShareUrl, type CodingJob } from "@/lib/chat-ui";
 import { mergeAgentEvent, parseAgentEvent, subscribeEvents, type AgentEvent } from "@/lib/events";
 import { StatusBadge } from "@/lib/status";
 import type { Artifact, FileEntry, LoginRequest, MemoryItem, Routine, SecretRequest, Skill, Workspace as WorkspaceData } from "@/lib/types";
@@ -386,9 +386,9 @@ export function Workspace({ botId }: { botId: string }) {
               {(llmConnected ?? workspace.openrouterConnected) === false ? (
                 <p data-testid="llm-key-banner" className="rounded-md border border-border bg-card px-3 py-2 text-body-sm">
                   <Link href="/settings/secrets" className="font-medium text-brand">
-                    Connect OpenRouter in Settings → Vault
+                    Add a platform key in Settings → Vault
                   </Link>
-                  <span className="text-muted-foreground"> — model tasks wait until a key is saved.</span>
+                  <span className="text-muted-foreground"> — tasks wait until a key is saved.</span>
                 </p>
               ) : null}
               <Approvals approvals={workspace.approvals ?? []} onChanged={() => void loadWorkspace()} />
@@ -519,7 +519,7 @@ export function Workspace({ botId }: { botId: string }) {
               >
                 <TabsList aria-label="Bot details" className="mx-4 grid h-[34px] w-[calc(100%-2rem)] grid-cols-3 items-center gap-0.5 self-center rounded-full bg-[var(--track)] p-[3px]">
                   {INFO_TABS.map(([value, label]) => (
-                    <TabsTrigger key={value} value={value} className="info-tab h-7 min-h-0 w-full min-w-0 justify-center overflow-hidden rounded-full border border-transparent px-3 text-ui font-[500] leading-none text-muted-foreground shadow-none transition-[background-color,box-shadow,color] duration-200 data-[state=active]:border-border data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-[0_1px_2px_rgba(0,0,0,0.16)]">
+                    <TabsTrigger key={value} value={value} className="info-tab h-7 min-h-0 w-full min-w-0 justify-center overflow-hidden rounded-full border border-transparent px-3 text-ui font-medium leading-none text-muted-foreground shadow-none transition-[background-color,box-shadow,color] duration-200 data-[state=active]:border-border data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-[0_1px_2px_rgba(0,0,0,0.16)]">
                       {label}
                     </TabsTrigger>
                   ))}
@@ -539,10 +539,9 @@ export function Workspace({ botId }: { botId: string }) {
                     {bot?.instructions ? (
                       <PanelCard className="px-3 py-3">
                         <p className="type-body text-card-foreground">{bot.instructions}</p>
-                        {displayModelName(bot.model) ? <p className="type-caption mt-2">Model · {displayModelName(bot.model)}</p> : null}
                       </PanelCard>
                     ) : (
-                      <PanelEmpty icon={Info} title="No description yet" detail={displayModelName(bot?.model) ? `Model · ${displayModelName(bot?.model)}` : "Add a short description in teammate settings."} />
+                      <PanelEmpty icon={Info} title="No description yet" detail="Add a short description in teammate settings." />
                     )}
                   </PanelSection>
                   <PanelSection title="Connect apps" testId="connect-apps">
@@ -732,10 +731,6 @@ function BotSettings({
         <div className="flex flex-col gap-2">
           <Label htmlFor="settings-description">Description</Label>
           <Textarea id="settings-description" value={draft.instructions} onChange={(event) => setDraft({ ...draft, instructions: event.target.value })} />
-        </div>
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="settings-model">Model</Label>
-          <Input id="settings-model" value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="Provider default" />
         </div>
       </section>
       <div className="flex min-h-11 items-center justify-between gap-3 text-body-sm">

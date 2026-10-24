@@ -75,8 +75,8 @@ public static class Routes
                 platform.NoteLoginFailure(ip);
                 return Results.Json(new { error = "invalid credentials" }, statusCode: 401);
             }
-            if (row.Status == "disabled") return Results.Json(new { error = "disabled" }, statusCode: 403);
-            var token = await platform.CreateSession(row.Id);
+            if (row.Status is "disabled" or "banned") return Results.Json(new { error = "disabled" }, statusCode: 403);
+            var token = await platform.CreateSession(row.Id, ip);
             ctx.Response.Cookies.Append("teammates_session", token, Cookie(ctx));
             return Results.Json(new { username });
         });
@@ -92,9 +92,9 @@ public static class Routes
             var user = await RequireUser(ctx, platform);
             if (user == null) return Results.Unauthorized();
             await using var conn = await platform.Data.OpenConnectionAsync();
-            var me = await conn.QuerySingleAsync<(string Username, string Role, string Status, string DisplayName)>("SELECT username, role, status, display_name FROM users WHERE id=@id", new { id = user });
+            var me = await conn.QuerySingleAsync<(string Username, string Role, string Status, string DisplayName, string Email, string AvatarUrl)>("SELECT username, role, status, display_name, coalesce(email, ''), coalesce(avatar_url, '') FROM users WHERE id=@id", new { id = user });
             var theme = ThemeChoice.Normalize(await conn.ExecuteScalarAsync<string>("SELECT theme FROM user_preferences WHERE user_id=@id", new { id = user })) ?? ThemeChoice.Default;
-            return Results.Json(new { id = user, username = me.Username, role = me.Role, status = me.Status, displayName = me.DisplayName, theme });
+            return Results.Json(new { id = user, username = me.Username, role = me.Role, status = me.Status, displayName = me.DisplayName, email = me.Email, avatarUrl = me.AvatarUrl, theme });
         });
 
         app.MapPut("/api/settings/appearance", async (HttpContext ctx, JsonElement body) =>
@@ -867,6 +867,7 @@ public static class Routes
             if (!Worker(ctx, platform)) return Results.Unauthorized();
             var worker = body.GetProperty("workerId").GetString();
             await using var conn = await platform.Data.OpenConnectionAsync();
+            try { await UptimeStore.Heartbeat(conn, "worker"); } catch { /* heartbeat is optional until the uptime tables exist */ }
             var n = await conn.ExecuteAsync("UPDATE tasks SET status='queued', lease_owner=NULL, lease_until=NULL, updated_at=now() WHERE status='running' AND (lease_owner=@worker OR lease_until < now())", new { worker });
             if (n > 0) platform.Tasks.Pulse();
             return Results.Json(new { reclaimed = n });
@@ -877,6 +878,12 @@ public static class Routes
             if (!Worker(ctx, platform)) return Results.Unauthorized();
             var worker = body.GetProperty("workerId").GetString();
             var max = body.TryGetProperty("max", out var maxEl) ? maxEl.GetInt32() : 1;
+            try
+            {
+                await using var beat = await platform.Data.OpenConnectionAsync();
+                await UptimeStore.Heartbeat(beat, "worker");
+            }
+            catch { /* heartbeat is optional until the uptime tables exist */ }
 
             async Task<List<object>> TryLease()
             {

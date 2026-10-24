@@ -66,7 +66,7 @@ export function TasksPane({
                   ) : null}
                   {typeof task.modelCalls === "number" ? (
                     <div>
-                      <dt className="inline">Model calls </dt>
+                      <dt className="inline">Calls </dt>
                       <dd className="inline text-ink">{task.modelCalls}</dd>
                     </div>
                   ) : null}
@@ -76,7 +76,7 @@ export function TasksPane({
                 {task.status === "waiting_resource" && openrouterConnected === false ? (
                   <p className="mt-2 text-body-sm">
                     <Link href="/settings/secrets" className="font-medium text-copper-deep underline">
-                      Connect OpenRouter
+                      Add a platform key
                     </Link>
                   </p>
                 ) : null}

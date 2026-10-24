@@ -1,9 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { cardClass, PageError, PageSkeleton, pillClass, SectionTitle } from "@/components/account/chrome";
 import { Button } from "@/components/ui/button";
-import { StateMessage } from "@/components/state-message";
 import { api } from "@/lib/api";
+import { type BillingSnapshot, formatDay } from "@/lib/account";
 import { errorMessage } from "@/lib/utils";
 
 type Usage = {
@@ -38,21 +40,28 @@ export default function UsagePage() {
   const [usage, setUsage] = useState<Usage | null>(null);
   const [rows, setRows] = useState<Row[] | null>(null);
   const [quota, setQuota] = useState<Quota | null>(null);
+
+  const [billing, setBilling] = useState<BillingSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
-      const [mine, limits, report] = await Promise.all([
+      const [credits, mine, limits, report] = await Promise.allSettled([
+        api<BillingSnapshot>("/api/billing"),
         api<Usage>("/api/usage"),
         api<Quota>("/api/quotas"),
-        api<Row[]>("/api/admin/usage").catch(() => null),
+        api<Row[]>("/api/admin/usage"),
       ]);
-      setUsage(mine);
-      setQuota(limits);
-      setRows(Array.isArray(report) ? report : null);
-      setError(null);
+      setBilling(credits.status === "fulfilled" ? credits.value : null);
+      setUsage(mine.status === "fulfilled" ? mine.value : null);
+      setQuota(limits.status === "fulfilled" ? limits.value : null);
+      setRows(report.status === "fulfilled" && Array.isArray(report.value) ? report.value : null);
+      const failed = [credits, mine, limits].find((result) => result.status === "rejected");
+      setError(failed?.status === "rejected" ? errorMessage(failed.reason, "Some usage details could not be loaded.") : null);
     } catch (caught) {
+      setBilling(null);
       setError(errorMessage(caught, "Could not load usage."));
     } finally {
       setLoading(false);
@@ -65,25 +74,59 @@ export default function UsagePage() {
 
   return (
     <>
-      <header>
-        <h2 className="text-body-sm font-medium">Usage and billing</h2>
-        <p className="mt-1 text-body-sm text-muted-foreground">Model calls, cost, and the quota for this account.</p>
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-title">Usage</h2>
+          <p className="mt-1 text-body-sm text-muted-foreground">Credits left for this account.</p>
+        </div>
+        <Button variant="outline" className={pillClass} asChild>
+          <Link href="/account/billing">Plans</Link>
+        </Button>
       </header>
-      {loading ? <StateMessage title="Loading usage…" detail="Reading model calls, cost, and the quota for this account." /> : null}
-      {error ? <p className="text-body-sm text-destructive">{error}</p> : null}
+      {loading ? <PageSkeleton /> : null}
+      {error ? <PageError title="Could not load usage." detail={error} onRetry={() => void load()} /> : null}
+      {billing ? (
+        <section data-testid="usage-report" className={`${cardClass} p-4`}>
+          <div className="flex items-baseline justify-between gap-3">
+            <SectionTitle>Credits</SectionTitle>
+            <p className="text-body-sm text-muted-foreground">Resets {formatDay(billing.renewsAt)}</p>
+          </div>
+          <div className="mt-4 grid gap-4 sm:grid-cols-3">
+            {[
+              ["Left", billing.creditBalance.toLocaleString()],
+              ["Used", billing.usedCredits.toLocaleString()],
+              ["Grant", billing.creditAllowance.toLocaleString()],
+            ].map(([label, value]) => (
+              <article key={label}>
+                <p className="text-meta font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+                <p className="mt-2 text-h1 tabular-nums">{value}</p>
+              </article>
+            ))}
+          </div>
+          <div className="mt-4">
+            <div className="mb-2 flex justify-between text-body-sm tabular-nums">
+              <span>{billing.usedCredits.toLocaleString()} used</span>
+              <span className="text-muted-foreground">{billing.usedPercent}% of {billing.creditAllowance.toLocaleString()}</span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-muted">
+              <div className="h-full rounded-full bg-brand" style={{ width: `${billing.usedPercent}%` }} />
+            </div>
+          </div>
+        </section>
+      ) : null}
       {usage ? (
         <section className="grid gap-[var(--space-card)] sm:grid-cols-3">
           <article className="rounded-lg border border-border bg-card p-4">
-            <p className="text-body-sm text-muted-foreground">Model calls</p>
-            <p className="text-h2 font-medium">{usage.modelCalls ?? 0}</p>
+            <p className="text-body-sm text-muted-foreground">Calls</p>
+            <p className="text-h2">{usage.modelCalls ?? 0}</p>
           </article>
           <article className="rounded-lg border border-border bg-card p-4">
             <p className="text-body-sm text-muted-foreground">Cost</p>
-            <p className="text-h2 font-medium">${Number(usage.costUsd ?? 0).toFixed(4)}</p>
+            <p className="text-h2">${Number(usage.costUsd ?? 0).toFixed(4)}</p>
           </article>
           <article className="rounded-lg border border-border bg-card p-4">
             <p className="text-body-sm text-muted-foreground">Latency</p>
-            <p className="text-h2 font-medium">{Math.round(Number(usage.latencyMs ?? 0))} ms</p>
+            <p className="text-h2">{Math.round(Number(usage.latencyMs ?? 0))} ms</p>
           </article>
         </section>
       ) : null}
@@ -99,7 +142,7 @@ export default function UsagePage() {
         </section>
       ) : null}
       {rows ? (
-        <section data-testid="usage-report" className="rounded-lg border border-border bg-card p-4">
+        <section data-testid="usage-user-report" className="rounded-lg border border-border bg-card p-4">
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-body-sm font-medium">Per-user report</h2>
             <Button variant="secondary" size="sm" onClick={() => void load()}>

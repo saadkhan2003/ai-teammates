@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, ChevronRight, CircleHelp, Info, Menu, MoreHorizontal, PanelLeft, PanelLeftClose, Plus, Search, Settings, Upload, X } from "lucide-react";
+import { Bell, ChevronRight, CircleHelp, CreditCard, Info, Menu, MoreHorizontal, PanelLeft, PanelLeftClose, Plus, Search, Settings, Upload, User, Users, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { type FormEvent, type ReactNode, type UIEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -206,12 +206,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (pathname === "/login" || pathname === "/invite") return;
+    if (pathname === "/login" || pathname === "/invite" || pathname === "/login/reset" || pathname === "/offline" || pathname === "/status") return;
     void load();
     const timer = window.setInterval(() => void load(), 15_000);
     const refresh = () => void load();
     const openCreate = () => setCreateOpen(true);
     window.addEventListener("teammates-bots-changed", refresh);
+    window.addEventListener("teammates-profile-changed", refresh);
     window.addEventListener("teammates-open-create", openCreate);
     let debounce = 0;
     const stopEvents = subscribeEvents(
@@ -232,6 +233,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       window.clearTimeout(debounce);
       stopEvents();
       window.removeEventListener("teammates-bots-changed", refresh);
+      window.removeEventListener("teammates-profile-changed", refresh);
       window.removeEventListener("teammates-open-create", openCreate);
     };
   }, [load, pathname]);
@@ -309,7 +311,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const unread = notes.filter((note) => !note.readAt).length;
 
-  if (pathname === "/login" || pathname === "/invite") return <>{children}</>;
+  if (pathname === "/login" || pathname === "/invite" || pathname === "/login/reset" || pathname === "/offline" || pathname === "/status") return <>{children}</>;
 
   function go(href: string) {
     setPalette(false);
@@ -442,7 +444,24 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       )}
       <nav className="sidebar-scroll min-h-0 flex-1 space-y-1 overflow-y-auto px-1.5 pb-3" onScroll={onRosterScroll}>
-        {groups.length === 0 ? <p className={cn("px-2 py-3 text-meta text-muted-foreground", compact && "sr-only")}>No teammates yet</p> : null}
+        {groups.length === 0 ? (
+          compact ? (
+            <button type="button" className="mx-auto grid size-11 place-items-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="No teammates yet. Create one." onClick={() => window.dispatchEvent(new Event("teammates-open-create"))}>
+              <Users className="size-4" />
+            </button>
+          ) : (
+            <div data-testid="roster-empty" className="mx-2 mt-3 rounded-card border border-sidebar-border bg-card px-3 py-4 text-center text-card-foreground shadow-[var(--shadow-card)]">
+              <span className="mx-auto grid size-10 place-items-center rounded-full bg-accent text-muted-foreground">
+                <Users className="size-4" aria-hidden="true" />
+              </span>
+              <p className="mt-2 text-body-sm font-medium">No teammates yet</p>
+              <p className="mt-1 text-meta leading-4 text-muted-foreground">Create one to start a conversation.</p>
+              <Button type="button" className="mt-3 h-11 rounded-full px-4" onClick={() => window.dispatchEvent(new Event("teammates-open-create"))}>
+                New teammate
+              </Button>
+            </div>
+          )
+        ) : null}
         {groups.map(([section, items]) => (
           <Collapsible key={section} defaultOpen>
             {compact ? null : (
@@ -554,15 +573,17 @@ export function AppShell({ children }: { children: ReactNode }) {
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>Weekly usage <span className="ml-auto text-meta text-muted-foreground">7% used</span></DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="w-56">
-                <div className="px-2 py-2"><p className="text-body-sm font-medium">Weekly usage</p><p className="text-meta text-muted-foreground">Resets in 7 days</p><p className="mt-2 text-h1 font-medium">7% <span className="text-meta text-muted-foreground">used</span></p></div>
+                <div className="px-2 py-2"><p className="text-body-sm font-medium">Weekly usage</p><p className="text-meta text-muted-foreground">Resets in 7 days</p><p className="mt-2 text-h1">7% <span className="text-meta text-muted-foreground">used</span></p></div>
                 <DropdownMenuItem onSelect={() => go("/settings/usage")}>Manage usage</DropdownMenuItem>
               </DropdownMenuSubContent>
             </DropdownMenuSub>
+            <DropdownMenuItem data-testid="menu-account" onSelect={() => go("/account")}><User /> Account</DropdownMenuItem>
+            <DropdownMenuItem data-testid="menu-billing" onSelect={() => go("/account/billing")}><CreditCard /> Billing</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => go("/settings/computer")}><Upload /> Get app</DropdownMenuItem>
             <DropdownMenuSub>
               <DropdownMenuSubTrigger><CircleHelp /> Support</DropdownMenuSubTrigger>
               <DropdownMenuSubContent>
-                <DropdownMenuItem onSelect={() => window.open("/docs/COMPANION.md", "_blank")}><CircleHelp /> Help Center</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => go("/account/help")}><CircleHelp /> Help Center</DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => setShortcutsOpen(true)}>⌨ Keyboard shortcuts</DropdownMenuItem>
                 <DropdownMenuItem data-testid="send-feedback" onSelect={() => setFeedbackOpen(true)}>✉ Send Feedback</DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => setAboutOpen(true)}><Info /> About</DropdownMenuItem>
@@ -652,7 +673,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
         <ConnectAppsDialog open={pluginsOpen} onOpenChange={setPluginsOpen} />
         <Dialog open={palette} onOpenChange={setPalette}>
-          <DialogContent data-testid="command-palette" className="overflow-hidden p-0 sm:max-w-lg">
+          <DialogContent data-testid="command-palette" className="overflow-hidden rounded-[16px] p-0 shadow-[var(--shadow-card)] sm:max-w-lg">
             <DialogTitle className="sr-only">Command palette</DialogTitle>
             <Command>
               <CommandInput placeholder="Jump to a teammate or run a command" />
@@ -718,7 +739,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </Dialog>
         <Dialog open={aboutOpen} onOpenChange={setAboutOpen}>
           <DialogContent className="sm:max-w-sm text-center" data-testid="about-dialog">
-            <DialogHeader><div className="mx-auto grid h-16 w-16 place-items-center rounded-xl bg-brand text-display font-semibold text-background">✦</div><DialogTitle className="text-h1">AI Teammates</DialogTitle><DialogDescription>Version {process.env.NEXT_PUBLIC_APP_VERSION || "0.4.0"}<br />Built {process.env.NEXT_PUBLIC_BUILD_DATE || "2026"}<br />Copyright © 2026 AI Teammates</DialogDescription></DialogHeader>
+            <DialogHeader><div className="mx-auto grid h-16 w-16 place-items-center rounded-xl bg-brand text-display text-background">✦</div><DialogTitle className="text-h1">AI Teammates</DialogTitle><DialogDescription>Version {process.env.NEXT_PUBLIC_APP_VERSION || "0.4.0"}<br />Built {process.env.NEXT_PUBLIC_BUILD_DATE || "2026"}<br />Copyright © 2026 AI Teammates</DialogDescription></DialogHeader>
             <Button variant="outline" data-testid="copy-version-info" onClick={() => { void navigator.clipboard?.writeText("AI Teammates 0.4.0"); toast.success("Version info copied."); }}>Copy version info</Button>
           </DialogContent>
         </Dialog>
@@ -843,7 +864,7 @@ const shortcutGroups = [
 function ShortcutsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl" data-testid="shortcuts-dialog">
+      <DialogContent className="max-h-[85vh] overflow-y-auto rounded-[16px] shadow-[var(--shadow-card)] sm:max-w-3xl" data-testid="shortcuts-dialog">
         <DialogHeader><DialogTitle>Keyboard shortcuts</DialogTitle></DialogHeader>
         <div className="grid gap-x-10 gap-y-5 sm:grid-cols-2">
           {shortcutGroups.map(([title, entries]) => <section key={title}><h3 className="mb-2 text-body-sm font-medium">{title}</h3><div className="divide-y divide-border">{entries.map(([label, keys]) => <div key={label} className="flex min-h-10 items-center justify-between gap-3 text-body-sm"><span>{label}</span><span className="text-meta text-muted-foreground">{keys.split(" ").map((key, index) => <kbd key={`${key}-${index}`} className="ml-1 rounded-chip border border-border bg-muted px-1.5 py-0.5 font-mono">{key}</kbd>)}</span></div>)}</div></section>)}
@@ -862,5 +883,5 @@ function FeedbackDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     catch (error) { toast.error(errorMessage(error, "Could not send feedback.")); }
     finally { setBusy(false); }
   }
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent data-testid="feedback-dialog"><DialogHeader><DialogTitle>Send feedback</DialogTitle><DialogDescription>Share a note with the AI Teammates team.</DialogDescription></DialogHeader><form onSubmit={(event) => void submit(event)} className="space-y-4"><Textarea data-testid="feedback-message" value={message} onChange={event => setMessage(event.target.value)} maxLength={5000} required placeholder="What should we know?" /><DialogFooter><Button data-testid="feedback-submit" type="submit" disabled={busy || !message.trim()}>{busy ? "Sending…" : "Send feedback"}</Button></DialogFooter></form></DialogContent></Dialog>;
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent data-testid="feedback-dialog" className="rounded-[16px] shadow-[var(--shadow-card)]"><DialogHeader><DialogTitle>Send feedback</DialogTitle><DialogDescription>Share a note with the AI Teammates team.</DialogDescription></DialogHeader><form onSubmit={(event) => void submit(event)} className="space-y-4"><Textarea data-testid="feedback-message" className="min-h-28 rounded-control" value={message} onChange={event => setMessage(event.target.value)} maxLength={5000} required placeholder="What should we know?" /><DialogFooter><Button data-testid="feedback-submit" className="rounded-full" type="submit" disabled={busy || !message.trim()}>{busy ? "Sending…" : "Send feedback"}</Button></DialogFooter></form></DialogContent></Dialog>;
 }

@@ -94,7 +94,7 @@ export function RoutinesPane({
             onChange={(event) => setWatchRef(event.target.value)}
             placeholder="https://example.com/status"
           />
-          <p className="text-meta text-muted-foreground">Leave empty to run on every cron tick. A URL runs the model only when the page changes.</p>
+          <p className="text-meta text-muted-foreground">Leave empty to run on every cron tick. A URL runs only when the page changes.</p>
         </div>
         <div className="flex flex-col gap-2">
           <Label htmlFor="routine-instruction">Instruction</Label>

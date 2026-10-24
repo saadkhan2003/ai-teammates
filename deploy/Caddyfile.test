@@ -49,6 +49,28 @@
 	}
 }
 
+# The admin listener stays closed even in this test file.
+(admin_routes) {
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+		X-Frame-Options SAMEORIGIN
+	}
+	@admin_denied not remote_ip {$ADMIN_ALLOWLIST:0.0.0.0/0 ::/0}
+	handle @admin_denied {
+		respond "Forbidden" 403
+	}
+	handle /api/* {
+		reverse_proxy api:8080
+	}
+	handle /health {
+		reverse_proxy api:8080
+	}
+	handle {
+		reverse_proxy admin:3000
+	}
+}
+
 :80 {
 	import routes
 }
@@ -56,4 +78,8 @@
 :443 {
 	tls internal
 	import routes
+}
+
+:8081 {
+	import admin_routes
 }

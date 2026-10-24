@@ -64,6 +64,7 @@
   --composer-placeholder: #9a9a9a;
   --composer-hover: #2a2a2a;
   --composer-shadow: 0 1px 2px rgb(0 0 0 / 0.35);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.28), 0 12px 28px rgb(0 0 0 / 0.22);
   --success: #1f7a45;
   --overlay: rgb(0 0 0 / 0.45);
   --shimmer: #282828;
@@ -75,6 +76,7 @@
   --space-label: 8px;
   --row-height: 44px;
   --content-width: 48rem;
+  --content-width-wide: 56rem;
   --app-height: 100dvh;
   --app-top: 0px;
   --shadow-card: 0 1px 2px rgb(0 0 0 / 0.28), 0 8px 20px rgb(0 0 0 / 0.18);
@@ -131,6 +133,7 @@ html.light {
   --composer-placeholder: #9a9a9a;
   --composer-hover: #f3f3f3;
   --composer-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 6px 16px rgb(0 0 0 / 0.04);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 24px rgb(0 0 0 / 0.05);
   --success: #1f7a45;
   --overlay: rgb(0 0 0 / 0.45);
   --shimmer: #ececec;
@@ -154,6 +157,7 @@ html.light {
   --space-label: 8px;
   --row-height: 44px;
   --content-width: 48rem;
+  --content-width-wide: 56rem;
   --shadow-card: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 24px rgb(0 0 0 / 0.05);
   --shadow-pill: 0 1px 2px rgb(0 0 0 / 0.05), 0 6px 16px rgb(0 0 0 / 0.06);
   --shadow-pill-hover: 0 2px 6px rgb(0 0 0 / 0.08), 0 10px 24px rgb(0 0 0 / 0.08);
