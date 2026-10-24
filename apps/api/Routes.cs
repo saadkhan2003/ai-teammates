@@ -1198,8 +1198,9 @@ public static class Routes
                       AND EXISTS (
                         SELECT 1 FROM messages
                         WHERE task_id=@id AND kind='question'
-                          AND jsonb_typeof(content::jsonb -> 'answer') = 'array'
-                          AND jsonb_array_length(content::jsonb -> 'answer') > 0
+                          AND CASE WHEN jsonb_typeof(content::jsonb -> 'answer') = 'array'
+                                   THEN jsonb_array_length(content::jsonb -> 'answer')
+                                   ELSE 0 END > 0
                       )
                     """,
                     new { id });
@@ -1225,8 +1226,9 @@ public static class Routes
                     @status = 'waiting_human' AND coalesce(@reason, '') = 'ask_user' AND EXISTS (
                       SELECT 1 FROM messages
                       WHERE task_id=@id AND kind='question'
-                        AND jsonb_typeof(content::jsonb -> 'answer') = 'array'
-                        AND jsonb_array_length(content::jsonb -> 'answer') > 0
+                        AND CASE WHEN jsonb_typeof(content::jsonb -> 'answer') = 'array'
+                                 THEN jsonb_array_length(content::jsonb -> 'answer')
+                                 ELSE 0 END > 0
                     )
                   )
                 """,
