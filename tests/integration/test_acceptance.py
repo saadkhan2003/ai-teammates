@@ -12,6 +12,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+
+import pytest
 from stack import AGENT_CONTAINER, API, API_CONTAINER, BASE, MOCK_CONTAINER, PG, computer_container
 
 OWNER = os.environ.get("OWNER_USERNAME", "saad")
@@ -351,6 +353,32 @@ def exercise_reactions(client: Client, bot_id: str, conversation: str, hello_tas
         item["role"] == "assistant" and not (item.get("content") or "").strip()
         for item in after_thanks["messages"]
     )
+
+
+def _owner_bot_ids(client: Client) -> set[str]:
+    status, bots = client.call("GET", "/api/bots")
+    assert status == 200, bots
+    return {bot["id"] for bot in bots or []}
+
+
+@pytest.fixture(autouse=True)
+def _release_acceptance_bots():
+    """Delete the bots these tests create so repeated suite runs stay under the bot quota."""
+    from test_bot_messaging import _cleanup
+
+    owner = login()
+    before = _owner_bot_ids(owner)
+    yield
+    owner = login()
+    leaked = sorted(_owner_bot_ids(owner) - before)
+    if leaked:
+        _cleanup(owner, *leaked)
+    other = Client()
+    status, _ = other.call("POST", "/api/auth/login", {"username": "other-owner", "password": "other-secret"}, auth=False)
+    if status == 200:
+        foreign = sorted(_owner_bot_ids(other))
+        if foreign:
+            _cleanup(other, *foreign)
 
 
 def test_acceptance_suite():
