@@ -39,11 +39,18 @@
     scaleY(var(--avatar-blink, 1));
 }
 
-.avatar-motion svg {
+.avatar-motion svg,
+.avatar-contact {
   display: block;
   width: 100%;
   height: 100%;
   overflow: visible;
+}
+
+.avatar-contact {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 
 .avatar-shape,
@@ -65,7 +72,7 @@
   position: absolute;
   inset: -6px;
   z-index: 0;
-  border-radius: 18px;
+  border-radius: var(--radius-card);
   background: color-mix(in srgb, var(--avatar-fill, var(--foreground)) 34%, var(--foreground) 7%);
   opacity: 0;
   pointer-events: none;
@@ -88,7 +95,7 @@
   max-width: 220px;
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-card);
   background: var(--card);
   color: var(--card-foreground);
   box-shadow: 0 10px 28px rgb(0 0 0 / 14%);
@@ -102,7 +109,8 @@
   margin: 0;
   font-size: 13px;
   font-weight: 600;
-  line-height: 1.3;
+  line-height: 18px;
+  letter-spacing: -0.08px;
 }
 
 .avatar-hover-preview {
@@ -110,7 +118,8 @@
   overflow: hidden;
   color: var(--muted-foreground);
   font-size: 12px;
-  line-height: 1.35;
+  line-height: 16px;
+  letter-spacing: 0.02em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -174,7 +183,8 @@
   color: transparent;
   font-size: 14px;
   font-weight: 500;
-  line-height: 1.2;
+  line-height: 20px;
+  letter-spacing: -0.08px;
   animation: avatar-status-shimmer 8s linear infinite;
 }
 

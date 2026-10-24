@@ -24,10 +24,16 @@ jobs:
             git fetch origin main
             (cd contracts && buf breaking --against "../.git#branch=origin/main,subdir=contracts")
           fi
+      - name: dependency audit
+        run: bash scripts/audit-ci.sh
+      - name: container image scan
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin v0.69.3
+          bash scripts/trivy-images.sh
       - name: unit tests
         run: |
           dotnet test tests/unit/Teammates.UnitTests.csproj --nologo
-          python3 -m pip install pytest
+          python3 -m pip install -r requirements-dev.txt
           python3 -m pytest -q tests/unit
           dotnet test tests/compute-contract/Compute.ContractTests.csproj --nologo
       - name: web build

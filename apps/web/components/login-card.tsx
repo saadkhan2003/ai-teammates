@@ -65,7 +65,7 @@ export function LoginCard({ request, onDone }: { request: LoginRequest; onDone: 
     return (
       <Card data-testid="login-card" data-state="done" className="min-w-0 max-w-full">
         <CardHeader className="p-4">
-          <CardTitle className="text-sm">Done ✓</CardTitle>
+          <CardTitle className="text-body-sm">Done ✓</CardTitle>
           <CardDescription className="break-words">{request.domain}</CardDescription>
         </CardHeader>
       </Card>
@@ -75,13 +75,13 @@ export function LoginCard({ request, onDone }: { request: LoginRequest; onDone: 
   return (
     <Card data-testid="login-card" data-state="open" className="min-w-0 max-w-full">
       <CardHeader className="p-4">
-        <CardTitle className="text-sm">Sign in</CardTitle>
+        <CardTitle className="text-body-sm">Sign in</CardTitle>
         <CardDescription>
           Domain <strong data-testid="login-domain">{request.domain}</strong>
         </CardDescription>
       </CardHeader>
       <CardContent className="p-4 pt-0">
-        <p className="text-sm text-muted-foreground">The values stay in this form. The bot does not see them.</p>
+        <p className="text-body-sm text-muted-foreground">The values stay in this form. The bot does not see them.</p>
         <form className="mt-3 flex flex-col gap-3" onSubmit={(event) => void submit(event)}>
           {fields.map((field) => (
             <Field
@@ -92,7 +92,7 @@ export function LoginCard({ request, onDone }: { request: LoginRequest; onDone: 
             />
           ))}
           <div className="flex items-center justify-between gap-3">
-            <Label htmlFor="login-save-vault" className="text-sm font-normal">
+            <Label htmlFor="login-save-vault" className="text-body-sm font-normal">
               Save to vault
             </Label>
             <Switch id="login-save-vault" data-testid="login-save-vault" checked={save} onCheckedChange={setSave} />
@@ -107,7 +107,7 @@ export function LoginCard({ request, onDone }: { request: LoginRequest; onDone: 
           </div>
         </form>
         {error ? (
-          <p role="alert" className="mt-2 text-sm text-destructive">
+          <p role="alert" className="mt-2 text-body-sm text-destructive">
             {error}
           </p>
         ) : null}

@@ -41,7 +41,7 @@ export function SettingsNav() {
             aria-selected={active}
             data-testid={tab.testId}
             className={cn(
-              "inline-flex min-h-11 shrink-0 items-center rounded-md px-3 text-sm text-muted-foreground hover:bg-accent hover:text-foreground md:w-full",
+              "inline-flex min-h-11 shrink-0 items-center rounded-md px-3 text-body-sm text-muted-foreground hover:bg-accent hover:text-foreground md:w-full",
               active && "bg-accent text-foreground",
             )}
           >
@@ -57,7 +57,7 @@ export function SettingsFrame({ children, edge = false }: { children: ReactNode;
   return (
     <div className="flex h-full min-h-0 flex-col md:flex-row">
       <div className="shrink-0 border-b border-border md:w-52 md:border-b-0 md:border-r md:py-[var(--space-page)]">
-        <h1 className="px-4 pb-[var(--space-label)] text-sm font-medium">Settings</h1>
+        <h1 className="px-4 pb-[var(--space-label)] text-body-sm font-medium">Settings</h1>
         <SettingsNav />
       </div>
       <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">

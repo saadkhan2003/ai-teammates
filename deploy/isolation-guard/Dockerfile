@@ -1,7 +1,5 @@
-FROM debian:trixie-slim
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends iptables python3 \
-    && rm -rf /var/lib/apt/lists/*
+FROM alpine:3.22
+RUN apk add --no-cache iptables iptables-legacy python3
 COPY computer-isolation.sh /opt/computer-isolation.sh
 COPY isolation-guard/guard.py isolation-guard/rules.py /opt/
 RUN chmod 755 /opt/computer-isolation.sh /opt/guard.py

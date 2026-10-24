@@ -102,16 +102,16 @@ export default function GeneralSettingsPage() {
     <>
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">Account</CardTitle>
+          <CardTitle className="text-body-sm">Account</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm font-medium">{username || "Signed in"}</p>
-          {role ? <p className="mt-1 text-xs text-muted-foreground">{role}</p> : null}
+          <p className="text-body-sm font-medium">{username || "Signed in"}</p>
+          {role ? <p className="mt-1 text-meta text-muted-foreground">{role}</p> : null}
         </CardContent>
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">Appearance</CardTitle>
+          <CardTitle className="text-body-sm">Appearance</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
           {THEMES.map((item) => (
@@ -130,7 +130,7 @@ export default function GeneralSettingsPage() {
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">Accent colour</CardTitle>
+          <CardTitle className="text-body-sm">Accent colour</CardTitle>
         </CardHeader>
         <CardContent className="flex gap-2">
           {ACCENTS.map((item) => (
@@ -148,7 +148,7 @@ export default function GeneralSettingsPage() {
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">Preferences</CardTitle>
+          <CardTitle className="text-body-sm">Preferences</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <div className="grid gap-4 md:grid-cols-2">
@@ -185,8 +185,8 @@ export default function GeneralSettingsPage() {
           </div>
           <div className="flex min-h-11 items-center justify-between gap-3 border-t border-border pt-4">
             <div>
-              <p className="text-sm">Notifications</p>
-              <p className="text-xs text-muted-foreground">Desktop alerts for this browser.</p>
+              <p className="text-body-sm">Notifications</p>
+              <p className="text-meta text-muted-foreground">Desktop alerts for this browser.</p>
             </div>
             <Switch checked={alerts} onCheckedChange={(checked) => void chooseAlerts(checked)} aria-label="Notifications" />
           </div>
@@ -194,9 +194,9 @@ export default function GeneralSettingsPage() {
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">Approval rules</CardTitle>
+          <CardTitle className="text-body-sm">Approval rules</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-1 text-sm text-muted-foreground">
+        <CardContent className="space-y-1 text-body-sm text-muted-foreground">
           <p>The server enforces these. They are not switches on this page.</p>
           <ul className="list-disc space-y-1 pl-4">
             <li>Shell commands and environment setup are denied.</li>
@@ -209,12 +209,12 @@ export default function GeneralSettingsPage() {
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">Security</CardTitle>
+          <CardTitle className="text-body-sm">Security</CardTitle>
         </CardHeader>
         <CardContent className="flex min-h-11 items-center justify-between gap-3">
           <div>
-            <p className="text-sm">Security keys</p>
-            <p className="text-xs text-muted-foreground">API keys and plugin credentials live in the vault.</p>
+            <p className="text-body-sm">Security keys</p>
+            <p className="text-meta text-muted-foreground">API keys and plugin credentials live in the vault.</p>
           </div>
           <Button variant="outline" size="sm" asChild>
             <Link href="/settings/secrets">Open vault</Link>
@@ -223,12 +223,12 @@ export default function GeneralSettingsPage() {
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">Session</CardTitle>
+          <CardTitle className="text-body-sm">Session</CardTitle>
         </CardHeader>
         <CardContent className="flex min-h-11 items-center justify-between gap-3">
           <div>
-            <p className="text-sm">Sign out</p>
-            <p className="text-xs text-muted-foreground">Ends this browser session.</p>
+            <p className="text-body-sm">Sign out</p>
+            <p className="text-meta text-muted-foreground">Ends this browser session.</p>
           </div>
           <form onSubmit={signOut}>
             <Button type="submit" variant="destructive" size="sm">

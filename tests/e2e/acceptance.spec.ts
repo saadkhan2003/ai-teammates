@@ -144,7 +144,7 @@ async function expectDone(page: Page, botId: string, taskId: string, timeout = 1
   return task;
 }
 
-async function openPane(page: Page, tab: "Overview" | "Details" | "Library" | "Computer" | "Routines" | "Files/Media" | "Skills" | "Memory" | "Tasks" | "Plugins") {
+async function openPane(page: Page, tab: "Overview" | "Details" | "Library" | "Computer" | "Routines" | "Files" | "Skills" | "Memory" | "Tasks" | "Plugins") {
   const pane = page.getByTestId("info-pane");
   const toggle = page.getByTestId("bot-name-button");
   if (!(await pane.isVisible().catch(() => false))) {
@@ -157,7 +157,7 @@ async function openPane(page: Page, tab: "Overview" | "Details" | "Library" | "C
     if (!opened) await toggle.click();
   }
   await expect(pane).toBeVisible();
-  const libraryTabs = ["Routines", "Files/Media", "Skills", "Memory", "Tasks", "Plugins"];
+  const libraryTabs = ["Routines", "Files", "Skills", "Memory", "Tasks", "Plugins"];
   const primaryName = tab === "Overview" ? "Details" : libraryTabs.includes(tab) ? "Library" : tab;
   const primary = pane.getByRole("tab", { name: primaryName, exact: true });
   await primary.scrollIntoViewIfNeeded();
@@ -315,8 +315,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
     const notesListing = await page.request.get(`/api/bots/${botId}/files?path=/workspace/notes`);
     expect(notesListing.ok()).toBeTruthy();
     expect(await notesListing.text()).toContain("ping.txt");
-    await openPane(page, "Files/Media");
-    await page.locator("#file-path").fill("/workspace/handoff.txt");
+    await openPane(page, "Files");
     await page.getByTestId("file-upload").setInputFiles({
       name: "handoff.txt",
       mimeType: "text/plain",
@@ -340,7 +339,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
     await page.getByTestId("memory-save").click();
     await expect(page.getByTestId("memory-list")).toContainText("north gate");
 
-    await openPane(page, "Files/Media");
+    await openPane(page, "Files");
     await expect(page.getByTestId("artifact-list")).toContainText("field-notes.txt");
     const [download] = await Promise.all([
       page.waitForEvent("download"),

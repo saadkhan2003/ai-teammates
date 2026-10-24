@@ -66,7 +66,7 @@ export function MemoryPane({
           />
         </div>
         {formError ? (
-          <p role="alert" className="text-sm text-clay">
+          <p role="alert" className="text-body-sm text-clay">
             {formError}
           </p>
         ) : null}
@@ -77,18 +77,18 @@ export function MemoryPane({
       <div data-testid="memory-list" className="rounded-lg border border-line bg-paper p-4">
         {!loaded ? <Skeleton className="h-20 w-full" /> : null}
         {loaded && error ? (
-          <div className="space-y-2"><p role="alert" className="text-sm text-clay">
+          <div className="space-y-2"><p role="alert" className="text-body-sm text-clay">
             Could not load memories. {error}
           </p><Button variant="outline" size="sm" onClick={onChanged}>Retry</Button></div>
         ) : null}
         {loaded && !error && memories.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No memories saved. Add a fact you want this bot to keep.</p>
+          <p className="text-body-sm text-muted-foreground">No memories saved. Add a fact you want this bot to keep.</p>
         ) : null}
         <ul className="flex flex-col gap-3">
           {memories.map((memory) => (
             <li key={memory.id} className="border-b border-line pb-3 last:border-0">
-              <p className="whitespace-pre-wrap text-sm">{memory.content}</p>
-              {memory.createdAt ? <p className="mt-1 text-xs text-muted-foreground">{formatWhen(memory.createdAt)}</p> : null}
+              <p className="whitespace-pre-wrap text-body-sm">{memory.content}</p>
+              {memory.createdAt ? <p className="mt-1 text-meta text-muted-foreground">{formatWhen(memory.createdAt)}</p> : null}
             </li>
           ))}
         </ul>

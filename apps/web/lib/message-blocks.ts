@@ -5,7 +5,7 @@ export type MessageBlock =
   | { kind: "question"; prompt: string; options: QuestionOption[]; multiple: boolean; allowCustom: boolean; answer: string[] | null }
   | { kind: "memory"; action: "saved" | "forgot"; text: string }
   | { kind: "form"; title: string; fields: FormField[] }
-  | { kind: "file"; name: string; url?: string; mime?: string }
+  | { kind: "file"; name: string; url?: string; mime?: string; size?: number }
   | { kind: "image"; name: string; url: string }
   | { kind: "video"; name: string; url: string }
   | { kind: "coding-jobs" };
@@ -61,7 +61,9 @@ function asBlock(value: unknown): MessageBlock | null {
     return { kind: "form", title: String(record.title ?? "Secure form"), fields };
   }
   if (type === "file" || type === "attachment") {
-    return { kind: "file", name: String(record.name ?? "File"), url: typeof record.url === "string" ? record.url : undefined, mime: typeof record.mime === "string" ? record.mime : undefined };
+    const sizeRaw = record.size ?? record.sizeBytes ?? record.size_bytes;
+    const size = typeof sizeRaw === "number" ? sizeRaw : typeof sizeRaw === "string" && /^\d+$/.test(sizeRaw) ? Number(sizeRaw) : undefined;
+    return { kind: "file", name: String(record.name ?? "File"), url: typeof record.url === "string" ? record.url : undefined, mime: typeof record.mime === "string" ? record.mime : undefined, size };
   }
   if (type === "image" || type === "video") {
     const url = String(record.url ?? "");

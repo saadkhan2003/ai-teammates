@@ -1,4 +1,5 @@
 import type { Config } from "tailwindcss";
+import { tailwindFontSize } from "./lib/type-scale";
 
 const config: Config = {
   darkMode: ["class"],
@@ -79,16 +80,33 @@ const config: Config = {
         },
       },
       fontFamily: {
-        sans: ["var(--font-sans)", "ui-sans-serif", "system-ui", "sans-serif"],
-        display: ["var(--font-sans)", "ui-sans-serif", "system-ui", "sans-serif"],
-        mono: ["var(--font-mono)", "ui-monospace", "monospace"],
+        sans: ["var(--font-sans)"],
+        display: ["var(--font-sans)"],
+        mono: ["var(--font-mono)"],
       },
+      fontWeight: {
+        normal: "380",
+        medium: "450",
+        semibold: "600",
+        bold: "600",
+      },
+      fontSize: tailwindFontSize(),
       borderRadius: {
+        sm: "var(--radius-control)",
+        md: "var(--radius-control)",
         lg: "var(--radius-card)",
-        md: "var(--radius-button)",
-        sm: "6px",
-        bubble: "var(--radius-bubble)",
+        xl: "var(--radius-card)",
+        "2xl": "var(--radius-bubble-user)",
+        "3xl": "var(--radius-dialog)",
         card: "var(--radius-card)",
+        menu: "var(--radius-menu)",
+        dialog: "var(--radius-dialog)",
+        control: "var(--radius-control)",
+        pill: "var(--radius-pill)",
+        chip: "var(--radius-chip)",
+        bubble: "var(--radius-bubble)",
+        avatar: "var(--radius-avatar)",
+        full: "var(--radius-pill)",
       },
     },
   },

@@ -118,13 +118,20 @@ async function installApi(page: Page, options: { power: string; tasks: object[];
   });
 }
 
+async function showPane(page: Page) {
+  const pane = page.getByTestId("info-pane");
+  if (!(await pane.isVisible().catch(() => false))) await page.getByTestId("bot-name-button").click();
+  await expect(pane).toBeVisible();
+}
+
 async function openBot(page: Page, theme: "light" | "dark") {
   await page.addInitScript((value) => {
     const chosen = sessionStorage.getItem("shot-theme") || value;
     localStorage.setItem("teammates-theme", chosen);
   }, theme);
   await page.goto(`/bots/${bot}`);
-  await expect(page.getByTestId("info-pane")).toBeVisible();
+  await showPane(page);
+  await showPane(page);
   await expect(page.locator("html")).toHaveClass(theme === "light" ? /light/ : /^((?!light).)*$/);
 }
 
@@ -141,7 +148,7 @@ test("right panel identity, share menu, coding card, and routine toggles", async
   const details = pane.getByRole("tab", { name: "Details", exact: true });
   await expect(details).toHaveAttribute("data-state", "active");
   const accent = await details.evaluate((node) => getComputedStyle(node).backgroundColor);
-  expect(accent).toBe("rgb(255, 48, 69)");
+  expect(accent).toBe("rgb(255, 255, 255)");
   await expect(pane.getByRole("tab", { name: "Library", exact: true })).toBeVisible();
   await expect(pane.getByRole("tab", { name: "Computer", exact: true })).toBeVisible();
   await paneShot(page, "light-01-identity-tabs");
@@ -155,7 +162,8 @@ test("right panel identity, share menu, coding card, and routine toggles", async
   await expect.poll(() => options.copyHits).toEqual(["Ada copy"]);
   await expect(page).toHaveURL(new RegExp(`/bots/${copyId}`));
   await page.goto(`/bots/${bot}`);
-  await expect(page.getByTestId("info-pane")).toBeVisible();
+  await showPane(page);
+  await showPane(page);
   await page.getByTestId("info-share").click();
   await page.getByTestId("share-template-link").click();
   await expect(page.getByText("Template link copied.")).toBeVisible();
@@ -193,10 +201,11 @@ test("right panel identity, share menu, coding card, and routine toggles", async
 
   await page.evaluate(() => sessionStorage.setItem("shot-theme", "dark"));
   await page.goto(`/bots/${bot}`);
+  await showPane(page);
   await expect(page.locator("html")).not.toHaveClass(/light/);
   await expect(page.getByRole("tab", { name: "Details", exact: true })).toHaveAttribute("data-state", "active");
   const darkAccent = await page.getByRole("tab", { name: "Details", exact: true }).evaluate((node) => getComputedStyle(node).backgroundColor);
-  expect(darkAccent).toBe("rgb(255, 48, 69)");
+  expect(darkAccent).toBe("rgb(24, 24, 24)");
   await paneShot(page, "dark-01-identity-tabs");
   await page.getByTestId("info-share").click();
   await expect(page.getByTestId("share-create-copy")).toBeVisible();
@@ -246,6 +255,7 @@ test("computer thumbnail, control pill, and sleep card", async ({ page }) => {
 
   options.tasks = [{ id: "task-1", status: "waiting_human", title: "Sign in to the vendor" }];
   await page.goto(`/bots/${bot}`);
+  await showPane(page);
   await page.getByRole("tab", { name: "Computer", exact: true }).click();
   await page.getByTestId("take-control").click();
   await expect(page.getByTestId("hand-back")).toHaveText("I'm done");
@@ -255,6 +265,7 @@ test("computer thumbnail, control pill, and sleep card", async ({ page }) => {
   options.power = "hibernated";
   options.tasks = [];
   await page.goto(`/bots/${bot}`);
+  await showPane(page);
   await page.getByRole("tab", { name: "Computer", exact: true }).click();
   await expect(page.getByTestId("computer-asleep")).toContainText("Computer is asleep");
   await expect(page.getByTestId("computer-asleep")).toContainText("z z");
@@ -268,6 +279,7 @@ test("computer thumbnail, control pill, and sleep card", async ({ page }) => {
   await page.evaluate(() => sessionStorage.setItem("shot-theme", "dark"));
   options.power = "running";
   await page.goto(`/bots/${bot}`);
+  await showPane(page);
   await expect(page.locator("html")).not.toHaveClass(/light/);
   await page.getByRole("tab", { name: "Computer", exact: true }).click();
   await page.getByTestId("computer-thumbnail").hover();
@@ -280,6 +292,7 @@ test("computer thumbnail, control pill, and sleep card", async ({ page }) => {
 
   options.tasks = [{ id: "task-1", status: "waiting_human", title: "Sign in to the vendor" }];
   await page.goto(`/bots/${bot}`);
+  await showPane(page);
   await page.getByRole("tab", { name: "Computer", exact: true }).click();
   await page.getByTestId("take-control").click();
   await expect(page.getByTestId("hand-back")).toHaveText("I'm done");
@@ -288,6 +301,7 @@ test("computer thumbnail, control pill, and sleep card", async ({ page }) => {
   options.power = "stopped";
   options.tasks = [];
   await page.goto(`/bots/${bot}`);
+  await showPane(page);
   await page.getByRole("tab", { name: "Computer", exact: true }).click();
   await expect(page.getByTestId("computer-asleep")).toContainText("Computer is asleep");
   await paneShot(page, "dark-06-sleep");

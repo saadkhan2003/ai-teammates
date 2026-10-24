@@ -42,9 +42,9 @@ export default function LoginPage() {
     <div className="flex min-h-dvh items-center justify-center px-4 py-[max(3rem,env(safe-area-inset-top))] pb-[max(3rem,env(safe-area-inset-bottom))]">
       <Card data-testid="login-card" className="w-full min-w-0 max-w-md">
         <CardHeader className="space-y-1 p-4">
-          <p className="text-sm font-medium">Teammates</p>
-          <CardTitle className="text-base">Sign in</CardTitle>
-          <p className="text-sm text-muted-foreground">Sign in with the owner account, or the username from your invitation.</p>
+          <p className="text-body-sm font-medium">Teammates</p>
+          <CardTitle className="text-lead">Sign in</CardTitle>
+          <p className="text-body-sm text-muted-foreground">Sign in with the owner account, or the username from your invitation.</p>
         </CardHeader>
         <CardContent className="p-4 pt-0">
           <form className="flex flex-col gap-4" onSubmit={onSubmit}>
@@ -76,7 +76,7 @@ export default function LoginPage() {
               />
             </div>
             {error ? (
-              <p role="alert" className="text-sm text-clay">
+              <p role="alert" className="text-body-sm text-clay">
                 {error}
               </p>
             ) : null}

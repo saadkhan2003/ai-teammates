@@ -364,7 +364,7 @@ export function PluginsPane({ mode = "installed" }: { mode?: "both" | "catalog" 
 
   return (
     <div data-testid="plugins-pane" className="flex flex-col gap-3">
-      <p data-testid="plugin-stats" className="text-xs text-muted-foreground">
+      <p data-testid="plugin-stats" className="text-meta text-muted-foreground">
         Imported {stats.imported} · Auto-checked {stats.autoChecked} · Needs auth {stats.needsAuth} · Failed {stats.failed}
         {stats.countsTowardTarget !== stats.autoChecked ? ` · Toward target ${stats.countsTowardTarget}` : ""}
       </p>
@@ -392,11 +392,11 @@ export function PluginsPane({ mode = "installed" }: { mode?: "both" | "catalog" 
         <div data-testid="plugins-loading" className="flex flex-col gap-2" aria-busy="true">
           <Skeleton className="h-16 w-full" />
           <Skeleton className="h-16 w-full" />
-          <p className="text-sm text-muted-foreground">Loading plugins…</p>
+          <p className="text-body-sm text-muted-foreground">Loading plugins…</p>
         </div>
       ) : null}
       {error ? (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="text-body-sm text-destructive">
           {error}
         </p>
       ) : null}
@@ -409,8 +409,8 @@ export function PluginsPane({ mode = "installed" }: { mode?: "both" | "catalog" 
       ) : null}
       {catalogEmpty ? (
         <div data-testid="plugins-empty" className="rounded-lg border border-border bg-card px-3 py-4">
-          <p className="text-sm font-medium">No catalog plugins</p>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="text-body-sm font-medium">No catalog plugins</p>
+          <p className="mt-1 text-body-sm text-muted-foreground">
             {query || category || label
               ? "Nothing in the catalog matches that filter."
               : "The catalog is empty. An import adds rows only. Nothing is installed until you install it."}
@@ -423,8 +423,8 @@ export function PluginsPane({ mode = "installed" }: { mode?: "both" | "catalog" 
             <li key={row.id} data-testid="catalog-row" className="rounded-lg border border-border bg-card px-3 py-2">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{row.name}</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
+                  <p className="truncate text-body-sm font-medium">{row.name}</p>
+                  <p className="mt-0.5 text-meta text-muted-foreground">
                     {row.publisher ? `${row.publisher} · ` : ""}
                     {row.kind} · {authLabel(row.authType)}
                     {row.category ? ` · ${row.category}` : ""}
@@ -443,7 +443,7 @@ export function PluginsPane({ mode = "installed" }: { mode?: "both" | "catalog" 
                 {row.blocked ? <Badge variant="destructive">blocked</Badge> : null}
               </div>
               {staff ? (
-                <button type="button" className="mt-2 text-xs text-muted-foreground underline" onClick={() => void block(row.id, !row.blocked)}>
+                <button type="button" className="mt-2 text-meta text-muted-foreground underline" onClick={() => void block(row.id, !row.blocked)}>
                   {row.blocked ? "Unblock" : "Block"}
                 </button>
               ) : null}
@@ -452,14 +452,14 @@ export function PluginsPane({ mode = "installed" }: { mode?: "both" | "catalog" 
         </ul>
       ) : null}
       {showCatalog && catalogTotal > catalog.length ? (
-        <p className="text-xs text-muted-foreground">
+        <p className="text-meta text-muted-foreground">
           Showing {catalog.length} of {catalogTotal}. Search to narrow the catalog.
         </p>
       ) : null}
       {installedEmpty ? (
         <div data-testid={showCatalog ? "plugins-installed-empty" : "plugins-empty"} className="rounded-lg border border-border bg-card px-3 py-4">
-          <p className="text-sm font-medium">No plugins installed</p>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="text-body-sm font-medium">No plugins installed</p>
+          <p className="mt-1 text-body-sm text-muted-foreground">
             {query || category ? "Nothing in this install matches that filter." : "Installed plugins list here. Installing one does not start a process."}
           </p>
         </div>
@@ -470,8 +470,8 @@ export function PluginsPane({ mode = "installed" }: { mode?: "both" | "catalog" 
             <li key={row.id} data-testid="plugin-row" className="rounded-lg border border-border bg-card px-3 py-2">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{row.name}</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
+                  <p className="truncate text-body-sm font-medium">{row.name}</p>
+                  <p className="mt-0.5 text-meta text-muted-foreground">
                     {row.kind} · {authLabel(row.authType)}
                     {row.category ? ` · ${row.category}` : ""}
                     {row.secretId ? " · credential stored" : ""}
@@ -515,11 +515,11 @@ export function PluginsPane({ mode = "installed" }: { mode?: "both" | "catalog" 
               ) : null}
               {bots.length > 0 ? (
                 <div className="mt-3 flex flex-col gap-2">
-                  <p className="text-xs font-medium text-muted-foreground">Enabled for</p>
+                  <p className="text-meta font-medium text-muted-foreground">Enabled for</p>
                   {bots.map((bot) => {
                     const enabled = enables.some((item) => item.pluginId === row.id && item.botId === bot.id && item.enabled);
                     return (
-                      <label key={bot.id} className="flex min-h-11 items-center justify-between gap-3 text-sm">
+                      <label key={bot.id} className="flex min-h-11 items-center justify-between gap-3 text-body-sm">
                         <span className="truncate">{bot.name}</span>
                         <Switch
                           checked={enabled}
@@ -532,7 +532,7 @@ export function PluginsPane({ mode = "installed" }: { mode?: "both" | "catalog" 
                   })}
                 </div>
               ) : (
-                <p className="mt-2 text-xs text-muted-foreground">Create a teammate to enable this plugin for them.</p>
+                <p className="mt-2 text-meta text-muted-foreground">Create a teammate to enable this plugin for them.</p>
               )}
             </li>
           ))}
@@ -540,8 +540,8 @@ export function PluginsPane({ mode = "installed" }: { mode?: "both" | "catalog" 
       ) : null}
       {showCatalog ? (
         <form className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3" onSubmit={addSpec}>
-          <p className="text-sm font-medium">Add an OpenAPI spec</p>
-          <p className="text-xs text-muted-foreground">A public http(s) URL. Private addresses and file URLs are rejected. This does not install the plugin.</p>
+          <p className="text-body-sm font-medium">Add an OpenAPI spec</p>
+          <p className="text-meta text-muted-foreground">A public http(s) URL. Private addresses and file URLs are rejected. This does not install the plugin.</p>
           <Input value={specUrl} onChange={(event) => setSpecUrl(event.target.value)} placeholder="https://example.com/openapi.json" aria-label="OpenAPI spec URL" type="url" required />
           <Button type="submit" disabled={busy === "spec"}>
             {busy === "spec" ? "Reading…" : "Add spec to catalog"}
@@ -550,17 +550,17 @@ export function PluginsPane({ mode = "installed" }: { mode?: "both" | "catalog" 
       ) : null}
       {showInstalled ? (
         <form className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3" onSubmit={addManual}>
-          <p className="text-sm font-medium">Add a plugin</p>
-          <p className="text-xs text-muted-foreground">Saves a registry row only. It does not start a server.</p>
+          <p className="text-body-sm font-medium">Add a plugin</p>
+          <p className="text-meta text-muted-foreground">Saves a registry row only. It does not start a server.</p>
           <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Name" aria-label="Plugin name" required />
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <select aria-label="Plugin kind" value={kind} onChange={(event) => setKind(event.target.value)} className="h-10 rounded-md border border-input bg-card px-2 text-sm">
+            <select aria-label="Plugin kind" value={kind} onChange={(event) => setKind(event.target.value)} className="h-10 rounded-md border border-input bg-card px-2 text-body-sm">
               <option value="mcp">MCP</option>
               <option value="openapi">OpenAPI</option>
               <option value="builtin">Built-in</option>
               <option value="oauth">OAuth app</option>
             </select>
-            <select aria-label="Plugin auth" value={authType} onChange={(event) => setAuthType(event.target.value)} className="h-10 rounded-md border border-input bg-card px-2 text-sm">
+            <select aria-label="Plugin auth" value={authType} onChange={(event) => setAuthType(event.target.value)} className="h-10 rounded-md border border-input bg-card px-2 text-body-sm">
               <option value="none">No auth</option>
               <option value="api_key">API key</option>
               <option value="oauth">OAuth</option>
@@ -583,7 +583,7 @@ function FilterChip({ active, onClick, children }: { active: boolean; onClick: (
       data-testid="plugin-filter"
       data-active={active}
       className={cn(
-        "min-h-11 rounded-md border px-3 py-1 text-xs sm:min-h-0",
+        "min-h-11 rounded-md border px-3 py-1 text-meta sm:min-h-0",
         active ? "border-transparent bg-primary text-primary-foreground" : "border-border bg-card text-foreground",
       )}
       onClick={onClick}

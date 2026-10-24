@@ -89,6 +89,7 @@ for (const theme of ["light", "dark"] as const) {
     await page.goto(`/bots/${bot}?theme=${theme}`);
     await expect(page.getByTestId("composer-pill")).toBeVisible();
     await shot(page, `${theme}-chat`);
+    await page.getByTestId("bot-name-button").click();
     await page.getByTestId("info-pane-close").click();
     await page.getByRole("button", { name: "Settings" }).click().catch(() => undefined);
     await page.goto(`/settings?theme=${theme}`);
@@ -117,6 +118,7 @@ for (const theme of ["light", "dark"] as const) {
     await shot(page, `${theme}-system`);
     await page.goto(`/bots/${bot}?theme=${theme}`);
     await expect(page.getByTestId("composer-pill")).toBeVisible();
+    await page.getByTestId("bot-name-button").click();
     await page.getByTestId("bot-settings-gear").click();
     await expect(page.getByTestId("bot-settings")).toBeVisible();
     await shot(page, `${theme}-bot-settings`);

@@ -64,8 +64,8 @@ export default function ScreenGalleryPage() {
     <div data-testid="screen-gallery" className="h-full overflow-y-auto">
       <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6">
         <header>
-          <h1 className="text-sm font-medium">Message gallery</h1>
-          <p className="text-sm text-muted-foreground">Every card type, using the same components as a live chat.</p>
+          <h1 className="text-body-sm font-medium">Message gallery</h1>
+          <p className="text-body-sm text-muted-foreground">Every card type, using the same components as a live chat.</p>
         </header>
         <div className="flex flex-wrap gap-2">
           <StatusBadge status="running" />
@@ -73,21 +73,21 @@ export default function ScreenGalleryPage() {
           <StatusBadge status="failed" />
           <StatusBadge status="idle" />
         </div>
-        <p className="flex items-center gap-2 text-sm text-muted-foreground">
-          <img src="/favicon.svg" alt="" className="h-4 w-4 rounded-sm" />
+        <p className="flex items-center gap-2 text-body-sm text-muted-foreground">
+          <img src="/favicon.svg" alt="" className="h-4 w-4 rounded-control" />
           Field clerk is working
         </p>
-        <article data-testid="task-card" className="rounded-lg border border-border bg-card px-3 py-2 text-sm">
+        <article data-testid="task-card" className="rounded-lg border border-border bg-card px-3 py-2 text-body-sm">
           <div className="flex items-center justify-between gap-3">
             <p className="truncate font-medium">Summarise the Friday inbox</p>
             <StatusBadge status="running" />
           </div>
         </article>
-        <article data-testid="secret-request-card" className="rounded-lg border border-border bg-card px-3 py-2 text-sm">
+        <article data-testid="secret-request-card" className="rounded-lg border border-border bg-card px-3 py-2 text-body-sm">
           <p className="font-medium">Secret request</p>
           <p className="text-muted-foreground">secret://vault/mailbox</p>
         </article>
-        <article data-testid="artifact-card" className="rounded-lg border border-border bg-card px-3 py-2 text-sm">
+        <article data-testid="artifact-card" className="rounded-lg border border-border bg-card px-3 py-2 text-body-sm">
           <p className="font-medium">handbook.pdf</p>
           <span className="text-brand">Download</span>
         </article>

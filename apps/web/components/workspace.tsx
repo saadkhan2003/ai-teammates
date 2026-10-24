@@ -1,17 +1,17 @@
 "use client";
 
-import { Settings, Share, X } from "lucide-react";
+import { Hash, Info, Plug, Settings, Share, Users, X } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Approvals } from "@/components/approvals";
 import { PluginsPane } from "@/components/plugins-pane";
-import { ArtifactsPane } from "@/components/artifacts-pane";
 import { ChatPane } from "@/components/chat-pane";
 import { CodingPanel, JobDetailDialog } from "@/components/coding-jobs";
 import { LoginCard } from "@/components/login-card";
 import { FilesPane } from "@/components/files-pane";
+import { LibraryList } from "@/components/library-list";
 import { MemoryPane } from "@/components/memory-pane";
 import { RoutinesPane } from "@/components/routines-pane";
 import { SkillsPane } from "@/components/skills-pane";
@@ -23,7 +23,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -34,20 +33,28 @@ import {
   normalizeRoutines,
   normalizeSkills,
 } from "@/lib/api";
-import { applyCodingJob, copyBotName, normalizeCodingJob, readableAccent, templateShareUrl, type CodingJob } from "@/lib/chat-ui";
+import { applyCodingJob, copyBotName, displayModelName, normalizeCodingJob, readableAccent, templateShareUrl, type CodingJob } from "@/lib/chat-ui";
 import { mergeAgentEvent, parseAgentEvent, subscribeEvents, type AgentEvent } from "@/lib/events";
 import { StatusBadge } from "@/lib/status";
 import type { Artifact, FileEntry, LoginRequest, MemoryItem, Routine, SecretRequest, Skill, Workspace as WorkspaceData } from "@/lib/types";
 import { cn, errorMessage } from "@/lib/utils";
 import { toast } from "sonner";
+import { PanelCard, PanelEmpty, PanelSection } from "@/components/panel-section";
+import { AppLogo } from "@/components/app-logo";
 import { BotAvatar } from "@/components/bot-avatar";
 import { BotAvatarPicker } from "@/components/bot-avatar-picker";
-import { defaultBotAvatar } from "@/lib/avatars";
+import { FileCard } from "@/components/file-card";
+import { publishBotAppearance, resolveBotAppearance } from "@/lib/bot-appearance";
+import { isConnected, readInstalledApps, type InstalledApp } from "@/lib/connect-apps";
+
+function isFileArtifact(artifact: Artifact) {
+  return Boolean(artifact.mime) || /\.[a-z0-9]{2,8}$/i.test(artifact.name);
+}
 
 const ComputerPane = dynamic(() => import("@/components/computer-pane").then((mod) => mod.ComputerPane), {
   ssr: false,
   loading: () => (
-    <div data-testid="computer-tab" data-vnc-state="disconnected" className="rounded-lg border border-border bg-card p-3 text-sm">
+    <div data-testid="computer-tab" data-vnc-state="disconnected" className="rounded-lg border border-border bg-card p-3 text-body-sm">
       Loading the desktop…
     </div>
   ),
@@ -89,7 +96,7 @@ const INFO_TABS = [
 ] as const;
 
 const LIBRARY_TABS = [
-  ["files", "Files/Media"],
+  ["files", "Files"],
   ["routines", "Routines"],
   ["skills", "Skills"],
   ["memory", "Memory"],
@@ -101,6 +108,7 @@ export function Workspace({ botId }: { botId: string }) {
   const router = useRouter();
   const [workspace, setWorkspace] = useState<WorkspaceData | null>(null);
   const [pane, setPane] = useState(false);
+  const [connectedApps, setConnectedApps] = useState<InstalledApp[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [desktopFull, setDesktopFull] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
@@ -179,8 +187,10 @@ export function Workspace({ botId }: { botId: string }) {
     }).catch(() => undefined));
     setWorkspace(null);
     setWorkspaceError(null);
-    setPane(window.matchMedia("(min-width: 768px)").matches);
     void loadWorkspace();
+    void api<unknown>("/api/plugins")
+      .then((data) => setConnectedApps(readInstalledApps(data).filter(isConnected)))
+      .catch(() => setConnectedApps([]));
     void loadAux(["artifacts", "routines"]);
     const preload = window.setTimeout(() => {
       void import("@novnc/novnc/lib/rfb.js");
@@ -252,6 +262,11 @@ export function Workspace({ botId }: { botId: string }) {
   }, []);
 
   useEffect(() => {
+    const current = workspace?.bot;
+    publishBotAppearance(current?.id || botId, current?.avatarShape, current?.avatarColor);
+  }, [workspace?.bot, botId]);
+
+  useEffect(() => {
     if (!pane) return;
     if (detailTab === "details" || (detailTab === "library" && librarySection === "routines")) void loadAux(["routines"]);
     if (detailTab === "library" && librarySection === "files") void loadAux(["files", "artifacts"]);
@@ -283,12 +298,12 @@ export function Workspace({ botId }: { botId: string }) {
     );
   }
 
-  const provider = workspace.llmProvider || "";
   const bot = workspace.bot;
   const requests = (workspace.secretRequests ?? []) as SecretRequest[];
-  const accent = readableAccent(bot?.avatarColor || defaultBotAvatar(botId).color);
-  const avatarShape = bot?.avatarShape || defaultBotAvatar(bot?.id || botId).shape;
-  const avatarColor = bot?.avatarColor || defaultBotAvatar(bot?.id || botId).color;
+  const look = resolveBotAppearance(bot?.id || botId, bot?.avatarShape, bot?.avatarColor);
+  const accent = readableAccent(look.color);
+  const avatarShape = look.shape;
+  const avatarColor = look.color;
   const jobs = (workspace.codingJobs ?? []).map((job, index) => normalizeCodingJob(job, index)).filter((job): job is CodingJob => job !== null);
 
   async function createCopy() {
@@ -332,20 +347,20 @@ export function Workspace({ botId }: { botId: string }) {
   return (
     <div className="flex h-full min-h-0">
       <section className="relative flex min-w-0 flex-1 flex-col">
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-16 bg-gradient-to-b from-background to-transparent" />
+        <div data-radius-allow="fade" className="pointer-events-none absolute inset-x-0 top-0 z-10 h-16 bg-gradient-to-b from-background to-transparent" />
         <header className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center px-3">
           <button
             type="button"
             data-testid="bot-name-button"
-            className="pointer-events-auto inline-flex max-w-[70%] items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-sm font-medium text-card-foreground shadow-sm transition-shadow hover:shadow-md"
+            className="pointer-events-auto inline-flex h-9 max-w-[70%] items-center gap-2 rounded-full border border-border bg-card pl-1.5 pr-3 text-ui font-medium text-card-foreground shadow-[var(--shadow-pill)] transition-[box-shadow] duration-200 hover:shadow-[var(--shadow-pill-hover)]"
             onClick={() => setPane((value) => !value)}
           >
-            <BotAvatar botId={bot?.id} shape={bot?.avatarShape} color={bot?.avatarColor} size={20} />
+            <BotAvatar botId={bot?.id || botId} shape={avatarShape} color={avatarColor} size={24} />
             <span className="truncate">{bot?.name || "Teammate"}</span>
           </button>
         </header>
         {workspaceError ? (
-          <p role="alert" className="px-4 pt-3 text-sm text-destructive">
+          <p role="alert" className="px-4 pt-3 text-body-sm text-destructive">
             Could not refresh the workspace. {workspaceError}
           </p>
         ) : null}
@@ -359,18 +374,17 @@ export function Workspace({ botId }: { botId: string }) {
           }}
           botName={bot?.name || "Teammate"}
           botId={botId}
-          accent={readableAccent(bot?.avatarColor || defaultBotAvatar(botId).color)}
-          avatarShape={bot?.avatarShape || defaultBotAvatar(botId).shape}
-          avatarColor={bot?.avatarColor || defaultBotAvatar(botId).color}
+          accent={accent}
+          avatarShape={avatarShape}
+          avatarColor={avatarColor}
           codingJobs={(workspace.codingJobs ?? []).map((job, index) => normalizeCodingJob(job, index)).filter((job): job is CodingJob => job !== null)}
           onOpenJob={setOpenJob}
           onSent={() => void loadWorkspace()}
           working={(workspace.tasks ?? []).some((task) => ["running", "planning", "queued"].includes((task.status ?? "").toLowerCase()))}
           extras={
             <>
-              {provider.toLowerCase() === "mock" ? <p className="text-sm text-muted-foreground">Provider is mock. This teammate is not calling OpenRouter.</p> : null}
               {(llmConnected ?? workspace.openrouterConnected) === false ? (
-                <p data-testid="llm-key-banner" className="rounded-md border border-border bg-card px-3 py-2 text-sm">
+                <p data-testid="llm-key-banner" className="rounded-md border border-border bg-card px-3 py-2 text-body-sm">
                   <Link href="/settings/secrets" className="font-medium text-brand">
                     Connect OpenRouter in Settings → Vault
                   </Link>
@@ -392,12 +406,12 @@ export function Workspace({ botId }: { botId: string }) {
                 ))}
               {finishedLogins.map((request) => (
                 <article key={`done-${request.id}`} data-testid="login-card" data-state="done" className="min-w-0 max-w-full rounded-lg border border-border bg-card p-4 text-card-foreground">
-                  <p className="text-sm font-medium">Done ✓</p>
-                  <p className="mt-1 break-words text-sm text-muted-foreground">{request.domain}</p>
+                  <p className="text-body-sm font-medium">Done ✓</p>
+                  <p className="mt-1 break-words text-body-sm text-muted-foreground">{request.domain}</p>
                 </article>
               ))}
               {requests.map((request) => (
-                <article key={request.id} data-testid="secret-request-card" className="min-w-0 max-w-full break-words rounded-lg border border-border bg-card px-3 py-2 text-sm">
+                <article key={request.id} data-testid="secret-request-card" className="min-w-0 max-w-full break-words rounded-lg border border-border bg-card px-3 py-2 text-body-sm">
                   <p className="font-medium">Secret request</p>
                   <p className="text-muted-foreground">{request.suggestedRef || request.type}</p>
                   {request.reason ? <p className="mt-1">{request.reason}</p> : null}
@@ -407,7 +421,7 @@ export function Workspace({ botId }: { botId: string }) {
                 </article>
               ))}
               {(workspace.tasks ?? []).slice(0, 3).map((task) => (
-                <article key={task.id} data-testid="task-card" className="min-w-0 max-w-full rounded-lg border border-border bg-card px-3 py-2 text-sm">
+                <article key={task.id} data-testid="task-card" className="min-w-0 max-w-full rounded-lg border border-border bg-card px-3 py-2 text-body-sm">
                   <div className="flex items-center justify-between gap-3">
                     <p className="truncate font-medium">{task.title || task.instruction}</p>
                     <StatusBadge status={task.status} />
@@ -415,24 +429,28 @@ export function Workspace({ botId }: { botId: string }) {
                   {task.status === "failed" && task.error ? <p role="alert" data-testid="task-error" className="mt-2 whitespace-pre-wrap text-destructive">{task.error}</p> : null}
                 </article>
               ))}
-              {(artifacts.items ?? []).slice(0, 2).map((artifact) => (
-                <article key={artifact.id} data-testid="artifact-card" className="rounded-lg border border-border bg-card px-3 py-2 text-sm">
-                  <p className="font-medium">{artifact.name}</p>
-                  <a className="text-brand" href={`/api/artifacts/${artifact.id}/download`}>
-                    Download
-                  </a>
-                </article>
+              {(artifacts.items ?? []).filter(isFileArtifact).slice(0, 2).map((artifact) => (
+                <FileCard
+                  key={artifact.id}
+                  testId="artifact-card"
+                  name={artifact.name}
+                  url={`/api/artifacts/${artifact.id}/download`}
+                  mime={artifact.mime}
+                  size={artifact.size}
+                />
               ))}
             </>
           }
         />
-        <JobDetailDialog job={openJob} accent={readableAccent(bot?.avatarColor || defaultBotAvatar(botId).color)} onClose={() => setOpenJob(null)} />
+        <JobDetailDialog job={openJob} accent={accent} onClose={() => setOpenJob(null)} />
       </section>
       {pane ? (
         <aside
           data-testid="info-pane"
           data-view={detailTab}
-          className="fixed inset-0 z-30 flex w-full min-w-0 flex-col bg-sidebar pt-[env(safe-area-inset-top)] text-sidebar-foreground md:static md:z-0 md:w-[260px] md:max-w-[42vw] md:border-l md:border-sidebar-border md:pt-0"
+          data-radius-allow="pane"
+          data-divider="panel"
+          className="fixed inset-0 z-30 flex w-full min-w-0 flex-col border-l border-border bg-sidebar pt-[env(safe-area-inset-top)] text-sidebar-foreground md:static md:z-0 md:w-[320px] md:max-w-[42vw] md:pt-0"
           style={{ ["--bot-accent" as string]: accent }}
         >
           <div className="flex h-11 items-center justify-end gap-1 px-2">
@@ -485,11 +503,11 @@ export function Workspace({ botId }: { botId: string }) {
               onSaved={() => void loadWorkspace()}
             />
           ) : (
-            <div className={cn("min-h-0 flex-1 overflow-y-auto", desktopFull && "overflow-visible")}>
+            <div className={cn("min-h-0 w-full min-w-0 flex-1 overflow-y-auto", desktopFull && "overflow-visible")}>
               <div data-testid="info-identity" className="flex flex-col items-center px-3 pb-3 text-center">
-                <BotAvatar botId={bot?.id || botId} shape={avatarShape} color={avatarColor} size={56} />
-                <p data-testid="info-bot-name" className="mt-2 text-sm font-semibold">{bot?.name || "Teammate"}</p>
-                <p data-testid="info-bot-title" className="max-w-full truncate px-2 text-xs text-muted-foreground">{bot?.role || "No title yet."}</p>
+                <BotAvatar botId={bot?.id || botId} shape={avatarShape} color={avatarColor} size={64} />
+                <p data-testid="info-bot-name" className="type-title mt-2">{bot?.name || "Teammate"}</p>
+                <p data-testid="info-bot-title" className="type-caption max-w-full truncate px-2">{bot?.role || "No title yet."}</p>
               </div>
               <Tabs
                 value={detailTab}
@@ -497,16 +515,16 @@ export function Workspace({ botId }: { botId: string }) {
                   setDetailTab(value);
                   if (value !== "computer") setDesktopFull(false);
                 }}
-                className="flex flex-col"
+                className="flex w-full min-w-0 flex-col"
               >
-                <TabsList aria-label="Bot details" className="mx-3 grid h-auto grid-cols-3 gap-1 rounded-full bg-card p-1">
+                <TabsList aria-label="Bot details" className="mx-4 grid h-[34px] w-[calc(100%-2rem)] grid-cols-3 items-center gap-0.5 self-center rounded-full bg-[var(--track)] p-[3px]">
                   {INFO_TABS.map(([value, label]) => (
-                    <TabsTrigger key={value} value={value} className="info-tab min-h-11 rounded-full px-2 text-xs text-muted-foreground shadow-none">
+                    <TabsTrigger key={value} value={value} className="info-tab h-7 min-h-0 w-full min-w-0 justify-center overflow-hidden rounded-full border border-transparent px-3 text-ui font-[500] leading-none text-muted-foreground shadow-none transition-[background-color,box-shadow,color] duration-200 data-[state=active]:border-border data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-[0_1px_2px_rgba(0,0,0,0.16)]">
                       {label}
                     </TabsTrigger>
                   ))}
                 </TabsList>
-                <TabsContent value="details" className="flex flex-col gap-[var(--space-section)] px-4 pb-6">
+                <TabsContent value="details" className="mt-4 flex flex-col gap-6 px-4 pb-6">
                   <CodingPanel
                     jobs={jobs}
                     routines={routines.items}
@@ -517,40 +535,92 @@ export function Workspace({ botId }: { botId: string }) {
                     onOpenJob={setOpenJob}
                     onToggleRoutine={toggleRoutine}
                   />
-                  <section>
-                    <h2 className="mb-2 text-xs font-medium text-muted-foreground">About</h2>
-                    <p className="text-sm text-muted-foreground">{bot?.instructions || "No description yet."}</p>
-                    <p className="mt-2 text-sm text-muted-foreground">Provider: {provider || "unknown"}</p>
-                    {provider.toLowerCase() === "mock" ? <p className="mt-2 text-sm">Provider is mock. This teammate is not calling OpenRouter.</p> : null}
-                  </section>
-                  <Collapsible data-testid="connect-apps">
-                    <CollapsibleTrigger className="flex min-h-11 w-full items-center text-left text-sm font-medium">Connect apps</CollapsibleTrigger>
-                    <CollapsibleContent className="pb-2">
-                      <PluginsPane mode="catalog" />
-                    </CollapsibleContent>
-                  </Collapsible>
-                  <section data-testid="channels">
-                    <h2 className="mb-2 text-xs font-medium text-muted-foreground">Channels</h2>
-                    <p className="text-sm text-muted-foreground">No channels. Group chats will list them here.</p>
-                  </section>
-                  <section data-testid="members">
-                    <h2 className="mb-2 text-xs font-medium text-muted-foreground">Members</h2>
-                    <p className="text-sm text-muted-foreground">Just you and {bot?.name || "this teammate"}.</p>
-                  </section>
+                  <PanelSection title="About">
+                    {bot?.instructions ? (
+                      <PanelCard className="px-3 py-3">
+                        <p className="type-body text-card-foreground">{bot.instructions}</p>
+                        {displayModelName(bot.model) ? <p className="type-caption mt-2">Model · {displayModelName(bot.model)}</p> : null}
+                      </PanelCard>
+                    ) : (
+                      <PanelEmpty icon={Info} title="No description yet" detail={displayModelName(bot?.model) ? `Model · ${displayModelName(bot?.model)}` : "Add a short description in teammate settings."} />
+                    )}
+                  </PanelSection>
+                  <PanelSection title="Connect apps" testId="connect-apps">
+                    {connectedApps.length === 0 ? (
+                      <PanelEmpty
+                        icon={Plug}
+                        title="No apps connected"
+                        detail="Plugins and skills you add show up here."
+                        action={
+                          <Button type="button" size="sm" onClick={() => window.dispatchEvent(new Event("teammates-open-connect-apps"))}>
+                            <Plug />
+                            Connect apps
+                          </Button>
+                        }
+                      />
+                    ) : (
+                      <PanelCard>
+                        <ul>
+                          {connectedApps.map((app) => (
+                            <li key={app.id} data-testid="connected-app-row" className="flex min-h-11 items-center gap-2 px-3">
+                              <AppLogo name={app.name} iconUrl={app.iconUrl} size={28} />
+                              <span className="min-w-0 flex-1">
+                                <span className="type-body block truncate font-medium">{app.name}</span>
+                                <span className="type-caption block">Connected</span>
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </PanelCard>
+                    )}
+                  </PanelSection>
+                  <PanelSection title="Channels" testId="channels">
+                    <PanelEmpty icon={Hash} title="No channels" detail="Group chats will list them here." />
+                  </PanelSection>
+                  <PanelSection title="Members" testId="members">
+                    <PanelCard>
+                      <ul>
+                        <li className="flex min-h-11 items-center gap-2 px-3">
+                          <span className="grid size-7 place-items-center rounded-full bg-muted text-micro font-medium text-muted-foreground">
+                            <Users className="size-3.5" strokeWidth={1.5} aria-hidden />
+                          </span>
+                          <span className="type-body font-medium">You</span>
+                        </li>
+                        <li className="flex min-h-11 items-center gap-2 px-3">
+                          <BotAvatar botId={bot?.id || botId} shape={avatarShape} color={avatarColor} size={28} />
+                          <span className="min-w-0">
+                            <span className="type-body block truncate font-medium">{bot?.name || "Teammate"}</span>
+                            <span className="type-caption block">Teammate</span>
+                          </span>
+                        </li>
+                      </ul>
+                    </PanelCard>
+                  </PanelSection>
                 </TabsContent>
-                <TabsContent value="library" className="px-3 pb-6">
-                  <Tabs value={librarySection} onValueChange={setLibrarySection}>
-                    <TabsList aria-label="Library sections" className="h-auto w-full justify-start gap-1 overflow-x-auto bg-transparent p-0">
+                <TabsContent value="library" className="min-w-0 px-4 pb-6">
+                  <Tabs value={librarySection} onValueChange={setLibrarySection} className="min-w-0">
+                    <TabsList aria-label="Library sections" className="library-subtabs -mx-4 h-8 w-[calc(100%+2rem)] min-w-0 justify-between gap-0 overflow-x-auto bg-transparent px-1.5">
                       {LIBRARY_TABS.map(([value, label]) => (
-                        <TabsTrigger key={value} value={value} className="min-h-11 shrink-0 rounded-full px-2.5 text-xs">
+                        <TabsTrigger key={value} value={value} className="h-7 min-h-0 shrink-0 rounded-full px-1 text-ui font-medium">
                           {label}
                         </TabsTrigger>
                       ))}
                     </TabsList>
                     <TabsContent value="files">
-                      <div className="flex flex-col gap-6">
-                        <FilesPane botId={botId} files={files.items} error={files.error} loaded={files.loaded} onChanged={() => void loadAux(["files"])} />
-                        <ArtifactsPane artifacts={artifacts.items} error={artifacts.error} loaded={artifacts.loaded} onRetry={() => void loadAux(["artifacts"])} />
+                      <div className="flex flex-col gap-4">
+                        <LibraryList
+                          botId={botId}
+                          botName={bot?.name || "Teammate"}
+                          avatarShape={avatarShape}
+                          avatarColor={avatarColor}
+                          files={files.items}
+                          artifacts={artifacts.items}
+                          pages={workspace.pages ?? []}
+                          error={files.error || artifacts.error}
+                          loaded={files.loaded && artifacts.loaded}
+                          onRetry={() => void loadAux(["files", "artifacts"])}
+                        />
+                        <FilesPane botId={botId} onChanged={() => void loadAux(["files"])} />
                       </div>
                     </TabsContent>
                     <TabsContent value="routines">
@@ -570,7 +640,7 @@ export function Workspace({ botId }: { botId: string }) {
                     </TabsContent>
                   </Tabs>
                 </TabsContent>
-                <TabsContent value="computer" forceMount className="px-3 pb-6 data-[state=inactive]:hidden">
+                <TabsContent value="computer" forceMount className="px-4 pb-6 data-[state=inactive]:hidden">
                   <ComputerPane
                     botId={botId}
                     tasks={workspace.tasks ?? []}
@@ -643,11 +713,11 @@ function BotSettings({
         </Button>
       </div>
       <div>
-        <h2 className="text-sm font-medium">Teammate settings</h2>
-        <p className="mt-1 text-xs text-muted-foreground">Avatar, name, and notifications for this teammate.</p>
+        <h2 className="text-body-sm font-medium">Teammate settings</h2>
+        <p className="mt-1 text-meta text-muted-foreground">Avatar, name, and notifications for this teammate.</p>
       </div>
       <section className="flex flex-col gap-2">
-        <p className="text-xs font-medium text-muted-foreground">Avatar</p>
+        <p className="text-meta font-medium text-muted-foreground">Avatar</p>
         <BotAvatarPicker botId={botId} shape={draft.avatarShape} color={draft.avatarColor} onChange={(shape, color) => setDraft({ ...draft, avatarShape: shape, avatarColor: color })} />
       </section>
       <section className="flex flex-col gap-4">
@@ -668,7 +738,7 @@ function BotSettings({
           <Input id="settings-model" value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="Provider default" />
         </div>
       </section>
-      <div className="flex min-h-11 items-center justify-between gap-3 text-sm">
+      <div className="flex min-h-11 items-center justify-between gap-3 text-body-sm">
         <Label htmlFor="settings-notifications">Notifications</Label>
         <Switch
           id="settings-notifications"
@@ -676,7 +746,7 @@ function BotSettings({
           onCheckedChange={(checked) => setDraft({ ...draft, notifications: checked })}
         />
       </div>
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {error ? <p className="text-body-sm text-destructive">{error}</p> : null}
       <div className="flex justify-end">
         <Button type="submit">Save</Button>
       </div>

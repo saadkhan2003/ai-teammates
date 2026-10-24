@@ -266,8 +266,8 @@ export default function SecretsPage() {
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-8">
       <header>
-        <h2 className="text-sm font-medium">Vault</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
+        <h2 className="text-body-sm font-medium">Vault</h2>
+        <p className="mt-2 text-body-sm text-muted-foreground">
           Values are write-only. Bots see references such as secret://openrouter/default, never the raw secret.
         </p>
       </header>
@@ -308,7 +308,7 @@ export default function SecretsPage() {
               <p>Used securely by the model gateway. Bots never receive the raw key.</p>
               <TestReadout result={testResult} />
               {formError ? (
-                <p role="alert" className="text-sm text-clay">
+                <p role="alert" className="text-body-sm text-clay">
                   {formError}
                 </p>
               ) : null}
@@ -335,7 +335,7 @@ export default function SecretsPage() {
             <p data-testid="masked-suffix">Key ending in: ...{openRouter.maskedSuffix}</p>
             <TestReadout result={testResult} />
             {formError ? (
-              <p role="alert" className="text-sm text-clay">
+              <p role="alert" className="text-body-sm text-clay">
                 {formError}
               </p>
             ) : null}
@@ -378,7 +378,7 @@ export default function SecretsPage() {
                   name="type"
                   value={addType}
                   onChange={(event) => setAddType(event.target.value)}
-                  className="h-10 rounded-md border border-input bg-card px-3 text-sm"
+                  className="h-10 rounded-md border border-input bg-card px-3 text-body-sm"
                 >
                   {SECRET_TYPES.map((type) => (
                     <option key={type} value={type}>
@@ -386,7 +386,7 @@ export default function SecretsPage() {
                     </option>
                   ))}
                 </select>
-                <p className="text-xs text-muted-foreground">OAuth and connector credentials are stored as plugin credentials.</p>
+                <p className="text-meta text-muted-foreground">OAuth and connector credentials are stored as plugin credentials.</p>
               </div>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="add-value">Value</Label>
@@ -429,7 +429,7 @@ export default function SecretsPage() {
                 <Input id="add-bots" value={addBots} onChange={(event) => setAddBots(event.target.value)} placeholder="Bot ids, comma separated. Empty means every bot." />
               </div>
               {formError && openRouter ? (
-                <p role="alert" className="text-sm text-clay sm:col-span-2">
+                <p role="alert" className="text-body-sm text-clay sm:col-span-2">
                   {formError}
                 </p>
               ) : null}
@@ -445,8 +445,8 @@ export default function SecretsPage() {
 
       {!loading && !error ? (
         <section className="flex flex-col gap-3">
-          <h2 className="font-display text-2xl">Stored secrets</h2>
-          {secrets.length === 0 ? <p className="text-sm text-muted-foreground">No secrets stored yet.</p> : null}
+          <h2 className="font-display text-h1">Stored secrets</h2>
+          {secrets.length === 0 ? <p className="text-body-sm text-muted-foreground">No secrets stored yet.</p> : null}
           <ul className="flex flex-col gap-2">
             {secrets.map((secret) => (
               <li key={secret.id} data-testid="secret-row" data-ref={`secret://${secret.namespace}/${secret.name}`} className="min-w-0 max-w-full rounded-lg border border-line bg-paper px-4 py-3">
@@ -459,7 +459,7 @@ export default function SecretsPage() {
                   <p className="break-all font-medium">
                     secret://{secret.namespace}/{secret.name}
                   </p>
-                  <p className="text-sm text-muted-foreground">
+                  <p className="text-body-sm text-muted-foreground">
                     {secret.type} · {secret.maskedSuffix ? `····${secret.maskedSuffix}` : "••••"} · last used {formatWhen(secret.lastUsedAt)}
                     {secret.revokedAt ? " · revoked" : ""}
                   </p>
@@ -481,20 +481,20 @@ export default function SecretsPage() {
       ) : null}
 
       <section data-testid="secret-usage" className="rounded-lg border border-line bg-paper p-4">
-        <h2 className="font-display text-2xl">Usage</h2>
-        {!selectedId ? <p className="mt-2 text-sm text-muted-foreground">Save a secret to see its usage.</p> : null}
-        {usageLoading ? <p className="mt-2 text-sm text-muted-foreground">Loading usage…</p> : null}
+        <h2 className="font-display text-h1">Usage</h2>
+        {!selectedId ? <p className="mt-2 text-body-sm text-muted-foreground">Save a secret to see its usage.</p> : null}
+        {usageLoading ? <p className="mt-2 text-body-sm text-muted-foreground">Loading usage…</p> : null}
         {usageError ? (
-          <p role="alert" className="mt-2 text-sm text-clay">
+          <p role="alert" className="mt-2 text-body-sm text-clay">
             Could not load usage. {usageError}
           </p>
         ) : null}
         {selectedId && !usageLoading && !usageError && usage.length === 0 ? (
-          <p className="mt-2 text-sm text-muted-foreground">No usage recorded for this secret.</p>
+          <p className="mt-2 text-body-sm text-muted-foreground">No usage recorded for this secret.</p>
         ) : null}
         <ul className="mt-3 flex flex-col gap-3">
           {usage.map((event) => (
-            <li key={event.id} className="border-b border-line pb-3 text-sm last:border-0">
+            <li key={event.id} className="border-b border-line pb-3 text-body-sm last:border-0">
               <p className="font-medium">{event.event || "event"}</p>
               <p className="text-muted-foreground">
                 {[event.createdAt ? formatWhen(event.createdAt) : "", event.actor, event.tool, event.destination, event.decision, event.reasonCode]

@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "scripts": {
+    "audit:ci": "bash scripts/audit-ci.sh"
+  }
+}

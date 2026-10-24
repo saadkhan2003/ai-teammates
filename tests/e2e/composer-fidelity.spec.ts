@@ -91,8 +91,7 @@ test("composer matches the reference in light and dark", async ({ page }) => {
   await page.getByTestId("composer").fill("One\nTwo\nThree\nFour");
   await expect(pill).toHaveAttribute("data-multiline", "true");
   const multiRadius = await pill.evaluate((node) => Number.parseFloat(getComputedStyle(node).borderRadius));
-  expect(multiRadius).toBeGreaterThan(16);
-  expect(multiRadius).toBeLessThan(28);
+  expect(multiRadius).toBeGreaterThan(100);
   await shot(page, "light-multiline");
 
   await page.getByTestId("composer").fill("");

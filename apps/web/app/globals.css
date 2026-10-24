@@ -1,3 +1,4 @@
+@import "../styles/fonts.css";
 @import "../styles/theme-tokens.css";
 
 @tailwind base;
@@ -13,12 +14,120 @@
     height: 100%;
     overflow-x: clip;
   }
+  html {
+    font-optical-sizing: auto;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground text-body font-sans;
     min-height: 100dvh;
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
-    font-size: 14px;
+    font-weight: 380;
+    font-synthesis: none;
+    font-feature-settings: "cv11" 1, "ss01" 1;
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-optical-sizing: auto;
+  }
+  strong,
+  b,
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-weight: 600;
+  }
+}
+
+svg.lucide {
+  stroke-width: 1.5;
+}
+
+.type-title {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.08px;
+  line-height: 24px;
+}
+
+.type-label {
+  font-size: 12px;
+  font-weight: 450;
+  letter-spacing: 0.02em;
+  line-height: 16px;
+  color: var(--muted-foreground);
+}
+
+.type-body {
+  font-size: 15px;
+  font-weight: 380;
+  letter-spacing: -0.08px;
+  line-height: 22px;
+}
+
+.type-caption {
+  font-size: 12px;
+  font-weight: 380;
+  letter-spacing: 0.02em;
+  line-height: 16px;
+  color: var(--muted-foreground);
+}
+
+.tabular,
+time,
+[data-tabular="true"] {
+  font-variant-numeric: tabular-nums;
+}
+
+.panel-card {
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  color: var(--card-foreground);
+  box-shadow: var(--shadow-card);
+}
+
+@keyframes pane-in {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+[data-testid="info-pane"] {
+  animation: pane-in 180ms ease;
+}
+
+.library-preview {
+  border-radius: var(--radius-card);
+  transform-origin: 50% 0;
+  animation: library-preview-in 150ms ease;
+}
+
+@keyframes library-preview-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-testid="info-pane"],
+  .library-preview {
+    animation: none;
   }
 }
 
@@ -54,7 +163,7 @@
 
 .sidebar-scroll::-webkit-scrollbar-thumb {
   background: transparent;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 
 .sidebar-scroll:hover::-webkit-scrollbar-thumb,
@@ -67,7 +176,7 @@
   width: 16px;
   height: 16px;
   flex: none;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: repeating-conic-gradient(var(--bot-accent, var(--foreground)) 0deg 14deg, transparent 14deg 30deg);
   -webkit-mask: radial-gradient(farthest-side, transparent 62%, var(--foreground) 63%);
   mask: radial-gradient(farthest-side, transparent 62%, var(--foreground) 63%);
@@ -106,6 +215,20 @@
   }
 }
 
+.image-lightbox-frame {
+  animation: lightbox-pop 180ms ease;
+  opacity: 1;
+}
+
+@keyframes lightbox-pop {
+  from {
+    transform: scale(0.96);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
 .media-shimmer {
   background: linear-gradient(90deg, var(--shimmer) 0%, var(--shimmer-peak) 45%, var(--shimmer) 80%);
   background-size: 200% 100%;
@@ -138,10 +261,35 @@
   }
 }
 
+.connect-chip[data-active="true"] {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: var(--shadow-pill);
+}
+
+html.light .connect-chip[data-active="true"] {
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: var(--shadow-pill);
+}
+
+html:not(.light) .logo-dark-tile {
+  border-radius: 6px;
+  background: #fff;
+}
+
+.library-subtabs {
+  scrollbar-width: none;
+}
+
+.library-subtabs::-webkit-scrollbar {
+  display: none;
+}
+
 .info-tab[data-state="active"] {
-  background-color: var(--bot-accent, var(--foreground)) !important;
-  color: var(--on-accent) !important;
-  box-shadow: none !important;
+  background-color: var(--card) !important;
+  color: var(--foreground) !important;
+  box-shadow: var(--shadow-pill) !important;
 }
 
 .bot-toggle[data-state="checked"] {

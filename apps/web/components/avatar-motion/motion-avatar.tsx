@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
+import { AvatarEyes, ContactShadow, GlossyBlob } from "@/components/avatar-motion/glossy-blob";
 import { observeAvatarLook } from "@/components/avatar-motion/look";
 import { resolveAvatarAppearance } from "@/lib/avatar-motion";
 
@@ -24,6 +25,7 @@ export function MotionAvatar({
   hidden?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const uid = useId().replace(/:/g, "");
   const live = variant === "live";
   const appearance = resolveAvatarAppearance(shape, color, botId);
 
@@ -35,8 +37,7 @@ export function MotionAvatar({
 
   const eyes = (
     <svg viewBox="0 0 100 100" aria-hidden>
-      <ellipse cx="39" cy="47" rx="5.5" ry="9" fill="#171717" transform="rotate(-14 39 47)" />
-      <ellipse cx="62" cy="47" rx="5.5" ry="9" fill="#171717" transform="rotate(-14 62 47)" />
+      <AvatarEyes />
     </svg>
   );
 
@@ -51,14 +52,20 @@ export function MotionAvatar({
       aria-hidden={hidden || undefined}
       aria-label={hidden ? undefined : `${label || "Bot"} avatar`}
       className={live ? "avatar-motion avatar-motion-live" : "avatar-motion"}
+      data-bot-id={botId || undefined}
+      data-avatar-fill={appearance.fill}
+      data-avatar-gloss="3d"
       style={{ width: size, height: size, ["--avatar-unit" as string]: `${size / 100}px`, ["--avatar-fill" as string]: appearance.fill }}
     >
       {live ? (
         <>
+          <svg className="avatar-contact" viewBox="0 0 100 100" aria-hidden>
+            <ContactShadow idPrefix={`${uid}-ground`} />
+          </svg>
           <div className="avatar-motion-spin" data-avatar-part="spin">
             <div className="avatar-motion-breathe" data-avatar-part="breathe">
               <svg viewBox="0 0 100 100" aria-hidden>
-                <path className="avatar-shape" d={appearance.path} fill={appearance.fill} />
+                <GlossyBlob className="avatar-shape" idPrefix={`${uid}-a`} path={appearance.path} fill={appearance.fill} />
               </svg>
             </div>
           </div>
@@ -69,8 +76,9 @@ export function MotionAvatar({
       ) : (
         <div className="avatar-row-scaler" data-avatar-part="row">
           <svg viewBox="0 0 100 100" aria-hidden>
-            <path className="avatar-shape" d={appearance.path} fill={appearance.fill} />
-            <path className="avatar-shape-alt" d={appearance.altPath} fill={appearance.fill} />
+            <ContactShadow idPrefix={`${uid}-ground`} />
+            <GlossyBlob className="avatar-shape" idPrefix={`${uid}-a`} path={appearance.path} fill={appearance.fill} />
+            <GlossyBlob className="avatar-shape-alt" idPrefix={`${uid}-b`} path={appearance.altPath} fill={appearance.fill} />
           </svg>
           <div className="avatar-eyes-static">{eyes}</div>
         </div>

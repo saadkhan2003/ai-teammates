@@ -20,11 +20,11 @@ function hostHue(href: string): number {
 }
 
 function LinkMark({ href, external }: { href: string; external: boolean }) {
-  if (!external) return <img src="/favicon.svg" alt="" className="size-3.5 rounded-sm" />;
+  if (!external) return <img src="/favicon.svg" alt="" className="size-3.5 rounded-control" />;
   return (
     <span
       aria-hidden
-      className="grid size-3.5 place-items-center rounded-sm text-[8px] font-semibold text-white"
+      className="grid size-3.5 place-items-center rounded-control text-micro font-semibold text-white"
       style={{ backgroundColor: `hsl(${hostHue(href)} 55% 42%)` }}
     >
       {hostLetter(href)}
@@ -63,7 +63,7 @@ export function LinkPill({
         target={external ? "_blank" : undefined}
         rel={external ? "noopener noreferrer" : undefined}
         className={cn(
-          "inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-card px-2 py-0.5 text-xs font-medium text-card-foreground no-underline",
+          "inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-card px-2 py-0.5 text-meta font-medium text-card-foreground no-underline",
           className,
         )}
         onClick={(event) => {
@@ -74,9 +74,9 @@ export function LinkPill({
         <span className="truncate">{text}</span>
       </a>
       <span className="pointer-events-none absolute bottom-full left-0 z-30 hidden w-64 pb-1 group-hover/pill:block">
-        <span data-testid="link-preview" className="block rounded-2xl border border-border bg-card p-3 text-left text-card-foreground shadow-md">
-          <span className="line-clamp-2 text-sm font-semibold leading-5">{title}</span>
-          <span className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+        <span data-testid="link-preview" className="block overflow-hidden rounded-card border border-border bg-card p-3 text-left text-card-foreground shadow-md">
+          <span className="line-clamp-2 text-body-sm">{title}</span>
+          <span className="mt-2 flex items-center gap-2 text-meta text-muted-foreground">
             <span aria-hidden className="shrink-0">{mark}</span>
             <span data-testid="link-preview-url" className="min-w-0 flex-1 truncate">{shown}</span>
             <ArrowUpRight className="size-3.5 shrink-0" aria-hidden />
