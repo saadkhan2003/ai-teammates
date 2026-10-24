@@ -65,11 +65,12 @@ def _ensure_running(name: str) -> None:
         _docker("start", name)
 
 
-def test_deleted_container_recovers_on_the_next_tool_call():
+def test_deleted_container_recovers_on_the_next_tool_call(bot_factory):
     client = login()
     status, bots = client.call("GET", "/api/bots")
-    assert status == 200 and bots, bots
-    bot_id = bots[0]["id"]
+    assert status == 200, bots
+    # Do not depend on bots left behind by earlier tests; create a disposable one if needed.
+    bot_id = bots[0]["id"] if bots else bot_factory(client, "Recovery clerk")
     status, computer = client.call("GET", "/api/computer")
     assert status == 200, computer
     computer_id = computer.get("computerId")
