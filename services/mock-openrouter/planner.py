@@ -74,7 +74,12 @@ def _long_run_plan(messages: list, count: int) -> dict:
     delay_marker = f"long-run-delay-{index}"
     if "SLOW" in text.upper() and not _has_shell_command(messages, delay_marker):
         return _tool("shell", {"command": f"sleep 0.25 # long-run-delay-{index}"})
-    if not _has_result_for(messages, path, "write_file"):
+    if not _has_result_for(messages, path, "write_file", ok_only=True):
+        # A write whose outcome is unknown (worker killed mid-call) is verified
+        # with a read before it is repeated, like a careful model would. A
+        # successful verification read counts as progress and moves on.
+        if _has_result_for(messages, path, "write_file") and not _has_failed_read(messages, path):
+            return _tool("read_file", {"path": path})
         content = f"step {index}\n" + ("x" * 20000 if "BIG OUTPUT" in text else "complete\n")
         return _tool("write_file", {"path": path, "content": content})
     if not _has_result_for(messages, path, "read_file"):
@@ -130,14 +135,39 @@ def _long_run_progress(messages: list) -> int:
                 pass
         if item.get("role") != "tool":
             continue
-        if "read_file" in _tool_name(item, messages):
+        if "read_file" in _tool_name(item, messages) and _result_ok(item):
             completed.update(int(value) for value in re.findall(r"long-run-step-(\d{5})", _result_path(item, messages)))
     return max(completed, default=0)
 
 
-def _has_result_for(messages: list, path: str, tool_name: str) -> bool:
+def _has_result_for(messages: list, path: str, tool_name: str, ok_only: bool = False) -> bool:
     marker = path.rsplit("/", 1)[-1]
-    return any(item.get("role") == "tool" and tool_name in _tool_name(item, messages) and marker in _result_path(item, messages) for item in messages)
+    return any(
+        item.get("role") == "tool" and tool_name in _tool_name(item, messages) and marker in _result_path(item, messages)
+        and (not ok_only or _result_ok(item))
+        for item in messages
+    )
+
+
+def _has_failed_read(messages: list, path: str) -> bool:
+    marker = path.rsplit("/", 1)[-1]
+    return any(
+        item.get("role") == "tool" and "read_file" in _tool_name(item, messages) and marker in _result_path(item, messages)
+        and not _result_ok(item)
+        for item in messages
+    )
+
+
+def _result_ok(item: dict) -> bool:
+    """False for unknown-outcome placeholders and explicit tool failures."""
+    try:
+        result = json.loads(_content_text(item.get("content")))
+    except (ValueError, TypeError):
+        return True
+    for value in (result, result.get("output") if isinstance(result, dict) else None):
+        if isinstance(value, dict) and (value.get("status") == "unknown_outcome" or value.get("ok") is False):
+            return False
+    return True
 
 
 def _has_shell_command(messages: list, marker: str) -> bool:

@@ -12,9 +12,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from stack import AGENT_CONTAINER, API, API_CONTAINER, BASE, MOCK_CONTAINER, PG
 
-BASE = os.environ.get("BASE_URL", "http://127.0.0.1:18080").rstrip("/")
-API = os.environ.get("API_URL", "http://127.0.0.1:18081").rstrip("/")
 OWNER = os.environ.get("OWNER_USERNAME", "saad")
 PASSWORD = os.environ.get("OWNER_PASSWORD", "teammates-dev")
 WORKER = os.environ.get("WORKER_TOKEN", "dev-worker-token-change-me")
@@ -162,7 +161,7 @@ def assert_clean(text: str) -> None:
 
 def _psql(sql: str) -> str:
     return subprocess.check_output(
-        ["sudo", "docker", "exec", os.environ.get("PG_CONTAINER", "teammates-postgres-1"), "psql", "-U", "agent", "-d", "agent", "-tA", "-c", sql],
+        ["sudo", "docker", "exec", PG, "psql", "-U", "agent", "-d", "agent", "-tA", "-c", sql],
         text=True,
     ).strip()
 
@@ -588,7 +587,7 @@ def test_acceptance_suite():
     assert "teammates_probe" in raw
 
     before = wait_task(client, bot_id, submit(client, conversation, "What should I call you?", as_task=False))
-    subprocess.check_call(["sudo", "docker", "restart", "teammates-api-1"])
+    subprocess.check_call(["sudo", "docker", "restart", API_CONTAINER])
     deadline = time.time() + 60
     while time.time() < deadline:
         try:
@@ -627,19 +626,19 @@ def test_acceptance_suite():
     status, after_delete = client.call("GET", f"/api/secrets/{github['id']}/usage")
     assert status == 200 and any(item.get("event") == "secret.deleted" for item in after_delete)
 
-    dump = subprocess.check_output(["sudo", "docker", "exec", "teammates-postgres-1", "pg_dump", "-U", "agent", "-d", "agent", "-Fc"], stderr=subprocess.DEVNULL)
+    dump = subprocess.check_output(["sudo", "docker", "exec", PG, "pg_dump", "-U", "agent", "-d", "agent", "-Fc"], stderr=subprocess.DEVNULL)
     master = open(os.environ.get("SECRETS_MASTER_KEY_PATH", os.path.join(os.path.dirname(__file__), "..", "..", "secrets", "secrets_master_key")), "rb").read()
     assert master not in dump
-    subprocess.check_call(["sudo", "docker", "exec", "-i", "teammates-postgres-1", "psql", "-U", "agent", "-d", "postgres", "-c", "DROP DATABASE IF EXISTS agent_restore"])
-    subprocess.check_call(["sudo", "docker", "exec", "-i", "teammates-postgres-1", "psql", "-U", "agent", "-d", "postgres", "-c", "CREATE DATABASE agent_restore"])
-    restore = subprocess.Popen(["sudo", "docker", "exec", "-i", "teammates-postgres-1", "pg_restore", "-U", "agent", "-d", "agent_restore", "--no-owner"], stdin=subprocess.PIPE)
+    subprocess.check_call(["sudo", "docker", "exec", "-i", PG, "psql", "-U", "agent", "-d", "postgres", "-c", "DROP DATABASE IF EXISTS agent_restore"])
+    subprocess.check_call(["sudo", "docker", "exec", "-i", PG, "psql", "-U", "agent", "-d", "postgres", "-c", "CREATE DATABASE agent_restore"])
+    restore = subprocess.Popen(["sudo", "docker", "exec", "-i", PG, "pg_restore", "-U", "agent", "-d", "agent_restore", "--no-owner"], stdin=subprocess.PIPE)
     restore.communicate(dump)
     hex_row = subprocess.check_output(
         [
             "sudo",
             "docker",
             "exec",
-            "teammates-postgres-1",
+            PG,
             "psql",
             "-U",
             "agent",
@@ -666,17 +665,17 @@ def test_acceptance_suite():
     assert opened == PORTAL_PASSWORD.encode()
     opened = b""
 
-    logs = subprocess.check_output(["sudo", "docker", "logs", "teammates-api-1"], stderr=subprocess.STDOUT, text=True, errors="replace")
-    logs += subprocess.check_output(["sudo", "docker", "logs", "teammates-agent-1"], stderr=subprocess.STDOUT, text=True, errors="replace")
+    logs = subprocess.check_output(["sudo", "docker", "logs", API_CONTAINER], stderr=subprocess.STDOUT, text=True, errors="replace")
+    logs += subprocess.check_output(["sudo", "docker", "logs", AGENT_CONTAINER], stderr=subprocess.STDOUT, text=True, errors="replace")
     logs += subprocess.check_output(["sudo", "docker", "logs", slug], stderr=subprocess.STDOUT, text=True, errors="replace")
-    logs += subprocess.check_output(["sudo", "docker", "logs", "teammates-mock-openrouter-1"], stderr=subprocess.STDOUT, text=True, errors="replace")
+    logs += subprocess.check_output(["sudo", "docker", "logs", MOCK_CONTAINER], stderr=subprocess.STDOUT, text=True, errors="replace")
     assert_clean(logs)
     columns = subprocess.check_output(
         [
             "sudo",
             "docker",
             "exec",
-            "teammates-postgres-1",
+            PG,
             "psql",
             "-U",
             "agent",

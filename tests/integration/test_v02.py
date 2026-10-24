@@ -8,7 +8,7 @@ import urllib.error
 import urllib.request
 import uuid
 
-BASE = os.environ.get("BASE_URL", "http://127.0.0.1:18080").rstrip("/")
+from stack import BASE
 OWNER = os.environ.get("OWNER_USERNAME", "saad")
 PASSWORD = os.environ.get("OWNER_PASSWORD", "teammates-dev")
 

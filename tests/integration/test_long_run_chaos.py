@@ -1,10 +1,12 @@
 """Small chaos checks for long-running tasks; requires the mock integration stack."""
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -93,13 +95,21 @@ def test_real_docker_kill_resumes_once():
             f"SELECT count(*) FROM task_run_events WHERE task_id='{task}' AND type='resumed'"
         ) == "1"
         assert int(_psql(
-            f"SELECT count(*) FROM messages WHERE task_id='{task}' AND kind='text' AND content::jsonb->>'type'='resume' AND content::jsonb->>'event'='resumed'"
+            f"SELECT count(*) FROM messages WHERE task_id='{task}' AND kind='text' AND (CASE WHEN left(btrim(content::text),1)='{{' THEN content::jsonb->>'type'='resume' AND content::jsonb->>'event'='resumed' ELSE false END)"
         )) <= 1
+        # The kill may land mid-write: that call resumes as unknown_outcome and
+        # the planner verifies with a read before repeating it. Either way every
+        # step file exists exactly once and no path is written twice.
         writes = int(_psql(f"SELECT count(*) FROM task_steps WHERE task_id='{task}' AND tool='write_file'"))
-        assert writes == 30, f"expected one write per scripted step; found {writes}"
+        assert 29 <= writes <= 30, f"expected one write per scripted step; found {writes}"
+        assert _psql(f"SELECT count(*) FROM (SELECT args->>'path' FROM task_steps WHERE task_id='{task}' AND tool='write_file' GROUP BY args->>'path' HAVING count(*)>1) duplicates") == "0"
         assert int(_psql(
             f"SELECT count(*) FROM tool_execution_dedupe WHERE task_id='{task}' AND tool='write_file' AND status='completed'"
-        )) == 30
+        )) == writes
+        for index in range(1, 31):
+            status, content = client.call("GET", f"/api/bots/{bot}/files/raw?path=/workspace/long-run-step-{index:05d}.txt")
+            assert status == 200, (index, status)
+            assert str(content).startswith(f"step {index}\n"), (index, str(content)[:40])
     finally:
         _cleanup(client, bot, task)
 
@@ -125,7 +135,9 @@ def test_paused_stale_worker_cannot_write_after_resume():
             time.sleep(.5)
         else:
             raise AssertionError(f"task did not complete on a newer lease epoch: {row}")
-        assert int(_psql(f"SELECT count(*) FROM tool_execution_dedupe WHERE task_id='{task}' AND status='completed'")) == int(_psql(f"SELECT count(*) FROM task_steps WHERE task_id='{task}'"))
+        # read_file is idempotent and never claims a dedupe key; every other
+        # (non-idempotent) step must map to exactly one completed claim.
+        assert int(_psql(f"SELECT count(*) FROM tool_execution_dedupe WHERE task_id='{task}' AND status='completed'")) == int(_psql(f"SELECT count(*) FROM task_steps WHERE task_id='{task}' AND tool<>'read_file'"))
         assert _psql(f"SELECT count(*) FROM (SELECT args->>'path' FROM task_steps WHERE task_id='{task}' AND tool='write_file' GROUP BY args->>'path' HAVING count(*)>1) duplicates") == "0"
     finally:
         _cleanup(client, bot, task)
@@ -162,17 +174,29 @@ def test_poison_step_stops_after_no_progress_attempts():
 
 def test_auto_resume_ceiling_is_enforced():
     client, bot, task = _demo("LONG RUN DEMO 30 SLOW")
+    name = os.environ.get("AGENT_CONTAINER", "resume-agent-1")
     try:
         _wait_steps(task, 2)
-        # Seed the durable attempt ledger with five recent automatic resumes,
-        # then expire the live lease to exercise the real sweeper ceiling.
-        attempts = "[" + ",".join(
-            '{"n":%d,"startedAt":"2026-10-24T00:00:00Z","endedAt":"2026-10-24T00:01:00Z","endReason":"lease_expired","progress":true}' % n
-            for n in range(1, 6)
-        ) + "]"
-        _psql(f"UPDATE tasks SET checkpoint=jsonb_set(checkpoint,'{{attempts}}','{attempts}'::jsonb,true),lease_until=now()-interval '1 minute' WHERE id='{task}'")
-        _wait_for(f"SELECT status||':'||waiting_reason FROM tasks WHERE id='{task}'", "waiting_human:resume_exhausted", 90)
+        # Freeze the worker so its heartbeat cannot renew the lease or rewrite
+        # the checkpoint, then seed the durable attempt ledger with five
+        # automatic resumes inside the rolling hour and expire the lease to
+        # exercise the real sweeper ceiling.
+        _docker("pause", name)
+        try:
+            now = datetime.now(timezone.utc)
+            attempts = json.dumps([
+                {"n": n, "startedAt": (now - timedelta(minutes=30 - n * 5)).isoformat(),
+                 "endedAt": (now - timedelta(minutes=29 - n * 5)).isoformat(),
+                 "endReason": "lease_expired", "progress": True}
+                for n in range(1, 6)
+            ])
+            _psql(f"UPDATE tasks SET checkpoint=jsonb_set(coalesce(checkpoint,'{{}}'::jsonb),'{{attempts}}','{attempts}'::jsonb,true),lease_until=now()-interval '1 minute' WHERE id='{task}'")
+            _wait_for(f"SELECT status||':'||waiting_reason FROM tasks WHERE id='{task}'", "waiting_human:resume_exhausted", 90)
+        finally:
+            _docker("unpause", name)
         assert _psql(f"SELECT count(*) FROM task_run_events WHERE task_id='{task}' AND type='resume_exhausted'") == "1"
+        time.sleep(5)
+        assert _psql(f"SELECT status||':'||waiting_reason FROM tasks WHERE id='{task}'") == "waiting_human:resume_exhausted"
     finally:
         _cleanup(client, bot, task)
 

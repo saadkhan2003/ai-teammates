@@ -5,7 +5,7 @@ import os
 import pytest
 import requests
 
-API = os.environ.get("API_URL", "http://127.0.0.1:18081")
+from stack import API
 USER = os.environ.get("OWNER_USERNAME", "saad")
 PASSWORD = os.environ.get("OWNER_PASSWORD", "teammates-dev")
 

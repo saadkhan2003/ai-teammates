@@ -6,6 +6,7 @@ import urllib.parse
 
 from test_acceptance import Client, login, worker_call
 from test_bot_messaging import _bot, _cleanup, _workspace
+from stack import BASE
 
 
 def test_uploaded_chat_attachments_are_grouped_and_paged_per_group():
@@ -87,7 +88,7 @@ def test_library_safe_content_range_dlp_pin_and_soft_delete():
         assert items["sensitive.txt"].get("dlpState") == "redacted"
 
         def request(path, headers=None):
-            req = urllib.request.Request("http://127.0.0.1:18080" + path, headers={"Cookie": client.cookie, **(headers or {})})
+            req = urllib.request.Request(BASE + path, headers={"Cookie": client.cookie, **(headers or {})})
             try:
                 return urllib.request.urlopen(req, timeout=30)
             except urllib.error.HTTPError as exc:

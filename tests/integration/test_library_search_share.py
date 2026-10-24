@@ -7,6 +7,7 @@ import uuid
 
 from test_acceptance import Client, login, worker_call, _psql
 from test_bot_messaging import _bot, _cleanup, _workspace
+from stack import BASE
 
 
 def _public(url):
@@ -58,7 +59,7 @@ def test_search_filters_and_share_expiry_revoke_and_owner_scope():
         share_url = created["url"]
         token = share_url.rsplit("/", 1)[-1]
         assert len(token) == 64 and all(character in "0123456789abcdef" for character in token)
-        base = "http://127.0.0.1:18080"
+        base = BASE
         with _public(base + "/api/public/library/" + token) as response:
             assert response.status == 200
             assert response.headers["X-Robots-Tag"] == "noindex"

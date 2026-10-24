@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
+import { PG_CONTAINER } from "./containers";
 
 const owner = process.env.OWNER_USERNAME ?? "saad";
 const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
@@ -8,7 +9,7 @@ const tabs = ["Overview", "Computer", "Files/Media", "Skills", "Memory", "Tasks"
 const pages = ["/", "/settings", "/settings/secrets", "/settings/computer", "/settings/usage", "/system", "/invite"] as const;
 
 function psql(sql: string) {
-  const args = ["exec", "-i", "teammates-postgres-1", "psql", "-U", "agent", "-d", "agent", "-v", "ON_ERROR_STOP=1", "-c", sql];
+  const args = ["exec", "-i", PG_CONTAINER, "psql", "-U", "agent", "-d", "agent", "-v", "ON_ERROR_STOP=1", "-c", sql];
   let result = spawnSync("docker", args, { encoding: "utf8" });
   if (result.error || result.status !== 0) result = spawnSync("sudo", ["docker", ...args], { encoding: "utf8" });
   if (result.status !== 0) throw new Error(result.stderr || result.stdout || "psql failed");

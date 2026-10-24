@@ -9,6 +9,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from stack import BASE, COMPUTER_NETWORK_FILTER, COMPUTERS_NETWORK, OBJECT_STORE_CONTAINER, PG, PROJECT_FILTER
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -17,7 +19,7 @@ def _docker(*args: str) -> str:
 
 
 def _computers() -> list[str]:
-    raw = _docker("ps", "--filter", "label=teammates.role=user-computer", "--format", "{{.Names}}")
+    raw = _docker("ps", "--filter", "label=teammates.role=user-computer", "--filter", COMPUTER_NETWORK_FILTER, "--format", "{{.Names}}")
     return [line.strip() for line in raw.splitlines() if line.strip()]
 
 
@@ -82,15 +84,15 @@ def test_bot_computer_cannot_reach_postgres_seaweed_or_internal_api():
     subprocess.check_call(["sudo", "bash", str(ROOT / "deploy/computer-isolation.sh")])
     names = _computers()
     assert names, "no user computer is running"
-    postgres_ip = _docker("inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", "teammates-postgres-1")
-    seaweed_ip = _docker("inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", "teammates-object-store-1")
+    postgres_ip = _docker("inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", PG)
+    seaweed_ip = _docker("inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", OBJECT_STORE_CONTAINER)
     api_ip = "172.30.28.10"
     agent_ip = "172.30.28.11"
     assert postgres_ip and seaweed_ip
 
     for name in names:
         nets = _docker("inspect", "-f", "{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}", name).split()
-        assert nets == ["teammates-computers"], (name, nets)
+        assert nets == [COMPUTERS_NETWORK], (name, nets)
         report = _probe(name, postgres_ip, seaweed_ip, api_ip, agent_ip)
         for key in ("postgres", "seaweed", "api", "agent", "internal", "health", "private10", "private192"):
             assert report[key] != "open" and not str(report[key]).startswith("open "), (name, key, report)
@@ -136,7 +138,7 @@ def _alive(names: list[str]) -> list[str]:
 
 
 def _isolation_name() -> str:
-    raw = _docker("ps", "-a", "--filter", "label=com.docker.compose.service=isolation", "--format", "{{.Names}}")
+    raw = _docker("ps", "-a", "--filter", "label=com.docker.compose.service=isolation", "--filter", PROJECT_FILTER, "--format", "{{.Names}}")
     names = [line.strip() for line in raw.splitlines() if line.strip()]
     assert names, "isolation guard is not deployed"
     return names[0]
@@ -144,7 +146,7 @@ def _isolation_name() -> str:
 
 def _api(method: str, path: str, cookie: str, body: dict | None = None, timeout: float = 60):
     data = None if body is None else json.dumps(body).encode()
-    request = urllib.request.Request("http://127.0.0.1:18080" + path, data=data, method=method)
+    request = urllib.request.Request(BASE + path, data=data, method=method)
     if body is not None:
         request.add_header("Content-Type", "application/json")
     if cookie:
@@ -199,9 +201,9 @@ def test_flushed_chain_refuses_start_until_rules_return():
     assert owned, computer
     cookie = _bring_owned_up(cookie, owned)
     names = _alive(_computers())
-    assert owned in names or owned in _docker("ps", "-a", "--filter", "label=teammates.role=user-computer", "--format", "{{.Names}}")
-    postgres_ip = _docker("inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", "teammates-postgres-1")
-    seaweed_ip = _docker("inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", "teammates-object-store-1")
+    assert owned in names or owned in _docker("ps", "-a", "--filter", "label=teammates.role=user-computer", "--filter", COMPUTER_NETWORK_FILTER, "--format", "{{.Names}}")
+    postgres_ip = _docker("inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", PG)
+    seaweed_ip = _docker("inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", OBJECT_STORE_CONTAINER)
     assert postgres_ip and seaweed_ip
     stopped: list[str] = []
     try:

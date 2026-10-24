@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import { autoAllowBrowserOpens } from "./helpers";
+import { PG_CONTAINER, AGENT_CONTAINER, API_CONTAINER, MOCK_CONTAINER } from "./containers";
 
 const owner = process.env.OWNER_USERNAME ?? "saad";
 const password = process.env.OWNER_PASSWORD ?? "teammates-dev";
@@ -167,14 +168,14 @@ test("policy card, data-policy block, and login form", async ({ page }) => {
     expect(await response.text(), path).not.toContain(LOGIN_CANARY);
   }
   let logs = "";
-  for (const container of ["teammates-api-1", "teammates-agent-1", "teammates-mock-openrouter-1", slug]) {
+  for (const container of [API_CONTAINER, AGENT_CONTAINER, MOCK_CONTAINER, slug]) {
     logs += capture(["docker", "logs", "--tail", "20000", container], 60_000);
   }
   expect(logs).not.toContain(LOGIN_CANARY);
   const columns = capture([
     "docker",
     "exec",
-    "teammates-postgres-1",
+    PG_CONTAINER,
     "psql",
     "-U",
     "agent",

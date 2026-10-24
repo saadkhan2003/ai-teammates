@@ -297,3 +297,21 @@ def test_hello_script_is_capped_at_seven_sends():
         steps += 1
         messages = messages + [message, {"role": "tool", "tool_call_id": call["id"], "content": json.dumps({"ok": True})}]
     assert steps == 7
+
+
+def test_long_run_unknown_write_is_verified_before_repeating():
+    user = {"role": "user", "content": "LONG RUN DEMO 2"}
+    first = plan([user])["choices"][0]["message"]["tool_calls"][0]
+    unknown = [user, {"role": "assistant", "tool_calls": [first]}, {"role": "tool", "name": "write_file", "tool_call_id": first["id"], "content": '{"ok":false,"status":"unknown_outcome"}'}]
+    verify = plan(unknown)["choices"][0]["message"]["tool_calls"][0]
+    assert verify["function"]["name"] == "read_file"
+    assert json.loads(verify["function"]["arguments"])["path"].endswith("long-run-step-00001.txt")
+    # The file landed: the verification read counts as progress.
+    landed = unknown + [{"role": "assistant", "tool_calls": [verify]}, {"role": "tool", "name": "read_file", "tool_call_id": verify["id"], "content": '{"path":"/workspace/long-run-step-00001.txt","content":"step 1\\ncomplete"}'}]
+    nxt = plan(landed)["choices"][0]["message"]["tool_calls"][0]
+    assert json.loads(nxt["function"]["arguments"])["path"].endswith("long-run-step-00002.txt")
+    # The file is missing: the write is repeated once.
+    missing = unknown + [{"role": "assistant", "tool_calls": [verify]}, {"role": "tool", "name": "read_file", "tool_call_id": verify["id"], "content": '{"ok":false,"reason":"not_found","path":"/workspace/long-run-step-00001.txt"}'}]
+    again = plan(missing)["choices"][0]["message"]["tool_calls"][0]
+    assert again["function"]["name"] == "write_file"
+    assert json.loads(again["function"]["arguments"])["path"].endswith("long-run-step-00001.txt")
