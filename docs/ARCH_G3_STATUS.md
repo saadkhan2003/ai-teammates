@@ -30,3 +30,10 @@ Fixed this round: teach hand-back now goes through the pane's lease-aware handBa
 - security: direct extract needed fenced actor/epoch (test fix ddc9401). It passes alone; in the full suite browser_open into the computer hangs ~2 min after private-hosts (cause open).
 - acceptance #17: backup/restore scripts were hardcoded to teammates-postgres-1 (the live stack); fixed to $STACK in 1132e81, and restore_check now passes on archgaps. pw10/pw11 ran pg_dump plus the agent_restore DROP/CREATE against live postgres; the live agent DB itself was not modified.
 - pw11 settings-computer: the owner login was rejected (new, uninvestigated).
+
+## pw12-pw24 (2026-10-24, PKT; DB/log times UTC)
+- pw12 52/54, pw17 53/54, pw20 45/54, pw22 53/54. security.spec alone: 3/3 (pw19, pw21), 1/1 (pw23).
+- Fixed (test): chat-features hover locator (563cf0d), security extract picks the signin tab (ecd5981), test owner's computer gets 1 CPU (a378728).
+- Root cause of the intermittent "~2 min hang" (security CDP connect 114 s in pw22, bot DELETE / POST /api/secrets 20 s timeouts and max_bots cascades in pw20/pw24): containers with a CFS quota (`cpus:` 0.01-0.25 in the stack compose, 0.4 CPU computers) get stuck throttled. Seen live in pw24 on archgaps-postgres-1 (0.2 CPU): cpu.stat usage_usec frozen for minutes while nr_throttled rose every period, one INSERT and nine `runc init` stuck in R, API "Failed to connect to postgres". Writing `max` to its cpu.max unstuck it instantly. Same signature on the computer earlier (runc init in R, /json/version timeouts). Host kernel 6.12.94+; host load was ~1, so it is not real CPU shortage.
+- Mitigation for isolated test stacks only: no CPU quotas (gen-stack-compose --no-cpu-limits) and a larger test-owner computer quota. Product sizing (0.4 CPU computers, small service quotas on the live stack) is for Saad to decide.
+- agent_restore was not dropped. The live stack was not touched.
