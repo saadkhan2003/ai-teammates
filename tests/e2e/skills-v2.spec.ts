@@ -2,7 +2,28 @@ import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { login } from "./helpers";
 
+const shotDir = "/workspace/shots-skills-v2";
+async function screenshot(page: import("@playwright/test").Page, screen: string, mode: "light" | "dark") {
+  const stableScreen = screen.replace(/-(light|dark)$/, "");
+  await page.evaluate((theme) => {
+    localStorage.setItem("teammates-theme", theme);
+    document.documentElement.classList.toggle("light", theme === "light");
+    document.documentElement.dataset.theme = theme;
+  }, mode);
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    const finiteAnimations = document.getAnimations().filter((animation) => animation.effect?.getTiming().iterations !== Infinity);
+    await Promise.race([
+      Promise.all(finiteAnimations.map((animation) => animation.finished.catch(() => undefined))),
+      new Promise((resolve) => setTimeout(resolve, 1500)),
+    ]);
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  await page.screenshot({ path: `${shotDir}/02-skills-${stableScreen}-${mode}.png`, fullPage: false });
+}
+
 test("owner can view, review, revert, and archive guide skills in the bot Skills pane", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   await login(page);
   const response = await page.request.post("/api/bots", { data: { name: `Skill ${Date.now()}` } });
   expect(response.ok()).toBeTruthy();
@@ -18,14 +39,20 @@ test("owner can view, review, revert, and archive guide skills in the bot Skills
     await page.goto(`/bots/${bot.id}`);
     await page.getByRole("tab", { name: /skills/i }).click();
     await expect(page.getByText("When reviewing the queue")).toBeVisible();
+    await screenshot(page, "skills-pane-list", "dark");
+    await screenshot(page, "skills-pane-list", "light");
     const row = page.getByTestId("skill-list").locator("li").filter({ hasText: slug });
     await row.getByRole("button", { name: "View" }).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByText("Confirm the queue totals.")).toBeVisible();
     await expect(dialog.getByText("Revision history")).toBeVisible();
     await expect(dialog.getByText("Check the newest orders.")).toBeVisible();
+    await screenshot(page, "skills-pane-history", "light");
+    await screenshot(page, "skills-pane-history", "dark");
     await dialog.getByRole("button", { name: "Revert" }).click();
     await expect(dialog.getByRole("heading", { name: /Daily review · v3/ })).toBeVisible();
+    await screenshot(page, "skills-pane-reverted", "dark");
+    await screenshot(page, "skills-pane-reverted", "light");
     await page.keyboard.press("Escape");
     await row.getByRole("button", { name: "Archive" }).click();
     await expect(page.getByText(slug)).toHaveCount(0);
