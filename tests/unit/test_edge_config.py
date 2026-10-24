@@ -46,6 +46,41 @@ def test_production_compose_refuses_the_dev_owner_password():
     assert "OWNER_PASSWORD: ${OWNER_PASSWORD:-teammates-dev}" in dev
 
 
+def _snippet(text: str, name: str) -> str:
+    token = f"({name}) {{"
+    start = text.index(token)
+    depth = 0
+    for index, char in enumerate(text[start:], start):
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    raise AssertionError(name)
+
+
+def test_admin_site_is_separate_and_allowlisted():
+    for name in ("Caddyfile", "deploy/Caddyfile.production", "deploy/Caddyfile.test"):
+        text = _text(name)
+        block = _snippet(text, "admin_routes")
+        assert "ADMIN_ALLOWLIST" in block
+        assert "remote_ip" in block
+        assert "reverse_proxy admin:3000" in block
+        assert "reverse_proxy api:8080" in block
+        assert "/internal" not in block
+        assert "/metrics" not in block
+        assert "/vnc" not in block
+    assert ":8081" in _text("Caddyfile")
+    assert ":8081" in _text("deploy/Caddyfile.test")
+    assert "admin.example.com" in _text("deploy/Caddyfile.production")
+    compose = _text("docker-compose.yml")
+    assert "18082:8081" in compose
+    assert "context: ./apps/admin" in compose
+    assert "cgroup_parent: /teammates-lowend" in _text("deploy/compose.low-end.yml")
+    assert "\n  admin:\n" in _text("deploy/compose.low-end.yml")
+
+
 def test_test_caddyfile_is_opt_in():
     text = _text("deploy/Caddyfile.test")
     assert "handle /internal/*" in text

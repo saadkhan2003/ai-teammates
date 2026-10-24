@@ -2,8 +2,8 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { cardClass, controlClass, PageError, PageSkeleton, pillClass, SectionTitle } from "@/components/account/chrome";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -35,6 +35,7 @@ export default function PolicySettingsPage() {
   const [pattern, setPattern] = useState("");
   const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   async function load() {
     const policy = await api<PolicyResponse>("/api/policy");
@@ -49,7 +50,9 @@ export default function PolicySettingsPage() {
   }
 
   useEffect(() => {
-    void load().catch((caught) => setError(errorMessage(caught, "Could not load policy.")));
+    void load()
+      .catch((caught) => setError(errorMessage(caught, "Could not load policy.")))
+      .finally(() => setLoading(false));
   }, []);
 
   async function save(event: FormEvent) {
@@ -87,20 +90,23 @@ export default function PolicySettingsPage() {
 
   return (
     <>
+      <header>
+        <h2 className="text-xl font-semibold tracking-tight">Policy</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Risky classes ask before the tool runs. A hard deny still wins.</p>
+      </header>
+      {loading && !error ? <PageSkeleton /> : null}
+      {error && Object.keys(classes).length === 0 ? <PageError title="Could not load policy." detail={error} onRetry={() => void load().catch((caught) => setError(errorMessage(caught, "Could not load policy.")))} /> : null}
       <form className="flex flex-col gap-4" onSubmit={(event) => void save(event)}>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Action policy</CardTitle>
-            <CardDescription>Risky classes ask before the tool runs. A hard deny still wins.</CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-4 md:grid-cols-2">
+        <section className={`${cardClass} p-4`}>
+          <SectionTitle>Action rules</SectionTitle>
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
             {CLASSES.map((name) => (
-              <div key={name} className="flex min-h-11 items-center justify-between gap-3 rounded-lg border border-border px-3">
+                <div key={name} className={`${controlClass} flex min-h-11 items-center justify-between gap-3 border border-border px-3 transition-colors hover:bg-accent/40`}>
                 <Label htmlFor={`policy-${name}`} className="text-sm font-normal">
                   {name}
                 </Label>
                 <Select value={classes[name] ?? "ASK"} onValueChange={(value) => setClasses((current) => ({ ...current, [name]: value }))}>
-                  <SelectTrigger id={`policy-${name}`} data-testid={`policy-${name}`} className="h-9 w-28 rounded-md">
+                  <SelectTrigger id={`policy-${name}`} data-testid={`policy-${name}`} className="h-9 w-28 rounded-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -115,27 +121,26 @@ export default function PolicySettingsPage() {
             ))}
           <div className="flex min-h-11 items-center justify-between gap-3 border-t border-border pt-4 md:col-span-2">
               <div>
-                <p className="text-sm">Model assist</p>
+                <p className="text-sm">Tool assist</p>
                 <p className="text-xs text-muted-foreground">Classify plugin tools. Built-in tools stay on the class rules.</p>
               </div>
-              <Switch data-testid="policy-model-assist" checked={assist} onCheckedChange={setAssist} aria-label="Model-assisted classifier for plugin tools" />
+              <Switch data-testid="policy-model-assist" checked={assist} onCheckedChange={setAssist} aria-label="Assisted classifier for plugin tools" />
             </div>
-          </CardContent>
-          <div className="flex justify-end p-4 pt-0">
-            <Button type="submit">Save policy</Button>
           </div>
-        </Card>
+          <div className="mt-4 flex justify-end">
+            <Button type="submit" className={pillClass}>Save policy</Button>
+          </div>
+        </section>
       </form>
       {staff ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Hard deny list</CardTitle>
-            <CardDescription>Admin only. Built-in rules cannot be removed, and approval cannot override them.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
+        <section className={`${cardClass} flex flex-col gap-4 p-4`}>
+          <div>
+            <SectionTitle>Hard deny list</SectionTitle>
+            <p className="mt-1 text-sm text-muted-foreground">Staff only. Built-in rules cannot be removed, and approval cannot override them.</p>
+          </div>
             <ul className="flex flex-col gap-2" data-testid="deny-list">
               {rules.map((rule) => (
-                <li key={rule.code} className="flex min-h-11 flex-col justify-center rounded-lg border border-border px-3 py-2 text-sm">
+                <li key={rule.code} className={`${controlClass} flex min-h-11 flex-col justify-center border border-border px-3 py-2 text-sm`}>
                   <span className="font-medium">{rule.code}</span>
                   {rule.builtin ? <span className="ml-2 text-xs text-muted-foreground">built-in</span> : null}
                   {rule.description ? <p className="text-muted-foreground">{rule.description}</p> : null}
@@ -156,13 +161,12 @@ export default function PolicySettingsPage() {
                 <Input id="deny-description" value={description} onChange={(event) => setDescription(event.target.value)} />
               </div>
               <div className="flex items-end justify-end">
-                <Button type="submit" variant="outline">
+                <Button type="submit" variant="outline" className={pillClass}>
                   Add rule
                 </Button>
               </div>
             </form>
-          </CardContent>
-        </Card>
+        </section>
       ) : null}
       {error ? (
         <p role="alert" className="text-sm text-destructive">

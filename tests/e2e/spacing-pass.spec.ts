@@ -95,7 +95,7 @@ for (const theme of ["light", "dark"] as const) {
     await expect(page.getByTestId("settings-modal")).toBeVisible();
     await shot(page, `${theme}-settings`);
     await page.goto(`/settings/usage?theme=${theme}`);
-    await expect(page.getByText("Model calls", { exact: true })).toBeVisible();
+    await expect(page.getByText("Credits", { exact: true })).toBeVisible();
     await shot(page, `${theme}-usage`);
     await page.goto(`/settings/policy?theme=${theme}`);
     await expect(page.getByTestId("settings-modal")).toBeVisible();

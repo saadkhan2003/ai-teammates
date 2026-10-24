@@ -283,7 +283,6 @@ export function Workspace({ botId }: { botId: string }) {
     );
   }
 
-  const provider = workspace.llmProvider || "";
   const bot = workspace.bot;
   const requests = (workspace.secretRequests ?? []) as SecretRequest[];
   const accent = readableAccent(bot?.avatarColor || defaultBotAvatar(botId).color);
@@ -368,13 +367,12 @@ export function Workspace({ botId }: { botId: string }) {
           working={(workspace.tasks ?? []).some((task) => ["running", "planning", "queued"].includes((task.status ?? "").toLowerCase()))}
           extras={
             <>
-              {provider.toLowerCase() === "mock" ? <p className="text-sm text-muted-foreground">Provider is mock. This teammate is not calling OpenRouter.</p> : null}
               {(llmConnected ?? workspace.openrouterConnected) === false ? (
                 <p data-testid="llm-key-banner" className="rounded-md border border-border bg-card px-3 py-2 text-sm">
                   <Link href="/settings/secrets" className="font-medium text-brand">
-                    Connect OpenRouter in Settings → Vault
+                    Add a platform key in Settings → Vault
                   </Link>
-                  <span className="text-muted-foreground"> — model tasks wait until a key is saved.</span>
+                  <span className="text-muted-foreground"> — tasks wait until a key is saved.</span>
                 </p>
               ) : null}
               <Approvals approvals={workspace.approvals ?? []} onChanged={() => void loadWorkspace()} />
@@ -520,8 +518,6 @@ export function Workspace({ botId }: { botId: string }) {
                   <section>
                     <h2 className="mb-2 text-xs font-medium text-muted-foreground">About</h2>
                     <p className="text-sm text-muted-foreground">{bot?.instructions || "No description yet."}</p>
-                    <p className="mt-2 text-sm text-muted-foreground">Provider: {provider || "unknown"}</p>
-                    {provider.toLowerCase() === "mock" ? <p className="mt-2 text-sm">Provider is mock. This teammate is not calling OpenRouter.</p> : null}
                   </section>
                   <Collapsible data-testid="connect-apps">
                     <CollapsibleTrigger className="flex min-h-11 w-full items-center text-left text-sm font-medium">Connect apps</CollapsibleTrigger>
@@ -662,10 +658,6 @@ function BotSettings({
         <div className="flex flex-col gap-2">
           <Label htmlFor="settings-description">Description</Label>
           <Textarea id="settings-description" value={draft.instructions} onChange={(event) => setDraft({ ...draft, instructions: event.target.value })} />
-        </div>
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="settings-model">Model</Label>
-          <Input id="settings-model" value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="Provider default" />
         </div>
       </section>
       <div className="flex min-h-11 items-center justify-between gap-3 text-sm">

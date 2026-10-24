@@ -52,6 +52,36 @@
 	}
 }
 
+# admin.example.com is the staff site. Same optional ADMIN_ALLOWLIST as the
+# dev file (space-separated CIDRs). It does not publish /internal/*, /metrics,
+# or /vnc/*.
+(admin_routes) {
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+		X-Frame-Options SAMEORIGIN
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; img-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; worker-src 'self' blob:; form-action 'self'"
+		-Server
+	}
+	request_body {
+		max_size 32MB
+	}
+	@admin_denied not remote_ip {$ADMIN_ALLOWLIST:0.0.0.0/0 ::/0}
+	handle @admin_denied {
+		respond "Forbidden" 403
+	}
+	handle /api/* {
+		reverse_proxy api:8080
+	}
+	handle /health {
+		reverse_proxy api:8080
+	}
+	handle {
+		reverse_proxy admin:3000
+	}
+}
+
 example.com {
 	tls {
 		issuer acme
@@ -61,4 +91,11 @@ example.com {
 
 www.example.com {
 	redir https://example.com{uri} permanent
+}
+
+admin.example.com {
+	tls {
+		issuer acme
+	}
+	import admin_routes
 }

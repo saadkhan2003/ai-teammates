@@ -1,9 +1,10 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { cardClass, controlClass, focusClass, pillClass } from "@/components/account/chrome";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ApiError, api } from "@/lib/api";
@@ -40,52 +41,55 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-dvh items-center justify-center px-4 py-[max(3rem,env(safe-area-inset-top))] pb-[max(3rem,env(safe-area-inset-bottom))]">
-      <Card data-testid="login-card" className="w-full min-w-0 max-w-md">
-        <CardHeader className="space-y-1 p-4">
-          <p className="text-sm font-medium">Teammates</p>
-          <CardTitle className="text-base">Sign in</CardTitle>
-          <p className="text-sm text-muted-foreground">Sign in with the owner account, or the username from your invitation.</p>
-        </CardHeader>
-        <CardContent className="p-4 pt-0">
-          <form className="flex flex-col gap-4" onSubmit={onSubmit}>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="login-username">Username</Label>
-              <Input
-                id="login-username"
-                data-testid="login-username"
-                name="username"
-                autoComplete="username"
-                placeholder="saad"
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
-                required
-              />
-            </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="login-password">Password</Label>
-              <Input
-                id="login-password"
-                data-testid="login-password"
-                name="password"
-                type="password"
-                autoComplete="current-password"
-                placeholder="Password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                required
-              />
-            </div>
-            {error ? (
-              <p role="alert" className="text-sm text-clay">
-                {error}
-              </p>
-            ) : null}
-            <Button data-testid="login-submit" type="submit" className="self-end" disabled={pending}>
+      <div data-testid="login-card" className={`${cardClass} w-full min-w-0 max-w-md p-4`}>
+        <p className="text-sm font-medium">Teammates</p>
+        <h1 className="mt-1 text-xl font-semibold tracking-tight">Sign in</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Sign in with the owner account, or the username from your invitation.</p>
+        <form className="mt-4 flex flex-col gap-4" onSubmit={onSubmit}>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="login-username">Username</Label>
+            <Input
+              id="login-username"
+              data-testid="login-username"
+              name="username"
+              autoComplete="username"
+              placeholder="saad"
+              className={`${controlClass} min-h-11`}
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              required
+            />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="login-password">Password</Label>
+            <Input
+              id="login-password"
+              data-testid="login-password"
+              name="password"
+              type="password"
+              autoComplete="current-password"
+              placeholder="Password"
+              className={`${controlClass} min-h-11`}
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              required
+            />
+          </div>
+          {error ? (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          ) : null}
+          <div className="flex items-center justify-between gap-3">
+            <Link href="/login/reset" className={`${focusClass} text-sm text-muted-foreground underline`}>
+              Forgot password
+            </Link>
+            <Button data-testid="login-submit" type="submit" className={pillClass} disabled={pending}>
               {pending ? "Signing in…" : "Sign in"}
             </Button>
-          </form>
-        </CardContent>
-      </Card>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

@@ -1,15 +1,18 @@
 import Link from "next/link";
+import { StatusScreen } from "@/components/status-screen";
 
 export default function NotFound() {
   return (
-    <div className="grid h-full place-items-center px-4">
-      <div className="w-full max-w-md rounded-lg border border-border bg-card px-6 py-8 text-center">
-        <p className="text-sm font-medium">That page is not here</p>
-        <p className="mt-2 text-sm text-muted-foreground">The address does not match a screen in Teammates.</p>
-        <Link href="/" className="mt-4 inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm text-primary-foreground">
+    <StatusScreen
+      testId="not-found-page"
+      code="404"
+      title="That page is not here"
+      detail="The address does not match a screen in Teammates."
+      action={
+        <Link href="/" className="inline-flex min-h-11 items-center rounded-full bg-primary px-4 text-sm font-medium text-primary-foreground">
           Back to teammates
         </Link>
-      </div>
-    </div>
+      }
+    />
   );
 }

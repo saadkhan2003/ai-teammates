@@ -1,11 +1,11 @@
 "use client";
 
 import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { cardClass, DevBadge, PageEmpty, PageSkeleton, pillClass, SectionTitle } from "@/components/account/chrome";
 import { SettingsFrame } from "@/components/settings-nav";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { StateMessage } from "@/components/state-message";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { asList, api, extractPrompt, readModelCalls, readProvider } from "@/lib/api";
@@ -62,7 +62,7 @@ export default function SystemPage() {
       setProvider((current) => current ?? readProvider(requestResult.value));
       setRequestError(null);
     } else {
-      setRequestError(errorMessage(requestResult.reason, "Could not load model requests."));
+      setRequestError(errorMessage(requestResult.reason, "Could not load prompts."));
     }
     setLoading(false);
     try {
@@ -104,17 +104,20 @@ export default function SystemPage() {
     <SettingsFrame>
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-sm font-medium">System</h2>
+          <h2 className="text-xl font-semibold tracking-tight">System</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Health, invitations, and model calls. Prompts are shown without credentials or raw request bodies.
+            Health, invitations, and usage. Prompts are shown without credentials.
           </p>
         </div>
-        <Button variant="secondary" onClick={() => void load()}>
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <DevBadge show={mock} />
+          <Button variant="outline" className={pillClass} onClick={() => void load()}>
+            Refresh
+          </Button>
+        </div>
       </header>
       {health?.computerIsolation === false ? (
-        <p role="alert" data-testid="isolation-alert" className="rounded-lg border border-border bg-card p-4 text-sm text-destructive">
+        <p role="alert" data-testid="isolation-alert" className={`${cardClass} p-4 text-sm text-destructive`}>
           Computer isolation rules are missing. Computers will not start until the rules are installed again.
         </p>
       ) : null}
@@ -127,17 +130,17 @@ export default function SystemPage() {
             ["Computers", String(health.computers ?? "—")],
             ["Stuck tasks", String(health.stuckTasks ?? "—")],
           ].map(([label, value]) => (
-            <article key={label} className="rounded-lg border border-border bg-card p-4">
-              <p className="text-xs text-muted-foreground">{label}</p>
-              <p className="text-2xl font-semibold">{value}</p>
+            <article key={label} className={`${cardClass} p-4`}>
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+              <p className="mt-2 text-2xl font-semibold tabular-nums">{value}</p>
             </article>
           ))}
         </section>
       ) : null}
       {health ? (
-        <form className="flex flex-col gap-4 rounded-lg border border-border bg-card p-4" onSubmit={invite}>
+        <form className={`${cardClass} flex flex-col gap-4 p-4`} onSubmit={invite}>
           <div>
-            <h2 className="text-sm font-medium">Invite a teammate</h2>
+            <SectionTitle>Invite a member</SectionTitle>
             <p className="mt-1 text-sm text-muted-foreground">The token is shown once.</p>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -161,28 +164,38 @@ export default function SystemPage() {
           {inviteToken ? <p className="text-xs text-muted-foreground">Token (shown once): {inviteToken}</p> : null}
           {inviteError ? <p className="text-sm text-destructive">{inviteError}</p> : null}
           <div className="flex justify-end">
-            <Button type="submit">Invite</Button>
+            <Button type="submit" className={pillClass}>Invite</Button>
           </div>
         </form>
       ) : null}
-      <section data-testid="outbound-actions" className="rounded-lg border border-border bg-card p-4">
-        <h2 className="mb-2 text-sm font-medium">Outbound actions</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Sends, posts, purchases, and plugin writes. A retry replays the stored result.</p>
-        {outbound.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">No outbound actions recorded yet.</p> : null}
-        <ul className="mt-3 flex flex-col gap-2">
-          {outbound.map((row, index) => (
-            <li key={String(row.id ?? index)} className="flex min-h-11 items-center text-sm">
-              {String(row.kind ?? "action")} · {String(row.tool ?? "")} · {String(row.status ?? "")}
-            </li>
-          ))}
-        </ul>
+      <section data-testid="outbound-actions" className={`${cardClass} p-4`}>
+        <SectionTitle>Outbound actions</SectionTitle>
+        <p className="mt-1 text-sm text-muted-foreground">Sends, posts, purchases, and plugin writes.</p>
+        {outbound.length === 0 ? <div className="mt-4"><PageEmpty title="No outbound actions yet" detail="Sends and posts show up here." /></div> : (
+          <table className="mt-4 w-full text-sm">
+            <thead className="text-xs uppercase tracking-wide text-muted-foreground">
+              <tr className="border-b border-border">
+                <th className="py-3 text-left font-medium">Kind</th>
+                <th className="py-3 text-left font-medium">Tool</th>
+                <th className="py-3 text-right font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {outbound.map((row, index) => (
+                <tr key={String(row.id ?? index)} className="border-b border-border last:border-0">
+                  <td className="py-3">{String(row.kind ?? "action")}</td>
+                  <td className="py-3 text-muted-foreground">{String(row.tool ?? "")}</td>
+                  <td className="py-3 text-right"><span className="inline-flex h-6 items-center rounded-full bg-muted px-2 text-xs capitalize">{String(row.status ?? "")}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </section>
-      {loading ? <StateMessage title="Loading system metrics…" detail="Reading usage and recorded model requests." /> : null}
-      {provider ? <p className="text-sm">Provider: {provider}</p> : null}
-      {mock ? <p className="text-sm">Provider is mock. These calls stayed on this server and were not sent to OpenRouter.</p> : null}
-      <section data-testid="metrics-model-calls" className="rounded-lg border border-border bg-card p-4">
-        <p className="text-sm text-muted-foreground">Model calls</p>
-        <p className="text-2xl font-medium">{modelCalls == null ? "—" : modelCalls}</p>
+      {loading ? <PageSkeleton /> : null}
+      <section data-testid="metrics-model-calls" className={`${cardClass} p-4`}>
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Calls</p>
+        <p className="mt-2 text-3xl font-semibold tabular-nums">{modelCalls == null ? "—" : modelCalls}</p>
         <p data-testid="metrics-cost" className="mt-3 text-sm">
           Cost {costUsd == null ? "—" : `$${costUsd.toFixed(4)}`}
         </p>
@@ -201,21 +214,21 @@ export default function SystemPage() {
           </p>
         ) : null}
       </section>
-      <section className="rounded-lg border border-border bg-card p-4">
-        <h2 className="mb-2 text-sm font-medium">Prompts</h2>
+      <section className={`${cardClass} p-4`}>
+        <SectionTitle>Prompts</SectionTitle>
         {requestError ? (
           <p role="alert" className="mt-2 text-sm text-clay">
-            Could not load model requests. {requestError}
+            Could not load prompts. {requestError}
           </p>
         ) : null}
         {!loading && !requestError && prompts.length === 0 ? (
-          <p className="mt-2 text-sm text-muted-foreground">No model requests recorded yet.</p>
+          <div className="mt-4"><PageEmpty title="No prompts yet" detail="Prompts show up here after a teammate runs." /></div>
         ) : null}
         <ScrollArea className="mt-3 h-[min(50dvh,520px)]">
           <ol className="flex flex-col gap-3">
             {prompts.map((row) => (
-              <li key={row.id} className="flex min-h-11 flex-col justify-center rounded-lg border border-border px-3 py-2">
-                <p className="text-xs text-muted-foreground">{[row.model, row.when ? formatWhen(row.when) : ""].filter(Boolean).join(" · ") || "Prompt"}</p>
+              <li key={row.id} className="flex min-h-11 flex-col justify-center rounded-[8px] border border-border px-3 py-2">
+                <p className="text-xs text-muted-foreground">{row.when ? formatWhen(row.when) : "Prompt"}</p>
                 <p className="mt-1 whitespace-pre-wrap break-words text-sm">{row.prompt || "This request did not include a prompt."}</p>
               </li>
             ))}

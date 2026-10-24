@@ -410,7 +410,7 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
     const done = await expectDone(page, botId, found!.id);
     expect(done.modelCalls ?? 0).toBe(0);
     await openPane(page, "Tasks");
-    await expect(page.getByTestId("task-item").filter({ hasText: "Replay" }).first()).toContainText("Model calls 0");
+    await expect(page.getByTestId("task-item").filter({ hasText: "Replay" }).first()).toContainText("Calls 0");
   });
 
   await test.step("11 routine fires with the workspace closed", async () => {

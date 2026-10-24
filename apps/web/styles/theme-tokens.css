@@ -54,6 +54,7 @@
   --composer-placeholder: #9a9a9a;
   --composer-hover: #2a2a2a;
   --composer-shadow: 0 1px 2px rgb(0 0 0 / 0.35);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.28), 0 12px 28px rgb(0 0 0 / 0.22);
   --success: #1f7a45;
   --overlay: rgb(0 0 0 / 0.45);
   --shimmer: #282828;
@@ -117,6 +118,7 @@ html.light {
   --composer-placeholder: #9a9a9a;
   --composer-hover: #f3f3f3;
   --composer-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 6px 16px rgb(0 0 0 / 0.04);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 24px rgb(0 0 0 / 0.05);
   --success: #1f7a45;
   --overlay: rgb(0 0 0 / 0.45);
   --shimmer: #ececec;
