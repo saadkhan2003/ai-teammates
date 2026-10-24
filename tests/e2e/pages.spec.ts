@@ -21,6 +21,8 @@ for (const theme of ["light", "dark"]) {
     const stopAllow = autoAllowBrowserOpens(page, bot.id, ["write_page", "edit_page"]);
     try {
       await page.goto(`/bots/${bot.id}`);
+      const appText = await page.locator("body").innerText();
+      expect(appText).not.toMatch(/OpenRouter|OpenAI|Anthropic|GPT|Claude|Gemini|DeepInfra/i);
       await page.getByTestId("composer").fill("Make a page with projects and a calculator");
       await page.getByTestId("send-chat").click();
       const card = page.getByTestId("page-card").first();
@@ -32,6 +34,7 @@ for (const theme of ["light", "dark"]) {
       const frame = page.frameLocator('[data-testid="page-frame"]');
       await expect(frame.getByRole("heading", { name: "Quarterly overview", exact: true })).toBeVisible();
       await frame.getByRole("button", { name: "Project" }).click();
+      await expect(frame.getByRole("columnheader", { name: /Project/ })).toHaveAttribute("aria-sort", "ascending");
       await expect(frame.locator("tbody tr").first()).toContainText("Atlas");
       await frame.getByPlaceholder("Filter rows").fill("Planning");
       await expect(frame.locator("tbody tr")).toHaveCount(1);
@@ -78,7 +81,7 @@ for (const theme of ["light", "dark"]) {
         await screenshot(shared, "06-shared-view", theme);
         await expect(shared.getByRole("button", { name: /Restore version|Share page|Create read-only link/ })).toHaveCount(0);
         await dialog.getByRole("button", { name: "Revoke", exact: true }).click();
-        await shared.reload(); await expect(shared.getByRole("alert")).toContainText("isn’t available");
+        await shared.reload(); await expect(shared.getByTestId("page-unavailable")).toContainText("isn’t available");
       } finally { await anonymous.close(); }
       await page.keyboard.press("Escape");
       const downloadEvent = page.waitForEvent("download");

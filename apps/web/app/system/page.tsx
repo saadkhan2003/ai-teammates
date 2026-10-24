@@ -165,7 +165,6 @@ export default function SystemPage() {
       </header>
       {loading ? <ListSkeleton label="Loading system metrics" rows={3} /> : null}
       {provider ? <p className="text-sm">Provider: {provider}</p> : null}
-      {mock ? <p className="text-sm">Provider is mock. These calls stayed on this server and were not sent to OpenRouter.</p> : null}
       <section data-testid="metrics-model-calls" className="rounded-lg border border-line bg-paper p-5 shadow-none">
         <p className="text-sm text-muted-foreground">Model calls</p>
         <p className="text-2xl font-medium">{modelCalls == null ? "—" : modelCalls}</p>

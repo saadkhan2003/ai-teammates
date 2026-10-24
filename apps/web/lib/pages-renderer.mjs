@@ -95,9 +95,9 @@ export function runRenderer() {
       case "table": case "grid": {
         const columns = Array.isArray(item.columns) ? item.columns.slice(0, 30).map(String) : [];
         const rows = Array.isArray(item.rows) ? item.rows.slice(0, 1000).filter(Array.isArray).map(row => columns.map((_, i) => String(row[i] ?? "").slice(0, 2000))) : [];
-        const table = el("table"), head = el("thead"), tr = el("tr"), body = el("tbody"); let sort = -1, ascending = true, query = "";
+        const table = el("table"), head = el("thead"), tr = el("tr"), body = el("tbody"); let sort = -1, ascending = true, hasSorted = false, query = "";
         columns.forEach((column, i) => { const th = el("th");
-          if (item.type === "grid") { const b = el("button", column + " ↕"); b.type = "button"; b.addEventListener("click", () => { ascending = sort === i ? !ascending : true; sort = i; draw(); }); th.append(b); }
+          if (item.type === "grid") { const b = el("button", column + " ↕"); b.type = "button"; th.setAttribute("aria-sort", "none"); b.addEventListener("click", () => { ascending = hasSorted && sort === i ? !ascending : true; sort = i; hasSorted = true; columns.forEach((_, index) => tr.children[index].setAttribute("aria-sort", index === sort ? (ascending ? "ascending" : "descending") : "none")); draw(); }); th.append(b); }
           else th.textContent = column;
           tr.append(th);
         });

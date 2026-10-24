@@ -60,6 +60,21 @@ def test_test_caddyfile_is_opt_in():
     assert "API_URL" in makefile
 
 
+def test_caddy_referrer_policy_is_a_default_and_renderer_headers_survive():
+    for name in ("Caddyfile", "deploy/Caddyfile.test", "deploy/Caddyfile.production"):
+        text = _text(name)
+        assert "?Referrer-Policy same-origin" in text
+        assert "\n\t\tReferrer-Policy same-origin" not in text
+        assert "X-Frame-Options SAMEORIGIN" in text
+    renderer = _text("apps/web/app/page-renderer/route.ts")
+    assert '"Referrer-Policy": "no-referrer"' in renderer
+    assert '"Content-Security-Policy":' in renderer
+    assert "frame-ancestors 'self'" in renderer
+    production = _text("deploy/Caddyfile.production")
+    assert 'Content-Security-Policy "default-src \'self\'' in production
+    assert "X-Frame-Options SAMEORIGIN" in production
+
+
 def test_production_caddy_explicitly_hides_internal_metrics_and_keeps_streams_alive():
     text = _text("deploy/Caddyfile.production")
     assert "handle /internal/*" in text and "respond 404" in text

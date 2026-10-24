@@ -6,7 +6,7 @@
 (routes) {
 	header {
 		X-Content-Type-Options nosniff
-		Referrer-Policy same-origin
+		?Referrer-Policy same-origin
 		X-Frame-Options SAMEORIGIN
 	}
 	handle /api/events {

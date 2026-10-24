@@ -793,7 +793,8 @@ function EventCard({ event }: { event: AgentEvent }) {
     const verified = Number(event.verified ?? event.verifiedLinks);
     const removed = Number(event.removed ?? event.removedLinks);
     if (!Number.isFinite(verified) || !Number.isFinite(removed)) return null;
-    return <p data-testid="grounding-notice" role="status" className="text-xs text-muted-foreground">Verified {verified} links, removed {removed}</p>;
+    if (verified === 0 && removed === 0) return null;
+    return <p data-testid="grounding-notice" role="status" className="text-xs text-muted-foreground">Checked {verified} links{removed > 0 ? ` and removed ${removed} unsafe links` : ""}.</p>;
   }
   if (event.type === "memory") return <MemoryNotice action={(["saved", "updated", "forgot", "suggested", "blocked"].includes(String(event.action)) ? String(event.action) : "saved") as "saved" | "updated" | "forgot" | "suggested" | "blocked"} text={String(event.content ?? "")} memoryId={String(event.memoryId ?? event.memory_id ?? "") || undefined} memoryKind={String(event.kind ?? "") || undefined} reason={String(event.reason ?? "") || undefined} />;
   const tool = String(event.tool ?? event.name ?? "Tool");

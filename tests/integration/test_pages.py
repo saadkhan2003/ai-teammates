@@ -128,6 +128,7 @@ def test_malicious_source_is_only_data_and_renderer_route_is_locked_down(bot_fac
         assert "'unsafe-inline'" not in csp and "'unsafe-eval'" not in csp and "allow-same-origin" not in csp
         assert "script-src 'nonce-" in csp
         assert response.headers["Referrer-Policy"] == "no-referrer"
+        assert response.headers["X-Frame-Options"] == "SAMEORIGIN"
         assert response.headers.get("Set-Cookie") is None
         html = response.read().decode()
         assert "Quarterly report" not in html and MALICIOUS not in html
