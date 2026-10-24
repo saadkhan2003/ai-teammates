@@ -8,6 +8,13 @@ import { cn } from "@/lib/utils";
 
 const tabs = [
   { href: "/settings", label: "General", exact: true },
+  { href: "/settings/account", label: "Account" },
+  { href: "/settings/security", label: "Security" },
+  { href: "/settings/sessions", label: "Sessions" },
+  { href: "/settings/delete", label: "Delete account" },
+  { href: "/settings/help", label: "Help center" },
+  { href: "/settings/contact", label: "Contact support" },
+  { href: "/settings/tickets", label: "My tickets" },
   { href: "/settings/policy", label: "Policy", testId: "nav-policy" },
   { href: "/settings/approval-rules", label: "Approval rules", testId: "nav-approval-rules" },
   { href: "/settings/computer", label: "Computer" },
@@ -16,6 +23,14 @@ const tabs = [
   { href: "/settings/usage", label: "Usage & Billing" },
   { href: "/settings/updates", label: "Updates" },
   { href: "/system", label: "System", testId: "nav-system", admin: true },
+  { href: "/settings/support", label: "Support inbox", admin: true },
+  { href: "/settings/incidents", label: "Status incidents", admin: true },
+  { href: "/status", label: "Status page" },
+  { href: "/changelog", label: "Changelog" },
+  { href: "/pricing", label: "Plans & pricing" },
+  { href: "/legal/terms", label: "Terms" },
+  { href: "/legal/privacy", label: "Privacy" },
+  { href: "/legal/acceptable-use", label: "Acceptable use" },
 ];
 
 export function SettingsNav() {

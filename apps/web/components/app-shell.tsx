@@ -127,12 +127,12 @@ export function AppShell({ children }: { children: ReactNode }) {
     try {
       const [botData, me, noteData] = await Promise.all([
         api<unknown>("/api/bots"),
-        api<{ username?: string }>("/api/auth/me").catch(() => ({ username: "Account" })),
+        api<{ username?: string; displayName?: string }>("/api/auth/me").catch(() => ({ username: "Account" })),
         api<unknown>("/api/notifications").catch(() => []),
       ]);
       setBots(readBots(botData));
       setBotsLoaded(true);
-      setUsername(me.username || "Account");
+      setUsername(me.displayName || me.username || "Account");
       setNotes(
         asList(noteData, ["items", "notifications"]).map((entry) => {
           const record = (entry ?? {}) as Record<string, unknown>;
@@ -163,7 +163,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (pathname === "/login" || pathname === "/invite") return;
+    if (pathname === "/login" || pathname === "/invite" || pathname === "/status" || pathname === "/changelog" || pathname === "/pricing" || pathname.startsWith("/legal/")) return;
     wireConnectionEvents();
     void load();
     const timer = window.setInterval(() => void load(), 15_000);
@@ -273,7 +273,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => observer.disconnect();
   }, [accentColor]);
 
-  if (pathname === "/login" || pathname === "/invite") return <>{children}</>;
+  if (pathname === "/login" || pathname === "/invite" || pathname === "/status" || pathname === "/changelog" || pathname === "/pricing" || pathname.startsWith("/legal/")) return <>{children}</>;
 
   function go(href: string) {
     setPalette(false);
@@ -490,10 +490,15 @@ export function AppShell({ children }: { children: ReactNode }) {
               </DropdownMenuSubContent>
             </DropdownMenuSub>
             <DropdownMenuItem onSelect={() => go("/settings/computer")}><Upload /> Get app</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => go("/settings/account")}>Account</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => go("/settings/security")}>Security</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => go("/settings/sessions")}>Sessions & devices</DropdownMenuItem>
             <DropdownMenuSub>
               <DropdownMenuSubTrigger><CircleHelp /> Support</DropdownMenuSubTrigger>
               <DropdownMenuSubContent>
-                <DropdownMenuItem onSelect={() => window.open("/docs/COMPANION.md", "_blank")}><CircleHelp /> Help Center</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => go("/settings/help")}><CircleHelp /> Help Center</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => go("/settings/contact")}>Contact support</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => go("/settings/tickets")}>My tickets</DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => setShortcutsOpen(true)}>⌨ Keyboard shortcuts</DropdownMenuItem>
                 <DropdownMenuItem data-testid="send-feedback" onSelect={() => setFeedbackOpen(true)}>✉ Send Feedback</DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => setAboutOpen(true)}><Info /> About</DropdownMenuItem>

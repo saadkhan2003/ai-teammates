@@ -75,15 +75,15 @@ public static class Routes
             var username = body.GetProperty("username").GetString() ?? "";
             var password = body.GetProperty("password").GetString() ?? "";
             await using var conn = await platform.Data.OpenConnectionAsync();
-            var row = await conn.QuerySingleOrDefaultAsync<(Guid Id, string Hash, string Status)>("SELECT id, password_hash, coalesce(status, 'active') FROM users WHERE username=@username", new { username });
+            var row = await conn.QuerySingleOrDefaultAsync<(Guid Id, string Hash, string Status, bool TotpEnabled)>("SELECT id, password_hash, coalesce(status, 'active'), totp_enabled FROM users WHERE username=@username", new { username });
             if (row.Id == Guid.Empty || !Passwords.Verify(password, row.Hash ?? ""))
             {
                 await platform.NoteLoginFailure(ip, loginAttemptId);
                 return Results.Json(new { error = "invalid credentials" }, statusCode: 401);
             }
             if (row.Status == "disabled") return Results.Json(new { error = "disabled" }, statusCode: 403);
-            var token = await platform.CreateSession(row.Id);
-            ctx.Response.Cookies.Append("teammates_session", token, Cookie(ctx));
+            if (row.TotpEnabled) return await AccountRoutes.StartLoginChallenge(ctx, platform, row.Id);
+            await AccountRoutes.EstablishSession(ctx, platform, row.Id);
             return Results.Json(new { username });
         });
 

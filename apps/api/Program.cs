@@ -148,6 +148,7 @@ catch (Exception ex)
     app.Logger.LogError("computer isolation alert: computers will not start ({Message})", ex.Message);
 }
 Routes.Map(app, platform, runtime);
+AccountRoutes.Map(app, platform);
 TeachRoutes.Map(app, platform);
 VncTicketRoutes.Map(app, platform);
 SecurityRoutes.Map(app, platform, loginFlow);

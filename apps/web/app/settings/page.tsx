@@ -25,6 +25,7 @@ const LOCALES = [
   { value: "fr", label: "Français" },
   { value: "de", label: "Deutsch" },
   { value: "ja", label: "日本語" },
+  { value: "ur", label: "اردو (partial)" },
 ];
 
 const ZONES = ["UTC", "America/New_York", "America/Los_Angeles", "Europe/London", "Europe/Paris", "Asia/Karachi", "Asia/Tokyo"];
