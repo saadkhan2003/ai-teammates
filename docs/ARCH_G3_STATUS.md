@@ -17,3 +17,10 @@ Still open: I1 (gVisor/Firecracker, laptop); Cloudflare dashboard setup is manua
 - acc9b: 1 passed (reset DB/computers).
 - Playwright: 27/54 passed on the first run, mostly login 429 (30 logins per IP per 10 min, successful ones included). With the limiter table cleared, the 27 re-ran: 11 passed, 16 failed (9 stuck on the login page with no error, several "task could not finish"). Not yet triaged.
 - Reset between runs must also clear login_rate_events, credential_domain_grants and approval_rules, and stop api/agent first.
+
+## Playwright on archgaps, pw9 (2026-10-24, HEAD before d699fed)
+49/54 passed, 5 failed.
+- acceptance #9 code agent: edit_file approval not auto-allowed (test). Fix committed in d699fed, not re-run yet.
+- security login form: request_login still sees "You're in control" (DESKTOP_BUSY). Open; the lease was free once the run ended.
+- mobile ×3 (iphone-13, pixel-7, android-360): an approval inserted with no task_id does not render a send_email approval card. Open.
+Fixed this round: teach hand-back now goes through the pane's lease-aware handBack, and the API returns 400 instead of 500 for a missing body (product); the fullscreen attention banner no longer covers Stop on phones (product); globalSetup sets the egress policy; settings-computer uses anonymous storageState.
