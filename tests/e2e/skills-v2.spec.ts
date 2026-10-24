@@ -19,7 +19,7 @@ async function screenshot(page: import("@playwright/test").Page, screen: string,
     ]);
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   });
-  await page.screenshot({ path: `${shotDir}/02-skills-${stableScreen}-${mode}.png`, fullPage: false });
+  await page.screenshot({ path: `${shotDir}/02-${stableScreen}-${mode}.png`, fullPage: false });
 }
 
 test("owner can view, review, revert, and archive guide skills in the bot Skills pane", async ({ page }) => {

@@ -72,6 +72,8 @@ test("owner manages the shared Skills library in both themes", async ({ page }) 
     await page.getByTestId("skill-delete").click();
     await expect(page.getByTestId("skill-delete-dialog")).toBeVisible();
     await screenshot(page, "skills-delete-dialog", "light");
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("skill-delete-dialog")).toBeHidden();
 
     await theme(page, "dark");
     const darkRow = page.getByTestId("skills-list").getByRole("button").filter({ hasText: slug });
