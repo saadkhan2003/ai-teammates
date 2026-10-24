@@ -269,9 +269,12 @@ public sealed class ComputerJobs(Platform platform, UsageMeter meter)
         var job = await Get(conn, jobId);
         if (job == null || job.OwnerId != owner || (botScope is { } scoped && job.BotId != scoped)) return new { ok = false, reason = "job not found" };
         if (!JobRules.IsActive(job.Status)) return new { ok = true, status = job.Status };
+        // Close the row first: the watcher may probe between the kill and the update, see the killed
+        // process exit non-zero and record "failed". Finish only updates an active row, so whoever
+        // closes first wins, and a stop must win.
+        await Finish(conn, job, "cancelled", "stopped_by_" + actor, null);
         try { await Exec(new ComputerId(job.ComputerId.ToString()), job.BotId, ["python3", "-c", JobRules.KillScript, job.Id.ToString("n")], ct); }
         catch (Exception ex) when (ex is not OperationCanceledException) { /* a stopped computer already ended the process */ }
-        await Finish(conn, job, "cancelled", "stopped_by_" + actor, null);
         return new { ok = true, status = "cancelled", job_id = jobId };
     }
 
