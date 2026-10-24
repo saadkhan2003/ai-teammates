@@ -39,6 +39,7 @@ test("owner can view, review, revert, and archive guide skills in the bot Skills
     await page.goto(`/bots/${bot.id}`);
     await page.getByRole("tab", { name: /skills/i }).click();
     await expect(page.getByText("When reviewing the queue")).toBeVisible();
+    await page.getByTestId("skill-list").scrollIntoViewIfNeeded();
     await screenshot(page, "skills-pane-list", "dark");
     await screenshot(page, "skills-pane-list", "light");
     const row = page.getByTestId("skill-list").locator("li").filter({ hasText: slug });
