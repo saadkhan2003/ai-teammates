@@ -216,11 +216,18 @@ export function ChatPane({
     if (scroll && pending && storedMessages[0]?.id !== pending.firstId) {
       let frame = 0;
       let attempts = 0;
+      let stable = 0;
       const restore = () => {
         const row = Array.from(listRef.current?.querySelectorAll<HTMLElement>("[data-chat-row]") ?? []).find(row => row.dataset.chatRow === pending.anchor.id);
         if (row) {
-          scroll.scrollTop = anchoredScrollTop(scroll.scrollTop, scroll.getBoundingClientRect().top, row.getBoundingClientRect().top, pending.anchor);
-          prependAnchor.current = null;
+          // Rows above the anchor keep measuring for a few frames after a prepend;
+          // re-align until the anchor holds still for two frames.
+          const next = anchoredScrollTop(scroll.scrollTop, scroll.getBoundingClientRect().top, row.getBoundingClientRect().top, pending.anchor);
+          const moved = Math.abs(next - scroll.scrollTop) >= 1;
+          if (moved) scroll.scrollTop = next;
+          stable = moved ? 0 : stable + 1;
+          if (stable >= 2 || attempts++ >= 20) prependAnchor.current = null;
+          else frame = requestAnimationFrame(restore);
         } else if (attempts++ < 8) {
           messageListRef.current?.reveal(pending.anchor.id);
           frame = requestAnimationFrame(restore);

@@ -46,6 +46,12 @@ async function emit(page: Page, event: Record<string, unknown>) {
 async function bottomGap(page: Page) {
   return page.getByTestId('chat-scroll').evaluate(node => node.scrollHeight - node.clientHeight - node.scrollTop);
 }
+async function rowOffset(page: Page, id: string) {
+  return page.getByTestId('chat-scroll').evaluate((scroll, id) => {
+    const row = [...scroll.querySelectorAll<HTMLElement>('[data-chat-row]')].find(row => row.dataset.chatRow === id);
+    return row ? row.getBoundingClientRect().top - scroll.getBoundingClientRect().top : Number.POSITIVE_INFINITY;
+  }, id);
+}
 async function anchor(page: Page) {
   return page.getByTestId('chat-scroll').evaluate(scroll => {
     const top = scroll.getBoundingClientRect().top;
@@ -129,8 +135,9 @@ test('prepending history keeps the reading row in place, including the short-cha
     const before = await anchor(page);
     await page.getByTestId('load-older').click();
     await expect(page.getByTestId('chat-message-list')).toHaveAttribute('data-message-count', String(count + 100));
-    await expect.poll(async () => (await anchor(page)).id).toBe(before.id);
-    await expect.poll(async () => Math.abs((await anchor(page)).offset - before.offset)).toBeLessThan(4);
+    // The reading row must keep its offset. Prepended rows may fill the space that
+    // padding and the "Load earlier" button used above it, so measure that row by id.
+    await expect.poll(async () => Math.abs((await rowOffset(page, before.id)) - before.offset)).toBeLessThan(4);
   }
 });
 

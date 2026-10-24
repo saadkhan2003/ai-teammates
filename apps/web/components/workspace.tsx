@@ -1,6 +1,6 @@
 "use client";
 
-import { frameBatch, patchWorkspace } from "@/lib/event-patches";
+import { frameBatch, mergeRows, patchWorkspace } from "@/lib/event-patches";
 import { streamIsOpen } from "@/lib/events";
 import { Lru } from "@/lib/chat-speed";
 import { Settings, X } from "lucide-react";
@@ -158,15 +158,27 @@ export function Workspace({ botId }: { botId: string }) {
   const connection = useConnection();
   const taskIds = useRef(new Set<string>());
   const seq = useRef(0);
+  const patchSeq = useRef(0);
   const auxSeq = useRef(0);
   const tabRef = useRef(detailTab);
   tabRef.current = detailTab;
 
   const loadWorkspace = useCallback(async () => {
     const ticket = ++seq.current;
+    const patchesBefore = patchSeq.current;
     try {
-      const data = normalizeWorkspace(await api<WorkspaceData>(`/api/bots/${botId}/workspace`));
+      let data = normalizeWorkspace(await api<WorkspaceData>(`/api/bots/${botId}/workspace`));
       if (ticket !== seq.current) return;
+      // A live patch that landed while this snapshot was in flight is newer than it:
+      // keep rows the snapshot does not have yet instead of dropping them.
+      const live = workspaceRef.current;
+      if (patchSeq.current !== patchesBefore && live && live.bot.id === data.bot.id) {
+        const messageIds = new Set(data.messages.map(row => row.id));
+        const taskIds = new Set(data.tasks.map(row => row.id));
+        data = { ...data,
+          messages: mergeRows(data.messages, live.messages.filter(row => !messageIds.has(row.id))),
+          tasks: mergeRows(data.tasks, live.tasks.filter(row => !taskIds.has(row.id))) };
+      }
       taskIds.current = new Set(data.tasks.map(task => task.id));
       workspaceCache.set(botId, data);
       setWorkspace(data);
@@ -243,6 +255,7 @@ export function Workspace({ botId }: { botId: string }) {
         if (patched !== current) {
           taskIds.current = new Set(patched.tasks.map(task => task.id));
           workspaceRef.current = patched;
+          patchSeq.current++;
           workspaceCache.set(botId, patched);
           setWorkspace(patched);
         }
