@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { login } from "./helpers";
 
+// The request fixture must stay anonymous (device calls use bearer tokens); the page logs in through the form.
+test.use({ storageState: { cookies: [], origins: [] } });
+
 test("pair once, edit device permissions, heartbeat and revoke", async ({ page, request }) => {
   // Anonymous management cannot list devices.
   expect((await request.get("/api/devices")).status()).toBe(403);
