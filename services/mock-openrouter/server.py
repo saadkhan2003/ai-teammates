@@ -6,6 +6,7 @@ import json
 import os
 from collections import OrderedDict
 from threading import Lock
+import time
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -87,7 +88,41 @@ def anthropic_response(response: dict) -> dict:
     for call in message.get("tool_calls", []):
         content.append({"type": "tool_use", "id": call["id"], "name": call["function"]["name"], "input": json.loads(call["function"]["arguments"])})
     usage = response.get("usage", {})
-    return {"id": "msg_mock", "type": "message", "role": "assistant", "content": content, "stop_reason": "tool_use" if message.get("tool_calls") else "end_turn", "usage": {"input_tokens": usage.get("prompt_tokens", 1), "output_tokens": usage.get("completion_tokens", 1), "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}
+    cached = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
+    return {"id": "msg_mock", "type": "message", "role": "assistant", "content": content, "stop_reason": "tool_use" if message.get("tool_calls") else "end_turn", "usage": {"input_tokens": max(0, usage.get("prompt_tokens", 1) - cached), "output_tokens": usage.get("completion_tokens", 1), "cache_read_input_tokens": cached, "cache_creation_input_tokens": 0}}
+
+
+def stream_frames(response: dict, anthropic: bool = False):
+    """Deterministic small frames for all mock adapters, including split tool JSON."""
+    message = response["choices"][0]["message"]
+    if anthropic:
+        native = anthropic_response(response)
+        yield {"type": "message_start", "message": {"id": "msg_mock", "role": "assistant", "content": [], "usage": {**native["usage"], "output_tokens": 0}}}
+        for index, block in enumerate(native["content"]):
+            start = {"type": "tool_use", "id": block["id"], "name": block["name"], "input": {}} if block["type"] == "tool_use" else {"type": "text", "text": ""}
+            yield {"type": "content_block_start", "index": index, "content_block": start}
+            raw = json.dumps(block["input"]) if block["type"] == "tool_use" else block["text"]
+            for offset in range(0, len(raw), 8):
+                delta = {"type": "input_json_delta", "partial_json": raw[offset:offset+8]} if block["type"] == "tool_use" else {"type": "text_delta", "text": raw[offset:offset+8]}
+                yield {"type": "content_block_delta", "index": index, "delta": delta}
+            yield {"type": "content_block_stop", "index": index}
+        yield {"type": "message_delta", "delta": {"stop_reason": native["stop_reason"]}, "usage": {"output_tokens": native["usage"]["output_tokens"]}}
+        yield {"type": "message_stop"}
+    else:
+        def chunk(delta, finish=None):
+            return {"choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
+        yield chunk({"role": "assistant"})
+        text = message.get("content") or ""
+        for offset in range(0, len(text), 8):
+            yield chunk({"content": text[offset:offset+8]})
+        for index, tool in enumerate(message.get("tool_calls", [])):
+            yield chunk({"tool_calls": [{"index": index, "id": tool["id"], "type": "function", "function": {"name": tool["function"]["name"], "arguments": ""}}]})
+            args = tool["function"]["arguments"]
+            for offset in range(0, len(args), 8):
+                yield chunk({"tool_calls": [{"index": index, "function": {"arguments": args[offset:offset+8]}}]})
+        yield chunk({}, "tool_calls" if message.get("tool_calls") else "stop")
+        yield {"choices": [], "usage": response.get("usage", {})}
+        yield "[DONE]"
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -151,12 +186,34 @@ class Handler(BaseHTTPRequestHandler):
         usage = response.setdefault("usage", {})
         cached = cached_usage(messages, usage.get("prompt_tokens", 0))
         usage["prompt_tokens_details"] = {"cached_tokens": cached}
-        if path == "/anthropic/v1/messages":
+        if payload.get("stream") is True:
+            self._stream(response, path == "/anthropic/v1/messages")
+        elif path == "/anthropic/v1/messages":
             converted = anthropic_response(response)
             converted["usage"]["cache_read_input_tokens"] = cached
             self._send(200, converted)
         else:
             self._send(200, response)
+
+    def _stream(self, response: dict, anthropic: bool) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        delay = max(0, min(5000, int(os.environ.get("MOCK_STREAM_DELAY_MS", "20")))) / 1000
+        first = max(0, min(10000, int(os.environ.get("MOCK_FIRST_TOKEN_DELAY_MS", os.environ.get("MOCK_STREAM_FIRST_TOKEN_DELAY_MS", "0"))))) / 1000
+        try:
+            time.sleep(first)
+            for frame in stream_frames(response, anthropic):
+                data = frame if isinstance(frame, str) else json.dumps(frame)
+                event = f"event: {frame['type']}\n" if anthropic and isinstance(frame, dict) else ""
+                self.wfile.write((event + "data: " + data + "\n\n").encode("utf-8"))
+                self.wfile.flush()
+                time.sleep(delay)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        self.close_connection = True
 
     def _send(self, status: int, payload: dict) -> None:
         body = json.dumps(payload).encode("utf-8")

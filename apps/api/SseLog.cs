@@ -31,6 +31,11 @@ public sealed class SseLog
         }
     }
 
+    public bool HasGap(long id)
+    {
+        lock (_gate) return id >= _next || (_recent.Count > 0 && id < _recent.Peek().Id - 1);
+    }
+
     public long? PublishedAt(long id)
     {
         lock (_gate) { foreach (var frame in _recent) if (frame.Id == id) return frame.PublishedAt; }

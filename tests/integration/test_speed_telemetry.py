@@ -55,14 +55,14 @@ def test_member_can_submit_rum_but_cannot_read_admin_speed():
 
 
 @pytest.mark.skipif(os.environ.get("LLM_PROVIDER") != "mock", reason="Mock-only model telemetry check")
-def test_mock_model_calls_have_provider_wall_time_and_cache_counts(bot_factory):
+def test_mock_model_calls_have_real_ttft_and_cache_counts(bot_factory):
     owner = login()
     assert owner.call("POST", "/api/secrets", {"namespace": "openrouter", "name": "default", "type": "API_KEY", "value": OPENROUTER})[0] == 200
     bot = bot_factory(owner, "Speed " + uuid.uuid4().hex[:6])
     task = submit(owner, _workspace(owner, bot)["conversationId"], "What should I call you?")
     assert wait_task(owner, bot, task)["status"] == "completed"
     rows = json.loads(_psql(f"SELECT coalesce(json_agg(t), '[]'::json) FROM (SELECT ttft_ms,total_ms,cached_tokens FROM model_calls WHERE task_id='{task}'::uuid) t"))
-    assert rows and all(r["total_ms"] is not None and r["ttft_ms"] == r["total_ms"] and r["total_ms"] >= 0 for r in rows)
+    assert rows and all(r["total_ms"] is not None and 0 <= r["ttft_ms"] <= r["total_ms"] for r in rows)
     assert all(r["cached_tokens"] is not None for r in rows)
     status, speed = owner.call("GET", "/api/admin/speed")
     assert status == 200

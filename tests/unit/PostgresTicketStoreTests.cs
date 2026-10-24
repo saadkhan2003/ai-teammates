@@ -15,7 +15,7 @@ public sealed class PostgresFactAttribute : FactAttribute
     }
 }
 
-public sealed class PostgresTicketStoreTests : IAsyncLifetime
+public sealed partial class PostgresTicketStoreTests : IAsyncLifetime
 {
     private string? _database;
     private NpgsqlDataSource? _dataA;

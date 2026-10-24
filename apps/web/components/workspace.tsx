@@ -1,5 +1,8 @@
 "use client";
 
+import { frameBatch, patchWorkspace } from "@/lib/event-patches";
+import { streamIsOpen } from "@/lib/events";
+import { Lru } from "@/lib/chat-speed";
 import { Settings, X } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
@@ -95,8 +98,12 @@ const INFO_TABS = [
   ["plugins", "Plugins"],
 ] as const;
 
+const workspaceCache = new Lru<string, WorkspaceData>(10);
+if (typeof window !== "undefined") window.addEventListener("teammates-session-reset", () => workspaceCache.clear());
+
 export function Workspace({ botId }: { botId: string }) {
-  const [workspace, setWorkspace] = useState<WorkspaceData | null>(null);
+  const [workspaceState, setWorkspace] = useState<WorkspaceData | null>(() => workspaceCache.get(botId) ?? null);
+  const workspace = workspaceState?.bot.id === botId ? workspaceState : workspaceCache.get(botId) ?? null;
   const [older, setOlder] = useState<{ botId: string; items: ChatMessage[]; hasMore: boolean | null }>({ botId, items: [], hasMore: null });
   const olderRef = useRef(older);
   olderRef.current = older;
@@ -135,7 +142,8 @@ export function Workspace({ botId }: { botId: string }) {
   const [autoControlKey, setAutoControlKey] = useState(0);
   const [handBackKey, setHandBackKey] = useState(0);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
-  const [ready, setReady] = useState(false);
+  const [readyForBot, setReadyForBot] = useState<string | null>(() => workspaceCache.get(botId) ? botId : null);
+  const ready = readyForBot === botId;
   const [files, setFiles] = useState<ListState<FileEntry>>(emptyList);
   const [memories, setMemories] = useState<ListState<MemoryItem>>(emptyList);
   const [skills, setSkills] = useState<ListState<Skill>>(emptyList);
@@ -160,13 +168,14 @@ export function Workspace({ botId }: { botId: string }) {
       const data = normalizeWorkspace(await api<WorkspaceData>(`/api/bots/${botId}/workspace`));
       if (ticket !== seq.current) return;
       taskIds.current = new Set(data.tasks.map(task => task.id));
+      workspaceCache.set(botId, data);
       setWorkspace(data);
       setWorkspaceError(null);
     } catch (caught) {
       if (ticket !== seq.current) return;
       setWorkspaceError(errorMessage(caught, "Could not load this workspace."));
     } finally {
-      if (ticket === seq.current) setReady(true);
+      if (ticket === seq.current) setReadyForBot(botId);
     }
   }, [botId]);
 
@@ -196,7 +205,7 @@ export function Workspace({ botId }: { botId: string }) {
   );
 
   useEffect(() => {
-    setReady(false);
+    setReadyForBot(workspaceCache.get(botId) ? botId : null);
     setAgentEvents([]);
     taskIds.current = new Set();
     setLlmConnected(null);
@@ -204,7 +213,7 @@ export function Workspace({ botId }: { botId: string }) {
       const connected = status.aiConnected ?? status.connected ?? status.configured ?? status.hasKey;
       if (typeof connected === "boolean") setLlmConnected(connected);
     }).catch(() => undefined);
-    setWorkspace(null);
+    setWorkspace(workspaceCache.get(botId) ?? null);
     setWorkspaceError(null);
     const desktop = window.matchMedia("(min-width: 768px)").matches;
     let stored: string | null = null;
@@ -215,37 +224,46 @@ export function Workspace({ botId }: { botId: string }) {
     const preload = window.setTimeout(() => {
       void import("@novnc/novnc/lib/rfb.js");
     }, 1500);
-    let debounce = 0;
-    const schedule = () => {
-      window.clearTimeout(debounce);
-      debounce = window.setTimeout(() => void loadWorkspace(), 200);
-    };
+    const batch = frameBatch<AgentEvent>(events => {
+      setAgentEvents(current => events.reduce((list, event) => mergeAgentEvent(list, event), current));
+    }, requestAnimationFrame, cancelAnimationFrame);
     const stopEvents = subscribeEvents((data) => {
       const event = parseAgentEvent(data);
-      const type = event?.type ?? "";
-      if (event && ["grounding", "tool", "tool_call", "tool_result", "delta", "message.delta", "text_delta", "memory"].includes(type)) {
-        // Events without bot/task attribution cannot safely be shown in this workspace.
-        if (event.botId === botId || (typeof event.taskId === "string" && taskIds.current.has(event.taskId))) {
-          const detail = event.detail && typeof event.detail === "object" ? event.detail as Record<string, unknown> : {};
-          setAgentEvents(current => mergeAgentEvent(current, { ...event, ...detail, type: event.type }));
-        }
+      if (!event || event.type === "notification.created") return;
+      if (["message.delta", "tool.delta", "model.started", "model.finished", "model.error"].includes(event.type)) return;
+      const belongs = event.botId === botId || (typeof event.taskId === "string" && taskIds.current.has(event.taskId));
+      if (event.botId && !belongs) return;
+      if (belongs && ["grounding", "tool", "tool_call", "tool_result", "tool.delta", "delta", "message.delta", "text_delta", "memory", "model.started", "model.finished", "model.error", "task.started"].includes(event.type)) {
+        const detail = event.detail && typeof event.detail === "object" ? event.detail as Record<string, unknown> : {};
+        batch.push({ ...event, ...detail, type: event.type });
       }
-      if (type === "memory" && (event?.botId === botId || (typeof event?.taskId === "string" && taskIds.current.has(event.taskId)))) void loadAux(["memories"]);
-      schedule();
-      if (type !== "task" && type !== "artifact") return;
-      const extra: Array<"files" | "memories" | "skills" | "routines" | "artifacts"> = ["artifacts", "routines"];
-      const tab = tabRef.current;
-      if (tab === "files") extra.push("files");
-      if (tab === "memory") extra.push("memories");
-      if (tab === "skills") extra.push("skills");
-      void loadAux(extra);
+      const current = workspaceRef.current;
+      const patched = current ? patchWorkspace(current, event) : null;
+      if (patched) {
+        if (patched !== current) {
+          taskIds.current = new Set(patched.tasks.map(task => task.id));
+          workspaceRef.current = patched;
+          workspaceCache.set(botId, patched);
+          setWorkspace(patched);
+        }
+      } else if (!["message.delta", "tool.delta", "model.started", "model.finished", "model.error"].includes(event.type)) void loadWorkspace();
+      if (event.type === "memory" && belongs) void loadAux(["memories"]);
+      if (["artifact", "task"].includes(event.type) && belongs) {
+        const extra: Array<"files" | "memories" | "skills" | "routines" | "artifacts"> = ["artifacts", "routines"];
+        const tab = tabRef.current;
+        if (tab === "files") extra.push("files");
+        if (tab === "memory") extra.push("memories");
+        if (tab === "skills") extra.push("skills");
+        void loadAux(extra);
+      }
     });
     const slow = window.setInterval(() => {
+      if (streamIsOpen()) return;
       void loadWorkspace();
       void loadAux(["artifacts", "routines"]);
     }, 15_000);
     return () => {
-      window.clearTimeout(debounce);
+      batch.stop();
       window.clearTimeout(preload);
       window.clearInterval(slow);
       stopEvents();
@@ -294,7 +312,7 @@ export function Workspace({ botId }: { botId: string }) {
     onSent: () => void loadWorkspace(),
   });
 
-  if (!ready) {
+  if (!ready && !workspace) {
     return (
       <ChatSkeleton />
     );

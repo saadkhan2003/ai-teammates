@@ -37,6 +37,8 @@ export type Reaction = {
 
 export type ChatMessage = {
   id: string;
+  clientId?: string | null;
+  sendState?: "pending" | "failed";
   role: string;
   content: string;
   createdAt?: string;

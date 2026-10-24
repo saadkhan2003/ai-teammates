@@ -54,6 +54,7 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   ) {
     window.location.assign("/login");
   }
+  if (path === "/api/auth/logout" && response.ok && typeof window !== "undefined") window.dispatchEvent(new Event("teammates-session-reset"));
   return response;
 }
 

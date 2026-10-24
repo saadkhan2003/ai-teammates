@@ -122,6 +122,7 @@ public static class Beta
                 if (!Access.CanGrant(actorRole, next) || !Access.CanChangeStatus(actorRole, targetRole))
                     return Results.Json(new { error = "forbidden" }, statusCode: 403);
                 await conn.ExecuteAsync("UPDATE users SET role=@role WHERE id=@id", new { id, role = next });
+                await platform.SessionChanged(id);
                 targetRole = next;
             }
             if (body.TryGetProperty("status", out var statusEl))
@@ -134,6 +135,7 @@ public static class Beta
                 if (status == "disabled")
                     await conn.ExecuteAsync("DELETE FROM sessions WHERE user_id=@id", new { id });
             }
+            await platform.SessionChanged(id);
             var row = await conn.QuerySingleAsync("SELECT id, username, display_name, role, status FROM users WHERE id=@id", new { id });
             return Results.Json(Platform.ToDict(row));
         });
@@ -333,6 +335,7 @@ public static class Beta
                 await conn.ExecuteAsync("UPDATE bots SET is_primary=true, updated_at=now() WHERE id=@id", new { id }, tx);
                 await tx.CommitAsync();
             }
+            await platform.Publish(new { type = "bot.updated", botId = id });
             var row = await conn.QuerySingleAsync("SELECT id, name, role, instructions, status, avatar, avatar_shape, avatar_color, section, notifications_enabled, is_primary, bio, peer_messaging FROM bots WHERE id=@id", new { id });
             return Results.Json(Platform.ToDict(row));
         });
@@ -349,6 +352,7 @@ public static class Beta
                 await BotFs.WipeAsync(platform.Compute, new ComputerId(computer.Value.ToString()), id, ct);
             await conn.ExecuteAsync("DELETE FROM bots WHERE id=@id AND owner_id=@owner", new { id, owner = user });
             await conn.ExecuteAsync("UPDATE bots SET is_primary=true WHERE id=(SELECT id FROM bots WHERE owner_id=@owner ORDER BY created_at LIMIT 1) AND NOT EXISTS (SELECT 1 FROM bots WHERE owner_id=@owner AND is_primary)", new { owner = user });
+            await platform.PublishTo(user.Value, new { type = "bot.deleted", botId = id });
             return Results.NoContent();
         });
 

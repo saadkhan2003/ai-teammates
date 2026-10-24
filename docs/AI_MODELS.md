@@ -21,7 +21,7 @@ Use the complete base URLs, without credentials, query strings or fragments. Kee
 
 Choose a primary for **Chat / planner**. Quick (classification and future quick acknowledgements/titles), vision (video summaries) and coding inherit chat until configured. Add fallbacks in their intended order; use **Move up** to reorder them. Only enabled providers and catalog models can be saved. Model metadata describes capabilities; administrators must select models suitable for their tools and image inputs.
 
-Configure caching flags, the cache TTL (`5m` or `1h`) and optional preferred maximum latency. Anthropic cache control marks the last system block, or the last tool definition if there is no system block. Compatible providers receive a stable conversation cache key when enabled; OpenRouter also receives the session ID and optional latency routing preference. These are hints: cache availability and enforcement depend on the provider. The API currently uses complete non-streaming responses.
+Configure caching flags, the cache TTL (`5m` or `1h`) and optional preferred maximum latency. Anthropic cache control marks the tools and stable system/memory boundaries. Compatible providers receive a stable conversation cache key when enabled; OpenRouter also receives the session ID and optional latency routing preference. These are hints: cache availability and enforcement depend on the provider. Worker planner calls use the additive streaming adapter; complete-response callers remain supported. See `SPEED.md` for buffering, fallback, and telemetry semantics.
 
 The credit price editor takes a plan-to-model JSON map:
 
