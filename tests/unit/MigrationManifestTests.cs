@@ -26,7 +26,9 @@ public sealed class MigrationManifestTests
         Assert.Equal(listed.Length, listed.Distinct().Count());
         var ids = listed.Select(file => int.Parse(file[..3])).ToArray();
         Assert.Equal(ids.Length, ids.Distinct().Count());
-        Assert.Equal(Enumerable.Range(1, ids.Length), ids);
+        // v1 streams reserve migration numbers 052-056 independently; ids stay contiguous through v0.4 (042), then strictly ascending.
+        Assert.Equal(Enumerable.Range(1, 42), ids.Take(42));
+        Assert.Equal(ids.Order(), ids);
         Assert.DoesNotContain(ids, id => id is >= 90 and <= 99);
         var copies = Regex.Matches(File.ReadAllText(Path.Combine(root, "apps/api/Dockerfile")),
             @"(?m)^COPY db/(\S+\.sql) /migrations/(\S+\.sql)$");
