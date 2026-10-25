@@ -1,6 +1,8 @@
 # v0.2 security and login
 
-Policy gate, data checker, hash-chained audit, in-chat login, and a public proxy that does not publish worker routes. The MVP acceptance checks stay in place. Decisions: `docs/adr/0001-action-policy-pipeline.md`, `docs/adr/0002-computer-login-authorization.md`, `docs/adr/0003-edge-does-not-publish-worker-routes.md`. Operator notes: `docs/SECURITY.md`.
+Historical v0.2 security and login implementation snapshot. Migration behavior, test counts, and known limitations describe that earlier tree, not current upgrade guidance. Use [`docs/SECURITY.md`](SECURITY.md) for current security notes. The three ADR file paths cited in the original v0.2 notes are not present in this repository snapshot.
+
+Policy gate, data checker, hash-chained audit, in-chat login, and a public proxy that does not publish worker routes. The MVP acceptance checks stay in place. Operator notes: [`docs/SECURITY.md`](SECURITY.md).
 
 ## What was added
 
@@ -45,7 +47,7 @@ Manual UI, signed in as `saad` / `teammates-dev`:
 
 `db/005_plugins.sql` stays migration `005`, the same file as main. Security is `db/006_security.sql` and credential grants are `db/007_credential_grants.sql`. Those ids do not collide with anything in main's `db/` tree, which stops at `005_plugins.sql`.
 
-A database that already applied the pre-rebase branch recorded security as migration `005`. The runner then skips `005_plugins.sql`, so `plugins` is missing and `secrets_type_chk` rejects `PLUGIN_CREDENTIAL`. That database needs a fresh volume: `docker compose down -v`, then up. Do not apply `005_plugins.sql` by hand and treat that as proof.
+Historical pre-rebase failure only: a database from that branch recorded security as migration `005`; the runner then skipped `005_plugins.sql`, leaving `plugins` missing and causing `secrets_type_chk` to reject `PLUGIN_CREDENTIAL`. The original recovery discarded that test volume and rebuilt it. Do not treat this as current migration guidance or run `docker compose down -v` against a data-bearing stack.
 
 The counts below are from one volume created with `docker compose down -v`, rebuilt, and started with `docker-compose.yml` and `deploy/compose.test.yml`. The API runner applied `001` through `007`. Nothing was patched with psql.
 
