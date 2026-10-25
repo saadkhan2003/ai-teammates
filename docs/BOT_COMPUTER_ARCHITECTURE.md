@@ -1,6 +1,7 @@
 # Bot Computer Architecture (the Grok Bot "box") and how to replicate it in AI Teammates
 
 Scanned: 2026-10-23 (Asia/Karachi), read-only. Nothing on the machine was changed, no other hosts were scanned.
+Historical reverse-engineering and roadmap snapshot. Repo-state claims and proposed file paths describe the 2026-10-23 checkout; later integration work changed the tree. Use current source and feature guides for shipped behavior.
 All tokens, bearer values, cookies, keys and non-local IPs are **redacted or not read**. Token files are described by mechanism only.
 
 **Legend** — every claim is tagged:
