@@ -78,15 +78,15 @@ public static class Routes
             var username = body.GetProperty("username").GetString() ?? "";
             var password = body.GetProperty("password").GetString() ?? "";
             await using var conn = await platform.Data.OpenConnectionAsync();
-            var row = await conn.QuerySingleOrDefaultAsync<(Guid Id, string Hash, string Status)>("SELECT id, password_hash, coalesce(status, 'active') FROM users WHERE username=@username", new { username });
+            var row = await conn.QuerySingleOrDefaultAsync<(Guid Id, string Hash, string Status, bool TotpEnabled)>("SELECT id, password_hash, coalesce(status, 'active'), totp_enabled FROM users WHERE username=@username", new { username });
             if (row.Id == Guid.Empty || !Passwords.Verify(password, row.Hash ?? ""))
             {
                 await platform.NoteLoginFailure(ip, loginAttemptId);
                 return Results.Json(new { error = "invalid credentials" }, statusCode: 401);
             }
             if (row.Status is "disabled" or "banned") return Results.Json(new { error = "disabled" }, statusCode: 403);
-            var token = await platform.CreateSession(row.Id, ip);
-            ctx.Response.Cookies.Append("teammates_session", token, Cookie(ctx));
+            if (row.TotpEnabled) return await AccountRoutes.StartLoginChallenge(ctx, platform, row.Id);
+            await AccountRoutes.EstablishSession(ctx, platform, row.Id);
             return Results.Json(new { username });
         });
 
@@ -104,7 +104,7 @@ public static class Routes
             await using var conn = await platform.Data.OpenConnectionAsync();
             var me = await conn.QuerySingleAsync<(string Username, string Role, string Status, string DisplayName, string Email, string AvatarUrl, string Timezone)>("SELECT username, role, status, display_name, coalesce(email, ''), coalesce(avatar_url, ''), timezone FROM users WHERE id=@id", new { id = user });
             var theme = ThemeChoice.Normalize(await conn.ExecuteScalarAsync<string>("SELECT theme FROM user_preferences WHERE user_id=@id", new { id = user })) ?? ThemeChoice.Default;
-            return Results.Json(new { id = user, username = me.Username, role = me.Role, status = me.Status, displayName = me.DisplayName, email = me.Email, avatarUrl = me.AvatarUrl, timezone = me.Timezone, theme });
+            return Results.Json(new { id = user, username = me.Username, role = me.Role, status = me.Status, displayName = me.DisplayName, email = me.Email, avatarUrl = me.AvatarUrl.StartsWith("user-avatars/", StringComparison.Ordinal) ? "/api/account/avatar" : me.AvatarUrl, timezone = me.Timezone, theme });
         });
 
         app.MapPatch("/api/auth/timezone", async (HttpContext ctx, JsonElement body) =>

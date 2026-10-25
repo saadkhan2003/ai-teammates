@@ -133,7 +133,7 @@ async function install(page: Page, state: ReturnType<typeof fresh>) {
     }
     if (path === "/api/account/password" && method === "POST") {
       const body = request.postDataJSON() as { newPassword?: string };
-      if (!body.newPassword || body.newPassword.length < 8) return json({ error: "Use at least 8 characters." }, 400);
+      if (!body.newPassword || body.newPassword.length < 12 || body.newPassword.length > 256 || !/[A-Za-z]/.test(body.newPassword) || !/[0-9]/.test(body.newPassword)) return json({ error: "Use at least 12 characters with letters and numbers, up to 256 characters." }, 400);
       return json({ ok: true });
     }
     if (path === "/api/account/identities" && method === "POST") {
@@ -321,8 +321,8 @@ test("profile, billing, and help actions", async ({ page }) => {
   await page.getByTestId("current-password").fill("teammates-dev");
   await page.getByTestId("new-password").fill("short");
   await page.getByTestId("password-save").click();
-  await expect(page.getByTestId("password-form").getByText("Use at least 8 characters.")).toBeVisible();
-  await page.getByTestId("new-password").fill("a-longer-password");
+  await expect(page.getByTestId("password-form").getByText("Use at least 12 characters with letters and numbers, up to 256 characters.")).toBeVisible();
+  await page.getByTestId("new-password").fill("a-longer-password-2");
   await page.getByTestId("password-save").click();
   await expect(page.getByText("Password updated.")).toBeVisible();
   await page.getByRole("button", { name: "Connect", exact: true }).first().click();

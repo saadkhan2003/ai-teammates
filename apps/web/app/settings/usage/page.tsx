@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { cardClass, PageError, PageSkeleton, pillClass, SectionTitle } from "@/components/account/chrome";
 import { Button } from "@/components/ui/button";
 import { SettingsSelect } from "@/components/settings-select";
+import { SettingsBillingTabs } from "@/components/settings-billing-tabs";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/utils";
 import { barWidth, bytesLabel, coresLabel, creditsLabel, onDemandOptions, percentLabel, resetsLabel, storageTone } from "@/lib/usage-format.mjs";
@@ -78,6 +79,7 @@ export default function UsagePage() {
   const c = data?.credits;
   return (
     <div id="usage" className="thin-type flex flex-col gap-[var(--space-section)] text-body-sm" data-testid="usage-billing">
+      <SettingsBillingTabs />
       <AccountUsage />
       {!data && !error ? <PageSkeleton /> : null}
       {error ? <PageError title="Could not load usage." detail={error} onRetry={() => void load()} /> : null}

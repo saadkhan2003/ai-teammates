@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { Suspense, type ReactNode, useEffect, useState } from "react";
-import { BarChart3, Bell, KeyRound, Laptop, Puzzle, RefreshCw, ScrollText, Shield, SlidersHorizontal, Sparkles } from "lucide-react";
+import { Activity, CircleHelp, CreditCard, FileText, Mail, Ticket, Trash2, User, Video, BarChart3, Bell, KeyRound, Laptop, Puzzle, RefreshCw, ScrollText, Shield, SlidersHorizontal, Sparkles } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { focusClass } from "@/components/account/chrome";
@@ -12,6 +12,15 @@ import { settingsGroups } from "./settings-nav-config.mjs";
 type NavItem = { id: string; label: string; href: string; icon: string; exact?: boolean; testId?: string; admin?: boolean };
 
 const icons: Record<string, typeof SlidersHorizontal> = {
+  account: User,
+  billing: CreditCard,
+  help: CircleHelp,
+  contact: Mail,
+  tickets: Ticket,
+  status: Activity,
+  legal: FileText,
+  delete: Trash2,
+  video: Video,
   general: SlidersHorizontal,
   updates: RefreshCw,
   notifications: Bell,
@@ -36,7 +45,7 @@ export function SettingsNav() {
       .catch(() => setRole("member"));
   }, []);
 
-  const staff = role == null || role === "owner" || role === "admin";
+  const staff = role === "owner" || role === "admin";
 
   return (
     <nav aria-label="Settings" className="flex gap-1 overflow-x-auto px-2 py-1 md:flex-col md:gap-0 md:overflow-visible md:px-2">
@@ -88,7 +97,7 @@ export function SettingsFrame({ children, edge = false }: { children: ReactNode;
   return (
     <div className="flex h-full min-h-0 flex-col md:flex-row">
       <Suspense fallback={null}><SettingsAnchorScroll /></Suspense>
-      <div className="shrink-0 border-b border-border md:w-56 md:border-b-0 md:border-r md:py-4">
+      <div className="min-h-0 shrink-0 overflow-y-auto border-b border-border md:w-56 md:border-b-0 md:border-r md:py-4">
         <h1 className="px-4 pb-2 text-lead font-medium">Settings</h1>
         <SettingsNav />
       </div>

@@ -7,13 +7,19 @@ public sealed class MigrationManifestTests
 {
     public static string Root()
     {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "apps/api/Platform.cs"))) dir = dir.Parent;
-        return dir?.FullName ?? throw new InvalidOperationException("Repository root not found");
+        var configured = Environment.GetEnvironmentVariable("TEST_SOURCE_ROOT");
+        if (!string.IsNullOrWhiteSpace(configured) && File.Exists(Path.Combine(configured, "apps/api/Platform.cs"))) return configured;
+        foreach (var start in new[] { AppContext.BaseDirectory, Directory.GetCurrentDirectory() })
+        {
+            var dir = new DirectoryInfo(start);
+            while (dir != null && !File.Exists(Path.Combine(dir.FullName, "apps/api/Platform.cs"))) dir = dir.Parent;
+            if (dir is not null) return dir.FullName;
+        }
+        throw new InvalidOperationException("Repository root not found");
     }
 
     [Fact]
-    public void Manifest_and_docker_copy_cover_every_file_once_in_linear_order()
+    public void Manifest_and_docker_copy_cover_every_file_once_in_ascending_order()
     {
         var root = Root();
         var source = File.ReadAllText(Path.Combine(root, "apps/api/Platform.cs"));
@@ -31,6 +37,8 @@ public sealed class MigrationManifestTests
         Assert.Equal(ids.Order(), ids);
         Assert.Equal(ids.Distinct(), ids);
         Assert.Equal(new[] { "047_task_briefs.sql", "048_brief_lessons.sql", "049_approval_signals.sql", "050_usage_credits.sql", "051_resources.sql" }, listed[46..51]);
+        Assert.Contains("054_account_support.sql", listed);
+        Assert.Equal(63, ids[^1]);
         Assert.DoesNotContain(ids, id => id is >= 90 and <= 99);
         var copies = Regex.Matches(File.ReadAllText(Path.Combine(root, "apps/api/Dockerfile")),
             @"(?m)^COPY db/(\S+\.sql) /migrations/(\S+\.sql)$");

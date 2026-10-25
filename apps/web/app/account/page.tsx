@@ -189,7 +189,7 @@ export default function AccountPage() {
 
           <form data-testid="password-form" onSubmit={(event) => void savePassword(event)} className={`${cardClass} p-[var(--space-inset)]`}>
             <SectionTitle icon={<KeyRound className="size-4" aria-hidden="true" />}>Password</SectionTitle>
-            <p className="mt-1 text-body-sm text-muted-foreground">At least 8 characters. The current password has to match.</p>
+            <p className="mt-1 text-body-sm text-muted-foreground">Use at least 12 characters with letters and numbers. The current password has to match.</p>
             <div className="mt-4 grid gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="current-password">Current password</Label>

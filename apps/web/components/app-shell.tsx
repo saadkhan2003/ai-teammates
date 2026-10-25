@@ -150,7 +150,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (!match) return;
     try { window.localStorage.setItem("teammates-last-bot", match[1]); } catch { /* storage unavailable */ }
   }, [pathname]);
-  const authPage = pathname === "/login" || pathname === "/invite";
+  const authPage = ["/login", "/invite", "/login/reset", "/offline", "/status", "/changelog", "/pricing"].includes(pathname) || pathname.startsWith("/legal/");
   const [bots, setBots] = useState<RosterBot[]>([]);
   const [botsLoaded, setBotsLoaded] = useState(false);
   const [username, setUsername] = useState("Account");
@@ -366,7 +366,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => observer.disconnect();
   }, [accentColor]);
 
-  if (pathname === "/login" || pathname === "/invite" || pathname === "/login/reset" || pathname === "/offline" || pathname === "/status") return <>{children}</>;
+  if (authPage) return <>{children}</>;
 
   function go(href: string) {
     setPalette(false);

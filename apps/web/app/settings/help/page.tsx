@@ -1,0 +1,6 @@
+"use client";
+import Link from "next/link";
+import { useMemo, useState } from "react";
+import { faq } from "@/data/faq";
+import { Input } from "@/components/ui/input";
+export default function HelpPage(){const [query,setQuery]=useState("");const rows=useMemo(()=>faq.filter(item=>`${item.question} ${item.answer}`.toLowerCase().includes(query.toLowerCase())),[query]);return <div id="help-center" className="flex flex-col gap-5" data-testid="help-page"><header><h2 className="text-lead font-medium">Help center</h2><p className="text-body-sm text-muted-foreground">Answers to common account and product questions.</p></header><Input aria-label="Search help articles" data-testid="faq-search" placeholder="Search help" value={query} onChange={e=>setQuery(e.target.value)}/><div className="grid gap-3">{rows.map(item=><article key={item.question} className="rounded-card border border-border bg-card p-4"><h3 className="text-body-sm font-medium">{item.question}</h3><p className="mt-1 text-body-sm text-muted-foreground">{item.answer}</p></article>)}{rows.length===0?<p className="rounded-card border border-border p-4 text-body-sm text-muted-foreground">No answers match that search.</p>:null}</div><Link className="text-body-sm underline" href="/settings/contact">Contact support</Link></div>}

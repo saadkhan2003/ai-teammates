@@ -8,9 +8,9 @@
     },
     {
       "id": "account",
-      "href": "/settings",
-      "label": "Account",
-      "description": "Who is signed in, and sign out."
+      "href": "/settings/account",
+      "label": "Profile / Account",
+      "description": "Profile photo, display name, timezone, language, notification preferences, and email verification."
     },
     {
       "id": "theme",
@@ -81,7 +81,7 @@
     {
       "id": "usage",
       "href": "/settings/usage",
-      "label": "Usage & Billing",
+      "label": "Usage",
       "description": "Credits, usage, cost, latency, and the quota for this account."
     },
     {
@@ -99,8 +99,104 @@
     {
       "id": "notification-inbox",
       "href": "/settings/notifications",
-      "label": "Notification inbox",
+      "label": "Notifications",
       "description": "Account notices for invites, runs, and billing; mark notices read."
+    },
+    {
+      "id": "security",
+      "href": "/settings/security",
+      "label": "Security",
+      "description": "Change your password and set up or disable two-step sign-in with an authenticator."
+    },
+    {
+      "id": "sessions",
+      "href": "/settings/sessions",
+      "label": "Sessions & devices",
+      "description": "Review active sessions and revoke other devices."
+    },
+    {
+      "id": "delete-account",
+      "href": "/settings/delete",
+      "label": "Delete account",
+      "description": "Review and confirm permanent account deletion."
+    },
+    {
+      "id": "video-config",
+      "href": "/settings/video",
+      "label": "Video config",
+      "description": "Configure video analysis limits and preferences."
+    },
+    {
+      "id": "billing",
+      "href": "/settings/billing",
+      "label": "Billing & invoices",
+      "description": "Current plan, account balance, monthly activity, invoices and receipts, and published pricing configuration."
+    },
+    {
+      "id": "pricing",
+      "href": "/pricing",
+      "label": "Pricing",
+      "description": "Published plan prices and approximate local-currency conversions."
+    },
+    {
+      "id": "help-center",
+      "href": "/settings/help",
+      "label": "Help center",
+      "description": "Search frequently asked questions and find help."
+    },
+    {
+      "id": "contact-support",
+      "href": "/settings/contact",
+      "label": "Contact support",
+      "description": "Open a support ticket with an optional attachment."
+    },
+    {
+      "id": "my-tickets",
+      "href": "/settings/tickets",
+      "label": "My tickets",
+      "description": "Read your support tickets and staff replies."
+    },
+    {
+      "id": "status",
+      "href": "/status",
+      "label": "Status",
+      "description": "Live service checks, uptime history, and public incidents."
+    },
+    {
+      "id": "changelog",
+      "href": "/changelog",
+      "label": "Changelog",
+      "description": "Application release notes."
+    },
+    {
+      "id": "terms",
+      "href": "/legal/terms",
+      "label": "Terms",
+      "description": "Terms of use."
+    },
+    {
+      "id": "privacy",
+      "href": "/legal/privacy",
+      "label": "Privacy",
+      "description": "Privacy policy."
+    },
+    {
+      "id": "acceptable-use",
+      "href": "/legal/acceptable-use",
+      "label": "Acceptable use",
+      "description": "Acceptable use policy."
+    },
+    {
+      "id": "support-inbox",
+      "href": "/settings/support",
+      "label": "Support inbox",
+      "description": "Staff support ticket queue, replies, and status changes."
+    },
+    {
+      "id": "incidents",
+      "href": "/settings/incidents",
+      "label": "Status incidents",
+      "description": "Staff publishing and editing of public status incidents."
     }
   ],
   "panels": [
