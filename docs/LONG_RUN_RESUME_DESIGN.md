@@ -1,6 +1,6 @@
 # Long-running work: limits, interruptions, auto-resume — findings and a design for AI Teammates
 
-Status: design, not built. Written 2026-10-24 (Asia/Karachi). Day counts are **estimates**, not measurements.
+Status: historical design, partially implemented. Written 2026-10-24 (Asia/Karachi); its gap analysis describes that date, not the current tree. See [the implementation snapshot](LONG_RUN_RESUME_IMPLEMENTATION.md) and current source for shipped behavior. Day counts are **original estimates**, not measurements or remaining-work estimates.
 Tags: **[verified]** = read on a fetched page, in this repo, or in a tool result this session (source named). **[secondary]** = only seen in a search-result summary, page not read. **[inferred]** = reasoned from verified facts. **[guess]** = a number or choice I picked and have not tested.
 Grok Bot does not publish how its runtime limits, kills or resumes work. Everything about *how it does it* is inferred.
 
@@ -8,8 +8,8 @@ Grok Bot does not publish how its runtime limits, kills or resumes work. Everyth
 
 - Nobody documents one universal "max run time". Limits come from four independent places: the **session/credential lifetime**, the **model context window**, **per-run budgets** (steps, time, money), and **idle/sleep policy**. Products survive them the same way: keep state **outside** the process (database, transcript file, git), **detect** death (heartbeat/lease), **restart** a new worker from the last durable state, and **shrink** context by summarising instead of replaying.
 - Our observed "interrupted roughly every hour or ~1,000–1,500 tool calls" is **not explained by anything public**. A one-hour credential/session TTL is plausible (see 1.1, Cursor/Vercel) but unproven. Cheap way to find out: log wall-clock and tool-call count at each interruption (section 6, step 0).
-- AI Teammates already has the hard half: DB task queue, 20 s lease with 5 s heartbeat, epoch fencing, stall watchdog, plan items, per-step transcript, outbound idempotency, computer-recovery resume. It is missing the soft half: **cumulative budgets, a resume brief, context compaction, a no-progress breaker, and any user-visible "resumed" notice.** Details in section 3.
-- Recommendation: build section 4 in the order in section 6. About **10–13 engineer-days [guess]**, 7–9 calendar days with parallel agents [guess]. Step 0 (a supervisor for our own build workers) takes half a day and helps today.
+- At the time this design was written, AI Teammates already had the hard half: DB task queue, 20 s lease with 5 s heartbeat, epoch fencing, stall watchdog, plan items, per-step transcript, outbound idempotency, and computer-recovery resume. The design identified cumulative budgets, a resume brief, context compaction, a no-progress breaker, and a user-visible "resumed" notice as gaps; these were later implemented in part. See the implementation snapshot for scope and limits.
+- Original recommendation: build section 4 in the order in section 6. The **10–13 engineer-day** and **7–9 calendar-day** figures [guess] are estimates from the original proposal, not the remaining effort. Step 0's supervisor suggestion likewise describes that earlier build context.
 
 ## 1. Findings: how others handle it
 
