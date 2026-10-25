@@ -1,6 +1,6 @@
-# Bot-to-bot messaging, teammate management and chat actions: design v2 (proposal, not built)
+# Bot-to-bot messaging, teammate management and chat actions: historical design v2
 
-Status: design only. Nothing in this file is implemented. Numbers marked **(est.)** are planning assumptions, not measurements. v2 folds in Saad's decisions and adds three chat features ("Add to chat" quotes, message hover actions, quoted-message rendering).
+Status: historical design proposal, not an implementation status report. Its initial baseline predates the integrated bot-messaging and chat-action implementation; use current source and tests to determine what shipped. Numbers marked **(est.)** are original planning assumptions, not measurements. v2 folds in Saad's decisions and adds three chat features ("Add to chat" quotes, message hover actions, quoted-message rendering).
 
 ## 0. Saad's decisions (v2) and where they land
 
@@ -14,7 +14,7 @@ Status: design only. Nothing in this file is implemented. Numbers marked **(est.
 | 6 | Cross-user messaging is deferred to v0.5. | 2, 12 |
 | 7 | New: "Add to chat" (select text, floating button, quoted block in the composer), quoted-message rendering with clamp, and message hover actions (react, reply, "..." menu). | 9, 10, 11 |
 
-## 1. What exists today (inspected in the repo)
+## 1. What existed at the initial design baseline (inspected 2026-10-23)
 
 - **No inter-bot messaging, no delegation, no mentions.** A search for `message_bot`, delegation, peers and handoff finds nothing in `apps/`, `services/`, `db/` or `docs/`. Bots are rows in `bots` (`owner_id`, `name`, `role`, `instructions`, avatar shape/colour). Every route checks the bot's owner.
 - **Bot and routine creation exist only as session-authenticated routes** (`POST /api/bots` creates the bot, conversation, control lock and, for the first bot, the shared computer; `max_bots` quota applies. `POST /api/bots/{id}/routines` validates cron and sets `next_run_at`). They are not callable from the worker tool path, and there is no update-bot or delete-routine route.

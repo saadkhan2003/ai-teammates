@@ -1,6 +1,6 @@
 # Library: how Grok Bot does it, and a design for AI Teammates
 
-Status: design, not built. Sizes are **estimates**. Written 2026-10-23 (Asia/Karachi).
+Status: historical design proposal, not an implementation status report. The integrated tree now has Library UI and API behavior; use `apps/web/components/library-pane.tsx`, `apps/api/LibraryRoutes.cs`, and `docs/PAGES.md` for current implementation context. This document's design targets and estimates are not a completion checklist. Written 2026-10-23 (Asia/Karachi).
 Each finding is marked **[confirmed]** (seen on the box or on a fetched page this session) or **[inferred]** (reasoned from what I saw, not verified).
 
 ## 1. How Grok Bot's Library works

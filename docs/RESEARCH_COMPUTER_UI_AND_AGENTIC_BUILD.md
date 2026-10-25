@@ -1,6 +1,6 @@
 # Research: the computer screen look, and how agent products build, supervise, test and ship software
 
-Written 2026-10-23 (PKT) for Saad. Method: web research plus a read of this repo (`src/`). Every claim is tagged **[confirmed]** (a source or the screenshot says it), **[repo]** (I read it in the code), or **[guess]** (my inference). Nothing here has been built or tested; effort figures are my estimates.
+Historical research snapshot written 2026-10-23 (PKT) for Saad. Method: web research plus a read of this repo (`src/`) at that time. Later integration work changed the codebase, so repo-state claims and the "what is missing" analysis below are not current status. Every claim is tagged **[confirmed]** (a source or the screenshot says it), **[repo]** (read in the code at the time), or **[guess]** (inference). Effort figures are original estimates, not remaining-work estimates.
 
 ---
 
@@ -66,7 +66,7 @@ Rough effort: items 1 to 5 about 1 day including a visual check; items 6 to 7 ab
 | 10 | **Confidence and progress reporting.** | Devin reports confidence at session start and after planning; the company says green correlates with about twice the merge rate (https://cognition.com/blog/devin-2-1). Grok Bot acknowledges the message before longer work, shows "Waiting on results" for background commands, and a Cursor-hosted bot "keeps working when your laptop is closed" (https://x.ai/changelog/bot). I found no product that publishes a precise time-estimation method. |
 | 11 | **Watchdogs for stalls.** | OpenHands stuck detection. Claude Code `maxTurns`. Cursor's CI follow-up cap. Anthropic's checklist: retries, checkpoints and resumable state. **[guess]** Real products also use lease or heartbeat timeouts, which is what our queue already has. |
 
-### B2. What AI Teammates already has versus what is missing **[repo]**
+### B2. What the repo had at the research baseline versus what appeared missing **[repo, 2026-10-23]**
 
 | Pattern | Have | Missing |
 |---|---|---|

@@ -1,6 +1,6 @@
 # Routines: how Grok Bot does it, and a design for AI Teammates
 
-Status: design, not built. Sizes are **estimates**. Written 2026-10-23.
+Status: historical design proposal, not an implementation status report. Routines are implemented in the integrated tree; use `apps/api/RoutineService.cs`, `apps/api/RoutineSchedule.cs`, `apps/api/RoutineRuns.cs`, and current web source for shipped behavior. The target behavior and estimates below are not a completion checklist. Written 2026-10-23.
 
 ## 1. How Grok Bot routines work
 
