@@ -70,6 +70,8 @@ The integration file includes the missing-container regression and the computer-
 
 ## Screenshots
 
+These four files are historical test artifacts and are not checked into this repository. Running `tests/e2e/security.spec.ts` in the configured Playwright environment recreates them under `docs/evidence/`.
+
 - `docs/evidence/classifier-approval.png` — external post approval card
 - `docs/evidence/dlp-block.png` — data-policy block
 - `docs/evidence/login-before.png` — login card before submit
