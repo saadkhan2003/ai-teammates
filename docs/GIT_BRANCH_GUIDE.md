@@ -1,23 +1,29 @@
 # Git branches, history, and snapshots
 
-Repository ref inventory checked 2026-10-25. The checkout is on local `main` at
+Initial repository ref inventory checked 2026-10-25. The checkout at that capture was on local `main` at
 `0a8a3faa3b8e32ccf078900f974b047e93279f85`; it tracks `origin/main`. The remote is
 `https://github.com/saadkhan2003/ai-teammates.git`. The repository is not shallow.
-The local snapshot has 52 remote branch names, one local branch, 49 checkpoint
-tags (48 lightweight and one annotated), one worktree, no stashes, and no submodules. The GitHub branch
-listing returned the same 52 names during this review. The listing API did not
-return branch commit IDs, so the SHA column below describes the local remote-tracking
-snapshot and may need refreshing before using a branch for a new change.
+That original snapshot had 52 remote branch names, one local branch, 49 checkpoint
+tags (48 lightweight and one annotated), one worktree, no stashes, and no submodules.
+A follow-up GitHub branch-name check at 2026-10-25 12:28 UTC returned 58 names;
+the six added `codex/*` branches are listed below. The original table remains the
+52-ref snapshot. The branch-name API did not return commit IDs; the added branch
+SHAs below came from the corresponding pull request heads at that check. Refresh
+the refs before making decisions from this dated inventory.
 
 ## How to read this history
 
 `main` is a reconstructed v0.3 baseline, not the newest product state. All 52
-remote branch tips descend from it. `origin/ui-integrate` is the broad integration
-line: it has 423 commits reachable after `main` and contains the exact tip commits
-of 50 of the 52 remote branches. The two tips it does not contain are
-`briefs-v1-pre-rebase` and `v04w/lr-1`. That is a Git ancestry fact; similar code
-may have been reworked or copied into the integration line. It does not prove the
-integrated implementation is behaviorally identical.
+remote branch tips in the original snapshot descended from it. The follow-up check
+confirmed the six added `codex/*` tips also descend from `main`. `origin/ui-integrate`
+is the broad integration line: at the original capture it had 423 commits reachable
+after `main` and contained the exact tip commits of 50 of 52 refs. At the follow-up
+check its tip was unchanged and contained 50 of 58 refs. The eight absent tips are
+`briefs-v1-pre-rebase`, `v04w/lr-1`, and the six added `codex/*` branches. Those six
+are one commit ahead of their PR base; five are based directly on `ui-integrate`,
+while `codex/repo-onboarding` is based on `main`. These are ancestry facts; similar
+code may have been reworked or copied into the integration line. They do not prove
+behavioral equivalence.
 
 Most branches are retained workstream heads, not unrelated product versions.
 Branch-only commit counts below mean `git rev-list origin/main..origin/<branch>`;
@@ -150,6 +156,27 @@ cumulative budgets, resume policy, and next-message resume. The integrated branc
 does include other long-run-resume work (migrations 028–033), so compare the actual
 worker/API behavior before judging the unmerged commits.
 
+### Follow-up Codex branches found on GitHub
+
+These six names were absent from the original 52-ref inventory. The GitHub PR API
+reported each associated PR open and mergeable at 2026-10-25 12:28 UTC; that state
+can change independently of this document. `In ui-integrate` refers to exact tip
+ancestry, not whether the PR should be merged.
+
+| Branch | Tip | PR | Base | In ui-integrate |
+|---|---:|---:|---|:---:|
+| `codex/admin-spend-caps` | `e522981a2a` | [#3](https://github.com/saadkhan2003/ai-teammates/pull/3) open | `ui-integrate` | no |
+| `codex/docs-history-context` | `1843883b91` | [#6](https://github.com/saadkhan2003/ai-teammates/pull/6) open | `ui-integrate` | no |
+| `codex/docs-integrated-audit` | `a0db2b86fc` | [#4](https://github.com/saadkhan2003/ai-teammates/pull/4) open | `ui-integrate` | no |
+| `codex/docs-shipped-status` | `35ebc5cd86` | [#5](https://github.com/saadkhan2003/ai-teammates/pull/5) open | `ui-integrate` | no |
+| `codex/repo-onboarding` | `85b8d4c057` | [#1](https://github.com/saadkhan2003/ai-teammates/pull/1) open | `main` | no |
+| `codex/resume-quota-features` | `7768c93718` | [#2](https://github.com/saadkhan2003/ai-teammates/pull/2) open | `ui-integrate` | no |
+
+The current PR links and branch bases are a review snapshot, not merge advice.
+Each PR should be reviewed against its own base; in particular, PR #1 and this
+branch-inventory follow-up build on the onboarding documentation rather than on
+`ui-integrate`.
+
 ## What ui-integrate contains
 
 This is the most complete integrated snapshot among the refs inspected, not a
@@ -205,14 +232,16 @@ using it. The three pre-redesign tags point to `700851a`, the `ui-integrate` tip
 and a separate v0.5 merge snapshot respectively. Forty-eight tags are lightweight;
 `cp-2026-10-25-pre-redesign-v05` is the one annotated tag.
 
-There is one local branch (`main`) and one worktree, at the repository root. There
-are no stashes or submodules. `origin/HEAD` points to `origin/main`. The only
-configured remote is `origin` (fetch and push URL are both the GitHub HTTPS URL).
-The GitHub branch-name check matched the local 52 remote-tracking names, but branch
-heads were not refreshed in this review. Local `refs/codex/turn-diffs/*` are
-Codex-managed capture/checkpoint refs included by `git rev-list --all`; they are
-not product branches. The local reflog records the clone on 2026-10-25 and does not
-provide earlier checkout history.
+At the original capture there was one local branch (`main`) and one worktree at the
+repository root, no stashes or submodules, and `origin/HEAD` pointed to `origin/main`.
+The only configured remote was `origin` (fetch and push URL were the GitHub HTTPS
+URL). During the follow-up audit, all 58 GitHub branch names were fetched into local
+remote-tracking refs and the inventory update was created on
+`codex/docs-branch-inventory`; these additions are later than the original
+worktree/ref count. Local `refs/codex/turn-diffs/*` are Codex-managed
+capture/checkpoint refs included by `git rev-list --all`; they are not product
+branches. The local reflog records the clone on 2026-10-25 and does not provide
+earlier checkout history.
 
 Testing evidence has a narrower scope than the branch inventory. In this session,
 the 46-test Python unit suite and configuration/source checks described in
@@ -235,4 +264,6 @@ git diff --stat origin/main...origin/ui-integrate
 git merge-base --is-ancestor origin/briefs-v1-pre-rebase origin/ui-integrate
 ```
 
-No branch was checked out, reset, rebased, fetched, or modified for this inventory.
+The original 52-ref inventory did not fetch, check out, reset, rebase, or modify
+branches. This follow-up audit fetched the current remote refs and updated the
+dated inventory; it did not merge any branch or pull request.

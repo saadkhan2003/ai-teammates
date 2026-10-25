@@ -3,9 +3,10 @@
 Source review: 2026-10-25, commit `0a8a3fa` on `main`.
 The checked-out `main` baseline has 280 tracked files and approximately 32,000 lines
 across C#, Python, TypeScript/TSX, SQL, and protobuf. This guide describes that
-baseline only. The repository also has 52 remote branches; see
+baseline only. The repository has additional feature and workstream branches; see
 [`GIT_BRANCH_GUIDE.md`](GIT_BRANCH_GUIDE.md) for the branch graph, feature inventory,
-and the much fuller `origin/ui-integrate` snapshot. This is an architecture and
+and the fuller `origin/ui-integrate` snapshot. The branch counts there are dated
+snapshots, not live counts. This is an architecture and
 onboarding reference, not a completed security audit or proof that the deployed
 stack works.
 
