@@ -183,7 +183,7 @@ public static class ActionClassifier
         "write_file", "read_file", "edit_file", "delete_file", "shell", "setup_env",
         "type_secret", "browser.type_secret", "save_memory", "update_memory", "forget_memory", "search_memory", "save_artifact",
         "request_secret", "request_login", "react_to_message", "reply_to_message", "send_message", "external_post", "sign",
-        "search_tools", "load_tool", "load_skill", "read_skill_file", "write_skill", "save_skill", "delete_skill", "watch_video", "ask_video",
+        "search_tools", "load_tool", "load_skill", "read_skill_file", "write_skill", "write_page", "edit_page", "save_skill", "delete_skill", "watch_video", "ask_video",
         "list_bots", "message_bot", "reply_to_bot", "thread_status", "create_bot", "update_bot", "list_routines", "create_routine", "get_routine", "update_routine", "pause_routine", "resume_routine", "delete_routine",
         "send_widget", "plan_set", "plan_update", "git_status", "git_diff", "git_commit", "run_tests", "create_pr", "watch_ci", "spawn_child_task", "child_status",
         "job_start", "job_status", "job_logs", "job_cancel"
@@ -225,7 +225,7 @@ public static class ActionClassifier
         if (tool == "read_skill_file") return ActionClasses.Read;
         if (tool == "delete_skill") return ActionClasses.Delete;
         if (tool == "save_skill") return ActionClasses.Write;
-        if (tool == "write_skill") return ActionClasses.Write;
+        if (tool is "write_skill" or "write_page" or "edit_page") return ActionClasses.Write;
         if (tool == "pause_routine") return ActionClasses.Write;
         if (tool == "update_bot") return SelfBioOnly(args) ? ActionClasses.Write : ActionClasses.BotManage;
         if (tool is "list_bots" or "thread_status" or "list_routines" or "get_routine") return ActionClasses.Read;

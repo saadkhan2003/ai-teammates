@@ -224,7 +224,7 @@ def scrub(value):
 
 
 RISKY_PREEXEC_TOOLS = {
-    "shell", "setup_env", "job_start", "write_file", "edit_file", "delete_file", "external_post", "send_message", "sign",
+    "write_page", "edit_page", "shell", "setup_env", "job_start", "write_file", "edit_file", "delete_file", "external_post", "send_message", "sign",
     "browser_click", "computer_click", "computer_type", "computer_key", "computer_use", "launch_app", "open_app",
     "automation_write", "delegate", "spawn_child_task", "message_bot", "create_routine", "update_routine",
 }
@@ -253,7 +253,7 @@ def preexec_decision(tool: str, args: dict, request, *, endpoint: str = "/intern
     """Ask the authenticated API before a risky action. Any bad response fails closed."""
     if tool not in RISKY_PREEXEC_TOOLS:
         return "allow"
-    if not isinstance(args, dict) or len(json.dumps(args, default=str)) > 32768:
+    if not isinstance(args, dict) or len(json.dumps(args, default=str)) > (2 * 1024 * 1024 if tool in {"write_page", "edit_page"} else 32768):
         return "deny"
     if tool == "shell":
         command = args.get("command")

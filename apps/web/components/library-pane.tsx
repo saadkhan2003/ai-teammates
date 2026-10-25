@@ -5,6 +5,7 @@ import { AudioLines, Copy, Download, FileArchive, FileCode, FileQuestion, FileTe
 import { toast } from "sonner";
 import { api, apiFetch } from "@/lib/api";
 import { formatAge, LIBRARY_FILTERS, libraryTypeParam, nextLibraryRowIndex, type LibraryFilter, type LibraryGroup, type LibraryItem, type LibraryResponse } from "@/lib/library";
+import { PagesLibrary } from "@/components/page-canvas";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -38,7 +39,7 @@ function LibrarySkeleton() {
   </div>;
 }
 
-export function LibraryPane({ botId, botName, botShape, botColor }: { botId: string; botName: string; botShape?: string; botColor?: string }) {
+export function LibraryPane({ botId, botName, botShape, botColor, activeType, onTypeChange: setActiveType }: { botId: string; botName: string; botShape?: string; botColor?: string; activeType: LibraryFilter; onTypeChange: (type: LibraryFilter) => void }) {
   const [data, setData] = useState<LibraryResponse>(initial);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
@@ -52,7 +53,6 @@ export function LibraryPane({ botId, botName, botShape, botColor }: { botId: str
   const [zoom, setZoom] = useState(1);
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
-  const [activeType, setActiveType] = useState<LibraryFilter>("All");
   const [direction, setDirection] = useState<"all" | "in" | "out">("all");
   const [searchItems, setSearchItems] = useState<LibraryItem[] | null>(null);
   const [shareInfo, setShareInfo] = useState<Record<string, { id: string; url?: string }[]>>({});
@@ -131,10 +131,12 @@ export function LibraryPane({ botId, botName, botShape, botColor }: { botId: str
 
   if (!loaded) return <LibrarySkeleton />;
   const populated = data.pinned.length > 0 || data.groups.some(group => group.items.length > 0);
+  if (activeType === "Pages") return <div className="space-y-4"><Button variant="ghost" size="sm" onClick={() => setActiveType("All")}>← All library items</Button><PagesLibrary botId={botId} /></div>;
   if (!populated && !error) return <div className="py-8 text-center">
     <div className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-lg border border-border bg-card text-muted-foreground"><FileText className="h-5 w-5" /></div>
     <p className="text-sm font-medium">Nothing here yet</p>
     <p className="mx-auto mt-1 max-w-64 text-xs text-muted-foreground">Files you send and files your teammate shares will show up here.</p>
+    <Button variant="outline" size="sm" className="mt-4" onClick={() => setActiveType("Pages")}>Pages</Button>
   </div>;
 
   const visibleGroups = data.groups.filter(group => group.items.length > 0);

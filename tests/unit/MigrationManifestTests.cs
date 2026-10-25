@@ -37,6 +37,7 @@ public sealed class MigrationManifestTests
         Assert.Equal(ids.Order(), ids);
         Assert.Equal(ids.Distinct(), ids);
         Assert.Equal(new[] { "047_task_briefs.sql", "048_brief_lessons.sql", "049_approval_signals.sql", "050_usage_credits.sql", "051_resources.sql" }, listed[46..51]);
+        Assert.Contains("053_pages.sql", listed);
         Assert.Contains("054_account_support.sql", listed);
         Assert.Equal(63, ids[^1]);
         Assert.DoesNotContain(ids, id => id is >= 90 and <= 99);

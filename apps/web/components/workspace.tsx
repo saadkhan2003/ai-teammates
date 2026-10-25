@@ -46,6 +46,7 @@ import { FileCard } from "@/components/file-card";
 import { publishBotAppearance, resolveBotAppearance } from "@/lib/bot-appearance";
 import { isConnected, readInstalledApps, type InstalledApp } from "@/lib/connect-apps";
 import type { AppLink } from "@/lib/app-links";
+import type { LibraryFilter } from "@/lib/library";
 
 function isFileArtifact(artifact: Artifact) {
   return Boolean(artifact.mime) || /\.[a-z0-9]{2,8}$/i.test(artifact.name);
@@ -55,6 +56,7 @@ import { HISTORY_PAGE, mergeHistory } from "@/lib/history";
 import { clampWorkBudget, WORK_BUDGET_LIMITS } from "@/lib/work-budget";
 import type { ChatMessage } from "@/lib/types";
 import { RefreshNotice } from "@/components/refresh-notice";
+import { PageCanvasHost } from "@/components/page-canvas";
 import { LibraryPane } from "@/components/library-pane";
 import { ShareMenu } from "@/components/share-menu";
 import { RecordingBanner, useTeachTask } from "@/components/teach-task";
@@ -168,6 +170,7 @@ export function Workspace({ botId }: { botId: string }) {
   const [artifacts, setArtifacts] = useState<ListState<Artifact>>(emptyList);
   const [detailTab, setDetailTab] = useState("details");
   const [librarySection, setLibrarySection] = useState("files");
+  const [libraryType, setLibraryType] = useState<LibraryFilter>("All");
   const [openJob, setOpenJob] = useState<CodingJob | null>(null);
   const [memoryFocusId, setMemoryFocusId] = useState<string | undefined>();
   const [finishedLogins, setFinishedLogins] = useState<LoginRequest[]>([]);
@@ -187,6 +190,7 @@ export function Workspace({ botId }: { botId: string }) {
     const onLink = (event: Event) => {
       const detail = (event as CustomEvent<AppLink>).detail;
       if (!detail || detail.kind !== "panel") return;
+      setLibraryType(detail.id === "pages" ? "Pages" : "All");
       setPane(true);
       setSettingsOpen(false);
       setDesktopFull(false);
@@ -601,6 +605,7 @@ export function Workspace({ botId }: { botId: string }) {
         />
         <JobDetailDialog job={openJob} accent={accent} onClose={() => setOpenJob(null)} />
       </section>
+      <PageCanvasHost botId={botId} onOpen={() => { setPaneRaw(false); setSettingsOpen(false); }} />
       <div className={cn("contents md:block md:shrink-0 md:overflow-hidden", pane ? "md:w-[320px] md:max-w-[42vw]" : "md:w-0")}>
       {paneMounted ? (
         <aside
@@ -787,7 +792,7 @@ export function Workspace({ botId }: { botId: string }) {
                       ))}
                     </TabsList>
                     <TabsContent value="files">
-                      <LibraryPane botId={botId} botName={bot?.name || "Teammate"} botShape={avatarShape} botColor={avatarColor} />
+                      <LibraryPane activeType={libraryType} onTypeChange={setLibraryType} botId={botId} botName={bot?.name || "Teammate"} botShape={avatarShape} botColor={avatarColor} />
                       <div className="flex flex-col gap-4">
                         <LibraryList
                           botId={botId}

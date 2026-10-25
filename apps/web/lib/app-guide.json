@@ -229,6 +229,13 @@
       "section": "files"
     },
     {
+      "id": "pages",
+      "tab": "library",
+      "label": "Pages",
+      "description": "Private reports, dashboards, trackers and plans. Open a page in the canvas to view history, export or share a read-only link.",
+      "section": "files"
+    },
+    {
       "id": "computer",
       "tab": "computer",
       "label": "Computer",

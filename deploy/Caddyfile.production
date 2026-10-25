@@ -13,13 +13,13 @@
 	encode @compress zstd gzip
 	header {
 		X-Content-Type-Options nosniff
-		Referrer-Policy same-origin
+		?Referrer-Policy same-origin
 		X-Frame-Options SAMEORIGIN
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		# noVNC opens a same-origin WebSocket at /vnc/websockify.
 		# connect-src 'self' allows that ws/wss endpoint. worker-src blob
 		# covers the noVNC worker. Next.js ships inline styles.
-		Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; img-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; worker-src 'self' blob:; form-action 'self'"
+		?Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; img-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; worker-src 'self' blob:; form-action 'self'"
 		-Server
 	}
 	request_body {

@@ -24,6 +24,7 @@ public static class Routes
         BriefRoutes.Map(app, platform);
         LearnedRoutes.Map(app, platform);
         SkillLibraryRoutes.Map(app, platform, runtime);
+        PagesRoutes.Map(app, platform);
         app.MapGet("/health", async () =>
         {
             var postgres = false;
@@ -1803,7 +1804,8 @@ public static class Routes
                         (string?)ledger["snapshotRef"], (string?)ledger["snapshotAt"]);
                     resume = new { brief, interrupted = previousReason is "lease_expired" or "computer_recovered" or "network_interrupted" or "stalled" };
                 }
-                rows.Add(new { id = task.Id, botId = task.BotId, computerId = placement.Computer.Value, cdpUrl = $"http://{dns}:9222", instruction = task.Instruction, kind = task.Kind, attempt = task.Attempt, epoch = task.Epoch, checkpoint = checkpointJson, force_compact = task.ForceCompact, conversationId = task.ConversationId, messageId = task.SourceMessageId, hasBrief = await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM task_briefs WHERE task_id=@id)", new { id = task.Id }, tx), role = injectRole ? botPrompt.Role : "", botInstructions = injectRole ? botPrompt.Instructions : "", memoryMode = notesFlag, botMemoryMode = memoryMode, standingRules = rules, scopedRules, ruleTokens, feedback, learnedContext, skill = skillJson, resume, budget = new { maxSteps = resolvedBudget.MaxSteps, maxSeconds = resolvedBudget.MaxSeconds, maxAttemptSteps = Math.Min(400, resolvedBudget.MaxSteps), maxAttemptSeconds = Math.Min(1800, resolvedBudget.MaxSeconds), maxRounds = modelRoundBudget.PerAttempt, maxRoundsCumulative = modelRoundBudget.Cumulative, pauseOnBudget, label = resolvedBudget.Label } });
+                var pages = (await conn.QueryAsync<(Guid Id, string Title)>("SELECT id,title FROM pages WHERE bot_id=@bot AND owner_id=(SELECT owner_id FROM bots WHERE id=@bot) AND conversation_id=@chat ORDER BY updated_at DESC LIMIT 20", new { bot = task.BotId, chat = task.ConversationId }, tx)).Select(p => new { id = p.Id, title = p.Title }).ToArray();
+                rows.Add(new { pages, id = task.Id, botId = task.BotId, computerId = placement.Computer.Value, cdpUrl = $"http://{dns}:9222", instruction = task.Instruction, kind = task.Kind, attempt = task.Attempt, epoch = task.Epoch, checkpoint = checkpointJson, force_compact = task.ForceCompact, conversationId = task.ConversationId, messageId = task.SourceMessageId, hasBrief = await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM task_briefs WHERE task_id=@id)", new { id = task.Id }, tx), role = injectRole ? botPrompt.Role : "", botInstructions = injectRole ? botPrompt.Instructions : "", memoryMode = notesFlag, botMemoryMode = memoryMode, standingRules = rules, scopedRules, ruleTokens, feedback, learnedContext, skill = skillJson, resume, budget = new { maxSteps = resolvedBudget.MaxSteps, maxSeconds = resolvedBudget.MaxSeconds, maxAttemptSteps = Math.Min(400, resolvedBudget.MaxSteps), maxAttemptSeconds = Math.Min(1800, resolvedBudget.MaxSeconds), maxRounds = modelRoundBudget.PerAttempt, maxRoundsCumulative = modelRoundBudget.Cumulative, pauseOnBudget, label = resolvedBudget.Label } });
                 var wakeInfo = await conn.QuerySingleAsync<(string Kind, Guid? RoutineId)>("SELECT kind AS Kind, routine_id AS RoutineId FROM tasks WHERE id=@id", new { id = task.Id }, tx);
                 if (ComputerNeed.EagerWake(wakeInfo.Kind, wakeInfo.RoutineId)) wake.Add(placement.Computer.Value);
             }
@@ -2329,7 +2331,7 @@ public static class Routes
             var idText = message["id"]?.ToString();
             if (message.TryGetValue("metadata", out var metaRaw) && metaRaw is string metaText && metaText.Length > 2)
             {
-                try { var meta = JsonSerializer.Deserialize<JsonElement>(metaText); message["parts"] = meta.TryGetProperty("parts", out var pe) ? pe : null; message["skill"] = meta.TryGetProperty("skill", out var se) ? se : null; message["attachments"] = meta.TryGetProperty("attachments", out var ae) ? ae : null; message["videoAnalysis"] = meta.TryGetProperty("videoAnalysis", out var video) ? video : null; } catch { message["parts"] = null; }
+                try { var meta = JsonSerializer.Deserialize<JsonElement>(metaText); message["parts"] = meta.TryGetProperty("parts", out var pe) ? pe : null; message["skill"] = meta.TryGetProperty("skill", out var se) ? se : null; message["attachments"] = meta.TryGetProperty("attachments", out var ae) ? ae : null; message["page"] = meta.TryGetProperty("page", out var pageCard) ? pageCard : null; message["videoAnalysis"] = meta.TryGetProperty("videoAnalysis", out var video) ? video : null; } catch { message["parts"] = null; }
             }
             message.Remove("metadata");
             if (message.GetValueOrDefault("role")?.ToString() == "assistant" && Guid.TryParse(message.GetValueOrDefault("requestId")?.ToString(), out var parent))

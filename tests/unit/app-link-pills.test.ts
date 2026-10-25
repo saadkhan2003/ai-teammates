@@ -17,6 +17,7 @@ assert.deepEqual(missing, { pill: false, text: "Flux" });
 
 const library = resolveAppHref("app://panel?tab=library");
 assert.deepEqual(library, { kind: "panel", id: "library", tab: "library", section: "files" });
+assert.deepEqual(resolveAppHref("app://panel?tab=pages"), { kind: "panel", id: "pages", tab: "library", section: "files" });
 assert.equal(resolveAppHref("app://panel?tab=coding-jobs")?.tab, "details");
 assert.equal(resolveAppHref("app://panel?tab=tasks")?.section, "tasks");
 assert.equal(resolveAppHref("app://panel?tab=details")?.tab, "details");

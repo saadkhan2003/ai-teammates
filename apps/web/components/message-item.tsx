@@ -13,6 +13,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { api } from "@/lib/api";
 import { CLAMP_MAX_PX, EXPANDED, LONG_PRESS_MS, cancelsLongPress, flatten, needsClamp } from "@/lib/chat-parts";
 import { readVideoAnalysis } from "@/lib/video-analysis";
+import { PageCard } from "@/components/page-canvas";
 import { VideoAnalysisCard } from "@/components/video-analysis-card";
 import { BriefCard } from "@/components/brief-card";
 import { QUICK_REACTIONS, searchEmoji } from "@/lib/emoji";
@@ -318,7 +319,7 @@ export function MessageBody({ message, mine, byId, onJump, fallback, renderText,
     {message.skill ? <span data-testid="skill-chip" className="mb-1.5 inline-flex items-center gap-1 rounded-full border border-current/25 bg-black/10 px-2 py-0.5 text-xs font-medium"><Sparkles className="h-3 w-3" aria-hidden />{message.skill.label}</span> : null}
     <div data-testid={renderBubble ? undefined : "message-bubble"}><div ref={box} id={`body-${message.id}`} style={clampStyle}
       className={cn("motion-clamp", clampable && clamped && !expanded && "[mask-image:linear-gradient(to_bottom,black_85%,transparent)]")}>
-      {inner ?? (videoAnalysis ? <VideoAnalysisCard analysis={videoAnalysis} /> : <div data-testid="message-text" className="space-y-2">{fallback}</div>)}
+      {message.page ? <PageCard page={message.page} /> : inner ?? (videoAnalysis ? <VideoAnalysisCard analysis={videoAnalysis} /> : <div data-testid="message-text" className="space-y-2">{fallback}</div>)}
       {message.attachments?.length ? <div className="mt-2 space-y-1">{message.attachments.map(item => <div key={item.path} data-testid="recording-attachment" className="flex min-h-9 items-center gap-2 rounded-lg border border-current/20 bg-black/10 px-2.5 py-1.5 text-xs"><Video className="h-4 w-4 shrink-0" aria-hidden /><span className="truncate" title={item.path}>{item.name}</span></div>)}</div> : null}
     </div>
     </div>

@@ -46,6 +46,7 @@ public class AppAwarenessTests
         Assert.Contains(AppGuide.Panels, panel => panel.Id == "details" && panel.Tab == "details");
         Assert.Contains(AppGuide.Panels, panel => panel.Id == "library" && panel.Tab == "library" && panel.Section == "files");
         Assert.Contains(AppGuide.Panels, panel => panel.Id == "computer" && panel.Tab == "computer");
+        Assert.Contains(AppGuide.Panels, panel => panel.Id == "pages" && panel.Tab == "library" && panel.Section == "files");
         Assert.Contains(AppGuide.Panels, panel => panel.Id == "routines" && panel.Tab == "library" && panel.Section == "routines");
         Assert.Contains(AppGuide.Panels, panel => panel.Id == "coding-jobs" && panel.Tab == "details");
     }
@@ -56,6 +57,7 @@ public class AppAwarenessTests
         var map = AppGuide.MapText();
         Assert.Contains("app://panel?tab=details", map);
         Assert.Contains("app://panel?tab=library", map);
+        Assert.Contains("app://panel?tab=pages", map);
         Assert.Contains("app://panel?tab=coding-jobs", map);
         Assert.Contains("app://settings?id=vault", map);
         Assert.Contains("Lead with the answer", AppGuide.StyleText);

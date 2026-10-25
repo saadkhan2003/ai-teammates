@@ -150,7 +150,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (!match) return;
     try { window.localStorage.setItem("teammates-last-bot", match[1]); } catch { /* storage unavailable */ }
   }, [pathname]);
-  const authPage = ["/login", "/invite", "/login/reset", "/offline", "/status", "/changelog", "/pricing"].includes(pathname) || pathname.startsWith("/legal/");
+  const authPage = ["/login", "/invite", "/login/reset", "/offline", "/status", "/changelog", "/pricing"].includes(pathname) || pathname.startsWith("/legal/") || pathname.startsWith("/p/");
   const [bots, setBots] = useState<RosterBot[]>([]);
   const [botsLoaded, setBotsLoaded] = useState(false);
   const [username, setUsername] = useState("Account");
