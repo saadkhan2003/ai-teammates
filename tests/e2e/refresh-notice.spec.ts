@@ -28,10 +28,14 @@ test("couldn't refresh shows once in the sidebar and chat, retries by keyboard a
     await page.keyboard.press("Enter");
     await expect(page.getByTestId("refresh-notice-chat")).toHaveCount(1);
 
-    await page.unroute("**/api/**");
+    // Wait out the retry spin (the button is disabled while it runs) and focus it before the
+    // network comes back: background polls such as learned notes clear the notice as soon as
+    // one request succeeds, which would remove the button before the key press.
+    await expect(page.getByTestId("refresh-retry-sidebar")).toBeEnabled();
+    await page.getByTestId("refresh-retry-sidebar").focus();
     const bots = page.waitForResponse(r => r.url().endsWith("/api/bots") && r.request().method() === "GET");
     const history = page.waitForResponse(r => r.url().includes(`/api/bots/${botId}/workspace`));
-    await page.getByTestId("refresh-retry-sidebar").focus();
+    await page.unroute("**/api/**");
     await page.keyboard.press("Enter");
     await bots;
     await history;
