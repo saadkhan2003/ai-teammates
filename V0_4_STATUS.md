@@ -1,5 +1,7 @@
 # AI Teammates v0.4 status (2026-10-24, PKT)
 
+Historical status of the `v0.4-codex` worker branch and its isolated mock stack at that time. This is a point-in-time test record, not the current integrated-tree status.
+
 Branch `v0.4-codex` (local), base v0.3 `0a8a3fa`. Stack under test: mock stack web :18080 / api :18081. NOT pushed (no credentials, no push to main).
 
 ## Done on v0.4-codex

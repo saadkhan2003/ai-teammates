@@ -1,6 +1,6 @@
 # Research: the computer screen look, and how agent products build, supervise, test and ship software
 
-Written 2026-10-23 (PKT) for Saad. Method: web research plus a read of this repo (`src/`). Every claim is tagged **[confirmed]** (a source or the screenshot says it), **[repo]** (I read it in the code), or **[guess]** (my inference). Nothing here has been built or tested; effort figures are my estimates.
+Written 2026-10-23 (PKT) for Saad. This is a historical research and gap-analysis snapshot, not a current implementation report: later work has implemented several items in its “Missing” column. Method: web research plus a read of this repo (`src/`). Every claim is tagged **[confirmed]** (a source or the screenshot says it), **[repo]** (I read it in the code at that time), or **[guess]** (my inference). The product proposals in this document were not built or tested during that research pass; effort figures are estimates.
 
 ---
 

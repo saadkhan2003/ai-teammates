@@ -2,7 +2,7 @@
 
 The lr-1 backend work adds an API-owned checkpoint ledger capped at 8 KB, heartbeat progress details, lease-expiry events, bounded retry/backoff policy, and cumulative/per-attempt worker budgets. Budget exhaustion, repeated no-progress attempts, and the hourly retry limit pause work in `waiting_human`; owners can continue or raise the budget, and their next chat message continues a paused run. Approval decisions wake the waiting task, while cancelled tasks remain terminal.
 
-Resume settings follow `docs/DECISIONS_DEFAULTS.md`: five automatic resumes per rolling hour, 12 coding rounds per attempt / 60 cumulative, and pause-on-budget enabled. Resume actions and owner budget changes are audited. The web notice/card UI and computer-facing presentation remain in the assigned UI chunk.
+Resume settings follow `docs/DECISIONS_DEFAULTS.md`: five automatic resumes per rolling hour, 12 coding rounds per attempt / 60 cumulative, and pause-on-budget enabled. Resume actions and owner budget changes are audited. The web notice/card UI is implemented in `apps/web/components/resume-card.tsx` and `chat-pane.tsx`. The computer pane has a generic **Continue bot** action for human-step waits; budget-specific Continue/Raise/Stop actions are provided by the chat card.
 
 Work tasks use their resolved step budget plus one final response as the cumulative model-round budget (at most 400 rounds per attempt). Chat and coding retain their separate configured round limits. Raising or continuing a work task's step budget also raises its model-round budget; the chaos suite needs no `ChatRounds` override.
 

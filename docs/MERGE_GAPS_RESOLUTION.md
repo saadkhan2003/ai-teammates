@@ -1,5 +1,7 @@
 # arch/gaps merge resolution
 
+Historical conflict-resolution record for the `v04-merge` tree. Its final “Remaining work” paragraph describes the state at that merge, not the current project backlog; check the current tests and stack before treating any item as outstanding.
+
 Working tree: `v04-merge`, HEAD `748a0794d731ff08807b3b5fa39a317e845057cd`, incoming `db83eb3`.
 Git metadata remains unchanged; the orchestrator must stage the resolved files and create the merge commit.
 

@@ -1,6 +1,6 @@
 # Library: how Grok Bot does it, and a design for AI Teammates
 
-Status: design, not built. Sizes are **estimates**. Written 2026-10-23 (Asia/Karachi).
+Status: historical design and implementation reference. The integrated tree now has Library API routes, ingestion and thumbnail processing, the user-facing pane, search/share flows, and related tests (`apps/api/LibraryRoutes.cs`, `LibraryIngest.cs`, `LibraryThumbnailWorker.cs`, `apps/web/components/library-pane.tsx`, and migrations `db/024`–`db/026`). Sections 3–6 describe the earlier 2026-10-23 snapshot and its gaps; do not use that gap list as the current backlog without checking code and tests. Sizes are **estimates**.
 Each finding is marked **[confirmed]** (seen on the box or on a fetched page this session) or **[inferred]** (reasoned from what I saw, not verified).
 
 ## 1. How Grok Bot's Library works
@@ -46,7 +46,7 @@ Right panel, tabbed (Details, Library, Computer). Library is grouped into rounde
 
 Takeaways we copy: auto-save both directions; type filter plus search; multi-download; storage meter; per-item share only for Pages; a way to exclude private/temporary items.
 
-## 3. AI Teammates today (read from `/workspace/ai-teammates-live/src`)
+## 3. AI Teammates at the 2026-10-23 snapshot (historical)
 
 Built:
 - `apps/web/components/library-pane.tsx` (42 lines): merges `files` (flat `/workspace` listing, no directories) and `artifacts`; groups by day; 10 rows then **Show more**; thumbnail only for images (by mime or extension) using the raw download URL; "…" menu with Open/Download and Copy name; hover tooltip card with preview, bot avatar and time; skeleton (`library-loading`) and empty text.
@@ -58,7 +58,7 @@ Built:
 - Output DLP in `apps/api/Dlp.cs` (redaction, health/finance phrase blocks) for text.
 - e2e `tests/e2e/library-share.spec.ts` only checks the tab shows "Nothing here yet / Loading / Today / Yesterday".
 
-### Gaps (vs. the screenshot and the research)
+### Gaps identified at that snapshot (not a current backlog)
 1. Grouping is Today / Yesterday / long dates, not Today / This week / Older; it uses the browser's timezone, not the user's saved zone.
 2. Files have **no timestamp** (`createdAt` missing), so every file lands in "Today" and `formatAge` prints "now". Raw `/workspace` listing is not a Library; it shows build logs and junk.
 3. Show more is client-side slicing across groups; one global limit, not per group; the API returns everything.

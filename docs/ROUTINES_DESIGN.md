@@ -1,6 +1,6 @@
 # Routines: how Grok Bot does it, and a design for AI Teammates
 
-Status: design, not built. Sizes are **estimates**. Written 2026-10-23.
+Status: historical design and implementation reference, not a current backlog. The integrated tree has routine scheduling, timezone-aware service code, run/test APIs, and UI history (`apps/api/RoutineService.cs`, `RoutineSchedule.cs`, `RoutineRuns.cs`, `apps/web/components/routines-pane.tsx`, and migrations `db/021`–`db/023`). The gap list and build order below describe the 2026-10-23 snapshot; recheck each item against current code and tests. Sizes are **estimates**.
 
 ## 1. How Grok Bot routines work
 
@@ -36,7 +36,7 @@ Sources: the Cursor-managed `routines` skill and `UpdateRoutine` tool contract t
 
 Takeaways for us: create by chat; cron is the stored form; timezone is explicit; jitter by default; one-shot self-deleting reminders; one catch-up run at most; history with skip reasons; per-user caps; auto-pause of dead routines.
 
-## 3. What AI Teammates has today (read from `src`)
+## 3. What AI Teammates had at the 2026-10-23 snapshot (historical)
 
 Working:
 - `routines` and `routine_runs` tables (db/001_init.sql), `watch_kind/ref/fingerprint` (db/009), `created_by_bot_id`, `origin_depth` (db/015).
@@ -45,7 +45,7 @@ Working:
 - Bot tools `list_routines` and `create_routine` (`ToolSchema.cs`, `BotMessaging.cs`): classified `bot_manage`, which defaults to Ask, so an approval card appears. Limits: 15 minutes minimum, 10 routines per bot, 3 management actions per task, DLP check, idempotency key, audit row, depth limit.
 - UI: `routines-pane.tsx` (create form + list) and a new `routines-section.tsx` with `cronToWords` and a Switch (in progress, uncommitted).
 
-Gaps:
+Gaps identified at that snapshot (not a current backlog):
 1. **Timezone is ignored.** Every `Cron.Next` call passes `TimeZoneInfo.Utc`. `routines.timezone` exists but is never written or read. The user's timezone lives only in browser localStorage (`teammates-timezone`). "8am" therefore fires at 8:00 UTC.
 2. The model must hand-write cron; the tool description gives no timestamp, timezone, jitter or default-window rules. The mock planner always writes `0 * * * *`.
 3. Only create and list exist. No get, update, pause, resume or delete tool, so a user asking "change it to 9" or "stop the reminder" has no path except the panel.
