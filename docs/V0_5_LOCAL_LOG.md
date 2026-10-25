@@ -1,5 +1,7 @@
 # v0.5-local log (2026-10-25)
 
+Historical implementation and validation snapshot for the `v0.5-local` branch and isolated `v05` stack. Its test outcomes, performance figures, screenshots, and follow-ups are scoped to that run, not current integrated-tree status.
+
 Branch `v0.5-local`. Built on the isolated `v05` stack (port 46080) with `LLM_PROVIDER=mock`. No live stack, no real provider.
 
 ## Scope delivered
