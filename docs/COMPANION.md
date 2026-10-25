@@ -1,6 +1,6 @@
-# Companion API (v0.4)
+# Companion devices and command transport
 
-Use your HTTPS Teammates base URL in production. Pair from Settings → Computer → Add a device, then enter the displayed code in the companion app/CLI. Update the companion to the release reported by `GET /api/devices/version`. Current latest and minimum compatible versions are `0.4.0`. This release provides registration and permissions; execution transport is not yet connected to the worker.
+Use your HTTPS Teammates base URL in production. Pair from Settings → Computer → Add a device, then enter the displayed code in the companion app/CLI. Check `GET /api/devices/version` for the server's current latest and minimum compatible versions; do not assume the version is fixed in this guide. The integrated tree includes registration, permissions, and a device WebSocket command transport. The Rust companion implementation is a phase-one CLI/core; its Tauri tray shell is not compiled or release-verified, and this command path is separate from the agent worker's tool-dispatch path. The older Python CLI under `companion/` supports pairing, heartbeat and egress relay, but its `--command` runs locally rather than through the server command transport.
 
 ## Registration
 
@@ -22,7 +22,7 @@ Management returns 403 without an owner session. Pairing, permission updates and
 
 ## Execution contract
 
-`DeviceGate` is registered in API dependency injection. `await gate.CanExecute(deviceId)` returns false for missing/revoked devices, unknown modes, or execution `off`. `ask` means the caller must still obtain an approval; `always` does not bypass PolicyGate, DLP, account/workspace authorization or network isolation. Check ownership before the gate and recheck immediately before dispatch. Route traffic, file access, and browser access require their separate flags. This helper is intentionally not wired to agent dispatch in v0.4.
+`DeviceGate` is registered in API dependency injection. `await gate.CanExecute(deviceId)` returns false for missing/revoked devices, unknown modes, or execution `off`. `ask` means the caller must still obtain an approval; `always` does not bypass PolicyGate, DLP, account/workspace authorization or network isolation. Check ownership before the gate and recheck immediately before dispatch. Route traffic, file access, and browser access require their separate flags. The owner-requested device command endpoints below are a separate path; this is not a general agent tool-dispatch integration. Do not assume worker shell or computer tools execute on the paired companion.
 
 ## v0.5 execution transport
 
