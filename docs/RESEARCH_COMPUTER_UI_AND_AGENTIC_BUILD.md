@@ -128,7 +128,7 @@ Rough effort: items 1 to 5 about 1 day including a visual check; items 6 to 7 ab
 5. **Reply on completion in the original chat**, with a short summary, evidence links and open items, plus a notification if the user left the app (`Platform.Notify`). Failures are reported with the same care as successes.
 
 ### C3. The working-row label pattern
-**Order of what the row shows** (extends `workingStatus()` in `apps/web/components/shimmer-text.tsx`, **[repo]** which today returns "Typing…" while streaming, else the last status/step, else a tool label, else the task title, else "Working…"):
+**Proposed order of what the row should show.** The current helper's order, checked 2026-10-25, is streaming **Typing…**, plan-item label, latest status/step, known tool label, task title, then **Working on it**. The recommendations below are not a description of current behavior; see [`tool-status.ts`](../apps/web/lib/tool-status.ts) and its [unit tests](../apps/web/lib/tool-status.test.mjs).
 1. A reply is streaming: **"Typing…"**.
 2. A live step label exists: show it, for example "Messaging Scout", "Reading the page", "Running tests".
 3. Task started but no step yet: the generic **"Working on it"**, with the bot's animated avatar and the shimmer. Change the fallback so the generic text comes before the task title; show the task title in the panel instead.
