@@ -1,6 +1,6 @@
-# Bot-to-bot messaging, teammate management and chat actions: design v2 (proposal, not built)
+# Bot-to-bot messaging, teammate management and chat actions: design v2
 
-Status: design only. Nothing in this file is implemented. Numbers marked **(est.)** are planning assumptions, not measurements. v2 folds in Saad's decisions and adds three chat features ("Add to chat" quotes, message hover actions, quoted-message rendering).
+Status: historical design and implementation reference. Core bot-to-bot threads, peer tools, approval handling, chat rows, and quoted-message actions are implemented in the integrated tree (`apps/api/BotMessaging.cs`, `apps/web/components/bot-thread.tsx`, `db/015_bot_messaging.sql`, and `tests/integration/test_bot_messaging.py`). This document still contains design detail and estimates; it is not proof that every proposed behavior or test is complete. Recheck individual requirements against current code and tests. v2 folds in Saad's decisions and adds three chat features ("Add to chat" quotes, message hover actions, quoted-message rendering).
 
 ## 0. Saad's decisions (v2) and where they land
 

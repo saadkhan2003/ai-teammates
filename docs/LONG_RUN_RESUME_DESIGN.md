@@ -1,6 +1,6 @@
 # Long-running work: limits, interruptions, auto-resume — findings and a design for AI Teammates
 
-Status: design, not built. Written 2026-10-24 (Asia/Karachi). Day counts are **estimates**, not measurements.
+Status: historical design and implementation reference. The integrated tree includes cumulative budgets, durable resume state, lease recovery, compaction, retry limits, user-visible notices/cards, and chaos coverage; see [`LONG_RUN_RESUME_IMPLEMENTATION.md`](LONG_RUN_RESUME_IMPLEMENTATION.md), `apps/api/ResumeBrief.cs`, `apps/api/Reliability.cs`, `services/agent/worker.py`, and `apps/web/components/resume-card.tsx`. The findings and gap list below are the original design snapshot, not a current implementation checklist. Recheck any remaining design item against source and tests. Day counts are **estimates**, not measurements.
 Tags: **[verified]** = read on a fetched page, in this repo, or in a tool result this session (source named). **[secondary]** = only seen in a search-result summary, page not read. **[inferred]** = reasoned from verified facts. **[guess]** = a number or choice I picked and have not tested.
 Grok Bot does not publish how its runtime limits, kills or resumes work. Everything about *how it does it* is inferred.
 
@@ -65,7 +65,7 @@ Sources: https://x.ai/changelog/bot (Aug 12 – Oct 22, 2026 entries), https://c
 4. **Context is condensed server-side** (summaries and facts survive; docs: "summaries from its work … without replaying every prior message"), with the per-Bot memory layer (see docs/MEMORY_NOTES_DESIGN.md) doing the cross-turn carry.
 5. Our own session evidence: when a background worker is cut off, the supervising agent receives a **failed-task notice** and restarts the worker with a short "where it stopped" note; the worker's earlier commits survive. That matches "durable state in git + manual/agent-driven resume" more than "transparent auto-resume". The hourly cadence we see is consistent with a **session or credential TTL** [inferred; not proven] — see step 0 for the test.
 
-## 3. Gaps in AI Teammates today (read from this repo)
+## 3. Gaps in the original repository snapshot (historical)
 
 What already works [verified in code]:
 - Queue and lease: `tasks` has `lease_owner`, `lease_epoch`, `lease_until`, `attempt`, `checkpoint jsonb` (db/001_init.sql). Lease = 20 s (`Routes.cs` lease query); worker heartbeats every 5 s (`worker.py:_heartbeat`); the sweeper in `Program.cs` requeues expired leases with `waiting_reason='lease_expired'`. Each lease bumps `lease_epoch`; status, transcript and tool calls are checked against the epoch, so a stale worker cannot write.
@@ -155,7 +155,7 @@ Goal: <task instruction, first 1,000 chars>
 Plan (from the plan items): [x] 1 … [x] 2 … [ ] 3 <current> …
 Repo state: branch <b>, last commit <sha> "<subject>", <k> uncommitted files: <names only>.
 Calls with unknown outcome: <tool + args summary>. They may have partly run. Check the result (git status, file contents, command output) before running them again. Do NOT repeat sends, payments or deletes without verifying.
-Next: do a quick check that the workspace still builds/tests (one command), then continue with plan item 3. Do not restart finished items.
+Historical handoff note from the original design pass. Subsequent implementation and validation are recorded in [`LONG_RUN_RESUME_IMPLEMENTATION.md`](LONG_RUN_RESUME_IMPLEMENTATION.md) and [`WT-PROGRESS-resume.md`](WT-PROGRESS-resume.md); use the current checkout and tests to determine any remaining work.
 ```
 The API builds the plan, repo state and unknown calls from the ledger and one `git_status` call, so it works even if the model's context was compacted. This is the Anthropic "get your bearings" sequence, made automatic.
 For non-idempotent tools (`shell`, `write_file`, anything with side effects outside the workspace), an unanswered call is **not** re-executed automatically: it is listed as unknown-outcome in the brief and the model decides after checking. Read-only tools and outbound actions with a stored idempotency claim re-run as today.

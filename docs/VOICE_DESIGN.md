@@ -1,6 +1,6 @@
 # Voice: dictation, live calls and voice replies
 
-Status: design, not built. Written 2026-10-24 (Asia/Karachi). Day counts, prices and latencies below are **estimates** unless a figure is quoted from a page I fetched this session. Provider prices change; re-check before you commit money to one.
+Status: live voice calls and voice replies are design-only and not built. The existing composer shortcut has basic browser dictation through `SpeechRecognition`; it does not implement the call, transcript-card, or voice-reply design below. Written 2026-10-24 (Asia/Karachi). Day counts, prices and latencies below are **estimates** unless a figure is quoted from a page I fetched this session. Provider prices change; re-check before you commit money to one.
 Tags: **[confirmed]** (read on a fetched page or in the repo this session), **[inferred]**, **[guess]**.
 Voice is a non-goal in `docs/V0_5_PLAN.md`; this is a design for after that, or as a v0.6 slice.
 Honesty note: I did not open the reference screenshots stored with this task, so the UX below comes from Grok Bot's written docs and changelog, not from pictures. Visuals should be compared against the screenshots before building.
