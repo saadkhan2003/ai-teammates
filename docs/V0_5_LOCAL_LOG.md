@@ -73,4 +73,5 @@ First-token p95 is over target. DLP buffers until a sentence boundary, so first 
 The earlier 04:01 set is kept in `pre-0401/`.
 
 ## Follow-ups
-- The admin spend card still prints the caps object as raw JSON (`{plans, users, bots}`) under the table. This is admin-only and pre-existing.
+- Resolved on `codex/admin-spend-caps`: the admin spend card now renders plan, owner, and bot caps as a readable table with daily/monthly USD values, action, and downgrade target. IDs remain copyable; unset caps and loading/error states are labeled. The spend table and caps remain admin-only.
+- Validation: admin TypeScript check passed; the new Playwright spec type-checks and is discovered by `playwright --list`. Runtime Playwright/CDP was not run because localhost browser inspection is blocked in this session. Admin production build could not complete because the shared installed dependency tree lacks `@tailwindcss/postcss`; the admin lockfile includes it.
