@@ -234,7 +234,7 @@ def test_websocket_close_grace_force_release_and_tab_transfer_are_wired():
     assert "force_release_reason_required" in force and "desktop.lease.force_release" in force
     assert "DesktopLeaseRepository.ForceReleaseAsync" in force
     assert "transfer=true" in ui
-    assert "Take over here" in ui
+    assert 'data-testid="take-control"' in ui and "takeControl()" in ui  # cloud UI label is "Take control"
     assert 'data-testid="force-release"' in ui
 
 

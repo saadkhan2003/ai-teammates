@@ -190,7 +190,11 @@ export function Workspace({ botId }: { botId: string }) {
       setPane(true);
       setSettingsOpen(false);
       setDesktopFull(false);
-      setDetailTab(detail.tab);
+      const libraryTabs = ["files", "memory", "skills", "tasks", "plugins", "routines"];
+      if (libraryTabs.includes(detail.tab)) {
+        setDetailTab("library");
+        setLibrarySection(detail.tab);
+      } else setDetailTab(detail.tab === "overview" ? "details" : detail.tab);
       if (detail.section) setLibrarySection(detail.section);
     };
     window.addEventListener("teammates-app-link", onLink);
@@ -325,6 +329,10 @@ export function Workspace({ botId }: { botId: string }) {
         if (tab === "files") extra.push("files");
         if (tab === "memory") extra.push("memories");
         if (tab === "skills") extra.push("skills");
+        const section = libraryRef.current;
+        if (tab === "library" && section === "files") extra.push("files");
+        if (tab === "library" && section === "memory") extra.push("memories");
+        if (tab === "library" && section === "skills") extra.push("skills");
         void loadAux(extra);
       }
     });
@@ -355,7 +363,7 @@ export function Workspace({ botId }: { botId: string }) {
       if (event.key === "Escape") {
         // A dialog, popover or menu already handled this Escape (Radix calls preventDefault when it dismisses);
         // closing that layer must not also close the info pane behind it.
-        if (event.defaultPrevented || document.querySelector("[role='dialog'][data-state='open'], [role='alertdialog'][data-state='open']")) return;
+        if (event.defaultPrevented || document.querySelector("[role='dialog'][data-state='open'], [role='alertdialog'][data-state='open'], [role='menu']")) return;
         const target = event.target as HTMLElement | null;
         const inPane = !!target?.closest?.("[data-testid='info-pane']");
         const onPill = !!target?.closest?.("[data-testid='bot-name-button']");
@@ -391,7 +399,7 @@ export function Workspace({ botId }: { botId: string }) {
   const teach = useTeachTask({
     botId,
     conversationId: workspace?.conversationId,
-    onBegin: () => { setDesktopFull(true); setAutoControlKey(value => value + 1); },
+    onBegin: () => { setPane(true); setDetailTab("computer"); setDesktopFull(true); setAutoControlKey(value => value + 1); },
     onEnd: () => setHandBackKey(value => value + 1),
     onSent: () => void loadWorkspace(),
   });
@@ -472,24 +480,23 @@ export function Workspace({ botId }: { botId: string }) {
     });
   }
 
-  const computerExpanded = desktopFull;
 
   return (
-    <div className="flex h-full min-h-0">
+    <div className="flex h-full min-h-0 [&_button]:rounded-control">
       {teach.startedAt ? <RecordingBanner botName={bot?.name || "Teammate"} shape={bot?.avatarShape} color={bot?.avatarColor} startedAt={teach.startedAt} onCancel={() => void teach.cancel()} /> : null}
-      <section className="motion-fade relative flex min-w-0 flex-1 flex-col">
-        <div aria-hidden data-testid="chat-top-fade" className="pointer-events-none absolute inset-x-0 top-0 z-10 h-16 bg-gradient-to-b from-background/85 via-background/50 to-transparent" />
-        <header data-testid="chat-pill-bar" className="pointer-events-none absolute inset-x-0 top-0 z-20 flex h-12 items-center justify-center px-3 pt-2">
+      <section className="relative flex min-w-0 flex-1 flex-col">
+        <div aria-hidden data-testid="chat-top-fade" data-radius-allow="fade" className="pointer-events-none absolute inset-x-0 top-0 z-10 h-16 bg-gradient-to-b from-background to-transparent" />
+        <header data-testid="chat-pill-bar" className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center px-3">
           <button
             type="button"
             data-testid="bot-name-button"
             aria-expanded={pane}
             aria-controls="info-pane"
             aria-label={`${bot?.name || "Teammate"} details`}
-            className="pointer-events-auto inline-flex max-w-[70%] items-center gap-2 rounded-full border border-white/5 bg-black/75 px-3.5 py-1.5 text-sm font-medium shadow-md backdrop-blur transition-colors hover:border-border hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="pointer-events-auto inline-flex h-9 max-w-[70%] items-center gap-2 rounded-full border border-border bg-card pl-1.5 pr-3 text-ui font-medium text-card-foreground shadow-[var(--shadow-pill)] transition-[box-shadow] duration-200 hover:shadow-[var(--shadow-pill-hover)]"
             onClick={() => togglePane()}
           >
-            <BotAvatar animated botId={bot?.id} shape={bot?.avatarShape} color={bot?.avatarColor} size={20} primary={bot?.isPrimary} />
+            <BotAvatar animated botId={bot?.id || botId} shape={avatarShape} color={avatarColor} size={24} primary={bot?.isPrimary} />
             <span className="truncate">{bot?.name || "Teammate"}</span>
           </button>
           {bot?.status ? (
@@ -534,7 +541,7 @@ export function Workspace({ botId }: { botId: string }) {
           extras={
             <>
               {(llmConnected ?? workspace.aiConnected) === false ? (
-                <p data-testid="llm-key-banner" className="rounded-md border border-border bg-card px-3 py-2 text-sm">
+                <p data-testid="llm-key-banner" className="rounded-md border border-border bg-card px-3 py-2 text-body-sm">
                   <Link href="/settings/secrets" className="font-medium text-brand">
                     Contact your administrator to connect AI
                   </Link>
@@ -594,26 +601,28 @@ export function Workspace({ botId }: { botId: string }) {
         />
         <JobDetailDialog job={openJob} accent={accent} onClose={() => setOpenJob(null)} />
       </section>
-      <div className={cn("contents md:block md:shrink-0 md:overflow-hidden", pane ? "md:w-[min(380px,42vw)]" : "md:w-0")}>
+      <div className={cn("contents md:block md:shrink-0 md:overflow-hidden", pane ? "md:w-[320px] md:max-w-[42vw]" : "md:w-0")}>
       {paneMounted ? (
         <aside
           id="info-pane"
           data-testid="info-pane"
-          data-view="details"
+          data-view={detailTab}
+          data-radius-allow="pane"
+          data-divider="panel"
+          style={{ ["--bot-accent" as string]: accent }}
           data-state={pane ? "open" : "closed"}
           aria-hidden={pane ? undefined : true}
-          className={cn("fixed inset-0 z-30 flex w-full min-w-0 flex-col border-border bg-background pt-[env(safe-area-inset-top)] transition-opacity duration-200 motion-reduce:transition-none md:static md:z-0 md:w-[min(380px,42vw)] md:border-l md:pt-0", !pane && "pointer-events-none opacity-0 max-md:hidden")}
+          className={cn("fixed inset-0 z-30 flex w-full min-w-0 flex-col border-border bg-sidebar text-sidebar-foreground pt-[env(safe-area-inset-top)] transition-opacity duration-200 motion-reduce:transition-none md:static md:z-0 md:w-[320px] md:max-w-[42vw] md:border-l md:pt-0", !pane && "pointer-events-none opacity-0 max-md:hidden")}
         >
           <RefreshNotice variant="panel" />
-          <div className="flex h-11 items-center gap-1 border-b border-border px-2">
-            <p className="min-w-0 flex-1 truncate px-1 text-sm font-medium">{bot?.name}</p>
+          <div className="flex h-11 items-center justify-end gap-1 px-2">
             <ShareMenu botId={botId} onCreated={() => window.dispatchEvent(new Event("teammates-bots-changed"))} />
             <Button
               type="button"
               data-testid="bot-settings-gear"
               variant="ghost"
               size="icon"
-              className="h-8 w-8"
+              className="size-8 rounded-md"
               aria-label="Teammate settings"
               onClick={() => setSettingsOpen(true)}
             >
@@ -665,43 +674,24 @@ export function Workspace({ botId }: { botId: string }) {
               onSaved={() => void loadWorkspace()}
             />
           ) : (
-            <div className={cn("min-h-0 flex-1 overflow-y-auto", desktopFull && "overflow-visible")}>
-              <div className="flex flex-col items-center gap-1 border-b border-border px-3 py-3" data-testid="panel-identity"><div data-testid="info-identity"><p data-testid="info-bot-name">{bot?.name}</p><p data-testid="info-bot-title">{bot?.role}</p>
-                <BotAvatar animated botId={bot?.id} shape={bot?.avatarShape} color={bot?.avatarColor} size={72} primary={bot?.isPrimary} /></div>
-                <BioField botId={botId} bio={bot?.bio ?? ""} onSaved={() => void loadWorkspace()} />
+            <div className={cn("min-h-0 w-full min-w-0 flex-1 overflow-y-auto", desktopFull && "overflow-visible")}>
+              <div data-testid="panel-identity">
+                <div data-testid="info-identity" className="flex flex-col items-center px-3 pb-3 text-center">
+                  <BotAvatar animated botId={bot?.id || botId} shape={avatarShape} color={avatarColor} size={64} primary={bot?.isPrimary} />
+                  <p data-testid="info-bot-name" className="type-title mt-2">{bot?.name || "Teammate"}</p>
+                  <p data-testid="info-bot-title" className="type-caption max-w-full truncate px-2">{bot?.role || "No title yet."}</p>
+                  <BioField botId={botId} bio={bot?.bio ?? ""} onSaved={() => void loadWorkspace()} />
+                </div>
               </div>
-              <div className={cn("border-b border-border", !computerExpanded && "p-3", computerExpanded && "flex min-h-[max(480px,70dvh)] flex-col")}>
-                <ComputerPane
-                  botId={botId}
-                  tasks={workspace.tasks ?? []}
-                  pages={workspace.pages ?? []}
-                  holder={workspace.holder}
-                  compact={!computerExpanded}
-                  caption={bot?.name || "Teammate"}
-                  avatar={<BotAvatar animated botId={bot?.id} shape={bot?.avatarShape} color={bot?.avatarColor} size={36} primary={bot?.isPrimary} />}
-                  fullscreen={desktopFull}
-                  recording={teach.recording}
-                  autoControlKey={autoControlKey}
-                  handBackKey={handBackKey}
-                  onHandedBack={() => void teach.finish()}
-                  onExpand={() => setDesktopFull(true)}
-                  onExitFullscreen={() => setDesktopFull(false)}
-                  onChanged={() => void loadWorkspace()}
-                />
-              </div>
-              <RoutinesSection
-                routines={routines.items}
-                loaded={routines.loaded}
-                error={routines.error}
-                onRetry={() => void loadAux(["routines"])}
-                onChanged={() => void loadAux(["routines"])}
-                onEdit={(text) => setRoutineEditRequest((current) => ({ key: (current?.key ?? 0) + 1, text }))}
-              />
-              <CodingSection botId={botId} />
-              <LearnedSection key={botId} botId={botId} onOpenMessage={() => { if (!window.matchMedia("(min-width: 768px)").matches) setPane(false); }} />
-              <Tabs value={detailTab} onValueChange={setDetailTab} className="flex flex-col">
-                <TabsList aria-label="Bot details" className="mx-1 h-auto w-auto justify-start gap-0 overflow-x-auto rounded-none bg-transparent p-0">
-                  {([["overview", "Overview"], ["files", "Files/Media"], ["skills", "Skills"], ["memory", "Memory"], ["tasks", "Tasks"], ["plugins", "Plugins"]] as const).filter(([value]) => detailTab !== "library" || value === "overview" || value === "files").map(([value, label]) => <TabsTrigger key={value} value={value}>{label}</TabsTrigger>)}
+              <Tabs
+                value={detailTab}
+                onValueChange={(value) => {
+                  setDetailTab(value);
+                  if (value !== "computer") setDesktopFull(false);
+                }}
+                className="flex w-full min-w-0 flex-col"
+              >
+                <TabsList aria-label="Bot details" className="mx-4 grid h-[34px] w-[calc(100%-2rem)] grid-cols-3 items-center gap-0.5 self-center rounded-md bg-[var(--track)] p-[3px]">
                   {INFO_TABS.map(([value, label]) => (
                     <TabsTrigger key={value} value={value} className="info-tab h-7 min-h-0 w-full min-w-0 justify-center overflow-hidden rounded-full border border-transparent px-3 text-ui font-medium leading-none text-muted-foreground shadow-none transition-[background-color,box-shadow,color] duration-200 data-[state=active]:border-border data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-[0_1px_2px_rgba(0,0,0,0.16)]">
                       {label}
@@ -733,6 +723,8 @@ export function Workspace({ botId }: { botId: string }) {
                       <PanelEmpty icon={Info} title="No description yet" detail="Add a short description in teammate settings." />
                     )}
                   </PanelSection>
+                  <CodingSection botId={botId} />
+                  <LearnedSection key={botId} botId={botId} onOpenMessage={() => { if (!window.matchMedia("(min-width: 768px)").matches) setPane(false); }} />
                   <PanelSection title="Connect apps" testId="connect-apps">
                     {connectedApps.length === 0 ? (
                       <PanelEmpty
@@ -829,7 +821,29 @@ export function Workspace({ botId }: { botId: string }) {
                     </TabsContent>
                   </Tabs>
                 </TabsContent>
-                <TabsContent value="computer"><Button data-testid="teach-start" disabled={teach.busy || teach.recording} onClick={() => void teach.start()}>Teach a task</Button></TabsContent>
+                <TabsContent value="computer" forceMount className={cn("px-4 pb-6", !desktopFull && "data-[state=inactive]:hidden")}>
+                  <Button data-testid="teach-start" className="mb-3" disabled={teach.busy || teach.recording} onClick={() => void teach.start()}>Teach a task</Button>
+                <ComputerPane
+                  botId={botId}
+                  tasks={workspace.tasks ?? []}
+                  pages={workspace.pages ?? []}
+                  holder={workspace.holder}
+                  compact={!desktopFull}
+                  caption={bot?.name || "Teammate"}
+                  avatar={<BotAvatar animated botId={bot?.id} shape={bot?.avatarShape} color={bot?.avatarColor} size={36} primary={bot?.isPrimary} />}
+                  avatarShape={avatarShape}
+                  avatarColor={avatarColor}
+                  displays={(workspace as WorkspaceData & { displays?: number }).displays ?? 1}
+                  fullscreen={desktopFull}
+                  recording={teach.recording}
+                  autoControlKey={autoControlKey}
+                  handBackKey={handBackKey}
+                  onHandedBack={() => void teach.finish()}
+                  onExpand={() => setDesktopFull(true)}
+                  onExitFullscreen={() => setDesktopFull(false)}
+                  onChanged={() => void loadWorkspace()}
+                />
+                </TabsContent>
                   <TabsContent value="files">
                     <div className="flex flex-col gap-6">
                       <FilesPane botId={botId} onChanged={() => void loadAux(["files"])} />

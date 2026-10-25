@@ -12,7 +12,7 @@ import { mergeOptimistic } from "@/lib/chat-speed";
 import { flushSync } from "react-dom";
 import { useComputerPrewarm } from "@/lib/use-computer-prewarm";
 import { beginSendPerf, endSendPerf, paintedPerf, chatPaintedPerf, initPerf } from "@/lib/perf";
-import { FormEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { FormEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Markdown } from "@/components/markdown";
 import { RefreshNotice } from "@/components/refresh-notice";
 import { ResumeCard, ResumeNotice } from "@/components/resume-card";
@@ -25,9 +25,14 @@ import { BotAvatar } from "@/components/bot-avatar";
 import { BotActionRow, BotThreadRow } from "@/components/bot-thread";
 import { parseBotRow, type BotThreadView } from "@/lib/bot-thread";
 import { MessageBody, MessageItem, plainTextOf } from "@/components/message-item";
-import { ShimmerText, workingStatus } from "@/components/shimmer-text";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { type ComposerPart, flatten, addQuote, canSend, hasBlocks, hasFiles, initialParts, normalizeSelection, pillPosition, removePart, setReply, toPayload } from "@/lib/chat-parts";
+import { workingStatus } from "@/components/shimmer-text";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { type ComposerPart, flatten, addQuote, canSend, hasBlocks, hasFiles, initialParts, normalizeSelection, pillPosition, removePart, setReply as setReplyPart, toPayload } from "@/lib/chat-parts";
 import { setAvatarMode } from "@/lib/avatar-motion";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -117,7 +122,7 @@ export function ChatPane({
   type Pending = ChatMessage & { conversation: string; payload: Record<string, unknown> };
   const [pending, setPending] = useState<Pending[]>([]);
   const visiblePending = pending.filter(m => m.conversation === conversationId);
-  const messages = mergeOptimistic(storedMessages, visiblePending);
+  const messages = useMemo(() => mergeOptimistic(storedMessages, pending.filter(message => message.conversation === conversationId)), [storedMessages, pending, conversationId]);
   useEffect(() => {
     setPending(current => current.filter(m => m.conversation !== conversationId || !storedMessages.some(real => real.id === m.id || real.clientId === m.clientId)));
   }, [storedMessages, conversationId]);
@@ -132,9 +137,9 @@ export function ChatPane({
       onSent();
     } catch (caught) {
       setPending(current => current.map(m => m.id === item.id ? { ...m, sendState: "failed" } : m));
-      const detail = errorMessage(caught, "Could not send that message.");
+      const message = errorMessage(caught, "Could not send that message.");
       setDlp(caught instanceof ApiError && caught.status === 422);
-      setError(detail);
+      setError(message);
     } finally { setSending(false); }
   }
   const prewarmComputer = useComputerPrewarm(botId);
@@ -163,13 +168,40 @@ export function ChatPane({
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   useEffect(() => { setAvatarMode(working ? "working" : "idle"); return () => setAvatarMode("idle"); }, [working]);
-  const previousIds = useRef(new Set(storedMessages.map(m => m.id)));
+  const seenRef = useRef<Set<string> | null>(null);
+  const seenConversation = useRef(conversationId);
+  const historyStart = useRef(storedMessages[0]?.createdAt);
+  const freshCount = useRef(0);
   useEffect(() => {
-    const added = storedMessages.filter(m => !previousIds.current.has(m.id)).length;
-    previousIds.current = new Set(storedMessages.map(m => m.id));
-    if (stickRef.current) { setFresh(0); setDismissedFresh(false); }
-    else if (added) { setFresh(n => n + added); setDismissedFresh(false); }
-  }, [storedMessages]);
+    const ids = messages.map((message) => message.id);
+    if (seenConversation.current !== conversationId) seenRef.current = null;
+    if (seenRef.current === null) {
+      seenRef.current = new Set(ids);
+      seenConversation.current = conversationId;
+      historyStart.current = storedMessages[0]?.createdAt;
+      freshCount.current = 0;
+      setFresh(0);
+      setDismissedFresh(false);
+      return;
+    }
+    // Prepended history is already read; only arrivals after the initial history count as fresh.
+    for (const message of storedMessages) {
+      if (historyStart.current && message.createdAt && message.createdAt < historyStart.current) seenRef.current.add(message.id);
+    }
+    if (stickRef.current) {
+      seenRef.current = new Set(ids);
+      freshCount.current = 0;
+      setDismissedFresh(false);
+      setFresh(0);
+      return;
+    }
+    const count = ids.filter((id) => !seenRef.current?.has(id)).length;
+    setFresh(count);
+    if (count > 0) {
+      if (count > freshCount.current) setDismissedFresh(false);
+    }
+    freshCount.current = count;
+  }, [messages, storedMessages, conversationId]);
   const [scrolledUp, setScrolledUp] = useState(false);
   const [fresh, setFresh] = useState(0);
   const [dismissedFresh, setDismissedFresh] = useState(false);
@@ -205,7 +237,12 @@ export function ChatPane({
   const [dlp, setDlp] = useState(false);
   const [userName, setUserName] = useState("You");
   const [customEmoji, setCustomEmoji] = useState("");
-  function togglePicker(id: string, anchor: HTMLButtonElement) { const side = pickerSide(window.innerHeight - anchor.getBoundingClientRect().bottom); setPicker(current => current?.id === id ? null : { id, side, full: false }); }
+  function togglePicker(messageId: string, anchor: HTMLButtonElement) {
+    const rect = anchor.getBoundingClientRect();
+    const bounds = scrollRef.current?.getBoundingClientRect();
+    const side = pickerSide((bounds?.bottom ?? window.innerHeight) - rect.bottom);
+    setPicker((current) => (current?.id === messageId ? null : { id: messageId, side, full: false }));
+  }
   const [uploads, setUploads] = useState<PendingUpload[]>([]);
   const [picker, setPicker] = useState<{ id: string; side: "above" | "below"; full: boolean } | null>(null);
 
@@ -315,7 +352,12 @@ export function ChatPane({
   }, [storedMessages, messages.length, events, working]);
   const lastTextId = parts[parts.length - 1]?.id;
   useEffect(() => {
-    for (const node of partRefs.current.values()) { node.style.height = "auto"; node.style.height = `${Math.min(node.scrollHeight, 180)}px`; }
+    for (const node of partRefs.current.values()) {
+      if (node) {
+        node.style.height = "auto";
+        node.style.height = `${Math.min(node.scrollHeight, 180)}px`;
+      }
+    }
   }, [parts]);
 
   // keep a draft per conversation in memory
@@ -339,7 +381,7 @@ export function ChatPane({
     }
   }
   const initial = userName.trim().charAt(0).toUpperCase() || "Y";
-  const byId = new Map(messages.map(m => [m.id, m]));
+  const byId = new Map(messages.map((message) => [message.id, message]));
   // Messages that arrive after the first paint of this conversation slide in; the history does not.
   const seen = useRef<{ key?: string; ids: Set<string> } | null>(null);
   if (!seen.current || seen.current.key !== botId) seen.current = { key: botId, ids: new Set(messages.map(m => m.id)) };
@@ -370,9 +412,28 @@ export function ChatPane({
   function startReply(message: ChatMessage) {
     const text = plainTextOf(message).replace(/\s+/g, " ").trim();
     const image = messageBlocks(message.content).find((block): block is Extract<MessageBlock, { kind: "image" }> => block.kind === "image");
-    setParts(current => setReply(current, { messageId: message.id, author: message.role === "user" ? "You" : botName, excerpt: text.slice(0, 200), ...(image ? { image: { src: image.url, alt: image.name } } : {}) }));
+    setParts(current => setReplyPart(current, { messageId: message.id, author: message.role === "user" ? "You" : botName, excerpt: text.slice(0, 200), ...(image ? { image: { src: image.url, alt: image.name } } : {}) }));
     announce("Reply added");
     focusComposer();
+  }
+  const replyPart = parts.find(part => part.type === "reply");
+  const reply = replyPart?.type === "reply" ? byId.get(replyPart.messageId) ?? { id: replyPart.messageId, content: replyPart.excerpt } : null;
+  function setReply(message: ChatMessage | null) {
+    if (message) startReply(message);
+    else setParts(current => current.filter(part => part.type !== "reply"));
+  }
+  function jump() {
+    stickRef.current = true;
+    freshCount.current = 0;
+    setDismissedFresh(false);
+    setFresh(0);
+    setScrolledUp(false);
+    seenRef.current = new Set(messages.map((message) => message.id));
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "instant" });
+    else scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }
+  function focusMessage(id: string) {
+    void jumpTo(id);
   }
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
@@ -386,6 +447,10 @@ export function ChatPane({
     highlightTimers.current.forEach(window.clearTimeout);
     highlightTimers.current = [];
     document.querySelectorAll("[data-jump]").forEach(el => el.removeAttribute("data-jump"));
+    document.querySelectorAll("[data-highlight]").forEach(el => el.removeAttribute("data-highlight"));
+    const cloudTarget = document.getElementById(node.id.replace(/^msg-/, "message-")) ?? node;
+    cloudTarget.setAttribute("data-highlight", "true");
+    highlightTimers.current.push(window.setTimeout(() => cloudTarget.removeAttribute("data-highlight"), QUOTE_HIGHLIGHT_MS));
     node.scrollIntoView({ block: "center", behavior: reduced ? "auto" : "smooth" });
     for (const step of highlightPlan(reduced)) {
       const apply = () => { if (step.phase === "off") node.removeAttribute("data-jump"); else node.setAttribute("data-jump", step.phase); };
@@ -514,32 +579,55 @@ export function ChatPane({
     setError(null);
     try {
       await api(`/api/messages/${messageId}/reactions`, { method: "POST", body: JSON.stringify({ emoji: glyph }) });
+      setPicker(null);
       onSent();
     } catch (caught) {
       setError(errorMessage(caught, "Could not update that reaction."));
     }
   }
 
-  async function attach(list: FileList | null) {
-    if (!list || !botId) return;
-    for (const file of Array.from(list)) {
-      const target = `/workspace/uploads/${Date.now()}-${file.name.replace(/[^\w.\- ]+/g, "_")}`;
-      const upload = { id: crypto.randomUUID(), name: file.name, mime: file.type, path: target, preview: URL.createObjectURL(file), status: "uploading" as const };
-      setUploads(current => [...current, upload]);
+  async function addFiles(list: FileList | null) {
+    if (!list?.length) return;
+    if (!botId) {
+      setError("This teammate cannot take files yet.");
+      return;
+    }
+    const files = [...list];
+    for (const file of files) {
+      const id = crypto.randomUUID();
+      const path = `/workspace/uploads/${Date.now()}-${file.name.replace(/[^\w.\- ]+/g, "_")}`;
+      const preview = URL.createObjectURL(file);
+      setUploads((current) => [...current, { id, name: file.name, mime: file.type, path, preview, status: "uploading" }]);
       try {
-        const response = await apiFetch(`/api/bots/${botId}/files`, { method: "PUT", headers: { "x-path": target, "Content-Type": "application/octet-stream" }, body: file });
+        const response = await apiFetch(`/api/bots/${botId}/files`, {
+          method: "PUT",
+          headers: { "x-path": path, "Content-Type": "application/octet-stream" },
+          body: file,
+        });
         if (!response.ok) throw new ApiError(response.status, `Upload failed (${response.status}).`);
-        setParts(current => current.map((p, i) => i === current.length - 1 && p.type === "text" ? { ...p, text: `${p.text}${p.text && !p.text.endsWith("\n") ? "\n" : ""}[attached: ${target}]` } : p));
-        setUploads(current => current.map(item => item.id === upload.id ? { ...item, status: "done" } : item));
+        setParts(current => current.map((p, i) => i === current.length - 1 && p.type === "text" ? { ...p, text: `${p.text}${p.text && !p.text.endsWith("\n") ? "\n" : ""}[attached: ${path}]` } : p));
+        setUploads((current) => current.map((item) => (item.id === id ? { ...item, status: "done" } : item)));
         announce(`Attached ${file.name}`);
-      } catch (caught) { setUploads(current => current.map(item => item.id === upload.id ? { ...item, status: "error" } : item)); setError(errorMessage(caught, "Could not attach that file.")); }
+      } catch (caught) {
+        setUploads((current) => current.map((item) => (item.id === id ? { ...item, status: "error" } : item)));
+        setError(errorMessage(caught, "Could not upload that file."));
+      }
     }
     if (fileRef.current) fileRef.current.value = "";
     focusComposer();
   }
 
-  async function send(asTask: boolean) {
-    if (sending || uploads.some(item => item.status === "uploading")) return;
+  function attachmentMarkdown(item: PendingUpload) {
+    const url = `/api/bots/${botId}/files/raw?path=${encodeURIComponent(item.path)}`;
+    if (item.mime.startsWith("image/")) return `![${item.name}](${url})`;
+    if (item.mime.startsWith("video/")) return `\`\`\`video\n${JSON.stringify({ name: item.name, url })}\n\`\`\``;
+    return `[${item.name}](${url})`;
+  }
+
+  async function send(asTask = false) {
+    const ready = uploads.filter((item) => item.status === "done");
+    const pending = uploads.some((item) => item.status === "uploading");
+    if (sending || pending) return;
     if (!canSend(parts)) {
       setError("Write a message first.");
       return;
@@ -555,11 +643,17 @@ export function ChatPane({
     setDlp(false);
     const rich = hasBlocks(parts);
     const text = parts.filter(p => p.type === "text").map(p => (p as { text: string }).text).join("\n").trim();
+    const attached = ready.map(attachmentMarkdown).join("\n");
+    const bodyText = [text, attached].filter(Boolean).join("\n\n");
     const clientId = crypto.randomUUID();
-    const payload = { ...(rich ? { parts: toPayload(parts), asTask } : { content: text, asTask }), client_id: clientId };
-    const item: Pending = { id: clientId, clientId, conversation: conversationId, role: "user", content: flatten(parts), createdAt: new Date().toISOString(), sendState: "pending", payload };
+    const payload = { ...(rich ? { parts: [...toPayload(parts), ...(attached ? [{ type: "text", text: attached }] : [])], asTask } : { content: bodyText, asTask }), client_id: clientId };
+    const item: Pending = { id: clientId, clientId, conversation: conversationId, role: "user", content: [flatten(parts), attached].filter(Boolean).join("\n\n"), createdAt: new Date().toISOString(), sendState: "pending", payload };
     // Commit before awaiting IO, so the echo is present for this submit frame.
-    flushSync(() => { setPending(current => [...current, item]); setParts(initialParts()); setUploads([]); });
+    flushSync(() => { setPending(current => [...current, item]); setParts(initialParts());
+      setUploads((current) => {
+        current.forEach((item) => URL.revokeObjectURL(item.preview));
+        return [];
+      }); });
     draftsRef.current.delete(conversationId);
     await deliver(item);
   }
@@ -581,12 +675,12 @@ export function ChatPane({
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void send(false);
+    void send();
   }
 
   const content = flatten(parts);
   const composerRef = { current: Array.from(partRefs.current.values()).pop() ?? null };
-  const typing = content.trim().length > 0;
+  const typing = canSend(parts);
   const [composerLines, setComposerLines] = useState(1);
 
   useEffect(() => {
@@ -599,27 +693,94 @@ export function ChatPane({
     const fromBreaks = content.split("\n").length;
     setComposerLines(Math.max(fromBreaks, Math.round(next / line)));
   }, [content]);
+  function renderComposerPart(part: ComposerPart, index: number) {
+    if (part.type === "reply") return null;
+    if (part.type === "quote") {
+      return (
+        <blockquote key={part.id} data-testid="composer-quote" className="mb-1 flex items-start gap-2 border-l-2 border-bot-border bg-bot-soft px-2 py-1 text-[13px] text-muted-foreground">
+          <span className="sr-only">Quoted text</span>
+          <span className="min-w-0 flex-1">
+            <span className="line-clamp-4 whitespace-pre-wrap">{part.text}</span>
+          </span>
+          <button type="button" aria-label="Remove quote" data-testid="remove-quote" className="grid h-6 w-6 shrink-0 place-items-center rounded-md hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" onClick={() => { setParts(current => removePart(current, part.id)); focusComposer(); }}><XIcon className="h-3.5 w-3.5" /></button>
+        </blockquote>
+      );
+    }
+    const last = index === parts.length - 1;
+    return (
+      <Textarea
+        key={part.id}
+        ref={node => { if (node) partRefs.current.set(part.id, node); else partRefs.current.delete(part.id); }}
+        aria-label={last ? `Message ${botName}` : "Comment"}
+        data-testid={last ? "composer" : "composer-segment"}
+        value={part.text}
+        onFocus={prewarmComputer}
+        onInput={prewarmComputer}
+        onChange={(event) => { const value = event.target.value; setParts(current => current.map(p => p.id === part.id ? { ...p, text: value } as ComposerPart : p)); }}
+        placeholder={last && parts.length === 1 ? `Message ${botName}` : last ? "Add a comment" : ""}
+        rows={1}
+        className="max-h-[180px] min-h-5 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-0 text-ui text-foreground shadow-none outline-none placeholder:text-[var(--composer-placeholder)] focus-visible:outline-none focus-visible:ring-0"
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            setError(null);
+            composerRef.current?.blur();
+          }
+          if (event.key === "Backspace" && part.text === "" && index > 0 && parts[index - 1].type !== "text") {
+            event.preventDefault();
+            const above = parts[index - 1];
+            setParts(current => removePart(current, above.id));
+            focusComposer();
+          }
+          if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && last) {
+            event.preventDefault();
+            void send();
+          }
+        }}
+      />
+    );
+  }
   let showedJobs = false;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div ref={scrollRef} data-testid="chat-scroll" className="chat-scroll min-h-0 flex-1 overflow-y-auto pt-12" style={{ overflowAnchor: "none" }} tabIndex={0} aria-label="Conversation history" onScroll={() => {
-        const node = scrollRef.current;
-        if (!node) return;
-        // Only an upward scroll away from the bottom unsticks. Row measurement in the
-        // virtual list can move scrollTop while content grows; that must not drop follow.
-        const near = nearChatBottom(node.scrollTop, node.scrollHeight, node.clientHeight);
-        if (near) stickRef.current = true;
-        else if (node.scrollTop < lastScrollTop.current - 1) stickRef.current = false;
-        lastScrollTop.current = node.scrollTop;
-        setScrolledUp(!stickRef.current);
+    <div className="relative flex min-h-0 flex-1 flex-col" style={{ ["--bot-accent" as string]: paint }}>
+      <div
+        ref={scrollRef}
+        data-testid="chat-scroll"
+        className="chat-scroll relative z-0 min-h-0 flex-1 overflow-y-auto pt-12"
+        style={{ overflowAnchor: "none" }}
+        tabIndex={0}
+        aria-label="Conversation history"
+        onScroll={() => {
+          const node = scrollRef.current;
+          if (!node) return;
+          // Only an upward scroll away from the bottom unsticks. Row measurement in the
+          // virtual list can move scrollTop while content grows; that must not drop follow.
+          const near = nearChatBottom(node.scrollTop, node.scrollHeight, node.clientHeight);
+          if (near) stickRef.current = true;
+          else if (node.scrollTop < lastScrollTop.current - 1) stickRef.current = false;
+          lastScrollTop.current = node.scrollTop;
+          setScrolledUp(!stickRef.current);
+          if (stickRef.current) {
+            seenRef.current = new Set(messages.map((message) => message.id));
+            freshCount.current = 0;
+            setDismissedFresh(false);
+            setFresh(0);
+          }
       }}>
-        <div ref={listRef} role="log" aria-label="Messages" aria-live="off" className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 py-4">
+        <div ref={listRef} role="log" aria-label="Messages" aria-live="off" className="mx-auto flex w-full max-w-[var(--content-width)] flex-col gap-1.5 px-4 py-4">
           {visiblePending.filter(m => m.sendState === "failed").map(m => <div key={`retry-${m.id}`} role="status" className="text-sm text-destructive">Message failed. <Button size="sm" variant="outline" data-testid="retry-send" onClick={() => void deliver(m)}>Retry</Button></div>)}
           {events.some(event => event.type === "task.started" && !storedMessages.some(m => m.role === "assistant" && m.requestId === event.taskId)) ? <div data-testid="ack-chip" role="status" className="text-sm text-muted-foreground">On it</div> : null}
           {hasOlder ? <Button type="button" data-testid="load-older" variant="ghost" size="sm" className="mx-auto" disabled={loadingOlder} onClick={() => void loadEarlier()}>{loadingOlder ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : null}Load earlier messages</Button> : null}
           {extras}
-          {messages.length === 0 ? <div data-testid="chat-empty" className="py-12 text-center"><p className="font-medium">Start a conversation with {botName}</p><p className="mt-2 text-sm text-muted-foreground">Ask a question, share an idea, or assign some work.</p></div> : null}
+          {messages.length === 0 ? (
+            <div data-testid="chat-empty" className="mx-auto flex max-w-sm flex-col items-center px-4 py-16 text-center">
+              <span className="grid size-10 place-items-center rounded-card bg-muted text-muted-foreground">
+                <MessageCircle className="size-5" strokeWidth={1.5} aria-hidden />
+              </span>
+              <p className="type-title mt-3">Start a conversation with {botName}</p>
+              <p className="type-caption mt-1">Ask a question, share an idea, or hand over some work.</p>
+            </div>
+          ) : null}
           <ChatMessageList key={conversationId} ref={messageListRef} messages={messages} scrollRef={scrollRef} renderMessage={(message) => {
             const blocks = messageBlocks(message.content);
             const jobBlock = blocks.some((block) => block.kind === "coding-jobs");
@@ -636,17 +797,17 @@ export function ChatPane({
             const only = blocks.length === 1 ? blocks[0] : null;
             if (only?.kind === "memory") {
               return (
-                <article key={message.id} data-testid="message-item" data-role={message.role} className="group mr-auto w-full max-w-md">
+                <article key={message.id} id={`message-${message.id}`} data-testid="message-item" data-role={message.role} className="group mr-auto w-full max-w-md">
                   <MemoryNotice botId={botId} action={only.action} text={only.text} memoryId={only.memoryId} memoryKind={only.memoryKind} previous={only.previous} reason={only.reason} onEdit={onEditMemory} onChanged={onMemoryChanged} />
                   <time className="mt-1 block px-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{formatWhen(message.createdAt)}</time>
                 </article>
               );
             }
             if (only?.kind === "resume" || only?.kind === "compacted") {
-              return <article key={message.id} data-testid="message-item" data-role={message.role} className="group mr-auto w-full max-w-md"><ResumeNotice block={only} /><time className="mt-1 block px-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{formatWhen(message.createdAt)}</time></article>;
+              return <article key={message.id} id={`message-${message.id}`} data-testid="message-item" data-role={message.role} className="group mr-auto w-full max-w-md"><ResumeNotice block={only} /><time className="mt-1 block px-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{formatWhen(message.createdAt)}</time></article>;
             }
             if (only?.kind === "resume_card") {
-              return <article key={message.id} data-testid="message-item" data-role={message.role} className="group mr-auto w-full max-w-md"><ResumeCard block={only} onChanged={onSent} /><time className="mt-1 block px-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{formatWhen(message.createdAt)}</time></article>;
+              return <article key={message.id} id={`message-${message.id}`} data-testid="message-item" data-role={message.role} className="group mr-auto w-full max-w-md"><ResumeCard block={only} onChanged={onSent} /><time className="mt-1 block px-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{formatWhen(message.createdAt)}</time></article>;
             }
             if (only?.kind === "question") {
               return (
@@ -669,7 +830,7 @@ export function ChatPane({
                     onToggle={(anchor) => togglePicker(message.id, anchor)}
                     onExpand={() => setPicker((current) => (current ? { ...current, full: true } : current))}
                     onReact={(emoji) => void react(message.id, emoji)}
-                    onReply={() => startReply(message)}
+                    onReply={() => setReply(message)}
                   />
                   <time className="mt-1 block px-1 text-micro text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{formatWhen(message.createdAt)}</time>
                 </article>
@@ -686,11 +847,12 @@ export function ChatPane({
             const body = blocks.filter((block) => block.kind !== "image" && block.kind !== "video" && block.kind !== "file").filter((block) => block.kind !== "text" || block.text.trim().length > 0);
             const singleLine = mine && media.length === 0 && body.length === 1 && body[0].kind === "text" && !body[0].text.includes("\n") && body[0].text.trim().length < 80;
             const showBubble = body.length > 0 || (Boolean(message.replyToId) && placement === "inside" && Boolean(replySnippet(quoted?.content ?? "").trim()));
-            if (!showBubble && media.length === 0 && reactions.length === 0) return null;
+            if (!message.parts?.length && !message.deleted && !message.videoAnalysis && !message.attachments?.length && !message.skill && !showBubble && media.length === 0 && reactions.length === 0) return null;
             return (
               <MessageItem
                 key={message.id}
                 message={message}
+                presentation="cloud"
                 fresh={freshIds.has(message.id)}
                 mine={mine}
                 botName={botName}
@@ -705,18 +867,88 @@ export function ChatPane({
                 focusSibling={focusSibling}
                 onOpenTask={onOpenTask}
               >
-                <MessageBody
-                  message={message}
-                  mine={mine}
-                  byId={byId}
-                  onJump={jumpTo}
-                  onWidgetAction={sendWidgetAction}
-                  renderText={(text) => <MediaRow media={messageBlocks(text)} jobs={codingJobs} accent={paint} botId={botId} mine={mine} onOpenJob={onOpenJob} onReply={() => startReply(message)} />}
-                  fallback={<>{blocks.some(block => block.kind === "coding-jobs") ? <CodingJobsCard jobs={codingJobs} accent={paint} onOpenJob={onOpenJob} /> : null}<MediaRow media={blocks} jobs={codingJobs} accent={paint} botId={botId} mine={mine} onOpenJob={onOpenJob} onReply={() => startReply(message)} /></>}
-                />
+                {message.replyToId && placement === "above" ? (
+                  <button
+                    type="button"
+                    data-testid="reply-quote"
+                    className="mb-1 max-w-full truncate rounded-md bg-muted px-3 py-1 text-left text-meta text-muted-foreground"
+                    onClick={() => focusMessage(message.replyToId!)}
+                  >
+                    {replySnippet(quoted?.content ?? "")}
+                  </button>
+                ) : null}
+                {showBubble || message.parts?.length || message.videoAnalysis || message.attachments?.length || message.skill ? (
+                  <MessageBody
+                    message={message}
+                    mine={mine}
+                    byId={byId}
+                    onJump={jumpTo}
+                    onWidgetAction={sendWidgetAction}
+                    renderText={(text) => <MediaRow media={messageBlocks(text)} jobs={codingJobs} accent={paint} botId={botId} mine={mine} onOpenJob={onOpenJob} onReply={() => setReply(message)} />}
+                    fallback={<>
+                    {body.map((block, index) => (
+                      <MessageBlockView
+                        key={`${message.id}-body-${index}`}
+                        block={block}
+                        jobs={codingJobs}
+                        accent={paint}
+                        mine={mine}
+                        botId={botId}
+                        onOpenJob={onOpenJob}
+                        onReply={() => setReply(message)}
+                      />
+                    ))}</>}
+                    renderBubble={(contents) => (
+                      <div id={`message-${message.id}`} data-testid={mine ? "user-bubble" : "assistant-bubble"}>
+                        <div
+                          data-testid="message-bubble"
+                          className={cn(
+                            "relative space-y-2 px-3.5 py-2 text-body",
+                            mine ? "bg-[var(--bot-accent)] text-on-accent" : "bg-assistant-bubble text-assistant-bubble-foreground",
+                            singleLine ? "rounded-control" : mine ? "rounded-2xl" : "rounded-xl",
+                            reactions.length ? "mb-3" : "",
+                          )}
+                        >
+                          {message.replyToId && !message.parts?.length && placement === "inside" ? (
+                            <button
+                              type="button"
+                              data-testid="reply-quote"
+                              className="flex w-full min-w-0 items-center gap-1.5 text-left text-meta text-muted-foreground"
+                              onClick={() => focusMessage(message.replyToId!)}
+                            >
+                              <MessageSquareQuote className="size-3.5 shrink-0" aria-hidden />
+                              <span className="truncate">{replySnippet(quoted?.content ?? "")}</span>
+                            </button>
+                          ) : null}
+                          {contents}
+                          <ReactionCluster reactions={reactions} botName={botName} userName={userName} onToggle={(emoji) => void react(message.id, emoji)} />
+                        </div>
+                      </div>
+                    )}
+                  />
+                ) : null}
+                {media.length > 0 && !message.parts?.length ? (
+                  <div className={cn("relative", showBubble ? "mt-1 w-0 min-w-full" : "w-[360px] max-w-full", !showBubble && reactions.length ? "mb-3" : "")}>
+                    <MediaRow
+                      media={media}
+                      jobs={codingJobs}
+                      accent={paint}
+                      mine={mine}
+                      botId={botId}
+                      onOpenJob={onOpenJob}
+                      onReply={() => setReply(message)}
+                    />
+                    {showBubble ? null : <ReactionCluster reactions={reactions} botName={botName} userName={userName} onToggle={(emoji) => void react(message.id, emoji)} />}
+                  </div>
+                ) : null}
               </MessageItem>
             );
           }} />
+          {!showedJobs && codingJobs.length > 0 ? (
+            <div className="flex w-full max-w-md flex-col gap-2">
+              <CodingJobsCard jobs={codingJobs} accent={paint} botId={botId} onOpenJob={onOpenJob} />
+            </div>
+          ) : null}
           {evidence.length ? <section aria-label="Task evidence" className="rounded-md border border-border bg-card p-3">
             <h3 className="mb-2 text-sm font-medium">Evidence</h3>
             <div className="grid gap-3 sm:grid-cols-2">{evidence.map(item => {
@@ -727,14 +959,9 @@ export function ChatPane({
               </figure>;
             })}</div>
           </section> : null}
-          {events.filter(event => !["delta", "message.delta", "text_delta", "task.started", "model.started", "model.finished", "model.error"].includes(event.type)).map((event, i) => <EventCard key={`${conversationId}-${i}`} event={event} />)}
+          {events.filter(event => !["delta", "message.delta", "text_delta", "task.started", "model.started", "model.finished", "model.error"].includes(event.type)).map((event, i) => <EventCard key={`${conversationId}-${i}`} event={event} botId={botId} onEditMemory={onEditMemory} onMemoryChanged={onMemoryChanged} />)}
           <StreamDraft botId={botId} completed={storedMessages.filter(m => m.role === "assistant" && m.requestId).map(m => m.requestId!)} onText={streamTextPainted} onTool={streamToolPainted} />
-          {working ? (
-            <div data-testid="working-row" role="status" className="flex items-center gap-2 px-1 py-1 text-sm">
-              <BotAvatar animated size={22} botId={botId} shape={avatar?.shape} color={avatar?.color} />
-              <ShimmerText text={workingStatus(events, events.some(event => ["delta", "message.delta", "text_delta"].includes(event.type)), taskTitle)} />
-            </div>
-          ) : null}
+          {active ? <LiveJobStep job={active} botId={botId} botName={botName} shape={avatarShape} color={avatarColor || accent} /> : null}
           {plan && plan.items.length ? <section aria-label="Task plan" className="rounded-md border border-border bg-card p-3 text-sm">
             <h3 className="font-medium">Plan</h3>
             <FlowDiagram label="Task plan flow" nodes={plan.items.map((item, index) => ({ id: `plan-${index}`, position: { x: index * 180, y: 0 }, data: { label: item.title }, type: "input" }))} edges={plan.items.slice(1).map((_, index) => ({ id: `plan-edge-${index}`, source: `plan-${index}`, target: `plan-${index + 1}` }))} />
@@ -755,96 +982,106 @@ export function ChatPane({
         onMouseDown={event => event.preventDefault()}
         onClick={() => addQuoteText(pill.text, pill.source)}
         className="z-50 inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-popover px-3 text-xs font-medium text-popover-foreground shadow-md hover:bg-bot-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11"><Quote className="h-3.5 w-3.5" aria-hidden />Add to chat</button> : null}
-      {scrolledUp && fresh > 0 && !dismissedFresh ? <div data-testid="new-messages-pill" className="fixed bottom-[calc(11rem+env(safe-area-inset-bottom))] left-1/2 z-20 inline-flex -translate-x-1/2 items-center gap-1 rounded-full bg-bot px-1.5 py-1 text-bot-foreground shadow-sm">
-        <button type="button" data-testid="new-messages" className="rounded-full px-3 py-1 text-sm" onClick={() => { stickRef.current = true; setFresh(0); setScrolledUp(false); scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }}>{newMessagesLabel(fresh)}</button>
-        <button type="button" data-testid="dismiss-new-messages" aria-label="Dismiss new messages" className="grid size-7 place-items-center rounded-full hover:bg-bot-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setDismissedFresh(true)}><XIcon className="size-4" aria-hidden /></button>
-      </div> : null}
-      {scrolledUp ? <Button type="button" data-testid="jump-to-latest" aria-label="Jump to latest" title="Jump to latest" variant="secondary" size="icon" className="fixed bottom-[calc(8rem+env(safe-area-inset-bottom))] left-1/2 z-20 -translate-x-1/2 rounded-full" onClick={() => { stickRef.current = true; setFresh(0); setScrolledUp(false); scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "instant" }); }}><ArrowDown className="size-4" aria-hidden /></Button> : null}
+      {scrolledUp ? (
+        <div className="pointer-events-none absolute inset-x-0 bottom-28 z-30 flex justify-center">
+          {fresh > 0 && !dismissedFresh ? (
+            <div data-testid="new-messages-pill" className="pointer-events-auto flex items-center gap-1 rounded-md bg-[var(--bot-accent)] px-3 py-1 text-body-sm text-on-accent shadow-sm">
+              <button type="button" data-testid="new-messages" onClick={jump}>
+                {newMessagesLabel(fresh)}
+              </button>
+              <button type="button" data-testid="dismiss-new-messages" aria-label="Dismiss new messages" className="px-1" onClick={() => setDismissedFresh(true)}>
+                ×
+              </button>
+            </div>
+          ) : (
+            <button type="button" data-testid="jump-to-latest" aria-label="Jump to latest" className="pointer-events-auto grid size-10 place-items-center rounded-md border border-border bg-card text-card-foreground shadow-md" onClick={jump}>
+              <ArrowDown className="h-5 w-5" />
+            </button>
+          )}
+        </div>
+      ) : null}
+      {working ? (
+        <div data-testid="working-row" role="status" className="mx-auto w-full max-w-[var(--content-width)] px-4 pb-2">
+          <ComposerPresence botId={botId} name={botName} shape={avatarShape ?? avatar?.shape} color={avatarColor || avatar?.color || accent} status={workingStatus(events, events.some(event => ["delta", "message.delta", "text_delta"].includes(event.type)), taskTitle)} />
+        </div>
+      ) : null}
       <form
         data-testid="composer-bar"
-        className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+        className="mx-auto flex w-full max-w-[var(--content-width)] flex-col gap-2 px-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
         onSubmit={onSubmit}
         onDragOver={event => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }}
-        onDrop={event => { if (hasFiles(event.dataTransfer.files)) { event.preventDefault(); void attach(event.dataTransfer.files); } }}
-        onPaste={event => { if (hasFiles(event.clipboardData.files)) { event.preventDefault(); void attach(event.clipboardData.files); } }}
+        onDrop={event => { if (hasFiles(event.dataTransfer.files)) { event.preventDefault(); void addFiles(event.dataTransfer.files); } }}
+        onPaste={event => { if (hasFiles(event.clipboardData.files)) { event.preventDefault(); void addFiles(event.clipboardData.files); } }}
       >
-        {parts.filter(part => part.type === "reply").map(part => part.type === "reply" ? (
-          <div key={part.id} data-testid="composer-reply" data-message-id={part.messageId} className="flex min-h-9 items-center gap-2 rounded-full border border-border bg-muted/60 py-1 pl-3 pr-1 text-[13px] text-muted-foreground">
+        <div data-testid="composer-stack" className="flex flex-col">
+        {reply && replyPart?.type === "reply" ? (
+          <div data-testid="composer-reply" data-message-id={replyPart.messageId} className="mb-2 flex w-fit max-w-full items-center gap-2 rounded-md bg-muted px-3 py-1 text-meta text-muted-foreground">
             <ReplyIcon className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            {part.image ? <img data-testid="composer-reply-image" src={part.image.src} alt={part.image.alt} className="size-7 shrink-0 rounded-full object-cover" /> : null}
-            <span className="sr-only">Replying to {part.author}: </span>
-            <span data-testid="composer-reply-text" className="min-w-0 flex-1 truncate"><span data-testid="reply-chip">{part.excerpt}</span></span>
-            <button type="button" aria-label="Remove reply" data-testid="remove-quote" className="grid h-7 w-7 shrink-0 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" onClick={() => { setParts(current => removePart(current, part.id)); focusComposer(); }}><XIcon className="h-3.5 w-3.5" aria-hidden /></button>
+            {replyPart.image ? <img data-testid="composer-reply-image" src={replyPart.image.src} alt={replyPart.image.alt} className="size-7 shrink-0 rounded-md object-cover" /> : null}
+            <span className="sr-only">Replying to {replyPart.author}: </span>
+            <span data-testid="composer-reply-text" className="min-w-0 flex-1 truncate"><span data-testid="reply-chip">{replySnippet(reply.content)}</span></span>
+            <button type="button" data-testid="remove-quote" aria-label="Cancel reply" onClick={() => { setReply(null); focusComposer(); }}>
+              ×
+            </button>
           </div>
-        ) : null)}
-        {uploads.length ? <div data-testid="composer-attachments" className="flex gap-2">{uploads.map(item => <div key={item.id} data-testid="pending-attachment">{item.mime.startsWith("image/") ? <img src={item.preview} alt={item.name} className="h-16 w-16 object-cover" /> : <span>{item.name}</span>}<span role="status">{item.status}</span><button type="button" aria-label={`Remove ${item.name}`} onClick={() => { URL.revokeObjectURL(item.preview); setUploads(current => current.filter(row => row.id !== item.id)); setParts(current => current.map(part => part.type === "text" ? { ...part, text: part.text.replace(`[attached: ${item.path}]`, "") } : part)); }}>Remove</button></div>)}</div> : null}
-        <div data-testid="composer-stack"><div data-testid="composer-pill" className="rounded-md border border-border bg-card px-3 py-2 shadow-sm">
-          {parts.map((part, index) => {
-            if (part.type === "reply") return null;
-            if (part.type === "quote") {
-              return (
-                <blockquote key={part.id} data-testid="composer-quote" className="mb-1 flex items-start gap-2 border-l-2 border-bot-border bg-bot-soft px-2 py-1 text-[13px] text-muted-foreground">
-                  <span className="sr-only">Quoted text</span>
-                  <span className="min-w-0 flex-1">
-                    <span className="line-clamp-4 whitespace-pre-wrap">{part.text}</span>
-                  </span>
-                  <button type="button" aria-label="Remove quote" data-testid="remove-quote" className="grid h-6 w-6 shrink-0 place-items-center rounded-md hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" onClick={() => { setParts(current => removePart(current, part.id)); focusComposer(); }}><XIcon className="h-3.5 w-3.5" /></button>
-                </blockquote>
-              );
-            }
-            const last = index === parts.length - 1;
-            return (
-              <Textarea
-                key={part.id}
-                ref={node => { if (node) partRefs.current.set(part.id, node); else partRefs.current.delete(part.id); }}
-                aria-label={last ? `Message ${botName}` : "Comment"}
-                data-testid={last ? "composer" : "composer-segment"}
-                value={part.text}
-                onFocus={prewarmComputer}
-                onInput={prewarmComputer}
-                onChange={(event) => { const value = event.target.value; setParts(current => current.map(p => p.id === part.id ? { ...p, text: value } as ComposerPart : p)); }}
-                placeholder={last && parts.length === 1 ? `Message ${botName}` : last ? "Add a comment" : ""}
-                rows={1}
-                className="min-h-10 resize-none border-0 bg-transparent px-1 py-1 shadow-none focus-visible:ring-0"
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") { setError(null); (event.currentTarget as HTMLTextAreaElement).blur(); }
-                  if (event.key === "Backspace" && part.text === "" && index > 0 && parts[index - 1].type !== "text") {
-                    event.preventDefault();
-                    const above = parts[index - 1];
-                    setParts(current => removePart(current, above.id));
-                    focusComposer();
-                  }
-                  if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && last) {
-                    event.preventDefault();
-                    void send(false);
-                  }
-                }}
-              />
-            );
-          })}
-          <div className="flex items-center gap-2">
-            <ComposerPresence botId={botId} shape={avatarShape ?? avatar?.shape} color={avatarColor ?? avatar?.color} name={botName} status={working ? "Getting it done" : undefined} />
+        ) : null}
+        <div
+          data-testid="composer-pill"
+          data-multiline={composerLines > 1 ? "true" : "false"}
+          className="border border-[var(--composer-border)] bg-[var(--composer)] text-card-foreground shadow-[var(--composer-shadow)] transition-colors focus-within:border-[var(--composer-border-focus)]"
+          style={{ borderRadius: "var(--radius-control)" }}
+        >
+          {uploads.length > 0 ? (
+            <div data-testid="composer-attachments" className="flex flex-wrap gap-1.5 px-3 pt-2">
+              {uploads.map((item) => (
+                <div key={item.id} data-testid="pending-attachment" className="flex items-center gap-1">
+                  <UploadCard key={item.id} item={item} />
+                  <button type="button" aria-label={`Remove ${item.name}`} className="grid size-7 place-items-center rounded-md hover:bg-accent" onClick={() => { URL.revokeObjectURL(item.preview); setUploads(current => current.filter(row => row.id !== item.id)); setParts(current => current.map(part => part.type === "text" ? { ...part, text: part.text.replace(`[attached: ${item.path}]`, "") } : part)); }}><XIcon className="size-3.5" aria-hidden /></button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {parts.slice(0, -1).map(renderComposerPart)}
+          <div className={cn("flex gap-1 px-1.5", composerLines > 1 ? "items-end py-1.5" : "h-11 items-center")}>
+            <input ref={fileRef} type="file" multiple data-testid="composer-file" className="sr-only" aria-hidden tabIndex={-1} onChange={(event) => { void addFiles(event.target.files); event.target.value = ""; }} />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button type="button" variant="ghost" size="icon" data-testid="composer-plus" aria-label="More options" className="h-9 w-9 rounded-full border border-border [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"><span data-testid="composer-add"><Plus className="h-4 w-4" /></span></Button>
+                <button type="button" data-testid="composer-plus" aria-label="Add" disabled={sending} className="grid size-7 shrink-0 place-items-center rounded-md text-[var(--composer-placeholder)] hover:bg-[var(--composer-hover)] disabled:opacity-50">
+                  <span data-testid="composer-add"><Plus className="size-4" strokeWidth={1.5} /></span>
+                </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" onCloseAutoFocus={event => { event.preventDefault(); focusComposer(); }}>
+              <DropdownMenuContent side="top" align="start" onCloseAutoFocus={event => { event.preventDefault(); focusComposer(); }}>
                 <DropdownMenuItem data-testid="plus-attach" onSelect={() => fileRef.current?.click()}>Attach files</DropdownMenuItem>
                 <DropdownMenuItem data-testid="plus-teach-task" onSelect={() => window.dispatchEvent(new Event("teammates-teach-task"))}>Teach a task</DropdownMenuItem>
-                <DropdownMenuItem data-testid="plus-quote" onSelect={() => window.dispatchEvent(new Event("teammates-add-selection"))}><Quote className="h-4 w-4" />Add selection to chat</DropdownMenuItem>
+                <DropdownMenuItem data-testid="plus-quote" onSelect={() => window.dispatchEvent(new Event("teammates-add-selection"))}><Quote className="size-4" />Add selection to chat</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            <input ref={fileRef} type="file" multiple hidden data-testid="composer-file" onChange={event => void attach(event.target.files)} />
-            <Button type="button" data-testid="composer-mic" variant="ghost" aria-label="Voice input" onClick={() => toast.info("Voice input is not available yet.")}><Mic className="h-4 w-4" /></Button>
-            <div className="ml-auto flex items-center gap-2">
-            {working && onStop ? <Button type="button" data-testid="stop-run" variant="destructive" disabled={stopping} onClick={() => void stop()}>{stopping ? "Stopping…" : "Stop"}</Button> : null}
-            <Button data-testid="send-chat" type="submit" size="icon" aria-label={sending ? "Sending" : "Send"} title="Send" className="h-9 w-9 shrink-0 rounded-full bg-bot text-bot-foreground hover:bg-bot/90 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" disabled={sending || !conversationId}>
-              {sending ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden /> : <ArrowUp className="h-4 w-4" aria-hidden />}
-            </Button>
-            </div>
+            {renderComposerPart(parts[parts.length - 1], parts.length - 1)}
+            <button type="button" data-testid="composer-mic" aria-label="Microphone" disabled={sending} className="grid size-7 shrink-0 place-items-center text-[var(--composer-placeholder)] disabled:opacity-50" onClick={() => toast.info("Voice input is not available yet.")}>
+              <Mic className="size-4" strokeWidth={1.5} />
+            </button>
+            <button
+              type={typing ? "submit" : "button"}
+              data-testid={typing ? "send-chat" : "composer-voice"}
+              aria-label={typing ? "Send" : "Voice"}
+              disabled={sending || !conversationId || (typing && uploads.some((item) => item.status === "uploading"))}
+              className="relative grid size-[30px] shrink-0 place-items-center rounded-md text-on-accent disabled:opacity-50"
+              style={{ backgroundColor: paint }}
+              onClick={typing ? undefined : () => toast.info("Voice input is not available yet.")}
+            >
+              <AudioLines className={cn("absolute size-4 transition-opacity duration-200", typing ? "opacity-0" : "opacity-100")} strokeWidth={1.75} />
+              <ArrowUp className={cn("absolute size-4 transition-opacity duration-200", typing ? "opacity-100" : "opacity-0")} strokeWidth={2.25} />
+            </button>
           </div>
         </div>
         </div>
+        {working && onStop ? (
+          <div className="flex items-center justify-end">
+            <Button type="button" data-testid="stop-run" variant="destructive" disabled={stopping} onClick={() => void stop()}>
+              {stopping ? "Stopping…" : "Stop"}
+            </Button>
+          </div>
+        ) : null}
         {error ? (
           <p role="alert" data-testid={dlp ? "dlp-block" : undefined} className="text-body-sm text-destructive">
             {error}
@@ -1204,7 +1441,7 @@ function MemoryNotice({ botId, action, text, memoryId, memoryKind, previous, rea
         <Notebook className="h-3.5 w-3.5" aria-hidden />
         {label}
       </CollapsibleTrigger>
-      <CollapsibleContent data-testid="memory-fact" onFocusCapture={() => setFocused(true)} onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false); }} className="px-6 pb-1 text-sm text-muted-foreground">
+      <CollapsibleContent data-testid="memory-fact" onFocusCapture={() => setFocused(true)} onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false); }} className="px-6 pb-1 text-body-sm text-muted-foreground">
         {memoryKind === "rule" ? <span className="mr-2 rounded-sm border border-line px-1.5 py-0.5 text-xs">Rule</span> : null}{text}
         {action === "blocked" ? null : <div className="mt-2 flex flex-wrap gap-2">{undoOpen && undoableMemoryAction(action) && memoryId ? <Button data-testid="memory-undo" className="min-h-11" size="sm" variant="outline" disabled={busy} onClick={() => void undo()}>Undo</Button> : null}{memoryId && onEdit ? <Button className="min-h-11" size="sm" variant="ghost" onClick={() => onEdit(memoryId)}>Edit</Button> : null}{action === "suggested" && memoryId && botId ? <><Button className="min-h-11" size="sm" onClick={() => void api(`/api/bots/${botId}/memories/${memoryId}/accept`, { method: "POST" }).then(onChanged).catch(() => toast.error("Could not save this suggestion."))}>Save</Button><Button className="min-h-11" size="sm" variant="outline" onClick={() => void api(`/api/bots/${botId}/memories/${memoryId}/dismiss`, { method: "POST" }).then(onChanged).catch(() => toast.error("Could not dismiss this suggestion."))}>Skip</Button></> : null}</div>}
       </CollapsibleContent>
@@ -1415,7 +1652,7 @@ function SecureFormCard({ title, fields }: { title: string; fields: FormField[] 
   );
 }
 
-function EventCard({ event }: { event: AgentEvent }) {
+function EventCard({ event, botId, onEditMemory, onMemoryChanged }: { event: AgentEvent; botId?: string; onEditMemory?: (id: string) => void; onMemoryChanged?: () => void }) {
   if (event.type === "grounding") {
     const verified = Number(event.verified ?? event.verifiedLinks);
     const removed = Number(event.removed ?? event.removedLinks);
@@ -1426,8 +1663,20 @@ function EventCard({ event }: { event: AgentEvent }) {
       </p>
     );
   }
-  if (event.type === "memory") return <MemoryNotice action={(["saved", "updated", "forgot", "suggested", "blocked"].includes(String(event.action)) ? String(event.action) : "saved") as "saved" | "updated" | "forgot" | "suggested" | "blocked"} text={String(event.content ?? "")} memoryId={String(event.memoryId ?? event.memory_id ?? "") || undefined} memoryKind={String(event.kind ?? "") || undefined} reason={String(event.reason ?? "") || undefined} />;
+  if (event.type === "memory") return <MemoryNotice botId={botId} onEdit={onEditMemory} onChanged={onMemoryChanged} previous={typeof event.previous === "string" ? event.previous : undefined} action={(["saved", "updated", "forgot", "suggested", "blocked"].includes(String(event.action)) ? String(event.action) : "saved") as "saved" | "updated" | "forgot" | "suggested" | "blocked"} text={String(event.content ?? "")} memoryId={String(event.memoryId ?? event.memory_id ?? "") || undefined} memoryKind={String(event.kind ?? "") || undefined} reason={String(event.reason ?? "") || undefined} />;
   const tool = String(event.tool ?? event.name ?? "Tool");
   const args = typeof event.args === "object" && event.args ? JSON.stringify(event.args) : String(event.args ?? "");
-  return <Collapsible data-testid="tool-call-card" className="rounded-md border border-border text-xs"><CollapsibleTrigger className="flex min-h-10 w-full items-center gap-2 px-3 text-left"><span aria-hidden>⌘</span><span className="font-medium">{toolLabel(tool, event.args)}</span><span className="min-w-0 flex-1 truncate text-muted-foreground">{args.slice(0, 90)}</span><span>{String(event.status ?? (event.type === "tool_result" ? "Done" : "Running"))}</span></CollapsibleTrigger><CollapsibleContent><pre className="max-h-64 overflow-auto whitespace-pre-wrap border-t border-border p-3">{JSON.stringify({ args: event.args, result: event.result }, null, 2)}</pre></CollapsibleContent></Collapsible>;
+  return (
+    <Collapsible data-testid="tool-call-card" className="rounded-md border border-border text-meta">
+      <CollapsibleTrigger className="flex min-h-10 w-full items-center gap-2 px-3 text-left">
+        <span aria-hidden>⌘</span>
+        <span className="font-medium">{toolLabel(tool, event.args)}</span>
+        <span className="min-w-0 flex-1 truncate text-muted-foreground">{args.slice(0, 90)}</span>
+        <span>{String(event.status ?? (event.type === "tool_result" ? "Done" : "Running"))}</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <pre className="max-h-64 overflow-auto whitespace-pre-wrap border-t border-border p-3">{JSON.stringify({ args: event.args, result: event.result }, null, 2)}</pre>
+      </CollapsibleContent>
+    </Collapsible>
+  );
 }

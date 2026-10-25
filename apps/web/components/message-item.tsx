@@ -23,6 +23,7 @@ import type { Widget } from "@/lib/widgets/schema";
 
 export type MessageItemProps = {
   message: ChatMessage;
+  presentation?: "cloud";
   fresh?: boolean;
   mine: boolean;
   botName: string;
@@ -51,7 +52,7 @@ const selectionIn = (el: HTMLElement | null) => {
 };
 
 export function MessageItem(props: MessageItemProps) {
-  const { message, fresh, mine, botName, botId, bot, byId, children, onReact, onReply, onQuote, onChanged, announce, focusSibling, onOpenTask } = props;
+  const { message, presentation, fresh, mine, botName, botId, bot, byId, children, onReact, onReply, onQuote, onChanged, announce, focusSibling, onOpenTask } = props;
   const ref = useRef<HTMLElement>(null);
   const reactRef = useRef<HTMLButtonElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
@@ -160,7 +161,7 @@ export function MessageItem(props: MessageItemProps) {
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
-      className={cn(fresh && "motion-rise", "group relative min-w-0 max-w-[85%] rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring sm:max-w-[75%]", mine ? "ml-auto" : "mr-auto")}
+      className={cn(fresh && "motion-rise", "group relative min-w-0 max-w-[85%] rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring", presentation === "cloud" ? "flex w-fit flex-col sm:max-w-[62%]" : "sm:max-w-[75%]", mine ? "ml-auto items-end" : "mr-auto items-start")}
     >
       <div
         role="toolbar"
@@ -182,11 +183,11 @@ export function MessageItem(props: MessageItemProps) {
           buttons[(idx + (event.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length]?.focus();
         }}
       >
-        <ToolButton ref={reactRef} testId="msg-react" label="Add reaction" popup expanded={emojiOpen} onClick={() => setEmojiOpen(v => !v)}><SmilePlus className="h-4 w-4" /></ToolButton>
-        <ToolButton testId="msg-reply" label="Reply" onClick={() => onReply(message)}><Reply className="h-4 w-4" /></ToolButton>
+        <ToolButton ref={reactRef} testId="msg-react" label="Add reaction" popup expanded={emojiOpen} onClick={() => setEmojiOpen(v => !v)}><span data-testid="message-react"><SmilePlus className="h-4 w-4" /></span></ToolButton>
+        <ToolButton testId="msg-reply" label="Reply" onClick={() => onReply(message)}><span data-testid="message-reply"><Reply className="h-4 w-4" /></span></ToolButton>
         <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
           <DropdownMenuTrigger asChild>
-            <ToolButton ref={moreRef} testId="msg-more" label="More" popup expanded={menuOpen}><MoreHorizontal className="h-4 w-4" /></ToolButton>
+            <ToolButton ref={moreRef} testId="msg-more" label="More" popup expanded={menuOpen}><span data-testid="message-more"><MoreHorizontal className="h-4 w-4" /></span></ToolButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent align={mine ? "end" : "start"} data-testid="message-menu" onCloseAutoFocus={event => { event.preventDefault(); ref.current?.focus(); }}>{items()}</DropdownMenuContent>
         </DropdownMenu>
@@ -195,10 +196,10 @@ export function MessageItem(props: MessageItemProps) {
         </PopoverLite>
       </div>
 
-      {!mine ? <div className="mb-1 flex items-center gap-2 text-xs"><BotAvatar botId={bot?.id} shape={bot?.shape} color={bot?.color} size={20} primary={bot?.primary} /><span data-testid="bot-name-label" className="font-medium text-bot-text">{botName}</span></div> : null}
+      {!mine && presentation !== "cloud" ? <div className="mb-1 flex items-center gap-2 text-xs"><BotAvatar botId={bot?.id} shape={bot?.shape} color={bot?.color} size={20} primary={bot?.primary} /><span data-testid="bot-name-label" className="font-medium text-bot-text">{botName}</span></div> : null}
       <div>{children}</div>
       {!mine && message.childTasks?.length ? <BriefCard message={message} onOpenTask={onOpenTask} /> : null}
-      {(message.reactions ?? []).length > 0 ? (
+      {presentation !== "cloud" && (message.reactions ?? []).length > 0 ? (
         <div data-testid="reaction-cluster" className="mt-1 flex flex-wrap gap-1">
           {message.reactions?.map(reaction => {
             const own = reaction.actorType === "user";
@@ -278,10 +279,10 @@ function EmojiPicker({ onPick, current }: { onPick: (emoji: string) => void; cur
 }
 
 /** The body of a message: ordered parts (quotes, replies, text) in the sent bubble, with the 20-line clamp. */
-export function MessageBody({ message, mine, byId, onJump, fallback, renderText, onWidgetAction }: { message: ChatMessage; mine: boolean; byId: Map<string, ChatMessage>; onJump: (id: string) => void; fallback: ReactNode; renderText?: (text: string) => ReactNode; onWidgetAction?: (widget: Widget, action: string, payload: Record<string, unknown>) => Promise<void> }) {
+export function MessageBody({ message, mine, byId, onJump, fallback, renderText, onWidgetAction, renderBubble }: { renderBubble?: (content: ReactNode) => ReactNode; message: ChatMessage; mine: boolean; byId: Map<string, ChatMessage>; onJump: (id: string) => void; fallback: ReactNode; renderText?: (text: string) => ReactNode; onWidgetAction?: (widget: Widget, action: string, payload: Record<string, unknown>) => Promise<void> }) {
   const replyId = message.replyToMessageId ?? message.replyToId ?? message.replyTo;
   const target = replyId ? byId.get(replyId) : undefined;
-  const parts = message.parts?.length ? message.parts : replyId ? [{ type: "reply" as const, messageId: replyId, author: target?.role === "user" ? "You" : "Teammate", excerpt: target ? plainTextOf(target).slice(0, 280) : "Original message" }, { type: "text" as const, text: message.content }] : null;
+  const parts = message.parts?.length ? message.parts : replyId && (!renderBubble || message.replyToMessageId || message.replyTo) ? [{ type: "reply" as const, messageId: replyId, author: target?.role === "user" ? "You" : "Teammate", excerpt: target ? plainTextOf(target).slice(0, 280) : "Original message" }, { type: "text" as const, text: message.content }] : null;
   const videoAnalysis = !parts?.length ? message.videoAnalysis ?? readVideoAnalysis(message.content) : null;
   const box = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState(() => EXPANDED.get(message.id) ?? false);
@@ -313,9 +314,9 @@ export function MessageBody({ message, mine, byId, onJump, fallback, renderText,
   const inner = parts && parts.length
     ? <div className="space-y-2">{parts.map((part, i) => <PartView key={i} part={part} byId={byId} expanded={expanded} onJump={onJump} renderText={renderText} onWidgetAction={onWidgetAction} />)}</div>
     : null;
-  return <div id={`message-${message.id}`} className={cn("relative rounded-bubble px-3.5 py-2 text-sm", bubble)} data-testid={mine ? "user-bubble" : "assistant-bubble"}>
+  const content = <>
     {message.skill ? <span data-testid="skill-chip" className="mb-1.5 inline-flex items-center gap-1 rounded-full border border-current/25 bg-black/10 px-2 py-0.5 text-xs font-medium"><Sparkles className="h-3 w-3" aria-hidden />{message.skill.label}</span> : null}
-    <div data-testid="message-bubble"><div ref={box} id={`body-${message.id}`} style={clampStyle}
+    <div data-testid={renderBubble ? undefined : "message-bubble"}><div ref={box} id={`body-${message.id}`} style={clampStyle}
       className={cn("motion-clamp", clampable && clamped && !expanded && "[mask-image:linear-gradient(to_bottom,black_85%,transparent)]")}>
       {inner ?? (videoAnalysis ? <VideoAnalysisCard analysis={videoAnalysis} /> : <div data-testid="message-text" className="space-y-2">{fallback}</div>)}
       {message.attachments?.length ? <div className="mt-2 space-y-1">{message.attachments.map(item => <div key={item.path} data-testid="recording-attachment" className="flex min-h-9 items-center gap-2 rounded-lg border border-current/20 bg-black/10 px-2.5 py-1.5 text-xs"><Video className="h-4 w-4 shrink-0" aria-hidden /><span className="truncate" title={item.path}>{item.name}</span></div>)}</div> : null}
@@ -324,7 +325,9 @@ export function MessageBody({ message, mine, byId, onJump, fallback, renderText,
     {clampable && (clamped || expanded) ? <button type="button" data-testid="bubble-toggle" aria-expanded={expanded} aria-controls={`body-${message.id}`} onClick={toggle}
       className="mt-1 inline-flex min-h-6 items-center gap-1 text-xs font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
       {expanded ? <>Show less <ChevronUp className="h-3 w-3" /></> : <>Show more <ChevronDown className="h-3 w-3" /></>}</button> : null}
-  </div>;
+  </>;
+  if (renderBubble) return renderBubble(content);
+  return <div id={`message-${message.id}`} className={cn("relative rounded-bubble px-3.5 py-2 text-body-sm", bubble)} data-testid={mine ? "user-bubble" : "assistant-bubble"}>{content}</div>;
 }
 
 function PartView({ part, byId, expanded, onJump, renderText, onWidgetAction }: { part: MessagePartView; byId: Map<string, ChatMessage>; expanded: boolean; onJump: (id: string) => void; renderText?: (text: string) => ReactNode; onWidgetAction?: (widget: Widget, action: string, payload: Record<string, unknown>) => Promise<void> }) {

@@ -1,20 +1,11 @@
 "use client";
 
-import { useId, useEffect, useRef } from "react";
+import { useId } from "react";
+import { useEffect, useRef } from "react";
 import { Star } from "lucide-react";
 import { AvatarEyes, ContactShadow, GlossyBlob } from "@/components/avatar-motion/glossy-blob";
-import { lobePath, subscribeAvatar, resolveAvatarAppearance, type AvatarFrame } from "@/lib/avatar-motion";
-
-const EYE_L = { x: 39, y: 47 };
-const EYE_R = { x: 62, y: 47 };
-const CENTER_Y = 52;
-
-function eyeAttrs(frame: AvatarFrame["eye"], cx: number, cy: number) {
-  return {
-    x: cx + frame.dx - frame.w / 2, y: cy + frame.dy - frame.h / 2, width: frame.w, height: frame.h, rx: Math.min(frame.rx, frame.w / 2, frame.h / 2),
-    transform: `rotate(${frame.rot.toFixed(1)} ${(cx + frame.dx).toFixed(2)} ${(cy + frame.dy).toFixed(2)})`,
-  };
-}
+import { resolveAvatarAppearance } from "@/lib/avatar-motion";
+import { lobePath, subscribeAvatar } from "@/lib/avatar-motion";
 
 /** Bot avatar. With `animated` it joins the shared avatar clock (see lib/avatar-motion.ts): every animated copy is in sync. */
 export function BotAvatar({ shape, color, size = 40, botId, className = "", animated = false, primary = false }: {
@@ -37,13 +28,19 @@ export function BotAvatar({ shape, color, size = 40, botId, className = "", anim
       }
     });
   }, [animated, appearance.shapeId]);
-  const svg = (
+  const svg = animated ? (
     <svg data-testid="bot-avatar" data-bot-id={botId || undefined} data-avatar-fill={appearance.fill} data-avatar-gloss="3d" data-animated={animated ? "true" : undefined} className={className} width={size} height={size} viewBox="0 0 100 100" role="img" aria-label="Bot avatar">
       <ContactShadow idPrefix={uid} />
       <g ref={body}>
       <g ref={blob}><GlossyBlob idPrefix={uid} path={appearance.path} fill={appearance.fill} /></g>
       <g ref={eyes}><AvatarEyes /></g>
       </g>
+    </svg>
+  ) : (
+    <svg data-testid="bot-avatar" data-bot-id={botId || undefined} data-avatar-fill={appearance.fill} data-avatar-gloss="3d" className={className} width={size} height={size} viewBox="0 0 100 100" role="img" aria-label="Bot avatar">
+      <ContactShadow idPrefix={uid} />
+      <GlossyBlob idPrefix={uid} path={appearance.path} fill={appearance.fill} />
+      <AvatarEyes />
     </svg>
   );
   if (!primary) return svg;

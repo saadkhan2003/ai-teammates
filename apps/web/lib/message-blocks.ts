@@ -3,7 +3,9 @@ import type { ResumeBlock } from "@/lib/resume-blocks";
 
 export type QuestionOption = { label: string; style: "primary" | "danger" };
 
-export type MessageBlock =
+export type MessageBlock = ContentBlock | ResumeBlock;
+
+type ContentBlock =
   | { kind: "text"; text: string }
   | { kind: "question"; prompt: string; options: QuestionOption[]; multiple: boolean; allowCustom: boolean; answer: string[] | null }
   | { kind: "memory"; action: "saved" | "updated" | "forgot" | "suggested" | "blocked"; memoryId?: string; memoryKind?: string; text: string; previous?: string; reason?: string }
@@ -11,8 +13,7 @@ export type MessageBlock =
   | { kind: "file"; name: string; url?: string; mime?: string; size?: number }
   | { kind: "image"; name: string; url: string }
   | { kind: "video"; name: string; url: string }
-  | { kind: "coding-jobs" }
-  | ResumeBlock;
+  | { kind: "coding-jobs" };
 
 export type FormField = { name: string; label: string; secret?: boolean };
 
