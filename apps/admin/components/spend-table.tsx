@@ -5,10 +5,41 @@ import { button } from "@/lib/ai";
 
 type BotSpend = { bot_id: string | null; bot_name: string | null; today: number; month: number };
 type OwnerSpend = { owner_id: string; owner_name: string | null; owner_username: string | null; today: number; month: number; bots: BotSpend[] };
-export type SpendPage = { owners: OwnerSpend[]; total: { today: number; month: number }; page: number; page_size: number; total_owners: number; caps: unknown };
+type SpendCap = { daily?: number | null; monthly?: number | null; action?: string; downgrade?: { provider: string; model: string } | null };
+type SpendCaps = { plans?: Record<string, SpendCap>; users?: Record<string, SpendCap>; bots?: Record<string, SpendCap> };
+export type SpendPage = { owners: OwnerSpend[]; total: { today: number; month: number }; page: number; page_size: number; total_owners: number; caps?: SpendCaps | null };
 
 const usd = (n: number) => `$${Number(n).toFixed(6)}`;
 const short = (id: string) => id.replaceAll("-", "").slice(0, 8);
+
+function CapValue({ value }: { value?: number | null }) {
+  return <>{value == null ? "—" : usd(value)}</>;
+}
+
+function SpendCaps({ caps, loaded, error }: { caps?: SpendCaps | null; loaded: boolean; error: string }) {
+  const rows = [
+    ...Object.entries(caps?.plans ?? {}).map(([id, cap]) => ({ scope: "Plan", id, cap })),
+    ...Object.entries(caps?.users ?? {}).map(([id, cap]) => ({ scope: "Owner", id, cap })),
+    ...Object.entries(caps?.bots ?? {}).map(([id, cap]) => ({ scope: "Bot", id, cap })),
+  ];
+
+  return <section aria-label="Spending caps" className="mt-4">
+    <h4 className="font-medium">Configured caps</h4>
+    <p className="text-xs text-muted-foreground">Plan and owner limits both apply. Bot limits apply to that bot. A dash means no limit is set.</p>
+    {!loaded ? <p className="mt-2 text-sm text-muted-foreground">{error ? "Caps unavailable." : "Loading caps…"}</p>
+      : rows.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">No spending caps configured.</p>
+      : <div className="mt-2 overflow-x-auto"><table className="w-full text-left text-xs">
+        <thead><tr>{["Scope", "Daily", "Monthly", "Action", "Downgrade target"].map(label => <th className="p-1" key={label}>{label}</th>)}</tr></thead>
+        <tbody>{rows.map(({ scope, id, cap }) => <tr className="border-t border-border" key={`${scope}:${id}`}>
+          <td className="p-1">{scope === "Plan" ? `${scope}: ${id}` : <>{scope}<CopyId id={id} label={scope.toLowerCase()} /></>}</td>
+          <td className="p-1"><CapValue value={cap.daily} /></td>
+          <td className="p-1"><CapValue value={cap.monthly} /></td>
+          <td className="p-1 capitalize">{cap.action ?? "block"}</td>
+          <td className="p-1">{cap.downgrade ? <span>{cap.downgrade.model} · provider <CopyId id={cap.downgrade.provider} label="provider" /></span> : "—"}</td>
+        </tr>)}</tbody>
+      </table></div>}
+  </section>;
+}
 
 /** Short id chip; click copies the full id. */
 export function CopyId({ id, label }: { id: string; label: string }) {
@@ -61,5 +92,6 @@ export function SpendTable({ pageSize = 10, onLoaded }: { pageSize?: number; onL
       <span>Page {page} of {pages} · {data?.total_owners} owners</span>
       <button className={button} disabled={page >= pages} onClick={() => setPage(p => p + 1)}>Next</button>
     </div>}
+    <SpendCaps caps={data?.caps} loaded={!!data} error={error} />
   </div>;
 }
