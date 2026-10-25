@@ -1,5 +1,5 @@
 import { SkillsSettings } from "@/components/skills-settings";
 
 export default function SkillsSettingsPage() {
-  return <SkillsSettings />;
+  return <div id="skills"><SkillsSettings /></div>;
 }

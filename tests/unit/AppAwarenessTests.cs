@@ -14,7 +14,7 @@ public class AppAwarenessTests
         var apiGuide = File.ReadAllText(Path.Combine(root, "apps/api/app-guide.json"));
         Assert.Equal(webGuide, apiGuide);
 
-        var nav = File.ReadAllText(Path.Combine(root, "apps/web/components/settings-nav.tsx"));
+        var nav = File.ReadAllText(Path.Combine(root, "apps/web/components/settings-nav-config.mjs"));
         var hrefs = Regex.Matches(nav, "href: \"(?<href>[^\"]+)\"")
             .Select(match => match.Groups["href"].Value)
             .ToHashSet(StringComparer.Ordinal);

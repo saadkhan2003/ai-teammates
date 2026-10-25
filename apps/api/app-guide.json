@@ -73,6 +73,12 @@
       "description": "Install and connect MCP servers, OpenAPI APIs, and built-in apps, then enable them for a teammate."
     },
     {
+      "id": "skills",
+      "href": "/settings/skills",
+      "label": "Skills",
+      "description": "Browse built-in guides and create, edit, or delete reusable skills your teammates can follow."
+    },
+    {
       "id": "usage",
       "href": "/settings/usage",
       "label": "Usage & Billing",
