@@ -100,6 +100,9 @@ test("computer card respects reduced motion", async ({ page }) => {
   const bot = await makeBot(page);
   try {
     await page.route(watchTicket, async () => { /* never answers */ });
+    // The computer is shared by the owner's bots, so an earlier test may have left its desktop awake.
+    // Pin the probe to "asleep" so this test always starts from the resting card.
+    await page.route(/\/api\/computer\/desktop(?:\?|$)/, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ desktop: "asleep" }) }));
     await open(page, bot.id);
     await wake(page);
     await expect(page.getByTestId("desktop-frame")).toHaveAttribute("data-phase", "connecting");
