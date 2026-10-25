@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { cardClass, PageError, PageSkeleton, pillClass, SectionTitle } from "@/components/account/chrome";
@@ -7,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { type BillingSnapshot, formatDay } from "@/lib/account";
 import { errorMessage } from "@/lib/utils";
+
+const AdminAnalyticsChart = dynamic(() => import("@/components/widgets/admin-analytics-chart"), { ssr: false, loading: () => <div className="h-56 animate-pulse rounded-md bg-muted" /> });
 
 type Usage = {
   modelCalls?: number;
@@ -139,6 +142,12 @@ export function AccountUsage() {
           <p className="text-muted-foreground">
             Memory {quota.memoryBytes ? `${Math.round(quota.memoryBytes / (1024 * 1024))} MB` : "—"} · CPU {quota.cpuMillis ?? "—"} ms
           </p>
+        </section>
+      ) : null}
+      {rows?.length ? (
+        <section className={`${cardClass} p-4`}>
+          <h2 className="mb-3 text-body-sm font-medium">Activity overview</h2>
+          <AdminAnalyticsChart rows={rows} />
         </section>
       ) : null}
       {rows ? (
