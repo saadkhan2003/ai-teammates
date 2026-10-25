@@ -26,8 +26,10 @@ public sealed class MigrationManifestTests
         Assert.Equal(listed.Length, listed.Distinct().Count());
         var ids = listed.Select(file => int.Parse(file[..3])).ToArray();
         Assert.Equal(ids.Length, ids.Distinct().Count());
-        // v0.5: speed 043–046, briefs 047–049, then speed's usage credits and resources as 050–051.
-        Assert.Equal(Enumerable.Range(1, 51).Concat(Enumerable.Range(57, 7)), ids);
+        // v0.5: speed 043–046, briefs 047–049, then usage credits and resources as 050–051. v1 streams reserve 052–056; ids stay strictly ascending.
+        Assert.Equal(Enumerable.Range(1, 51), ids.Take(51));
+        Assert.Equal(ids.Order(), ids);
+        Assert.Equal(ids.Distinct(), ids);
         Assert.Equal(new[] { "047_task_briefs.sql", "048_brief_lessons.sql", "049_approval_signals.sql", "050_usage_credits.sql", "051_resources.sql" }, listed[46..51]);
         Assert.DoesNotContain(ids, id => id is >= 90 and <= 99);
         var copies = Regex.Matches(File.ReadAllText(Path.Combine(root, "apps/api/Dockerfile")),

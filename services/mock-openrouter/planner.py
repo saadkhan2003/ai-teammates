@@ -246,6 +246,14 @@ def _steps(text: str, messages: list) -> list[Step]:
             ("tool", "react_to_message", {"message_id": _message_id(messages), "emoji": "🌟"}),
             ("final", ""),
         ]
+    if "SAVE SKILL V2 DEMO" in stripped:
+        match = re.search(r"\bname=([a-z0-9-]+)", stripped)
+        name = match.group(1) if match else "mock-saved-skill"
+        return [("tool", "save_skill", {"name": name, "description": "Use when testing deterministic skill saving.", "body": "# Mock skill\nSaved by the deterministic mock planner."}), ("final", "Saved the reusable skill.")]
+    if "DELETE SKILL V2 DEMO" in stripped:
+        match = re.search(r"\bname=([a-z0-9-]+)", stripped)
+        name = match.group(1) if match else "mock-saved-skill"
+        return [("tool", "delete_skill", {"name": name}), ("final", "Deleted the approved skill.")]
     video_match = re.fullmatch(r"VIDEO_V1_TEST:([0-9a-f-]{36})", stripped, re.IGNORECASE)
     if video_match:
         return [("tool", "watch_video", {"video_id": video_match.group(1)}), ("final", "Video test complete.")]

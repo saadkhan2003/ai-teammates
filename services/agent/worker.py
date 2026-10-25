@@ -669,7 +669,7 @@ class Worker:
                     catalog = await self.request_json("GET", f"/internal/skills/{_bot_id(task)}/catalog")
                     lines = catalog.get("catalog", []) if isinstance(catalog, dict) else []
                     if lines:
-                        text = "[skill-catalog]\nAvailable skills (load with load_skill(name)); bodies are loaded only when needed:\n" + "\n".join(str(line) for line in lines)[:4000]
+                        text = "[skill-catalog]\nAvailable skills (one per line). Before acting, load the matching skill with load_skill(name); read a helper file with read_skill_file(name, path). Bodies are loaded only when needed:\n" + "\n".join(str(line) for line in lines)[:4000]
                         if system is not None and isinstance(system.get("content"), str):
                             system["content"] += "\n\n" + text
                         else:

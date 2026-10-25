@@ -78,3 +78,4 @@ COPY db/063_admin_console.sql /migrations/063_admin_console.sql
 COPY evals/golden/ /app/evals/golden/
 COPY services/agent/skills/builtin/ /skills/builtin/
 ENTRYPOINT ["dotnet", "Teammates.Api.dll"]
+COPY db/055_skills_v2.sql /migrations/055_skills_v2.sql

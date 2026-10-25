@@ -3,45 +3,28 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { Suspense, type ReactNode, useEffect, useState } from "react";
-import { BarChart3, Bell, KeyRound, Laptop, Puzzle, RefreshCw, ScrollText, Shield, SlidersHorizontal } from "lucide-react";
+import { BarChart3, Bell, KeyRound, Laptop, Puzzle, RefreshCw, ScrollText, Shield, SlidersHorizontal, Sparkles } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { focusClass } from "@/components/account/chrome";
+import { settingsGroups } from "./settings-nav-config.mjs";
 
-type NavItem = {
-  href: string;
-  label: string;
-  icon: typeof SlidersHorizontal;
-  exact?: boolean;
-  testId?: string;
-  admin?: boolean;
+type NavItem = { id: string; label: string; href: string; icon: string; exact?: boolean; testId?: string; admin?: boolean };
+
+const icons: Record<string, typeof SlidersHorizontal> = {
+  general: SlidersHorizontal,
+  updates: RefreshCw,
+  notifications: Bell,
+  usage: BarChart3,
+  shield: Shield,
+  computer: Laptop,
+  plugins: Puzzle,
+  skills: Sparkles,
+  vault: KeyRound,
+  system: ScrollText,
 };
 
-const groups: { label: string; items: NavItem[] }[] = [
-  {
-    label: "Preferences",
-    items: [
-      { href: "/settings", label: "General", exact: true, icon: SlidersHorizontal },
-      { href: "/settings/updates", label: "Updates", icon: RefreshCw },
-      { href: "/settings/notifications", label: "Notifications", icon: Bell },
-      { href: "/settings/usage", label: "Usage", icon: BarChart3 },
-    ],
-  },
-  {
-    label: "Workspace",
-    items: [
-      { href: "/settings/approval-rules", label: "Approval rules", testId: "nav-approval-rules", icon: Shield },
-      { href: "/settings/policy", label: "Policy", testId: "nav-policy", icon: Shield },
-      { href: "/settings/computer", label: "Computer", icon: Laptop },
-      { href: "/settings/plugins", label: "Plugins", icon: Puzzle },
-      { href: "/settings/secrets", label: "Vault", icon: KeyRound },
-    ],
-  },
-  {
-    label: "Staff",
-    items: [{ href: "/system", label: "System", testId: "nav-system", icon: ScrollText, admin: true }],
-  },
-];
+const groups = (settingsGroups as unknown as Array<{ heading: string; items: NavItem[] }>).map((group) => ({ label: group.heading, items: group.items }));
 
 export function SettingsNav() {
   const pathname = usePathname();
@@ -62,10 +45,10 @@ export function SettingsNav() {
         if (items.length === 0) return null;
         return (
           <div key={group.label} className="flex shrink-0 gap-1 md:mt-4 md:flex-col md:gap-1">
-            <p className="hidden px-3 pb-1 text-micro font-medium uppercase tracking-wide text-muted-foreground md:block">{group.label}</p>
+            <p className="hidden px-3 pb-1 text-meta font-medium text-muted-foreground md:block">{group.label}</p>
             {items.map((tab) => {
               const active = tab.exact ? pathname === tab.href : pathname === tab.href || pathname.startsWith(`${tab.href}/`);
-              const Icon = tab.icon;
+              const Icon = icons[tab.icon] ?? SlidersHorizontal;
               return (
                 <Link
                   key={tab.href}

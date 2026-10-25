@@ -172,6 +172,7 @@ public sealed class Platform
         "049_approval_signals.sql",
         "050_usage_credits.sql",
         "051_resources.sql",
+        "055_skills_v2.sql",
         "057_chat_ui.sql",
         "058_coding_job_diff.sql",
         "059_theme.sql",
@@ -179,7 +180,6 @@ public sealed class Platform
         "061_account.sql",
         "062_uptime.sql",
         "063_admin_console.sql",
-
     ];
 
     /// <summary>Applies every manifest file not yet recorded in schema_migrations (recorded by its three-digit prefix).</summary>

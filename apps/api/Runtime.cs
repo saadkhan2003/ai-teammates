@@ -374,7 +374,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         var taskId = body.GetProperty("taskId").GetGuid();
         var botId = body.GetProperty("botId").GetGuid();
         var tool = body.GetProperty("tool").GetString() ?? "";
-        if (!await HoldsLease(taskId, EpochOf(body), ct, tool is "load_skill" or "write_skill" || VideoTools.IsTool(tool) || BriefStore.IsBriefTool(tool) ? botId : null)) return Results.StatusCode(409);
+        if (!await HoldsLease(taskId, EpochOf(body), ct, tool is "load_skill" or "read_skill_file" or "write_skill" or "save_skill" or "delete_skill" || VideoTools.IsTool(tool) || BriefStore.IsBriefTool(tool) ? botId : null)) return Results.StatusCode(409);
         var args = body.GetProperty("args");
         if (tool == "update_routine" && await BotMessaging.UpdateBlocked(platform, await OwnerOf(botId), botId, taskId, args, ct) is { } blocked)
             return Results.Json(new { decision = "deny", ok = false, reason = blocked, riskClass = ActionClasses.BotManage });
@@ -418,7 +418,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
             || !body.TryGetProperty("args", out var args))
             return Results.BadRequest(new { decision = "deny", reason = "invalid_preexec_request" });
         var tool = toolNode.GetString()!;
-        if (!await HoldsLease(taskId, EpochOf(body), ct, tool is "load_skill" or "write_skill" || VideoTools.IsTool(tool) || BriefStore.IsBriefTool(tool) ? botId : null)) return Results.StatusCode(409);
+        if (!await HoldsLease(taskId, EpochOf(body), ct, tool is "load_skill" or "read_skill_file" or "write_skill" or "save_skill" or "delete_skill" || VideoTools.IsTool(tool) || BriefStore.IsBriefTool(tool) ? botId : null)) return Results.StatusCode(409);
         if (tool == "update_routine" && await BotMessaging.UpdateBlocked(platform, await OwnerOf(botId), botId, taskId, args, ct) is { } blocked)
         {
             await platform.Audit("policy", "tool.denied", botId, taskId, new { tool, reason = blocked, riskClass = ActionClasses.BotManage });
@@ -450,7 +450,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         var botId = body.GetProperty("botId").GetGuid();
         var tool = body.GetProperty("tool").GetString() ?? "";
         // Reactions are recorded after a task has finished. They do not drive the computer.
-        if (tool != "react_to_message" && !await HoldsLease(taskId, EpochOf(body), ct, tool is "load_skill" or "write_skill" || VideoTools.IsTool(tool) || BriefStore.IsBriefTool(tool) ? botId : null)) return Results.StatusCode(409);
+        if (tool != "react_to_message" && !await HoldsLease(taskId, EpochOf(body), ct, tool is "load_skill" or "read_skill_file" or "write_skill" or "save_skill" or "delete_skill" || VideoTools.IsTool(tool) || BriefStore.IsBriefTool(tool) ? botId : null)) return Results.StatusCode(409);
         var args = body.GetProperty("args");
         var invalid = ToolSchema.Validate(tool, args);
         if (invalid != null)
@@ -465,7 +465,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
             return Results.Json(new { ok = false, status = "denied", reason = blocked, riskClass = ActionClasses.BotManage });
         }
         var actorId = body.TryGetProperty("actor_id", out var actorValue) ? actorValue.GetString() ?? "" : "";
-        var desktopEpoch = tool is "load_skill" or "write_skill" || VideoTools.IsTool(tool) ? null : await AgentDesktopEpoch(botId, ct);
+        var desktopEpoch = tool is "load_skill" or "read_skill_file" or "write_skill" or "save_skill" or "delete_skill" || VideoTools.IsTool(tool) ? null : await AgentDesktopEpoch(botId, ct);
         if ((tool is "browser_open" or "browser_extract" or "browser_click" or "browser_screenshot" or "type_secret" or "request_login" or "shell" or "setup_env" or "computer_screenshot" or "computer_click" or "computer_type" or "computer_key" or "computer_scroll" or "record_start" or "record_stop") && desktopEpoch == null)
             return Results.Json(new { code = "DESKTOP_BUSY", reason = "You're in control — tell me when to continue" }, statusCode: 409);
         var gated = await Gate(botId, taskId, tool, args, false, ct);
@@ -735,7 +735,9 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
         // Guide tools use the database only and share the same gated execution path.
         if (tool == "send_widget") return await WidgetRoutes.SendFromBot(platform, botId, taskId, args, ct);
         if (tool == "load_skill") return await SkillLibraryRoutes.Load(platform, owner, botId, Arg(args, "name"), ct);
-        if (tool == "write_skill") return await SkillLibraryRoutes.Write(platform, owner, botId, taskId, args, ct);
+        if (tool == "read_skill_file") return await SkillLibraryRoutes.ReadFile(platform, owner, botId, Arg(args, "name"), Arg(args, "path"), ct);
+        if (tool is "write_skill" or "save_skill") return await SkillLibraryRoutes.Write(platform, owner, botId, taskId, args, ct);
+        if (tool == "delete_skill") return await SkillLibraryRoutes.Delete(platform, owner, botId, taskId, Arg(args, "name"), ct);
         var placement = await platform.PlacementForBot(botId, ct);
         var computer = placement.Computer;
         switch (tool)
