@@ -31,8 +31,8 @@
 - Add migrations through both `Platform.MigrateAndSeed` and API Dockerfile copies.
 - A new tool can require updates to schema, dispatch, policy, worker routing, and tests.
 - `main` is a reconstructed v0.3 baseline; it is not the full product history.
-  There are 52 remote branches and later integrated feature work. Read
-  `docs/GIT_BRANCH_GUIDE.md` before choosing a branch or treating main as current.
+  Remote branches and later integrated feature work are documented in
+  `docs/GIT_BRANCH_GUIDE.md`; branch counts are dated snapshots and change over time.
 
 ## Build and test entry points
 
