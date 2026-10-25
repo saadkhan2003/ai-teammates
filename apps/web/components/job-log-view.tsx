@@ -88,25 +88,25 @@ export function JobLogView({ jobId, name, dark = false }: { jobId: string; name:
   const live = connected && !ended && !asleep;
   const state = ended ? "Ended" : asleep ? "Computer asleep" : paused ? "Paused" : live ? "Live" : "Connecting…";
   return (
-    <div data-testid="job-log-view" data-state={state.toLowerCase()} className={cn("mt-2 overflow-hidden rounded-md border", dark ? "border-white/10 bg-[#05070a]" : "border-border bg-neutral-950")}>
-      <div className="flex items-center gap-2 border-b border-white/10 px-2 py-1 text-[11px] text-neutral-300">
+    <div data-testid="job-log-view" data-state={state.toLowerCase()} className={cn("mt-2 overflow-hidden rounded-md border", dark ? "border-white/10 bg-terminal" : "border-border bg-terminal")}>
+      <div className="flex items-center gap-2 border-b border-white/10 px-2 py-1 text-[11px] text-terminal-foreground">
         <span data-testid="job-log-live" className="inline-flex items-center gap-1">
-          <span className={cn("h-1.5 w-1.5 rounded-full", live && !paused ? "bg-emerald-400" : ended ? "bg-neutral-500" : "bg-amber-400")} aria-hidden />
+          <span className={cn("h-1.5 w-1.5 rounded-full", live && !paused ? "bg-success" : ended ? "bg-terminal-muted" : "bg-warning")} aria-hidden />
           {state}
         </span>
-        <span className="text-neutral-500" data-testid="job-log-count">· {lines?.length ?? 0} lines{total > (lines?.length ?? 0) ? ` (last ${MAX_LINES} of ${total})` : ""}{held ? ` · ${held} new` : ""}</span>
+        <span className="text-terminal-muted" data-testid="job-log-count">· {lines?.length ?? 0} lines{total > (lines?.length ?? 0) ? ` (last ${MAX_LINES} of ${total})` : ""}{held ? ` · ${held} new` : ""}</span>
         <span className="flex-1" />
-        <span className="text-neutral-500">{status}</span>
+        <span className="text-terminal-muted">{status}</span>
         {!ended ? (
           <button type="button" data-testid="job-log-pause" aria-pressed={paused} onClick={togglePause}
-            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-neutral-200 hover:bg-white/10">
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-terminal-foreground hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:bg-white/15">
             {paused ? <Play className="h-3 w-3" aria-hidden /> : <Pause className="h-3 w-3" aria-hidden />}
             {paused ? "Resume" : "Pause"}
           </button>
         ) : null}
       </div>
       <pre ref={ref} onScroll={onScroll} data-testid="job-log" aria-label={`${name} log`} aria-readonly="true" aria-live="off" tabIndex={0}
-        className="max-h-64 min-h-24 overflow-auto whitespace-pre-wrap break-all p-2 font-mono text-[11px] leading-4 text-[#d1fae5]">
+        className="max-h-64 min-h-24 overflow-auto whitespace-pre-wrap break-all p-2 font-mono text-[11px] leading-4 text-terminal-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
         {lines == null ? "Loading log…" : lines.length ? lines.join("\n") : "No output yet."}
         {asleep ? "\n(The computer is asleep. Output resumes when it wakes.)" : ""}
       </pre>

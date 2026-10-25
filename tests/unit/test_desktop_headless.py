@@ -164,3 +164,26 @@ def test_cdp_proxy_wakes_desktop_when_chrome_is_down(desktops, monkeypatch, tmp_
     assert len(calls) == 1
     cdp_proxy._touch(1)
     assert (tmp_path / "cdp-1").exists()
+
+
+def test_rewake_after_reaper_brings_supervised_services_up_before_waiting_for_x(monkeypatch, tmp_path):
+    """After the idle reaper the xvfb/wm/panels services stay supervised but wanted down; a
+    rescan alone leaves X down, so waking again must ask s6 for them before waiting."""
+    monkeypatch.syspath_prepend(str(ROOT / "services/computer/src"))
+    for name in ("workspace", "pure", "desktops", "browser", "fixtureserver", "cdp_proxy"):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    monkeypatch.setenv("COMPUTER_TOKEN", "unit-test-only")
+    import desktops as module
+    calls = []
+    monkeypatch.setattr(module, "_write_service", lambda name, script, down=False: None)
+    monkeypatch.setattr(module, "_rescan", AsyncMock(side_effect=lambda: calls.append(("rescan",))))
+    monkeypatch.setattr(module, "_svc", AsyncMock(side_effect=lambda *a: calls.append(a)))
+    monkeypatch.setattr(module, "_wait_x", AsyncMock(side_effect=lambda n, *a: calls.append(("wait_x", n))))
+    monkeypatch.setattr(module.workspace, "desktop_identity", lambda bot: (1000, tmp_path / "bot", tmp_path))
+    monkeypatch.setattr(module.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(module.Path, "exists", lambda self: str(self).startswith("/run/service/") and str(self).endswith("/supervise"))
+    desk = module.Desktop(bot_id="bot-a", display=1, name="Ada")
+    asyncio.run(module.DesktopManager()._spawn_display(desk))
+    ups = [c[1].rsplit("/", 1)[1] for c in calls if c[0] == "-u"]
+    assert ups == ["xvfb-1", "wm-1", "panels-1"]
+    assert calls.index(("wait_x", 1)) > max(i for i, c in enumerate(calls) if c[0] == "-u")

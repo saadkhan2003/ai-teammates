@@ -32,3 +32,11 @@ test('delta batch schedules one frame, preserves order, and cancels unmounted wo
   batch.push('a');batch.push('b'); assert.equal(requested,1);callbacks.get(1)(); assert.deepEqual(commits,[['a','b']]);
   batch.push('c');assert.equal(requested,2);batch.stop();assert.equal(callbacks.has(2),false);assert.equal(commits.length,1);
 });
+test('browser.page events carry the tab list; approval patches keep relayed cards from the server list',()=>{
+  const pages=[{targetId:'1',url:'u1',title:'a'},{targetId:'2',url:'u2',title:'b'}];
+  const next=m.patchWorkspace({...workspace,pages:[]},{type:'browser.page',botId:'b',pages});
+  assert.equal(next.pages.length,2);
+  assert.equal(m.patchWorkspace({...workspace,pages:[]},{type:'browser.page',botId:'other',pages}).pages.length,0);
+  const relayed=[{id:'a1',action:'delete_file',status:'pending',relayed:true,botName:'Beta'}];
+  assert.equal(m.patchWorkspace(workspace,{type:'approval',botId:'b',task:{id:'t',status:'waiting_approval'},approvals:relayed}).approvals[0].relayed,true);
+});

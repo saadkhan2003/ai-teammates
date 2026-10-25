@@ -19,7 +19,10 @@ test("approval card describes Always allow and settings can revoke the scoped ru
     await expect(card).toBeVisible({ timeout: 60_000 });
     await expect(card.getByTestId("approval-always")).toBeVisible();
     await expect(card).toContainText("Always allow portal.example.edu in this bot");
+    // Wait for the decision to land before leaving the page, or the navigation can cancel it.
+    const decided = page.waitForResponse((r) => /\/api\/approvals\/[^/]+\/decide$/.test(r.url()) && r.request().method() === "POST");
     await card.getByTestId("approval-always").click();
+    expect((await decided).ok()).toBeTruthy();
 
     await page.goto("/settings/approval-rules");
     const row = page.getByTestId("approval-rule").first();

@@ -209,6 +209,9 @@ export function ComputerPane({
   const [connectFailed, setConnectFailed] = useState(false);
   const [desktopAsleep, setDesktopAsleep] = useState(false);
   const wakeRequested = useRef(false);
+  // Opening the full computer view is an explicit "show me the screen", so it wakes the desktop.
+  const fullViewRef = useRef(fullscreenProp);
+  fullViewRef.current = fullscreenProp;
   const [busy, setBusy] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(true);
   const [online, setOnline] = useState(true);
@@ -321,9 +324,10 @@ export function ComputerPane({
   async function desktopIsAsleep(): Promise<boolean> {
     try {
       const state = await api<{ desktop?: string }>("/api/computer/desktop");
-      return state?.desktop === "asleep";
+      // "unknown" means the computer did not answer the probe in time; rest on Watch rather than waking it.
+      return state?.desktop === "asleep" || state?.desktop === "unknown";
     } catch {
-      return false;
+      return true;
     }
   }
 
@@ -334,7 +338,7 @@ export function ComputerPane({
     clearReconnect();
     const gen = ++connectGen.current;
     setError(null);
-    if (!force && !wakeRequested.current && (await desktopIsAsleep())) {
+    if (!force && !wakeRequested.current && !fullViewRef.current && (await desktopIsAsleep())) {
       if (gen === connectGen.current) {
         pendingRef.current = false;
         setConnecting(false);

@@ -184,8 +184,9 @@ async function computerSlug(page: Page, botId: string) {
 async function assignTracked(page: Page, botId: string, text: string, asTask = true) {
   const before = new Set((await listTasks(page, botId)).map((row) => row.id));
   await send(page, text, asTask);
-  const created = (await listTasks(page, botId)).find((row) => !before.has(row.id));
-  expect(created, "task was created").toBeTruthy();
+  // The composer clears optimistically, before the send lands, so wait for the task row.
+  let created: TaskRow | undefined;
+  await expect.poll(async () => (created = (await listTasks(page, botId)).find((row) => !before.has(row.id))) !== undefined, { message: "task was created", timeout: 15_000 }).toBe(true);
   return created!.id;
 }
 
@@ -665,6 +666,11 @@ test("MVP acceptance items 1-22 on a real per-bot computer", async ({ page }) =>
   });
 
   await test.step("15 metrics", async () => {
+    // Idle computers hibernate and report no memory; wake it the way a user would before reading metrics.
+    await page.goto(botUrl);
+    await openPane(page, "Computer");
+    await expect(page.getByTestId("computer-tab")).toHaveAttribute("data-vnc-state", "connected", { timeout: 60_000 });
+    await page.goto("/settings/secrets");
     await page.getByTestId("nav-system").click();
     await expect(page.getByTestId("metrics-model-calls")).toContainText(/\d+/);
     await expect(page.getByTestId("metrics-cost")).toContainText("$");

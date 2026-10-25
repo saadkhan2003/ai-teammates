@@ -42,8 +42,10 @@ export function ComputerHealth() {
       {error ? <p role="alert" className="mt-3 text-sm text-destructive">{error}</p> : null}
       {rows && rows.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">No running computers sampled yet.</p> : null}
       {rows && rows.length > 0 ? (
-        <table className="mt-3 w-full text-sm">
-          <thead className="text-left text-xs uppercase tracking-wide text-muted-foreground">
+        // Six columns overflow on narrow screens; the region scrolls and can take keyboard focus.
+        <div role="region" aria-label="Computer memory" tabIndex={0} className="mt-3 overflow-x-auto rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:outline-none">
+        <table className="w-full min-w-[36rem] text-sm">
+          <thead className="text-left text-xs text-muted-foreground">
             <tr><th className="py-1 font-medium">Owner</th><th className="py-1 font-medium">Desktop</th><th className="py-1 text-right font-medium">Processes RSS</th><th className="py-1 text-right font-medium">Desktop RSS</th><th className="py-1 text-right font-medium">Container</th><th className="py-1 text-right font-medium">Chrome</th></tr>
           </thead>
           <tbody>
@@ -63,6 +65,7 @@ export function ComputerHealth() {
             ))}
           </tbody>
         </table>
+        </div>
       ) : null}
     </section>
   );

@@ -806,7 +806,10 @@ class Worker:
                 await self._status(task, "waiting_approval", reason=gate.get("reason"))
                 return None
             if gate.get("decision") != "allow":
-                return {"ok": False, "status": "denied", "reason": gate.get("reason") or "gate_unavailable"}
+                denied = {"ok": False, "status": "denied", "reason": gate.get("reason") or "gate_unavailable"}
+                if gate.get("code"):
+                    denied["code"] = gate["code"]  # e.g. usage_limit: the reply can point to the notice the API posted
+                return denied
         if name in {"watch_video", "ask_video"}:
             authorized = await self._execute_api(task, name, args)
             if authorized is None or authorized.get("ok") is False:
@@ -926,7 +929,10 @@ class Worker:
             posted = "waiting_human" if status == "needs_human" else status
             await self._status(task, posted, reason=body.get("reason"))
             return None
-        return {"ok": False, "reason": body.get("reason") or "denied"}
+        denied = {"ok": False, "reason": body.get("reason") or "denied"}
+        if body.get("code"):
+            denied["code"] = body["code"]
+        return denied
 
     async def _observe(self, task: dict, tool: str, args: dict, output: dict) -> str:
         body = await self.request_json(

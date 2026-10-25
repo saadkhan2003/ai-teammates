@@ -135,7 +135,7 @@ test("question card answer survives reload and memory notices render", async ({ 
   const task = await waitInstruction(page, botId, ASK);
   expect(task.status, resultText(task)).toBe("completed");
   expect(resultText(task)).toContain(CHOICE);
-  await expect(page.getByText(`You chose ${CHOICE}`)).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId("assistant-bubble").getByText(`You chose ${CHOICE}`)).toBeVisible({ timeout: 20_000 });
 
   await page.getByTestId("composer").fill(REMEMBER);
   await page.getByTestId("send-chat").click();

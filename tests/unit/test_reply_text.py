@@ -48,3 +48,14 @@ def test_mock_job_demos_reply_in_prose():
     assert "{" not in _final("JOB STATUS DEMO", {"jobs": [{"name": "Long demo", "status": "running"}]})
     assert _final("STORAGE DEMO hi", {"ok": True, "path": "/workspace/notes/storage-demo.txt"}) == "Write result: saved /workspace/notes/storage-demo.txt."
     assert _final("STORAGE READ DEMO", {"path": "x", "content": "first\n"}) == "Read result: first"
+
+
+PAUSED = {"ok": False, "status": "blocked", "code": "usage_limit",
+          "reason": "You've used all of this week's included usage, so new background jobs are paused."}
+
+
+def test_usage_pause_reply_does_not_repeat_the_notice():
+    out = humanize_reply("Started: " + json.dumps(PAUSED))
+    assert "this week's included usage" not in out and "{" not in out and "paused" in out
+    text = _final("JOB DEMO 2", PAUSED)
+    assert text.startswith("I couldn't start Tick demo") and "this week's included usage" not in text

@@ -44,6 +44,8 @@ async function setup(page: Page, opts: { messages?: Array<Record<string, unknown
 const assistant = (id: string, content: string, extra: Record<string, unknown> = {}) => ({ id, role: "assistant", content, createdAt: new Date().toISOString(), requestId: "req_123", ...extra });
 
 async function selectText(page: Page, locator: string, text: string) {
+  // Wait for the message to render; selecting right after navigation can race the first load.
+  await expect(page.locator(locator).filter({ hasText: text }).first()).toBeVisible();
   await page.evaluate(({ locator, text }) => {
     const root = document.querySelector(locator)!;
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);

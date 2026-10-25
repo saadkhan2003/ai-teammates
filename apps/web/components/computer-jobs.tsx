@@ -69,11 +69,11 @@ export function ComputerJobs({ botId, controlled = false, dark = false }: { botI
   const drift = Math.floor((now - loadedAt) / 1000);
 
   return (
-    <section data-testid="computer-jobs" className={cn("thin-type flex shrink-0 flex-col gap-2 text-[13px]", dark && "text-[#e7e9ea]")}>
+    <section data-testid="computer-jobs" className={cn("thin-type flex shrink-0 flex-col gap-2 text-[13px]", dark && "text-neutral-100")}>
       <div className="flex flex-wrap items-center justify-center gap-2">
         {showBackgroundPill(running, screenBusy) ? (
           <span data-testid="background-pill" role="status" className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs", dark ? "border-white/10 bg-white/[0.04]" : "border-border bg-card")}>
-            <Loader2 className="h-3 w-3 animate-spin text-[#1d9bf0] motion-reduce:animate-none" aria-hidden />
+            <Loader2 className="h-3 w-3 animate-spin text-info motion-reduce:animate-none" aria-hidden />
             <span className="t-label">Working in background</span>
             <span className={muted}>· {running} {running === 1 ? "job" : "jobs"}</span>
           </span>
@@ -88,13 +88,13 @@ export function ComputerJobs({ botId, controlled = false, dark = false }: { botI
             return (
               <li key={job.id} data-testid="job-row" data-status={job.status} className="px-3 py-2">
                 <div className="flex items-center gap-2">
-                  <button type="button" className="min-w-0 flex-1 truncate text-left" aria-expanded={open === job.id} data-testid="job-open" onClick={() => setOpen(open === job.id ? null : job.id)}>
+                  <button type="button" className="min-w-0 flex-1 truncate rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:opacity-80" aria-expanded={open === job.id} data-testid="job-open" onClick={() => setOpen(open === job.id ? null : job.id)}>
                     <span className="t-label">{job.name}</span>
                   </button>
                   <span data-testid="job-elapsed" className={cn("tabular-nums text-xs", muted)}>{elapsedLabel(elapsed)}</span>
-                  <span data-testid="job-status" className={cn("rounded-full px-2 py-0.5 text-[11px]", active ? "bg-[#1d9bf0]/15 text-[#1d9bf0]" : job.status === "done" ? "bg-emerald-500/15 text-emerald-500" : "bg-amber-500/15 text-amber-500")}>{jobStatusLabel(job.status)}</span>
+                  <span data-testid="job-status" className={cn("rounded-full px-2 py-0.5 text-[11px]", active ? "bg-info-soft text-info" : job.status === "done" ? "bg-success-soft text-success" : "bg-warning-soft text-warning")}>{jobStatusLabel(job.status)}</span>
                   {active ? (
-                    <button type="button" data-testid="job-stop" className={cn("rounded-full px-2 py-0.5 text-[11px]", confirm === job.id ? "bg-red-600 text-white" : dark ? "bg-white/10 hover:bg-white/15" : "bg-secondary hover:bg-accent")} onClick={() => void stop(job.id)} onBlur={() => setConfirm(null)}>
+                    <button type="button" data-testid="job-stop" className={cn("rounded-full px-2 py-0.5 text-[11px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50", confirm === job.id ? "bg-destructive text-destructive-foreground" : dark ? "bg-white/10 hover:bg-white/15 active:bg-white/20" : "bg-secondary hover:bg-accent active:bg-accent")} onClick={() => void stop(job.id)} onBlur={() => setConfirm(null)}>
                       {confirm === job.id ? "Confirm stop" : "Stop"}
                     </button>
                   ) : null}
@@ -107,7 +107,7 @@ export function ComputerJobs({ botId, controlled = false, dark = false }: { botI
           })}
         </ul>
       ) : null}
-      {error ? <p className="text-center text-xs text-amber-500">{error}</p> : null}
+      {error ? <p className="text-center text-xs text-warning">{error}</p> : null}
     </section>
   );
 }

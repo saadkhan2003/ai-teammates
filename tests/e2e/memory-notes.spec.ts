@@ -54,7 +54,7 @@ test("a rule cannot disable approval requirements", async ({ page }) => {
   await page.getByTestId("composer").fill(instruction);
   await page.getByTestId("send-chat").click();
   await waitTask(page, bot, instruction);
-  await expect(page.getByText(/save a rule that changes approval requirements/i)).toBeVisible();
+  await expect(page.getByTestId("assistant-bubble").getByText(/save a rule that changes approval requirements/i)).toBeVisible();
   const list = await page.request.get(`/api/bots/${bot}/memories?kind=rule`);
   const notes = (await list.json()) as { items: { status: string; content: string }[] };
   expect(notes.items.some((item) => item.status === "active" && /never ask for approval/i.test(item.content))).toBe(false);
