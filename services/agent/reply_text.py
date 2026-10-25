@@ -11,6 +11,10 @@ import json
 import re
 from typing import Any
 
+USAGE_LIMIT = "usage_limit"
+# The API already posts the full usage notice in the chat; the reply points to it instead of repeating it.
+USAGE_PAUSED_REPLY = "I couldn't start that now because background work is paused. The note above explains how to keep going."
+
 _TOOL_KEYS = {"ok", "status", "job_id", "jobs", "reason", "note", "log_path", "result_dir", "exit_code", "stdout", "stderr"}
 
 
@@ -23,6 +27,8 @@ def _summary(obj: dict[str, Any]) -> str:
         parts = [f"{j.get('name') or 'job'} is {str(j.get('status') or 'unknown').replace('_', ' ')}" for j in jobs[:5]]
         more = f" and {len(jobs) - 5} more" if len(jobs) > 5 else ""
         return "Background jobs: " + "; ".join(parts) + more + "."
+    if obj.get("ok") is False and obj.get("code") == USAGE_LIMIT:
+        return USAGE_PAUSED_REPLY
     if obj.get("ok") is False:
         reason = str(obj.get("reason") or "it did not work").strip().rstrip(".")
         return f"That didn't work: {reason}."
@@ -74,5 +80,5 @@ def humanize_reply(text: str) -> str:
         return text
     result = "".join(out)
     # "Started: Started X ..." / "Jobs: Background jobs: ..." -> drop the dangling label.
-    result = re.sub(r"^\s*[\w ]{1,40}:\s+(?=(Started |Background jobs|No background jobs|That didn't work|Done\.))", "", result)
+    result = re.sub(r"^\s*[\w ]{1,40}:\s+(?=(Started |Background jobs|No background jobs|That didn't work|I couldn't start that|Done\.))", "", result)
     return re.sub(r"[ \t]{2,}", " ", result).strip() or "Done."

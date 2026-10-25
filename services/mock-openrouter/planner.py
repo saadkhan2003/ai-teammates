@@ -725,6 +725,9 @@ def _tool_json(messages: list) -> dict:
 def _job_started_text(messages: list, name: str) -> str:
     """A friendly job_start reply; never the raw tool result."""
     result = _tool_json(messages)
+    if result.get("ok") is False and result.get("code") == "usage_limit":
+        # The API posts the full usage notice itself; repeating it would show the same note twice.
+        return f"I couldn't start {name} now because background work is paused. The note above explains how to keep going."
     if result.get("ok") is False:
         return f"I couldn't start {name}: {str(result.get('reason') or 'it did not start').rstrip('.')}."
     return f"Started {result.get('name') or name} in the background. I'll tell you when it's done."
