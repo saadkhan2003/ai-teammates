@@ -1,4 +1,6 @@
 # arch-c1 report
+> Historical handoff for `arch-c1 report`. Status, implementation details, test results, and open items below describe that workstream's recorded checkpoint; verify the current source and guides before treating them as current.
+
 
 Rows 3–5 add persisted logical windows (1–8), per-window Chrome/CDP routing, API window create/list/destroy and 409 cap handling; injectable doctor checks and a 5-second RFB supervisor; bounded logs; and an internal owner-token router with fixed-size constant-time comparison, private token files, and liveness markers. Tokens use 256-bit CSPRNG output. Doctor failures and router denials do not expose secrets.
 

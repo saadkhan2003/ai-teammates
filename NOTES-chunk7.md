@@ -1,4 +1,6 @@
 # Chunk 7 — Create New Bot
+> Historical handoff for `Chunk 7 — Create New Bot`. Status, implementation details, test results, and open items below describe that workstream's recorded checkpoint; verify the current source and guides before treating them as current.
+
 
 Implemented the Create New Bot modal with the original blob avatar picker (15 SVG shapes and 11 colour swatches), a live preview, required name, optional advanced role/instructions, Enter submission, and stable test IDs. Existing test IDs remain supported.
 

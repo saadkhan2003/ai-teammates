@@ -1,4 +1,6 @@
 # Chunk 2 handoff: computer image, DNS/isolation, second display
+> Historical handoff for `Chunk 2 handoff: computer image, DNS/isolation, second display`. Status, implementation details, test results, and open items below describe that workstream's recorded checkpoint; verify the current source and guides before treating them as current.
+
 
 Implemented only the assigned compute/computer/deploy/contract/test areas and this note. No Docker daemon, iptables command, paid API, credential file, or git mutation was used.
 

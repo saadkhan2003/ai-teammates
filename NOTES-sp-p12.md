@@ -1,3 +1,5 @@
+> Historical handoff for `sp-p12 handoff`. Status, implementation details, test results, and open items below describe that workstream's recorded checkpoint; verify the current source and guides before treating them as current.
+
 sp-p12 handoff
 
 Phase 1 checkpoint was tested before Phase 2 began (counts in WT-PROGRESS.md). No new migration or package is needed: client_id is the message UUID plus metadata, with transactional idempotent acceptance.

@@ -1,4 +1,6 @@
 # sp-p3 handoff
+> Historical handoff for `sp-p3 handoff`. Status, implementation details, test results, and open items below describe that workstream's recorded checkpoint; verify the current source and guides before treating them as current.
+
 
 Implemented composer focus/input prewarm (only 4 isolated lines in chat-pane), owner/policy/quota/audit checks and bounded background admission, adaptive service/CDP readiness, compute stage telemetry, disposable isolated paused templates with fresh bot mounts on claim, generator/compose settings, tests and Phase 3 documentation.
 

@@ -1,3 +1,5 @@
+> Historical handoff for `Chunk 3 integration notes:`. Status, implementation details, test results, and open items below describe that workstream's recorded checkpoint; verify the current source and guides before treating them as current.
+
 Chunk 3 integration notes:
 - Device schema is db/011_devices.sql; rebuild API/web and apply the forward-only migrations.
 - docs/COMPANION.md defines pairing/heartbeat contract for chunk 4. Public copy is apps/web/public/docs/COMPANION.md; keep them synchronized if changed.

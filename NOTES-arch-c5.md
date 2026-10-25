@@ -1,4 +1,6 @@
 # Chunk c5 report: rows 6, 7, 8 and lease follow-up
+> Historical handoff for `Chunk c5 report: rows 6, 7, 8 and lease follow-up`. Status, implementation details, test results, and open items below describe that workstream's recorded checkpoint; verify the current source and guides before treating them as current.
+
 
 Completed the follow-up gaps: RW WebSocket close grace releases the durable lease and fences/stops RW VNC; lease changes kick stale sockets; owner force release requires a reason and is audited; second tabs remain view-only until “Take over here”; shell, setup-env and CDP effects carry actor/epoch through the final service fence; process-group cancellation drains then SIGKILLs; restart reconciliation clears held inputs; and the seeded invariant model runs 2,000 interleavings. Migration is now `db/021_desktop_lease.sql`.
 

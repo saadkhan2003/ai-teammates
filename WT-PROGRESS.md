@@ -1,3 +1,7 @@
+# Worktree progress log
+
+> Chronological integration history. Each entry records the work and validation status at that checkpoint; it is not a current test report or release-readiness statement.
+
 - Read release/defaults and branch design/status notes; beginning ordered merges on v04-merge.
 - Merge/commit blocked before HEAD changed: Git metadata mount is read-only; Docker socket is denied and sudo cannot elevate under no-new-privileges; no stack touched.
 - Reviewed migration/schema and policy collisions; recorded proposed 027–039 mapping and reconciliation requirements in docs/MIGRATIONS_V04.md; implementation and suites pending environment repair.
