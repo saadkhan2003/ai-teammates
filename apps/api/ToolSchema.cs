@@ -52,6 +52,7 @@ public static class ToolSchema
         Fn("job_cancel", "Stop a running background job", Req("job_id", "string", "Job id")),
         Fn("setup_env", "Run a command with a secret in the environment", Req("secret_ref", "string", "secret:// reference"), Req("env_name", "string", "Env var"), Req("command", "string", "Command")),
         Fn("type_secret", "Type a stored secret into a password field", Req("secret_ref", "string", "secret:// reference"), Opt("selector", "string", "CSS selector"), Req("url", "string", "Page URL")),
+        Fn("send_widget", "Send a typed interactive widget to the user. Use JSON matching version 1 widget types: card, list, table, form, buttons, badges, key-value, progress, image-grid, chart, flow, or code.", Req("widget", "object", "Widget JSON object")),
         Fn("ask_user", "Ask the user to choose. Use this instead of asking in plain text. 1 to 6 options. style danger for a destructive option.",
             Req("prompt", "string", "Short question"),
             Arr("options", "Option labels", true, "string", 1, 6),

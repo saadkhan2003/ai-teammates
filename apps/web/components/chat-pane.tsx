@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { FileCard } from "@/components/file-card";
 import { ImageGrid } from "@/components/image-grid";
 import type { GalleryImage } from "@/components/image-lightbox";
@@ -18,6 +19,7 @@ import { ResumeCard, ResumeNotice } from "@/components/resume-card";
 import type { AgentEvent } from "@/lib/events";
 import { ArrowDown, ArrowUp, AudioLines, MessageCircle, MessageSquareQuote, Mic, MoreHorizontal, Notebook, Plus, Reply, Smile } from "lucide-react";
 import { Loader2, Reply as ReplyIcon, X as XIcon, Quote } from "lucide-react";
+import { Circle, CircleAlert, CircleCheck, CircleDot } from "lucide-react";
 import { highlightPlan, loadUntil } from "@/lib/history";
 import { BotAvatar } from "@/components/bot-avatar";
 import { BotActionRow, BotThreadRow } from "@/components/bot-thread";
@@ -46,6 +48,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { memoryReason, undoableMemoryAction } from "@/lib/memory-notes";
 import type { ChatMessage } from "@/lib/types";
 import { cn, errorMessage, formatWhen } from "@/lib/utils";
+import type { Widget } from "@/lib/widgets/schema";
 
 type PendingUpload = {
   id: string;
@@ -55,6 +58,7 @@ type PendingUpload = {
   preview: string;
   status: "uploading" | "done" | "error";
 };
+const FlowDiagram = dynamic(() => import("@/components/widgets/flow-view").then(m => m.FlowDiagram), { ssr: false, loading: () => <div className="h-60 animate-pulse rounded-md bg-muted" /> });
 type TaskPlan = { taskId: string; title: string; status: string; items: { title: string; status: string }[]; budget: { label: string }; tests: { required: boolean; passedAt?: string; override: boolean }; blocked: boolean; estimate?: { lowSeconds: number; highSeconds: number; n: number; label: string } | null };
 
 export function ChatPane({
@@ -343,6 +347,11 @@ export function ChatPane({
   useEffect(() => { for (const m of messages) seen.current?.ids.add(m.id); });
 
   function announce(text: string) { setLive(""); window.setTimeout(() => setLive(text), 30); }
+  async function sendWidgetAction(widget: Widget, action: string, payload: Record<string, unknown>) {
+    if (!botId) return;
+    await api(`/api/bots/${botId}/widget-actions`, { method: "POST", body: JSON.stringify({ widget_id: widget.id, action, payload }) });
+    onSent();
+  }
   function focusComposer() { window.setTimeout(() => { const node = lastTextId ? partRefs.current.get(lastTextId) : null; (node ?? Array.from(partRefs.current.values()).pop())?.focus(); }, 0); }
 
   const addQuoteText = useCallback((raw: string, source?: string) => {
@@ -701,6 +710,7 @@ export function ChatPane({
                   mine={mine}
                   byId={byId}
                   onJump={jumpTo}
+                  onWidgetAction={sendWidgetAction}
                   renderText={(text) => <MediaRow media={messageBlocks(text)} jobs={codingJobs} accent={paint} botId={botId} mine={mine} onOpenJob={onOpenJob} onReply={() => startReply(message)} />}
                   fallback={<>{blocks.some(block => block.kind === "coding-jobs") ? <CodingJobsCard jobs={codingJobs} accent={paint} onOpenJob={onOpenJob} /> : null}<MediaRow media={blocks} jobs={codingJobs} accent={paint} botId={botId} mine={mine} onOpenJob={onOpenJob} onReply={() => startReply(message)} /></>}
                 />
@@ -727,7 +737,8 @@ export function ChatPane({
           ) : null}
           {plan && plan.items.length ? <section aria-label="Task plan" className="rounded-md border border-border bg-card p-3 text-sm">
             <h3 className="font-medium">Plan</h3>
-            <ul className="mt-2 space-y-1">{plan.items.map((item, index) => <li key={index} className="flex gap-2"><span aria-hidden>{item.status === "done" ? "✓" : item.status === "blocked" ? "!" : item.status === "in_progress" ? "◉" : "○"}</span><span>{item.title}</span></li>)}</ul>
+            <FlowDiagram label="Task plan flow" nodes={plan.items.map((item, index) => ({ id: `plan-${index}`, position: { x: index * 180, y: 0 }, data: { label: item.title }, type: "input" }))} edges={plan.items.slice(1).map((_, index) => ({ id: `plan-edge-${index}`, source: `plan-${index}`, target: `plan-${index + 1}` }))} />
+            <ul className="mt-2 space-y-1">{plan.items.map((item, index) => <li key={index} className="flex gap-2"><span aria-hidden>{item.status === "done" ? <CircleCheck className="h-4 w-4 text-emerald-500" /> : item.status === "blocked" ? <CircleAlert className="h-4 w-4 text-destructive" /> : item.status === "in_progress" ? <CircleDot className="h-4 w-4 text-primary" /> : <Circle className="h-4 w-4 text-muted-foreground" />}</span><span>{item.title}</span></li>)}</ul>
             <p className="mt-2 text-xs text-muted-foreground">Budget: {plan.budget.label}</p>
             {plan.estimate ? <p className="text-xs text-muted-foreground">Estimate: ~{Math.round(plan.estimate.lowSeconds / 60)}–{Math.round(plan.estimate.highSeconds / 60)} min (from {plan.estimate.n} similar runs)</p> : null}
             <p className="text-xs">Tests: {plan.tests.required ? plan.tests.passedAt || plan.tests.override ? "passed" : "required" : "optional"}</p>

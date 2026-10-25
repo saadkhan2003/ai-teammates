@@ -733,6 +733,7 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
     {
         if (BotMessaging.IsTool(tool)) return await BotMessaging.Run(platform, owner, botId, taskId, tool, args, ct);
         // Guide tools use the database only and share the same gated execution path.
+        if (tool == "send_widget") return await WidgetRoutes.SendFromBot(platform, botId, taskId, args, ct);
         if (tool == "load_skill") return await SkillLibraryRoutes.Load(platform, owner, botId, Arg(args, "name"), ct);
         if (tool == "write_skill") return await SkillLibraryRoutes.Write(platform, owner, botId, taskId, args, ct);
         var placement = await platform.PlacementForBot(botId, ct);

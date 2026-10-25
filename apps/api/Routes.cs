@@ -19,6 +19,7 @@ public static class Routes
 
     public static void Map(WebApplication app, Platform platform, Runtime runtime)
     {
+        WidgetRoutes.Map(app, platform);
         LibraryRoutes.Map(app, platform);
         BriefRoutes.Map(app, platform);
         LearnedRoutes.Map(app, platform);

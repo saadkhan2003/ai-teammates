@@ -1,0 +1,33 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import ts from 'typescript';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
+const require = createRequire(import.meta.url);
+const src = fs.readFileSync(new URL('./schema.ts', import.meta.url), 'utf8');
+const js = ts.transpileModule(src, { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } }).outputText.replace('from \"zod\"', `from \"${pathToFileURL(require.resolve('zod')).href}\"`);
+const m = await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
+const sample = { version: 1, id: 'w1', type: 'buttons', actions: [{ id: 'ok', label: 'Continue', action: 'continue' }] };
+test('accepts supported widgets and rejects unknown schema versions/types', () => { assert.equal(m.validateWidget(sample).type, 'buttons'); assert.throws(() => m.validateWidget({ ...sample, version: 2 })); assert.throws(() => m.validateWidget({ ...sample, type: 'unknown' })); });
+test('rejects oversized/deep widgets and malicious image urls', () => {
+  assert.throws(() => m.validateWidget({ version: 1, id: 'w', type: 'code', language: 'txt', code: 'x'.repeat(24001) }));
+  let nested = 1; for (let i = 0; i < 10; i++) nested = { x: nested };
+  const deep = { ...sample, x: nested };
+  assert.throws(() => m.validateWidget(deep));
+  assert.equal(m.isSafeImageUrl('javascript:alert(1)'), false);
+  assert.equal(m.isSafeImageUrl('data:image/svg+xml,x'), false);
+  assert.equal(m.isSafeImageUrl('https://example.com/a.png'), true);
+  assert.equal(m.isSafeImageUrl('data:image/png;base64,YQ=='), true);
+  assert.equal(m.validateWidget({ version: 1, id: 'data-image', type: 'image-grid', images: [{ url: 'data:image/png;base64,YQ==', alt: 'pixel' }] }).type, 'image-grid');
+  assert.throws(() => m.validateWidget({ version: 1, id: 'unicode', type: 'card', body: '界'.repeat(16000) }));
+});
+test('rejects malformed widget fields', () => { assert.throws(() => m.validateWidget({ ...sample, actions: [{ id: 'a', label: 'x', action: 'x', unexpected: true }] })); });
+test('renderer escapes text through React and never invokes HTML injection APIs', () => {
+  const renderer = fs.readFileSync(new URL('../../components/widgets/widget-renderer.tsx', import.meta.url), 'utf8');
+  assert.equal(renderer.includes('dangerouslySetInnerHTML'), false);
+  assert.equal(renderer.includes('innerHTML'), false);
+  const malicious = { version: 1, id: 'unsafe', type: 'card', body: '<img src=x onerror=alert(1)>' };
+  assert.equal(m.validateWidget(malicious).body, '<img src=x onerror=alert(1)>');
+  assert.match(renderer, /hideProviderNames/);
+});

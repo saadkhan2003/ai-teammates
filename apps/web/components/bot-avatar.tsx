@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useEffect, useRef } from "react";
+import { Star } from "lucide-react";
 import { AvatarEyes, ContactShadow, GlossyBlob } from "@/components/avatar-motion/glossy-blob";
 import { lobePath, subscribeAvatar, resolveAvatarAppearance, type AvatarFrame } from "@/lib/avatar-motion";
 
@@ -46,5 +47,5 @@ export function BotAvatar({ shape, color, size = 40, botId, className = "", anim
     </svg>
   );
   if (!primary) return svg;
-  return <span className="relative inline-flex shrink-0">{svg}<span data-testid="primary-badge" role="img" aria-label="Primary bot" title="Primary bot" className="absolute bottom-0 right-0 text-xs">★</span></span>;
+  return <span className="relative inline-flex shrink-0">{svg}<span data-testid="primary-badge" role="img" aria-label="Primary bot" title="Primary bot" className="absolute bottom-0 right-0 text-xs"><Star aria-hidden className="h-3 w-3 fill-current" /></span></span>;
 }

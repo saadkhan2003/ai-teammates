@@ -75,7 +75,8 @@ export type CodingJob = {
 export type MessagePartView =
   | { type: "text"; text: string }
   | { type: "quote"; text: string; sourceMessageId?: string | null }
-  | { type: "reply"; messageId: string; author?: string; excerpt?: string };
+  | { type: "reply"; messageId: string; author?: string; excerpt?: string }
+  | { type: "widget"; widget: unknown };
 
 export type Approval = {
   id: string;
