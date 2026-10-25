@@ -1,4 +1,6 @@
 # sp-ai2 handoff
+> Historical handoff for `sp-ai2 handoff`. Status, implementation details, test results, and open items below describe that workstream's recorded checkpoint; verify the current source and guides before treating them as current.
+
 
 Implementation includes all sixteen control additions in migration 045, additive ASP.NET services, the admin app, mock catalog/golden judge, CLI golden runner, tests and docs/AI_MODELS.md. The non-streaming gateway is delegated into AiControlledGateway.cs to keep the adapter/streaming seam small. No streaming implementation, Docker command, paid API call, secret-file access or git mutation was performed.
 

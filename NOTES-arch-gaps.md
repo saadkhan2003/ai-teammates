@@ -1,4 +1,6 @@
 # Architecture G1 report
+> Historical handoff for `Architecture G1 report`. Status, implementation details, test results, and open items below describe that workstream's recorded checkpoint; verify the current source and guides before treating them as current.
+
 
 Moved VNC and terminal tickets, Teach exclusivity, login credential slots and rate windows into Postgres. Tickets are SHA-256 hashed, single-use, DB-expiring and claim-bound; VNC session tokens and submitted login fields are AES-GCM encrypted under the shared API master key. RW VNC heartbeats and release grace use database rows and a `SKIP LOCKED` sweeper. Relay sockets remain instance-local with Caddy affinity and clear mismatch closes.
 

@@ -1,4 +1,6 @@
 # Chunk 5 notes
+> Historical handoff for `Chunk 5 notes`. Status, implementation details, test results, and open items below describe that workstream's recorded checkpoint; verify the current source and guides before treating them as current.
+
 
 - Added a centralized pure shortcut matcher and connected the available shell actions, with a Node test in `apps/web/lib/shortcuts.test.mjs`. Playwright specs were added for shortcuts, the account menu, Settings, and About.
 - Settings pages now render in a centered dialog on their existing `/settings/*` routes. `?settings=general|computer|vault|usage|updates` routes to the corresponding existing settings screen. Updates now reads `/api/devices/version` and supports a manual check.

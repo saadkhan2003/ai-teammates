@@ -1,4 +1,6 @@
 # Architecture chunk c3 follow-up report
+> Historical handoff for `Architecture chunk c3 follow-up report`. Status, implementation details, test results, and open items below describe that workstream's recorded checkpoint; verify the current source and guides before treating them as current.
+
 
 Connected computer CONNECT traffic to the authenticated multiplexed WSS companion relay, with 90-second fallback/fail-closed routing. The companion resolves once and pins public addresses. The proxy polls versioned API policy every 10 seconds, keeps the last good policy, denies before first load, and submits host-only decisions to a rate-limited API audit endpoint. Policy changes are audited; stopped computers fetch the latest snapshot on resume. Added in-memory relay, route, policy, audit-redaction, and SSRF tests.
 

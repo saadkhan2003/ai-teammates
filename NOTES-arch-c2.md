@@ -1,4 +1,6 @@
 # Architecture chunk c2 report
+> Historical handoff for `Architecture chunk c2 report`. Status, implementation details, test results, and open items below describe that workstream's recorded checkpoint; verify the current source and guides before treating them as current.
+
 
 Completed row 9 terminal work alongside the previously completed file-transfer half. Added a per-window asyncio PTY WebSocket service with bounded binary/text framing, resize handling, tmux-backed reconnects, no idle timeout, and a plain-shell fallback. Added owner-only ticket issuance and an authenticated API WebSocket proxy, plus an xterm.js terminal component. The computer image now installs tmux.
 

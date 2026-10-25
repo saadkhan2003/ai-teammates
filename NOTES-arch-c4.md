@@ -1,4 +1,6 @@
 # Architecture chunk c4 report
+> Historical handoff for `Architecture chunk c4 report`. Status, implementation details, test results, and open items below describe that workstream's recorded checkpoint; verify the current source and guides before treating them as current.
+
 
 **Row 12 — implemented:** Added authenticated Teach start/stop routes, private fork-display recorder endpoints, bounded MP4 transfer, S3 artifact storage, bot-workspace attachment, and queued `learn-from-demonstration` task using the persisted prompt. Auto-stopped sessions remain retrievable. Files: `apps/api/Teach.cs`, `apps/api/Program.cs`, `src/Compute.Docker/DockerComputeProvider.cs`, `services/computer/src/server.py`, `services/computer/src/recorder.py`, `apps/api/DemoSkill.cs`, `tests/unit/PolicyTests.cs`, `tests/unit/test_computer_displays.py`, `tests/unit/test_recorder.py`.
 

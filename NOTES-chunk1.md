@@ -1,3 +1,5 @@
+> Historical handoff for `Chunk 1 integration notes:`. Status, implementation details, test results, and open items below describe that workstream's recorded checkpoint; verify the current source and guides before treating them as current.
+
 Chunk 1 integration notes:
 - Reliability migration uses db/012_reliability.sql because chunk 3 already created db/011_devices.sql. API Platform applies 012; API Dockerfile copies it and embeds the new workspace shell helper. Chunk 3/orchestrator must register/copy 011_devices separately (not edited here).
 - Agent Dockerfile includes grounding.py and retry.py. Rebuild API and agent before running the live suites.
