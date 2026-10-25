@@ -1,5 +1,7 @@
 # Skills v2 merge resolution
 
+Historical reconciliation and validation record for the Skills v2 merge into `v04-bc`. Migration IDs, test counts, and worktree references below describe that merge checkpoint, not the full current integrated tree.
+
 - WT-PROGRESS.md: retained the full v0.4 history and appended the Skills v2 branch history and merge validation.
 - apps/api/Dockerfile: retained migrations 001–040 and added 041 plus built-in guide files; retained one runtime environment/port declaration.
 - apps/api/Platform.cs: retained the transactional manifest-driven migration runner and appended 041.
