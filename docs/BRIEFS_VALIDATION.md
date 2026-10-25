@@ -1,5 +1,7 @@
 # Briefs backend validation
 
+Historical checkpoint from the `briefs` worktree (2026-10-24). The backend and worker changes were later incorporated into the integrated tree; the “uncommitted” and sibling-run statements below describe that checkpoint, not current repository state. Test results are limited to the commands recorded here.
+
 Backend/worker/eval work is complete in the `briefs` worktree. Frontend and Playwright files belong to the sibling run; this backend run did not edit them. Changes are uncommitted for the orchestrator. Observed HEAD: `f1e5b5391ffd4900da44c4f7de13c97ae2f275b3` (the sibling UI commit); a final backend commit SHA does not exist yet.
 
 Latest checks (2026-10-24):

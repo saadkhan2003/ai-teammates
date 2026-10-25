@@ -1,5 +1,7 @@
 # P3 merge resolution
 
+Historical intermediate merge report. Its unmerged-path count and statements about untouched Git metadata refer to that worktree snapshot, not the current `ui-integrate` checkout.
+
 Content conflicts are reconciled in the worktree. Git metadata was not changed; the index still lists 70 unmerged paths until the orchestrator stages them. No Docker, live stack, real model calls, installs, or git mutation commands were used.
 
 ## Shared decisions

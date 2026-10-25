@@ -1,5 +1,7 @@
 # Cloud PR merge verification (#7, #8, #9, #10, #11, #6)
 
+Historical tree-comparison snapshot for the listed cloud PRs. The local reconstruction refs and ancestry results below were checked against the stated HEAD; re-fetch the current repository refs before using this note to decide what to merge.
+
 ui-integrate HEAD before this note: 80e9c94. Origin SHAs return 403, so each pr/* ref is the local reconstruction, tree-verified against Origin.
 
 ## Ancestry and per-file tree comparison (PR changed files vs HEAD)

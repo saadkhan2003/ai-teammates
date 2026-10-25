@@ -1,5 +1,7 @@
 # Cloud UI restoration notes
 
+Historical restoration audit against the supplied `.lost.txt` comparison inputs. Its line-retention counts and file-by-file state apply to that restoration pass; compare against the current source before using them as current acceptance results.
+
 The `.cloud` files are the UI authority. This report accounts for every non-restored exact line in the supplied `.lost.txt` files; reference numbers below are line numbers in that file, not in the source file. Exact-line retention is a textual diagnostic, so helper extraction, added props and token changes count as losses even when the UI is retained.
 
 ## Per-file result

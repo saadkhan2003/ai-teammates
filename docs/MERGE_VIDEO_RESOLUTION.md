@@ -1,5 +1,7 @@
 # Video v1 merge into v0.4 + Skills v2
 
+Historical conflict-resolution record for the `v04-bc` worktree. The statement that the index remained unmerged describes the state before the merge commit; it is not the current repository index or merge status.
+
 Working tree: `wt/bc`, branch `v04-bc`, starting/current HEAD
 `5acf9ebc17acb9b626b1a9ff547536856cf5751e`. File conflicts are resolved;
 the index remains unmerged until the orchestrator stages the resolutions.

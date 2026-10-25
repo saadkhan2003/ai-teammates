@@ -1,5 +1,7 @@
 # v0.4 migrations
 
+Historical migration mapping for the v0.4 merge only. The integrated tree has later migrations beyond this list; use `apps/api/Platform.cs`, `apps/api/Dockerfile`, and the current `db/` directory for the active migration set.
+
 Migrations 001–026 from base 392f23e are unchanged. Incoming migrations are
 linear and unique, 027–042, including Skills v2 and Video v1.
 Platform.MigrationFiles and the API Dockerfile contain each SQL file once.
