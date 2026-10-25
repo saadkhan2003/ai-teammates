@@ -1,6 +1,5 @@
 "use client";
 
-import { ListSkeleton } from "@/components/ui/skeleton";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { cardClass, DevBadge, PageEmpty, PageSkeleton, pillClass, SectionTitle } from "@/components/account/chrome";
 import { SettingsFrame } from "@/components/settings-nav";
@@ -11,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import dynamic from "next/dynamic";
 
 const ScrollArea = dynamic(() => import("@/components/ui/scroll-area").then(module => module.ScrollArea), { ssr: false });
-import { asList, api, extractPrompt, readModelCalls } from "@/lib/api";
+import { asList, api, extractPrompt, readModelCalls, readProvider } from "@/lib/api";
 import { errorMessage, formatWhen } from "@/lib/utils";
 
 type PromptRow = { id: string; prompt: string; when?: string };
@@ -33,6 +32,7 @@ export default function SystemPage() {
   const [chromeProcesses, setChromeProcesses] = useState<number | null>(null);
   const [memoryBytes, setMemoryBytes] = useState<number | null>(null);
   const [modelCalls, setModelCalls] = useState<number | null>(null);
+  const [provider, setProvider] = useState<string | null>(null);
   const [prompts, setPrompts] = useState<PromptRow[]>([]);
   const [usageError, setUsageError] = useState<string | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
@@ -48,6 +48,7 @@ export default function SystemPage() {
     const [usageResult, requestResult] = await Promise.allSettled([api<unknown>("/api/usage"), api<unknown>("/api/model-requests")]);
     if (usageResult.status === "fulfilled") {
       setModelCalls(readModelCalls(usageResult.value));
+      setProvider(readProvider(usageResult.value));
       const usage = usageResult.value as Record<string, unknown>;
       setCostUsd(typeof usage.costUsd === "number" ? usage.costUsd : null);
       setLatencyMs(typeof usage.latencyMs === "number" ? usage.latencyMs : null);
@@ -59,6 +60,7 @@ export default function SystemPage() {
     }
     if (requestResult.status === "fulfilled") {
       setPrompts(readPrompts(requestResult.value));
+      setProvider((current) => current ?? readProvider(requestResult.value));
       setRequestError(null);
     } else {
       setRequestError(errorMessage(requestResult.reason, "Could not load prompts."));
@@ -80,7 +82,7 @@ export default function SystemPage() {
   useEffect(() => {
     void load();
   }, [load]);
-
+  const mock = provider?.toLowerCase() === "mock";
 
   async function invite(event: FormEvent) {
     event.preventDefault();
@@ -109,6 +111,7 @@ export default function SystemPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <DevBadge show={mock} />
           <Button variant="outline" className={pillClass} onClick={() => void load()}>
             Refresh
           </Button>

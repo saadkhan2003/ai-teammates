@@ -1,6 +1,4 @@
 "use client";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
-import { StateMessage } from "@/components/state-message";
 
 import { ListSkeleton } from "@/components/ui/skeleton";
 import { FormEvent, useCallback, useEffect, useState } from "react";
@@ -138,7 +136,7 @@ export default function SecretsPage() {
       setValue("");
       setTestResult(null);
       if (created.id) setSelectedId(created.id);
-      toast.success("AI connection key saved.");
+      toast.success("Platform key saved.");
       await load();
     } catch (caught) {
       setFormError(errorMessage(caught, "Could not save that key."));
@@ -260,33 +258,19 @@ export default function SecretsPage() {
   return (
     <div id="vault" data-testid="settings-vault" className="flex flex-col gap-[var(--space-section)]">
       <header>
-        <h2 className="text-sm font-medium">Vault</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Values are write-only. Bots see references such as secret://work/api_key, never the raw secret.
+        <h2 className="text-title">Vault</h2>
+        <p className="mt-1 text-body-sm text-muted-foreground">
+          Security keys are write-only. Teammates see a reference, never the raw secret.
         </p>
       </header>
 
-      {loading ? <ListSkeleton label="Loading secrets" rows={3} /> : null}
-      {!loading && error ? (
-        <StateMessage
-          tone="error"
-          title="Could not load secrets."
-          detail={error}
-          action={
-            <Button variant="secondary" onClick={() => void load()}>
-              Retry
-            </Button>
-          }
-        />
-      ) : null}
+      {loading ? <PageSkeleton /> : null}
+      {!loading && error ? <PageError title="Could not load secrets." detail={error} onRetry={() => void load()} /> : null}
 
       {!loading && !error && !aiConnection ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>AI connection key</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <form className="flex flex-col gap-4" onSubmit={saveAiConnection}>
+        <section className={`${cardClass} p-4`}>
+          <SectionTitle>Security keys</SectionTitle>
+            <form className="mt-4 flex flex-col gap-4" onSubmit={saveAiConnection}>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="secret-value">API key</Label>
                 <Input
@@ -316,16 +300,12 @@ export default function SecretsPage() {
                 </Button>
               </div>
             </form>
-          </CardContent>
-        </Card>
+        </section>
       ) : null}
 
       {!loading && !error && aiConnection ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>AI connection</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
+        <section className={`${cardClass} flex flex-col gap-4 p-4`}>
+          <SectionTitle>Platform key</SectionTitle>
             <p data-testid="connected-banner" className="text-sage">Connected ✓</p>
             <p data-testid="masked-suffix">Key ending in: …{aiConnection.maskedSuffix}</p>
             <TestReadout result={testResult} />
@@ -334,19 +314,20 @@ export default function SecretsPage() {
                 {formError}
               </p>
             ) : null}
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="secondary" disabled={busy !== null} onClick={() => void testSaved(aiConnection)}>
-                Test
-              </Button>
-              <Button data-testid="rotate-secret" type="button" variant="secondary" disabled={busy !== null} onClick={() => void rotate(aiConnection)}>
-                Rotate
-              </Button>
-              <Button data-testid="delete-secret" type="button" variant="destructive" disabled={busy !== null} onClick={() => void remove(aiConnection)}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" className={pillClass} disabled={busy !== null} onClick={() => void testSaved(aiConnection)}>
+                  Test
+                </Button>
+                <Button data-testid="rotate-secret" type="button" variant="outline" className={pillClass} disabled={busy !== null} onClick={() => void rotate(aiConnection)}>
+                  Rotate
+                </Button>
+              </div>
+              <Button data-testid="delete-secret" type="button" variant="destructive" className={pillClass} disabled={busy !== null} onClick={() => void remove(aiConnection)}>
                 Delete
               </Button>
             </div>
-          </CardContent>
-        </Card>
+        </section>
       ) : null}
 
       {!loading && !error ? (
@@ -453,9 +434,6 @@ export default function SecretsPage() {
                     {secret.revokedAt ? " · revoked" : ""}
                   </p>
                 </button>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {secret.type}, ending …{secret.maskedSuffix || "unavailable"}, last used {formatWhen(secret.lastUsedAt)}{secret.revokedAt ? ", revoked" : ""}
-                </p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {secret.revokedAt ? null : (
                     <Button data-testid="secret-revoke" type="button" size="sm" variant="outline" className={pillClass} disabled={busy !== null} onClick={() => void revoke(secret)}>
@@ -472,9 +450,9 @@ export default function SecretsPage() {
         </section>
       ) : null}
 
-      <section data-testid="secret-usage" className="rounded-lg border border-line bg-paper p-4">
-        <h2 className="font-display text-2xl">Usage</h2>
-        {!selectedId ? <p className="mt-2 text-sm text-muted-foreground">Save a secret to see its usage.</p> : null}
+      <section data-testid="secret-usage" className={`${cardClass} p-4`}>
+        <SectionTitle>Usage</SectionTitle>
+        {!selectedId ? <p className="mt-2 text-body-sm text-muted-foreground">Save a secret to see its usage.</p> : null}
         {usageLoading ? <ListSkeleton label="Loading usage" rows={1} /> : null}
         {usageError ? (
           <p role="alert" className="mt-2 text-body-sm text-clay">

@@ -3,7 +3,7 @@
 import { AccountUsage } from "@/components/account-usage";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { ListSkeleton } from "@/components/ui/skeleton";
+import { cardClass, PageError, PageSkeleton, pillClass, SectionTitle } from "@/components/account/chrome";
 import { Button } from "@/components/ui/button";
 import { SettingsSelect } from "@/components/settings-select";
 import { api } from "@/lib/api";
@@ -23,7 +23,7 @@ type CreditsResponse = {
   storage?: Storage; computers?: ComputerUse[];
 };
 
-const card = "rounded-xl border border-border bg-card px-4 py-3.5";
+const card = `${cardClass} px-4 py-3.5`;
 
 function resetDate(iso: string) {
   const at = new Date(iso);
@@ -36,6 +36,7 @@ export default function UsagePage() {
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
+    setError(null);
     try {
       setData(await api<CreditsResponse>("/api/usage/credits"));
       setError(null);
@@ -76,47 +77,47 @@ export default function UsagePage() {
 
   const c = data?.credits;
   return (
-    <div id="usage" className="thin-type flex flex-col gap-5 text-sm" data-testid="usage-billing">
-      <AccountUsage /><h2 className="t-head text-lg">Usage &amp; Billing</h2>
-      {!data && !error ? <ListSkeleton label="Loading usage" rows={3} /> : null}
-      {error ? <p className="text-sm text-clay">{error}</p> : null}
+    <div id="usage" className="thin-type flex flex-col gap-[var(--space-section)] text-body-sm" data-testid="usage-billing">
+      <AccountUsage />
+      {!data && !error ? <PageSkeleton /> : null}
+      {error ? <PageError title="Could not load usage." detail={error} onRetry={() => void load()} /> : null}
       {c ? (
         <>
           {c.paused && data?.message ? (
-            <p role="status" data-testid="usage-paused" className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-[13px]">{data.message}</p>
+            <p role="status" data-testid="usage-paused" className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-body-sm">{data.message}</p>
           ) : null}
           <div className="flex flex-col gap-2">
             <section className={card} data-testid="usage-weekly">
-              <p className="t-label text-[13px]">Weekly usage limit</p>
+              <SectionTitle>Weekly usage limit</SectionTitle>
               <p className="mt-2 flex items-baseline gap-1.5">
-                <span className="t-head text-2xl" data-testid="usage-percent">{percentLabel(c.percent)}</span>
-                <span className="text-[13px] text-muted-foreground">used</span>
+                <span className="t-head text-h2" data-testid="usage-percent">{percentLabel(c.percent)}</span>
+                <span className="text-body-sm text-muted-foreground">used</span>
               </p>
               <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-muted" role="progressbar" aria-label="Weekly usage" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100, Math.round(c.percent))}>
-                <div data-testid="usage-bar" className={`h-full rounded-full ${c.paused ? "bg-amber-500" : "bg-[#1d9bf0]"}`} style={{ width: barWidth(c.percent) }} />
+                <div data-testid="usage-bar" className={`h-full rounded-full ${c.paused ? "bg-amber-500" : "bg-brand"}`} style={{ width: barWidth(c.percent) }} />
               </div>
-              <p className="mt-2 text-xs text-muted-foreground" data-testid="usage-resets">{resetsLabel(c.resetsInDays)}</p>
-              <dl className="mt-3 grid grid-cols-3 gap-2 border-t border-border pt-3 text-xs" data-testid="usage-breakdown">
+              <p className="mt-2 text-meta text-muted-foreground" data-testid="usage-resets">{resetsLabel(c.resetsInDays)}</p>
+              <dl className="mt-3 grid grid-cols-3 gap-2 border-t border-border pt-3 text-meta" data-testid="usage-breakdown">
                 <div><dt className="text-muted-foreground">AI</dt><dd>{creditsLabel(c.aiCredits)}</dd></div>
                 <div><dt className="text-muted-foreground">Computer</dt><dd>{creditsLabel(c.computerCredits)}</dd></div>
                 <div><dt className="text-muted-foreground">Storage</dt><dd>{creditsLabel(c.storageCredits)}</dd></div>
               </dl>
             </section>
-            <p className="px-1 text-xs text-muted-foreground">Included usage with your subscription. Resets weekly. {creditsLabel(c.usedCredits)} of {creditsLabel(c.allowance)} credits used.</p>
+            <p className="px-1 text-meta text-muted-foreground">Included usage with your subscription. Resets weekly. {creditsLabel(c.usedCredits)} of {creditsLabel(c.allowance)} credits used.</p>
           </div>
 
           {data?.storage ? (
             <section className={card} data-testid="usage-storage">
               <div className="flex items-baseline justify-between gap-3">
-                <p className="t-label text-[13px]">Storage</p>
-                <p className="text-xs text-muted-foreground tabular-nums" data-testid="usage-storage-amount">
+                <SectionTitle>Storage</SectionTitle>
+                <p className="text-meta text-muted-foreground tabular-nums" data-testid="usage-storage-amount">
                   {bytesLabel(data.storage.usedBytes)} of {bytesLabel(data.storage.quotaBytes)}
                 </p>
               </div>
               <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-muted" role="progressbar" aria-label="Storage used" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100, Math.round(data.storage.percent))}>
                 <div data-testid="usage-storage-bar" className={`h-full rounded-full ${storageTone(data.storage.state)}`} style={{ width: barWidth(data.storage.percent) }} />
               </div>
-              <p className={`mt-2 text-xs ${data.storage.state === "ok" ? "text-muted-foreground" : "text-foreground"}`} data-testid="usage-storage-note" role={data.storage.state === "ok" ? undefined : "status"}>
+              <p className={`mt-2 text-meta ${data.storage.state === "ok" ? "text-muted-foreground" : "text-foreground"}`} data-testid="usage-storage-note" role={data.storage.state === "ok" ? undefined : "status"}>
                 {data.storage.message ?? `Saved files and artifacts. You'll get a warning at ${data.storage.warnPct}%.`}
               </p>
             </section>
@@ -124,22 +125,22 @@ export default function UsagePage() {
 
           {data?.computers?.length ? (
             <section className={card} data-testid="usage-computers">
-              <p className="t-label text-[13px]">Computer memory</p>
+              <SectionTitle>Computer memory</SectionTitle>
               <ul className="mt-2 flex flex-col gap-2.5">
                 {data.computers.map((computer, index) => {
                   const percent = computer.memoryLimitBytes ? (computer.memoryBytes * 100) / computer.memoryLimitBytes : 0;
                   return (
                     <li key={computer.id} data-testid="usage-computer">
-                      <div className="flex items-baseline justify-between gap-3 text-xs">
+                      <div className="flex items-baseline justify-between gap-3 text-meta">
                         <span>{data.computers!.length > 1 ? `Computer ${index + 1}` : "Your computer"}<span className="text-muted-foreground"> · {computer.power === "awake" ? "awake" : "asleep"}</span></span>
                         <span className="tabular-nums text-muted-foreground" data-testid="usage-computer-ram">
                           {computer.power === "awake" ? `${bytesLabel(computer.memoryBytes)} of ${bytesLabel(computer.memoryLimitBytes)} RAM` : `Up to ${bytesLabel(computer.memoryLimitBytes)} RAM`}
                         </span>
                       </div>
                       <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-muted" role="progressbar" aria-label="Memory used" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100, Math.round(percent))}>
-                        <div className="h-full rounded-full bg-[#1d9bf0]" style={{ width: barWidth(percent) }} />
+                        <div className="h-full rounded-full bg-brand" style={{ width: barWidth(percent) }} />
                       </div>
-                      <p className="mt-1 text-[11px] text-muted-foreground">{coresLabel(computer.cpuMinCores, computer.cpuMaxCores)}</p>
+                      <p className="mt-1 text-micro text-muted-foreground">{coresLabel(computer.cpuMinCores, computer.cpuMaxCores)}</p>
                     </li>
                   );
                 })}
@@ -149,8 +150,8 @@ export default function UsagePage() {
 
           <section className={`${card} flex items-center justify-between gap-4`}>
             <div className="min-w-0">
-              <p className="t-label text-[13px]">On-demand monthly limit</p>
-              <p className="text-xs text-muted-foreground">
+              <p className="t-label text-body-sm">On-demand monthly limit</p>
+              <p className="text-meta text-muted-foreground">
                 Pay as you go after your weekly usage, up to this amount a month.
                 {c.onDemandLimitUsd ? ` $${c.onDemandUsedUsd.toFixed(2)} used this month.` : ""}
               </p>
@@ -168,16 +169,16 @@ export default function UsagePage() {
           </section>
 
           <div className="flex flex-col gap-2">
-            <p className="t-label px-1 text-[13px] text-muted-foreground">Manage Plan</p>
+            <SectionTitle className="px-1">Manage Plan</SectionTitle>
             <section className={`${card} flex items-center justify-between gap-4`} data-testid="usage-plan">
               <div className="min-w-0">
-                <p className="t-label text-[13px]">Current plan: {c.planName}</p>
-                <p className="text-xs text-muted-foreground">
+                <p className="t-label text-body-sm">Current plan: {c.planName}</p>
+                <p className="text-meta text-muted-foreground">
                   ${Number(c.planPriceUsd).toFixed(0)}/month. Usage resets on {resetDate(c.resetsAt)}.{data?.upgrade ? " Upgrade for more usage." : ""}
                 </p>
               </div>
               {data?.upgrade ? (
-                <Button size="sm" className="shrink-0 rounded-full" data-testid="usage-upgrade" onClick={() => void upgrade()}>
+                <Button size="sm" className={`${pillClass} shrink-0`} data-testid="usage-upgrade" onClick={() => void upgrade()}>
                   Upgrade to {data.upgrade.name}
                 </Button>
               ) : null}
