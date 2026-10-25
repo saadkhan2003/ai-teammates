@@ -12,6 +12,8 @@ import { errorMessage } from "@/lib/utils";
 const AdminAnalyticsChart = dynamic(() => import("@/components/widgets/admin-analytics-chart"), { ssr: false, loading: () => <div className="h-56 animate-pulse rounded-md bg-muted" /> });
 
 type Usage = {
+  videoCalls?: number;
+  videoCostUsd?: number;
   modelCalls?: number;
   costUsd?: number;
   latencyMs?: number;
@@ -133,6 +135,10 @@ export function AccountUsage() {
           </article>
         </section>
       ) : null}
+      {usage ? <section data-testid="video-usage" className={`${cardClass} px-4 py-3.5 text-body-sm`}>
+        <SectionTitle>Video watching</SectionTitle>
+        <p className="mt-1 text-meta text-muted-foreground">{usage.videoCalls ?? 0} calls · ${Number(usage.videoCostUsd ?? 0).toFixed(4)}</p>
+      </section> : null}
       {quota ? (
         <section className="rounded-lg border border-border bg-card p-4 text-body-sm">
           <h2 className="mb-2 text-body-sm font-medium">Quota</h2>

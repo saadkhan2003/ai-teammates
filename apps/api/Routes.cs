@@ -1360,7 +1360,8 @@ public static class Routes
             var cost = await conn.ExecuteScalarAsync<decimal>("SELECT coalesce(sum(cost_usd),0) FROM model_calls WHERE owner_id=@id", new { id = user });
             var latency = await conn.ExecuteScalarAsync<double>("SELECT coalesce(avg(latency_ms),0)::float8 FROM model_calls WHERE owner_id=@id", new { id = user });
             var credits = await platform.Usage.SummaryAsync(user.Value, ctx.RequestAborted);
-            return Results.Json(new { credits, modelCalls = calls, costUsd = cost, latencyMs = latency, computerMemoryBytes = platform.ComputerMemory, chromeProcesses = platform.ChromeProcesses });
+            var video = await conn.QuerySingleAsync<(long Calls, decimal Cost)>("SELECT count(*),coalesce(sum(cost_usd),0) FROM model_calls WHERE owner_id=@id AND role=@role", new { id = user, role = VideoTools.UsageRole });
+            return Results.Json(new { credits, modelCalls = calls, costUsd = cost, latencyMs = latency, videoCalls = video.Calls, videoCostUsd = video.Cost, computerMemoryBytes = platform.ComputerMemory, chromeProcesses = platform.ChromeProcesses });
         });
 
         app.MapGet("/api/model-requests", async (HttpContext ctx) =>
@@ -2022,7 +2023,7 @@ public static class Routes
             JsonElement videoAnalysis = default;
             if (body.TryGetProperty("videoAnalysis", out var videoJson) && videoJson.ValueKind == JsonValueKind.Object)
             {
-                using var filtered = JsonDocument.Parse(OutputRedactor.Redact(videoJson.GetRawText()));
+                using var filtered = JsonDocument.Parse(VideoTools.RedactJsonStrings(videoJson));
                 videoAnalysis = filtered.RootElement.Clone();
             }
             var metadata = videoAnalysis.ValueKind == JsonValueKind.Object

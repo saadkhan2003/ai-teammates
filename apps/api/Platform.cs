@@ -172,6 +172,7 @@ public sealed class Platform
         "049_approval_signals.sql",
         "050_usage_credits.sql",
         "051_resources.sql",
+        "052_video_admin_config.sql",
         "053_pages.sql",
         "054_account_support.sql",
         "055_skills_v2.sql",

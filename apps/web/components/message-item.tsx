@@ -11,7 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { PopoverLite } from "@/components/ui/popover-lite";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { api } from "@/lib/api";
-import { CLAMP_MAX_PX, EXPANDED, LONG_PRESS_MS, cancelsLongPress, flatten, needsClamp } from "@/lib/chat-parts";
+import { CLAMP_MAX_PX, EXPANDED, LONG_PRESS_MS, cancelsLongPress, flatten, needsClamp, parseAttachmentMarkers } from "@/lib/chat-parts";
 import { readVideoAnalysis } from "@/lib/video-analysis";
 import { PageCard } from "@/components/page-canvas";
 import { VideoAnalysisCard } from "@/components/video-analysis-card";
@@ -157,7 +157,7 @@ export function MessageItem(props: MessageItemProps) {
       data-testid="message-item"
       data-role={message.role}
       tabIndex={0}
-      aria-label={`${mine ? "You" : botName}: ${plainTextOf(message).slice(0, 80)}`}
+      aria-label={`${mine ? "You" : botName}: ${parseAttachmentMarkers(plainTextOf(message)).text.slice(0, 80)}`}
       onKeyDown={onKeyDown}
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
@@ -280,7 +280,7 @@ function EmojiPicker({ onPick, current }: { onPick: (emoji: string) => void; cur
 }
 
 /** The body of a message: ordered parts (quotes, replies, text) in the sent bubble, with the 20-line clamp. */
-export function MessageBody({ message, mine, byId, onJump, fallback, renderText, onWidgetAction, renderBubble }: { renderBubble?: (content: ReactNode) => ReactNode; message: ChatMessage; mine: boolean; byId: Map<string, ChatMessage>; onJump: (id: string) => void; fallback: ReactNode; renderText?: (text: string) => ReactNode; onWidgetAction?: (widget: Widget, action: string, payload: Record<string, unknown>) => Promise<void> }) {
+export function MessageBody({ message, mine, byId, onJump, fallback, renderText, onWidgetAction, renderBubble, displayAttachments }: { displayAttachments?: Array<{ path?: string; name: string }>; renderBubble?: (content: ReactNode) => ReactNode; message: ChatMessage; mine: boolean; byId: Map<string, ChatMessage>; onJump: (id: string) => void; fallback: ReactNode; renderText?: (text: string) => ReactNode; onWidgetAction?: (widget: Widget, action: string, payload: Record<string, unknown>) => Promise<void> }) {
   const replyId = message.replyToMessageId ?? message.replyToId ?? message.replyTo;
   const target = replyId ? byId.get(replyId) : undefined;
   const parts = message.parts?.length ? message.parts : replyId && (!renderBubble || message.replyToMessageId || message.replyTo) ? [{ type: "reply" as const, messageId: replyId, author: target?.role === "user" ? "You" : "Teammate", excerpt: target ? plainTextOf(target).slice(0, 280) : "Original message" }, { type: "text" as const, text: message.content }] : null;
@@ -320,7 +320,7 @@ export function MessageBody({ message, mine, byId, onJump, fallback, renderText,
     <div data-testid={renderBubble ? undefined : "message-bubble"}><div ref={box} id={`body-${message.id}`} style={clampStyle}
       className={cn("motion-clamp", clampable && clamped && !expanded && "[mask-image:linear-gradient(to_bottom,black_85%,transparent)]")}>
       {message.page ? <PageCard page={message.page} /> : inner ?? (videoAnalysis ? <VideoAnalysisCard analysis={videoAnalysis} /> : <div data-testid="message-text" className="space-y-2">{fallback}</div>)}
-      {message.attachments?.length ? <div className="mt-2 space-y-1">{message.attachments.map(item => <div key={item.path} data-testid="recording-attachment" className="flex min-h-9 items-center gap-2 rounded-lg border border-current/20 bg-black/10 px-2.5 py-1.5 text-xs"><Video className="h-4 w-4 shrink-0" aria-hidden /><span className="truncate" title={item.path}>{item.name}</span></div>)}</div> : null}
+      {(displayAttachments ?? message.attachments ?? []).length ? <div className="mt-2 space-y-1">{(displayAttachments ?? message.attachments ?? []).map((item, index) => <div key={item.path ?? `${item.name}-${index}`} data-testid="recording-attachment" className="flex min-h-9 items-center gap-2 rounded-control border border-current/20 bg-black/10 px-2.5 py-1.5 text-xs"><Video className="h-4 w-4 shrink-0" aria-hidden /><span className="truncate">{item.name}</span></div>)}</div> : null}
     </div>
     </div>
     {clampable && (clamped || expanded) ? <button type="button" data-testid="bubble-toggle" aria-expanded={expanded} aria-controls={`body-${message.id}`} onClick={toggle}
@@ -332,7 +332,10 @@ export function MessageBody({ message, mine, byId, onJump, fallback, renderText,
 }
 
 function PartView({ part, byId, expanded, onJump, renderText, onWidgetAction }: { part: MessagePartView; byId: Map<string, ChatMessage>; expanded: boolean; onJump: (id: string) => void; renderText?: (text: string) => ReactNode; onWidgetAction?: (widget: Widget, action: string, payload: Record<string, unknown>) => Promise<void> }) {
-  if (part.type === "text") return renderText ? <>{renderText(part.text)}</> : <Markdown text={part.text} />;
+  if (part.type === "text") {
+    const text = parseAttachmentMarkers(part.text).text;
+    return renderText ? <>{renderText(text)}</> : <Markdown text={text} />;
+  }
   if (part.type === "widget") return <WidgetRenderer value={part.widget} onAction={onWidgetAction} />;
   if (part.type === "quote") {
     return <blockquote data-testid="quote-block" className={cn("border-l-2 border-current/40 bg-black/10 px-2 py-1 text-[13px] opacity-75 [overflow-wrap:anywhere] whitespace-pre-wrap", !expanded && "line-clamp-4")}>

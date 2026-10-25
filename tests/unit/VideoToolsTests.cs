@@ -42,6 +42,15 @@ public sealed class VideoToolsTests
         Assert.Equal(allowed, ToolSchema.Validate("watch_video", args) == null);
     }
 
+    [Theory]
+    [InlineData("attachment_id", "00000000-0000-0000-0000-000000000001")]
+    [InlineData("path", "/workspace/demo.mp4")]
+    public void WatchVideoAcceptsAttachmentOrWorkspacePath(string field, string value)
+    {
+        using var args = JsonDocument.Parse(JsonSerializer.Serialize(new Dictionary<string, object> { [field] = value }));
+        Assert.Null(ToolSchema.Validate("watch_video", args.RootElement));
+    }
+
     [Fact]
     public void VideoAndSkillToolsCoexistAndCardOmitsRawMedia()
     {
@@ -53,6 +62,38 @@ public sealed class VideoToolsTests
     }
 
     [Fact]
+    public void VideoAnalysisRedactionPreservesValidJsonAndEscapedText()
+    {
+        using var analysis = JsonDocument.Parse("""
+            {"summary":"contains sk-or-v1-CanarySecret123456 and \"quoted\" text \\\\ path","timeline":[{"text":"safe \"quoted\" value"}],"duration":12.5}
+            """);
+
+        var redacted = VideoTools.RedactJsonStrings(analysis.RootElement);
+        using var roundTrip = JsonDocument.Parse(redacted);
+
+        Assert.Equal(12.5, roundTrip.RootElement.GetProperty("duration").GetDouble());
+        var summary = roundTrip.RootElement.GetProperty("summary").GetString()!;
+        Assert.DoesNotContain("CanarySecret123456", summary);
+        Assert.Contains("[REDACTED]", summary);
+        Assert.Contains("\"quoted\" text \\\\ path", summary);
+        Assert.Equal("safe \"quoted\" value", roundTrip.RootElement.GetProperty("timeline")[0].GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public void FinalVideoStepStoresRedactedJsonAndKeepsFailureStatus()
+    {
+        using var failure = JsonDocument.Parse("""{"ok":false,"reason":"video_unavailable","error":"sk-or-v1-CanarySecret123456"}""");
+        var (json, ok) = VideoTools.FinalVideoStep(failure.RootElement);
+        using var saved = JsonDocument.Parse(json);
+        Assert.False(ok);
+        Assert.Equal("video_unavailable", saved.RootElement.GetProperty("reason").GetString());
+        Assert.DoesNotContain("CanarySecret123456", json);
+
+        using var success = JsonDocument.Parse("""{"summary":"Clear result","timeline":[]}""");
+        Assert.True(VideoTools.FinalVideoStep(success.RootElement).Ok);
+    }
+
+    [Fact]
     public void VideoCacheIdentityChangesWithEffectiveModelsAndSettings()
     {
         var original = VideoTools.SettingsVersion(Teammates.Api.Platform.DefaultRealModel, "whisper", "provider-a", "chunk=300");
@@ -61,6 +102,43 @@ public sealed class VideoToolsTests
         Assert.NotEqual(original, VideoTools.SettingsVersion(Teammates.Api.Platform.DefaultRealModel, "whisper-v2", "provider-a", "chunk=300"));
         Assert.NotEqual(original, VideoTools.SettingsVersion(Teammates.Api.Platform.DefaultRealModel, "whisper", "provider-b", "chunk=300"));
         Assert.NotEqual(original, VideoTools.SettingsVersion(Teammates.Api.Platform.DefaultRealModel, "whisper", "provider-a", "chunk=600"));
+    }
+
+    [Fact]
+    public void VideoCreditEntriesUseTheUserFacingLabelWithoutProviderDetails()
+    {
+        Assert.Equal("video", VideoTools.UsageRole);
+        Assert.Equal("video", VideoTools.UsageProvider);
+        Assert.Equal("Video watching", VideoTools.UsageLabel);
+    }
+
+    [Theory]
+    [InlineData("owner", true)]
+    [InlineData("admin", true)]
+    [InlineData("member", false)]
+    [InlineData("viewer", false)]
+    public void VideoAdminConfigIsStaffOnly(string role, bool canManage)
+    {
+        Assert.Equal(canManage, VideoTools.CanManageAdminConfig(role));
+        Assert.Equal(canManage ? 200 : 403, VideoTools.AdminConfigStatusCode(role));
+    }
+
+    [Fact]
+    public void VideoAdminConfigHasSafeDefaultsAndRejectsInvalidValues()
+    {
+        var defaults = VideoTools.Defaults(null, null, null, "mock/planner");
+        Assert.Equal("mock/planner", defaults.VisionModel);
+        Assert.Equal("openai/whisper-large-v3-turbo", defaults.TranscriptionModel);
+        Assert.Equal("DeepInfra", defaults.TranscriptionProvider);
+        Assert.True(VideoTools.ValidAdminConfig(defaults));
+        Assert.False(VideoTools.ValidAdminConfig(defaults with { VisionModel = "model\nInjected" }));
+    }
+
+    [Fact]
+    public void VideoCreditCostIncludesFramesTranscriptionAndVisionTokens()
+    {
+        Assert.Equal(0.01561m, VideoTools.ComputeCreditCost(10, 120, 100_000));
+        Assert.Equal(0m, VideoTools.ComputeCreditCost(-1, -10, -1));
     }
 
     [Theory]

@@ -1,5 +1,8 @@
 "use client";
 
+import { computerVideoProgress } from "@/lib/computer-video-state";
+import type { AgentEvent } from "@/lib/events";
+import { VideoProgress } from "@/components/video-progress";
 import { Eye, MousePointer2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { type ReactNode } from "react";
@@ -120,6 +123,7 @@ function desktopTabId(): string {
 export function ComputerPane({
   botId,
   tasks,
+  events = [],
   pages,
   holder,
   onChanged,
@@ -139,6 +143,7 @@ export function ComputerPane({
 }: {
   botId: string;
   tasks: Task[];
+  events?: AgentEvent[];
   pages: BrowserPage[];
   holder: "agent" | "human";
   onChanged: () => void;
@@ -222,6 +227,11 @@ export function ComputerPane({
   const [power, setPower] = useState<string>("unknown");
   zoomRef.current = zoom;
   panRef.current = pan;
+  const desktopSessionBot = useRef<string | null>(null);
+  const videoProgress = computerVideoProgress(tasks, events, desktopSessionBot.current === botId || holder === "human" || mode === "control");
+  const videoOnly = videoProgress !== null;
+  const videoOnlyRef = useRef(videoOnly);
+  videoOnlyRef.current = videoOnly;
   const waiting = tasks.filter((task) => task.status === "waiting_human");
 
   function clearReconnect() {
@@ -245,9 +255,9 @@ export function ComputerPane({
   }
 
   async function openSocket(token: string, nextMode: DesktopMode, gen: number) {
-    if (gen !== connectGen.current || !wantViewRef.current) return;
+    if (gen !== connectGen.current || !wantViewRef.current || videoOnlyRef.current) return;
     const imported = await import("@novnc/novnc/lib/rfb.js");
-    if (gen !== connectGen.current || !wantViewRef.current) return;
+    if (gen !== connectGen.current || !wantViewRef.current || videoOnlyRef.current) return;
     const screen = screenRef.current;
     if (!screen || !token) throw new Error("The desktop session did not include a token.");
     screen.replaceChildren();
@@ -300,7 +310,7 @@ export function ComputerPane({
 
   async function openView(nextMode: DesktopMode, path: string, gen: number) {
     await enqueueSocket(async () => {
-      if (gen !== connectGen.current || !wantViewRef.current) return;
+      if (gen !== connectGen.current || !wantViewRef.current || videoOnlyRef.current) return;
       if (activeSocket || rfbRef.current) {
         ignoreRef.current.add(sessionRef.current);
         const previous = activeSocket ?? rfbRef.current;
@@ -309,9 +319,9 @@ export function ComputerPane({
         openingRef.current = false;
         await releaseSocket(previous);
       }
-      if (gen !== connectGen.current || !wantViewRef.current) return;
+      if (gen !== connectGen.current || !wantViewRef.current || videoOnlyRef.current) return;
       const raw = await api<unknown>(path, { method: "POST", headers: { "X-Desktop-Tab": desktopTabId() } });
-      if (gen !== connectGen.current || !wantViewRef.current) return;
+      if (gen !== connectGen.current || !wantViewRef.current || videoOnlyRef.current) return;
       const token = readDesktopToken(raw);
       if (typeof token.epoch === "number") leaseEpoch.current = token.epoch;
       const mode = token.mode === "control" ? "control" : nextMode;
@@ -332,7 +342,7 @@ export function ComputerPane({
   }
 
   async function startView(force = false) {
-    if (!wantViewRef.current) return;
+    if (!wantViewRef.current || videoOnlyRef.current) return;
     if (liveRef.current || openingRef.current || pendingRef.current) return;
     pendingRef.current = true;
     clearReconnect();
@@ -356,7 +366,7 @@ export function ComputerPane({
     try {
       await openView("view", `/api/computers/${botIdRef.current}/vnc-ticket?role=watch`, gen);
     } catch (caught) {
-      if (gen !== connectGen.current || !wantViewRef.current) return;
+      if (gen !== connectGen.current || !wantViewRef.current || videoOnlyRef.current) return;
       liveRef.current = false;
       openingRef.current = false;
       setVncState("disconnected");
@@ -399,7 +409,7 @@ export function ComputerPane({
     });
     observer.observe(frame);
     return () => observer.disconnect();
-  }, []);
+  }, [videoOnly]);
 
   useEffect(() => {
     mobileRef.current = window.matchMedia("(max-width: 767px)").matches;
@@ -408,18 +418,22 @@ export function ComputerPane({
       mobileRef.current = query.matches;
     };
     query.addEventListener("change", onChange);
-    wantViewRef.current = true;
-    void startView();
+    wantViewRef.current = !videoOnly;
+    if (videoOnly) {
+      setError(null);
+      setConnectFailed(false);
+      setConnecting(false);
+    } else void startView();
     return () => {
       query.removeEventListener("change", onChange);
       closePaneSocket();
     };
     // Reconnect when the bot changes. Cleanup closes the previous socket first.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [botId]);
+  }, [botId, videoOnly]);
 
   useEffect(() => {
-    if (vncState === "connected") { setConnecting(false); setConnectFailed(false); setDesktopAsleep(false); wakeRequested.current = false; }
+    if (vncState === "connected") { desktopSessionBot.current = botId; setConnecting(false); setConnectFailed(false); setDesktopAsleep(false); wakeRequested.current = false; }
   }, [vncState]);
 
   // While the desktop sleeps, look again every few seconds; connect once a task wakes it.
@@ -479,7 +493,7 @@ export function ComputerPane({
     };
     const onShow = () => {
       if (document.visibilityState !== "visible") return;
-      wantViewRef.current = true;
+      wantViewRef.current = !videoOnlyRef.current;
       reconnectAttempt.current = 0;
       void startView();
     };
@@ -662,7 +676,7 @@ export function ComputerPane({
       openingRef.current = false;
       modeRef.current = "view";
       await enqueueSocket(() => releaseSocket(closing));
-      if (gen !== connectGen.current || !wantViewRef.current) return;
+      if (gen !== connectGen.current || !wantViewRef.current || videoOnlyRef.current) return;
       pendingRef.current = false;
       reconnectAttempt.current = 0;
       setVncState("disconnected");
@@ -815,9 +829,9 @@ export function ComputerPane({
       frame.removeEventListener("pointerup", onUp, { capture: true });
       frame.removeEventListener("pointercancel", onUp, { capture: true });
     };
-    // place reads refs and setState, which stay stable for this mount.
+    // Reattach when video progress gives way to the desktop frame.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [videoOnly]);
 
   const asleep = power === "hibernated" || power === "stopped";
   const needsHelp = waiting.length > 0;
@@ -856,6 +870,10 @@ export function ComputerPane({
     if (mode === "control" || holder === "human") await handBack();
     onExitFullscreen?.();
   }
+
+  if (videoProgress) return <div data-testid="computer-tab" className="flex min-h-32 items-center justify-center rounded-card bg-card p-4">
+    <VideoProgress progress={videoProgress} />
+  </div>;
 
   const view = (
     <div

@@ -32,11 +32,12 @@ public sealed class MigrationManifestTests
         Assert.Equal(listed.Length, listed.Distinct().Count());
         var ids = listed.Select(file => int.Parse(file[..3])).ToArray();
         Assert.Equal(ids.Length, ids.Distinct().Count());
-        // v0.5: speed 043–046, briefs 047–049, then usage credits and resources as 050–051. v1 streams reserve 052–056; ids stay strictly ascending.
+        // v0.5: speed 043–046, briefs 047–049, then usage credits and resources as 050–051. v1 streams reserve 052–056; ids stay strictly ascending. Video uses 052.
         Assert.Equal(Enumerable.Range(1, 51), ids.Take(51));
         Assert.Equal(ids.Order(), ids);
         Assert.Equal(ids.Distinct(), ids);
         Assert.Equal(new[] { "047_task_briefs.sql", "048_brief_lessons.sql", "049_approval_signals.sql", "050_usage_credits.sql", "051_resources.sql" }, listed[46..51]);
+        Assert.Contains("052_video_admin_config.sql", listed);
         Assert.Contains("053_pages.sql", listed);
         Assert.Contains("054_account_support.sql", listed);
         Assert.Equal(63, ids[^1]);

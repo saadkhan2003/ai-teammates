@@ -68,6 +68,7 @@ COPY db/048_brief_lessons.sql /migrations/048_brief_lessons.sql
 COPY db/049_approval_signals.sql /migrations/049_approval_signals.sql
 COPY db/050_usage_credits.sql /migrations/050_usage_credits.sql
 COPY db/051_resources.sql /migrations/051_resources.sql
+COPY db/052_video_admin_config.sql /migrations/052_video_admin_config.sql
 COPY db/053_pages.sql /migrations/053_pages.sql
 COPY db/054_account_support.sql /migrations/054_account_support.sql
 COPY db/055_skills_v2.sql /migrations/055_skills_v2.sql

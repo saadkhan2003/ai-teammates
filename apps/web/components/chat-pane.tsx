@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { VideoProgress } from "@/components/video-progress";
 import { FileCard } from "@/components/file-card";
 import { ImageGrid } from "@/components/image-grid";
 import type { GalleryImage } from "@/components/image-lightbox";
@@ -32,7 +33,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { type ComposerPart, flatten, addQuote, canSend, hasBlocks, hasFiles, initialParts, normalizeSelection, pillPosition, removePart, setReply as setReplyPart, toPayload } from "@/lib/chat-parts";
+import { type ComposerPart, parseAttachmentMarkers, flatten, addQuote, canSend, hasBlocks, hasFiles, initialParts, normalizeSelection, pillPosition, removePart, setReply as setReplyPart, toPayload } from "@/lib/chat-parts";
 import { setAvatarMode } from "@/lib/avatar-motion";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -595,7 +596,9 @@ export function ChatPane({
     const files = [...list];
     for (const file of files) {
       const id = crypto.randomUUID();
-      const path = `/workspace/uploads/${Date.now()}-${file.name.replace(/[^\w.\- ]+/g, "_")}`;
+      const name = file.name.replace(/[^\w.\- ]+/g, "_");
+      const video = file.type.startsWith("video/") || /\.(mp4|webm|mov|m4v|mkv|avi)$/i.test(name);
+      const path = `/workspace/uploads/${video ? name : `${Date.now()}-${name}`}`;
       const preview = URL.createObjectURL(file);
       setUploads((current) => [...current, { id, name: file.name, mime: file.type, path, preview, status: "uploading" }]);
       try {
@@ -782,7 +785,8 @@ export function ChatPane({
             </div>
           ) : null}
           <ChatMessageList key={conversationId} ref={messageListRef} messages={messages} scrollRef={scrollRef} renderMessage={(message) => {
-            const blocks = messageBlocks(message.content);
+            const display = parseAttachmentMarkers(message.content);
+            const blocks = messageBlocks(display.text);
             const jobBlock = blocks.some((block) => block.kind === "coding-jobs");
             if (jobBlock && !showedJobs) {
               showedJobs = true;
@@ -847,7 +851,7 @@ export function ChatPane({
             const body = blocks.filter((block) => block.kind !== "image" && block.kind !== "video" && block.kind !== "file").filter((block) => block.kind !== "text" || block.text.trim().length > 0);
             const singleLine = mine && media.length === 0 && body.length === 1 && body[0].kind === "text" && !body[0].text.includes("\n") && body[0].text.trim().length < 80;
             const showBubble = body.length > 0 || (Boolean(message.replyToId) && placement === "inside" && Boolean(replySnippet(quoted?.content ?? "").trim()));
-            if (!message.parts?.length && !message.deleted && !message.videoAnalysis && !message.attachments?.length && !message.skill && !showBubble && media.length === 0 && reactions.length === 0) return null;
+            if (!message.parts?.length && !message.deleted && !message.videoAnalysis && !message.attachments?.length && !display.attachments.length && !message.skill && !showBubble && media.length === 0 && reactions.length === 0) return null;
             return (
               <MessageItem
                 key={message.id}
@@ -877,9 +881,10 @@ export function ChatPane({
                     {replySnippet(quoted?.content ?? "")}
                   </button>
                 ) : null}
-                {showBubble || message.parts?.length || message.videoAnalysis || message.attachments?.length || message.skill ? (
+                {showBubble || message.parts?.length || message.videoAnalysis || message.attachments?.length || display.attachments.length || message.skill ? (
                   <MessageBody
                     message={message}
+                    displayAttachments={message.attachments?.length ? message.attachments : display.attachments}
                     mine={mine}
                     byId={byId}
                     onJump={jumpTo}
@@ -1653,6 +1658,7 @@ function SecureFormCard({ title, fields }: { title: string; fields: FormField[] 
 }
 
 function EventCard({ event, botId, onEditMemory, onMemoryChanged }: { event: AgentEvent; botId?: string; onEditMemory?: (id: string) => void; onMemoryChanged?: () => void }) {
+  if (event.type === "video_progress") return <VideoProgress progress={event} testId="video-chat-progress" />;
   if (event.type === "grounding") {
     const verified = Number(event.verified ?? event.verifiedLinks);
     const removed = Number(event.removed ?? event.removedLinks);

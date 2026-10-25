@@ -16,7 +16,7 @@ test("settings navigation has unique ids, labels, and destinations across groups
   }
   assert.deepEqual(settingsGroups.map((group) => group.heading), ["Preferences", "Account", "Workspace", "Billing", "Support", "Legal", "Staff"]);
   assert.equal(settingsGroups.find((group) => group.heading === "Workspace").items.some((item) => item.id === "skills"), true);
-  assert.deepEqual(items.filter((item) => item.admin).map((item) => item.id), ["system", "support-inbox", "incidents"]);
+  assert.deepEqual(items.filter((item) => item.admin).map((item) => item.id), ["video-admin-config", "system", "support-inbox", "incidents"]);
   assert.strictEqual(settingsNavGroups, settingsGroups);
 });
 

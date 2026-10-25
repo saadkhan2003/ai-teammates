@@ -224,6 +224,8 @@ export function Workspace({ botId }: { botId: string }) {
       taskIds.current = new Set(data.tasks.map(task => task.id));
       workspaceCache.set(botId, data);
       setWorkspace(data);
+      const activeTasks = new Set(data.tasks.filter(task => ["running", "planning", "queued"].includes((task.status ?? "").toLowerCase())).map(task => task.id));
+      setAgentEvents(current => current.filter(event => event.type !== "video_progress" || (typeof event.taskId === "string" && activeTasks.has(event.taskId))));
       setWorkspaceError(null);
     } catch (caught) {
       if (ticket !== seq.current) return;
@@ -311,9 +313,12 @@ export function Workspace({ botId }: { botId: string }) {
         if (relays && ["approval", "task", "bot_thread"].includes(event.type)) peerRefresh();
         return;
       }
-      if (belongs && ["grounding", "tool", "tool_call", "tool_result", "tool.delta", "delta", "message.delta", "text_delta", "memory", "model.started", "model.finished", "model.error", "task.started"].includes(event.type)) {
+      if (belongs && ["grounding", "tool", "tool_call", "tool_result", "tool.delta", "delta", "message.delta", "text_delta", "memory", "model.started", "model.finished", "model.error", "task.started", "video_progress"].includes(event.type)) {
         const detail = event.detail && typeof event.detail === "object" ? event.detail as Record<string, unknown> : {};
         batch.push({ ...event, ...detail, type: event.type });
+      }
+      if (belongs && event.type === "task" && ["completed", "failed", "cancelled"].includes(String(event.status ?? "").toLowerCase())) {
+        setAgentEvents(current => current.filter(item => !(item.type === "video_progress" && item.taskId === event.taskId)));
       }
       const current = workspaceRef.current;
       const patched = current ? patchWorkspace(current, event) : null;
@@ -831,6 +836,7 @@ export function Workspace({ botId }: { botId: string }) {
                 <ComputerPane
                   botId={botId}
                   tasks={workspace.tasks ?? []}
+                  events={agentEvents}
                   pages={workspace.pages ?? []}
                   holder={workspace.holder}
                   compact={!desktopFull}

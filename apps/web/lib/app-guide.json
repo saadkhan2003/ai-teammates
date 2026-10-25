@@ -197,6 +197,12 @@
       "href": "/settings/incidents",
       "label": "Status incidents",
       "description": "Staff publishing and editing of public status incidents."
+    },
+    {
+      "id": "video-admin-config",
+      "href": "/settings/admin-config/video",
+      "label": "Video processing",
+      "description": "Staff-only video processing configuration."
     }
   ],
   "panels": [

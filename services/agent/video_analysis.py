@@ -31,20 +31,26 @@ def sample_timestamps(duration: float, scene_times=(), *, cap_per_minute=MAX_FRA
     """Uniform 2s samples plus scene changes, capped evenly at 30/minute."""
     if duration <= 0:
         return []
-    points = {round(t, 3) for t in [*range(0, int(duration) + 1, FRAME_INTERVAL_SECONDS), *scene_times]
-              if isinstance(t, (int, float)) and 0 <= t < duration}
-    ordered = sorted(points)
+    scenes = {round(t, 3) for t in scene_times if isinstance(t, (int, float)) and 0 <= t < duration}
+    uniform = {float(t) for t in range(0, int(duration) + 1, FRAME_INTERVAL_SECONDS) if t < duration}
+    ordered = sorted(scenes | uniform)
     selected = []
     for start in range(0, math.ceil(duration), 60):
         minute = [stamp for stamp in ordered if start <= stamp < start + 60]
+        minute_scenes = [stamp for stamp in sorted(scenes) if start <= stamp < start + 60]
         cap = max(1, math.ceil(min(60, duration - start) / 60 * cap_per_minute))
         if len(minute) <= cap:
             selected.extend(minute)
-        elif cap == 1:
-            selected.append(minute[0])
         else:
-            selected.extend(minute[round(i * (len(minute) - 1) / (cap - 1))] for i in range(cap))
-    return selected
+            if len(minute_scenes) >= cap:
+                selected.extend(minute_scenes[round(i * (len(minute_scenes) - 1) / max(1, cap - 1))] for i in range(cap))
+                continue
+            selected.extend(minute_scenes)
+            fill = cap - len(minute_scenes)
+            candidates = [stamp for stamp in minute if stamp not in scenes]
+            if fill and candidates:
+                selected.extend(candidates[round(i * (len(candidates) - 1) / max(1, fill - 1))] for i in range(fill))
+    return sorted(set(selected))
 
 
 def chunk_ranges(duration: float, seconds=300):
@@ -54,8 +60,7 @@ def chunk_ranges(duration: float, seconds=300):
 
 
 def fits_tokens(text: str, frame_count: int, *, budget=100_000) -> bool:
-    # Conservative rough estimate: 4 chars/token plus 1,500 tokens per frame.
-    return len(text) / 4 + frame_count * 1500 < budget
+    return len(text) / 4 + frame_count * 2000 < budget
 
 
 def audio_skip_reason(*, has_audio: bool, mean_volume_db: float | None, speech_ratio: float | None,
@@ -103,7 +108,7 @@ async def extract_frames(path: Path, dest: Path, duration: float, *, timeout=180
     # scene timestamps are obtained from ffmpeg metadata; -vsync vfr keeps only selected frames.
     _, scene_log = await _run("ffmpeg", "-hide_banner", "-i", path, "-vf", "select='gt(scene,0.3)',showinfo", "-an", "-f", "null", "-", timeout=timeout)
     if progress:
-        await progress()
+        await progress({"stage": "Preparing video"})
     scenes = [float(x) for x in re.findall(r"pts_time:([0-9.]+)", scene_log)]
     stamps = sample_timestamps(duration, scenes)
     result = []
@@ -113,7 +118,7 @@ async def extract_frames(path: Path, dest: Path, duration: float, *, timeout=180
                    "-vf", "scale='if(gt(iw,ih),768,-2)':'if(gt(iw,ih),-2,768)'", "-q:v", "4", target, timeout=timeout)
         result.append({"timestamp": stamp, "path": target})
         if progress:
-            await progress()
+            await progress({"stage": "Reading frames", "current": index + 1, "total": len(stamps)})
     return result
 
 
@@ -138,7 +143,7 @@ async def inspect_audio(path: Path, has_audio: bool, *, timeout=90) -> tuple[str
 
 
 def summary_plan(duration: float, transcript: str, frames: list[dict], *, budget=100_000):
-    """Plan <=5min/60-frame inputs and trim evenly until each estimate fits the token budget."""
+    """Plan <=5min/60-frame inputs and keep every individual request under budget."""
     if duration <= 300 and len(transcript) / 4 + len(frames) * 1500 < budget and len(frames) <= 60:
         return [{"start": 0, "end": duration, "transcript": transcript, "frames": frames}]
     plans = []
@@ -146,15 +151,13 @@ def summary_plan(duration: float, transcript: str, frames: list[dict], *, budget
         selected = [f for f in frames if start <= float(f["timestamp"]) < end][:60]
         text = transcript_for_range(transcript, start, end)
         plans.append({"start": start, "end": end, "transcript": text, "frames": selected})
-    def total_tokens():
-        return sum(len(p["transcript"]) / 4 + len(p["frames"]) * 1500 for p in plans)
-    while total_tokens() >= budget and any(p["frames"] for p in plans):
-        for plan in plans:
+    # Budget images conservatively, then reduce images evenly before transcript text.
+    # This is per request: several small requests may exceed 100k tokens in total.
+    for plan in plans:
+        while estimate_total(plan["transcript"], plan["frames"]) >= budget and len(plan["frames"]) > 1:
             plan["frames"] = plan["frames"][::2]
-    while total_tokens() >= budget and any(p["transcript"] for p in plans):
-        for plan in plans:
-            plan["transcript"] = plan["transcript"][::2]
-    # At most 66 frames survive the global visual token budget.
+        if estimate_total(plan["transcript"], plan["frames"]) >= budget:
+            plan["transcript"] = plan["transcript"][:max(0, int((budget - len(plan["frames"]) * 2000) * 4))]
     return plans
 
 
@@ -169,7 +172,8 @@ def transcript_for_range(transcript: str, start: float, end: float) -> str:
 
 
 def estimate_total(transcript: str, frames: list[dict]) -> float:
-    return len(transcript) / 4 + len(frames) * 1500
+    # 768px image tokens vary by provider; 2,000 is a conservative planning estimate.
+    return len(transcript) / 4 + len(frames) * 2000
 
 
 def normalize_summary(value) -> dict:
@@ -199,33 +203,49 @@ def file_hash(path: Path) -> str:
 async def transcribe_chunks(path: Path, duration: float, client, *, model=None, provider=None, max_chunk_seconds=None, progress=None):
     """OpenRouter audio endpoint; caller supplies an authorized client carrying the API key."""
     model = model or os.getenv("VIDEO_STT_MODEL", "openai/whisper-large-v3-turbo")
-    provider = provider or os.getenv("VIDEO_STT_PROVIDER", "deepinfra")
+    provider = provider or os.getenv("VIDEO_STT_PROVIDER", "DeepInfra")
     if max_chunk_seconds is None:
         max_chunk_seconds = min(600, max(30, int(os.getenv("VIDEO_STT_CHUNK_SECONDS", "300"))))
     outputs = []
     with tempfile.TemporaryDirectory(prefix="video-stt-") as raw:
         root = Path(raw)
-        for index, (start, end) in enumerate(chunk_ranges(duration, max_chunk_seconds)):
-            chunk = root / f"chunk-{index}.mp3"
-            await _run("ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", start, "-i", path, "-t", end-start,
-                       "-vn", "-ac", "1", "-b:a", "48k", chunk, timeout=120)
-            if chunk.stat().st_size > 24_000_000:
-                raise ValueError("audio_chunk_size_limit")
-            body = {"model": model, "input_audio": {"data": base64.b64encode(chunk.read_bytes()).decode(), "format": "mp3"},
-                    "provider": {"order": [provider], "allow_fallbacks": False}}
-            if callable(client):
-                data = await client("stt", body)
-            else:
-                response = await client.post("/audio/transcriptions", json=body, timeout=55)
-                response.raise_for_status()
-                data = response.json()
-            outputs.append({"offset": start, "text": data.get("text", ""), "provider": data.get("provider")})
-            if progress:
-                await progress()
+        index = 0
+        for start, end in chunk_ranges(duration, max_chunk_seconds):
+            cursor = start
+            while cursor < end:
+                part_seconds = end - cursor
+                chunk = root / f"chunk-{index}.mp3"
+                while True:
+                    await _run("ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", cursor, "-i", path, "-t", part_seconds,
+                               "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", chunk, timeout=120)
+                    size = chunk.stat().st_size
+                    if size < 25_000_000:
+                        break
+                    chunk.unlink(missing_ok=True)
+                    # Always re-encode the half-sized part and check its actual byte size.
+                    # Bitrate and container overhead vary, so one estimate cannot guarantee
+                    # the strict provider limit.
+                    part_seconds *= 0.5
+                    if part_seconds < 1:
+                        raise ValueError("audio_chunk_size_limit")
+                body = {"model": model, "audio_seconds": part_seconds, "input_audio": {"data": base64.b64encode(chunk.read_bytes()).decode(), "format": "mp3"},
+                        "provider": {"order": [provider], "allow_fallbacks": False}}
+                if callable(client):
+                    data = await client("stt", body)
+                else:
+                    response = await client.post("/audio/transcriptions", json=body, timeout=55)
+                    response.raise_for_status()
+                    data = response.json()
+                outputs.append({"offset": cursor, "text": data.get("text", ""), "segments": data.get("segments"), "provider": data.get("provider")})
+                cursor = min(end, cursor + part_seconds)
+                index += 1
+                if progress:
+                    await progress({"stage": "Listening", "current": index, "total": "audio parts"})
     return outputs
 
 
-async def analyze_video(path: Path, model_call, *, cached=None, max_size=None, max_duration=None, progress=None):
+async def analyze_video(path: Path, model_call, *, cached=None, max_size=None, max_duration=None,
+                        stt_model=None, stt_provider=None, progress=None):
     """Run bounded preprocessing and summarize through caller's authenticated model bridge."""
     max_size = max_size or int(os.getenv("VIDEO_MAX_SIZE_BYTES", "1000000000"))
     max_duration = max_duration or int(os.getenv("VIDEO_MAX_DURATION_SECONDS", "3600"))
@@ -235,33 +255,39 @@ async def analyze_video(path: Path, model_call, *, cached=None, max_size=None, m
         return {**cached, "cacheHit": True}
     with tempfile.TemporaryDirectory(prefix="video-analysis-") as raw:
         root = Path(raw)
+        if progress:
+            await progress({"stage": "Preparing video"})
         frames = await extract_frames(path, root / "frames", duration, progress=progress)
         audio_reason, audio_stats = await inspect_audio(path, has_audio)
         chunks = []
         if has_audio and audio_reason is None:
-            chunks = await transcribe_chunks(path, duration, model_call, progress=progress)
+            chunks = await transcribe_chunks(path, duration, model_call, model=stt_model, provider=stt_provider, progress=progress)
         transcript = "\n".join(f"[{c['offset'] + float(seg.get('start', 0)):.1f}] {seg.get('text', '')}" for c in chunks for seg in (c.get("segments") or [{"text": c.get("text", "")}]))
-        if progress:
-            await progress()
+        if progress and chunks:
+            await progress({"stage": "Listening"})
         frame_payload = []
         for frame in frames:
             frame_payload.append({"timestamp": frame["timestamp"], "data": base64.b64encode(frame["path"].read_bytes()).decode("ascii")})
         plan = summary_plan(duration, transcript, frame_payload)
         selected_frames = {f["timestamp"]: f for section in plan for f in section["frames"]}
         summaries = []
-        for section in plan:
-            content = [{"type": "text", "text": f"Summarize video segment {section['start']:.1f}-{section['end']:.1f}s. Return JSON with summary and timeline entries using fields timestamp (seconds) and summary (what is shown/said). Transcript:\n{section['transcript']}"}]
+        for chunk_index, section in enumerate(plan, 1):
+            if progress:
+                await progress({"stage": "Watching part", "current": chunk_index, "total": len(plan)})
+            content = [{"type": "text", "text": f"Summarize video segment {section['start']:.1f}-{section['end']:.1f}s. Return JSON with summary and timeline entries using absolute video timestamps in seconds and summary (what is shown/said). Transcript:\n{section['transcript']}"}]
             for frame in section["frames"]:
                 content += [{"type": "text", "text": f"Frame at {frame['timestamp']} seconds"}, {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + frame["data"]}}]
             summaries.append(normalize_summary(await model_call("summary", content)))
-            if progress:
-                await progress()
-        if len(summaries) == 1:
-            summary = summaries[0]
-        else:
-            summary = normalize_summary(await model_call("summary", [{"type": "text", "text": "Merge these video segment summaries. Return JSON with overall summary and timeline entries using timestamp (seconds) and summary.\n" + json.dumps(summaries)}]))
+        # One vision request per chunk. Combining already-bounded text locally avoids
+        # an extra model call that would otherwise make long videos unexpectedly costly.
+        summary = {
+            "summary": "\n\n".join(part["summary"] for part in summaries if part["summary"]),
+            "timeline": sorted((entry for part in summaries for entry in part["timeline"]
+                                if isinstance(entry, dict)),
+                               key=lambda entry: float(entry.get("timestamp", 0) or 0)),
+        }
         result = {"videoId": digest, "duration": duration, "summary": summary["summary"], "transcript": transcript,
-                  "timeline": summary["timeline"] if len(summaries) > 1 else summaries[0]["timeline"], "frames": list(selected_frames.values()),
+                  "timeline": summary["timeline"], "frames": list(selected_frames.values()),
                   "audioSkipReason": audio_reason, "audioStats": audio_stats, "sttProvider": [c.get("provider") for c in chunks if c.get("provider")],
                   "sttSeconds": duration if chunks else 0, "frameCount": len(frames), "cacheHit": False}
         return result

@@ -57,6 +57,7 @@ export const settingsGroups = [
   {
     heading: "Staff",
     items: [
+      { id: "video-admin-config", label: "Video processing", href: "/settings/admin-config/video", admin: true, icon: "video" },
       { id: "system", label: "System", href: "/system", testId: "nav-system", admin: true, icon: "system" },
       { id: "support-inbox", label: "Support inbox", href: "/settings/support", admin: true, icon: "tickets" },
       { id: "incidents", label: "Status incidents", href: "/settings/incidents", admin: true, icon: "status" },

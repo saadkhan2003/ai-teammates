@@ -148,6 +148,10 @@ export function mergeAgentEvent(current: AgentEvent[], event: AgentEvent): Agent
     if (index >= 0) return current.map((item, i) => i === index ? { ...item, ...event, delta: (String(item.delta ?? item.text ?? "") + incoming).slice(0, 1_000_000) } : item);
   }
   const callId = event.callId ?? event.toolCallId ?? event.id;
+  if (event.type === "video_progress") {
+    const index = current.findIndex(item => item.taskId === event.taskId && item.type === "video_progress");
+    if (index >= 0) return current.map((item, i) => i === index ? { ...item, ...event } : item);
+  }
   const toolEvent = ["tool", "tool_call", "tool_result"].includes(event.type);
   if (event.type === "grounding" || (toolEvent && callId != null)) {
     const index = current.findIndex(item => item.taskId === event.taskId && (event.type === "grounding" ? item.type === "grounding" : ["tool", "tool_call", "tool_result"].includes(item.type) && (item.callId ?? item.toolCallId ?? item.id) === callId));

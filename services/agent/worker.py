@@ -829,6 +829,12 @@ class Worker:
             if not session:
                 return {"ok": False, "status": "denied", "reason": "video_authorization_required"}
             result = await self._video_tool(task, name, args, session)
+            # Authorization records the session marker first; replace it with the
+            # redacted tool outcome while the same lease still owns the task.
+            await self.request("POST", "/internal/video/finalize", {
+                "taskId": _task_id(task), "botId": _bot_id(task), "epoch": _epoch(task),
+                "videoSession": session, "result": result if isinstance(result, dict) else {"ok": False, "reason": "video_failed"},
+            })
             if name == "watch_video" and isinstance(result, dict) and result.get("ok") is not False:
                 task["_video_analysis"] = result
             return result
@@ -838,7 +844,7 @@ class Worker:
         assert self.client is not None
         bot_id, task_id = _bot_id(task), _task_id(task)
         import uuid
-        source = str(args.get("video_id") or args.get("source") or "")
+        source = str(args.get("attachment_id") or args.get("video_id") or args.get("path") or args.get("source") or "")
         if not source:
             return {"ok": False, "reason": "video_source_required"}
         try:
@@ -851,14 +857,17 @@ class Worker:
                  "videoId": item_id} if is_library_item else {"botId": bot_id, "taskId": task_id, "epoch": _epoch(task), "sourcePath": source}
         from video_analysis import processing_settings
         scope.update(videoSession=session, processingSettings=processing_settings())
+        config_response = await self.request_json("POST", "/internal/video/config", scope)
+        video_config = config_response.get("videoConfig", {}) if isinstance(config_response, dict) else {}
         if not is_library_item and (source.startswith(("http://", "https://")) or ".." in source.split("/")):
             return {"ok": False, "reason": "unsafe_video_source"}
         source_bytes = None
         if is_library_item:
             cache = await self.request_json("POST", "/internal/video/cache/get", scope)
         else:
-            source_response = await self.request("POST", "/internal/video/source", scope)
-            source_response.raise_for_status()
+            source_response = await self.request("POST", "/internal/video/source", scope, allow_status=(400, 403, 404, 413))
+            if source_response.status_code >= 400:
+                return {"ok": False, "reason": "video_unavailable", "error": "I couldn't open that video. Check the path and make sure the file belongs to this teammate's workspace."}
             source_bytes = source_response.content
             import hashlib
             scope["contentSha"] = hashlib.sha256(source_bytes).hexdigest()
@@ -869,19 +878,37 @@ class Worker:
                 return {"ok": False, "reason": "video_not_analyzed"}
             async def model_call(kind, content):
                 payload = {**scope, "kind": kind}
-                if kind == "stt": payload["audio"] = content["input_audio"]["data"]
-                else: payload["content"] = content
+                if kind == "stt":
+                    payload["audio"] = content["input_audio"]["data"]
+                    payload["audioSeconds"] = content.get("audio_seconds", 0)
+                else:
+                    payload["content"] = content
+                    payload["purpose"] = "answer"
+                    frames_in_request = sum(1 for item in content if isinstance(item, dict) and item.get("type") == "image_url")
+                    text_chars = sum(len(str(item.get("text") or "")) for item in content if isinstance(item, dict))
+                    payload["usageEstimate"] = {"frameCount": frames_in_request, "visionTokens": int(text_chars / 4 + frames_in_request * 2000)}
                 return await self._video_model_request(task, payload)
             answer = await answer_video_question(analysis, str(args.get("question", "")), model_call,
                                                 float(args["around_ts"]) if args.get("around_ts") is not None else None)
             return {"ok": True, "answer": answer, "videoId": item_id or source}
         if cache.get("analysis"):
             analysis = cache["analysis"]
-            return {key: analysis[key] for key in ("videoId", "duration", "summary", "timeline", "audioSkipReason", "sttProvider", "sttSeconds", "frameCount") if key in analysis} | {"cacheHit": True}
+            result = {key: analysis[key] for key in ("videoId", "duration", "summary", "timeline", "audioSkipReason", "sttSeconds", "frameCount") if key in analysis} | {"cacheHit": True}
+            if args.get("question"):
+                async def cached_model_call(kind, content):
+                    payload = {**scope, "kind": kind, "content": content}
+                    payload["purpose"] = "answer"
+                    frames_in_request = sum(1 for item in content if isinstance(item, dict) and item.get("type") == "image_url")
+                    text_chars = sum(len(str(item.get("text") or "")) for item in content if isinstance(item, dict))
+                    payload["usageEstimate"] = {"frameCount": frames_in_request, "visionTokens": int(text_chars / 4 + frames_in_request * 2000)}
+                    return await self._video_model_request(task, payload)
+                result["answer"] = await answer_video_question(analysis, str(args["question"]), cached_model_call)
+            return result
         await self.request("POST", "/internal/video/event", {**scope, "type": "video_analysis_started", "detail": {"sourceItemId": item_id}})
         if source_bytes is None:
-            response = await self.request("POST", "/internal/video/source", scope)
-            response.raise_for_status()
+            response = await self.request("POST", "/internal/video/source", scope, allow_status=(400, 403, 404, 413))
+            if response.status_code >= 400:
+                return {"ok": False, "reason": "video_unavailable", "error": "I couldn't open that attached video. Try attaching it again."}
             source_bytes = response.content
         import tempfile
         from pathlib import Path
@@ -893,16 +920,42 @@ class Worker:
                 scope["contentSha"] = hashlib.sha256(source_bytes).hexdigest()
             async def model_call(kind, content):
                 payload = {**scope, "kind": kind}
-                if kind == "stt": payload["audio"] = content["input_audio"]["data"]
-                else: payload["content"] = content
+                if kind == "stt":
+                    payload["audio"] = content["input_audio"]["data"]
+                    payload["audioSeconds"] = content.get("audio_seconds", 0)
+                else:
+                    payload["content"] = content
+                    payload["purpose"] = "vision"
                 await self.request("POST", "/internal/video/event", {**scope, "type": "video_model_call", "detail": {"kind": kind}})
                 return await self._video_model_request(task, payload)
-            async def progress():
+            async def progress(detail=None):
                 # Renew the bounded in-flight window only after real preprocessing progress.
                 task["_toolInFlightSince"] = datetime.now(timezone.utc).isoformat()
                 task["_lastProgressAt"] = task["_toolInFlightSince"]
-            result = await analyze_video(path, model_call, progress=progress)
+                if detail:
+                    await self.request("POST", "/internal/video/event", {**scope, "type": "video_progress", "detail": detail})
+            try:
+                result = await analyze_video(path, model_call,
+                    stt_model=video_config.get("transcriptionModel"),
+                    stt_provider=video_config.get("transcriptionProvider"), progress=progress)
+            except ValueError as exc:
+                reason = str(exc)
+                friendly = {
+                    "video_size_limit": "This video is too large to analyze. Please use a file under 1 GB.",
+                    "video_duration_limit": "This video is too long or has no readable duration. Please use a video under 60 minutes.",
+                    "audio_chunk_size_limit": "The audio track could not be split into safe processing parts.",
+                }.get(reason, "This video could not be analyzed. Please try a shorter or different file.")
+                return {"ok": False, "reason": reason, "error": friendly}
+            if args.get("question"):
+                async def answer_model_call(kind, content):
+                    payload = {**scope, "kind": kind, "content": content, "purpose": "answer"}
+                    frames_in_request = sum(1 for item in content if isinstance(item, dict) and item.get("type") == "image_url")
+                    text_chars = sum(len(str(item.get("text") or "")) for item in content if isinstance(item, dict))
+                    payload["usageEstimate"] = {"frameCount": frames_in_request, "visionTokens": int(text_chars / 4 + frames_in_request * 2000)}
+                    return await self._video_model_request(task, payload)
+                result["answer"] = await answer_video_question(result, str(args["question"]), answer_model_call)
         saved = await self.request_json("POST", "/internal/video/cache/put", {**scope, "analysis": result})
+        await self.request("POST", "/internal/video/event", {**scope, "type": "video_progress", "detail": {"stage": "Done"}})
         await self.request("POST", "/internal/video/event", {**scope, "type": "video_analysis_complete", "detail": {"duration": result.get("duration"), "frameCount": result.get("frameCount"), "sttSeconds": result.get("sttSeconds"), "cacheHit": False}})
         return {key: result[key] for key in ("videoId", "duration", "summary", "timeline", "audioSkipReason", "sttProvider", "sttSeconds", "frameCount") if key in result} | {"cacheStored": bool(saved.get("ok")), "cacheHit": False}
 

@@ -68,16 +68,53 @@ def test_video_cache_hit_keeps_scope_and_never_calls_source_or_model():
                 return {"decision": "allow"}
             if path.endswith("execute"):
                 return {"ok": True, "output": {"videoSession": "session"}}
+            if path.endswith("finalize"):
+                assert body["videoSession"] == "session" and body["result"]["cacheHit"] is True
+                return {"ok": True}
+            if path.endswith("/config"):
+                return {"videoConfig": {"visionModel": "test/vision", "transcriptionModel": "test/stt", "transcriptionProvider": "DeepInfra"}}
             assert path == "/internal/video/cache/get"
             assert body["videoSession"] == "session" and body["processingSettings"]
             assert body["videoId"] == "00000000-0000-0000-0000-000000000001"
             return {"analysis": analysis}
+        async def request(method, path, body=None, **kwargs):
+            seen.append(path)
+            assert path == "/internal/video/finalize"
+            assert body["videoSession"] == "session" and body["result"]["cacheHit"] is True
+            return object()
         worker.request_json = request_json
+        worker.request = request
         task = {"id": "task", "botId": "bot", "epoch": 7}
         result = await worker._invoke(task, {"name": "watch_video", "arguments": {"video_id": "00000000-0000-0000-0000-000000000001"}}, True)
         assert result["cacheHit"] is True and "frames" not in result and "transcript" not in result
         assert task["_video_analysis"] == result
-        assert seen == ["/internal/tools/preexec", "/internal/tools/execute", "/internal/video/cache/get"]
+        assert seen == ["/internal/tools/preexec", "/internal/tools/execute", "/internal/video/config", "/internal/video/cache/get", "/internal/video/finalize"]
+    asyncio.run(run())
+
+
+def test_video_tool_finalizes_failed_result_for_task_step_audit():
+    async def run():
+        worker = Worker()
+        calls = []
+        async def request_json(method, path, body=None):
+            if path.endswith("preexec"):
+                return {"decision": "allow"}
+            assert path.endswith("execute")
+            return {"ok": True, "output": {"videoSession": "session"}}
+        async def request(method, path, body=None, **kwargs):
+            calls.append((path, body))
+            return object()
+        async def failed(*args):
+            return {"ok": False, "reason": "video_unavailable"}
+        worker.request_json = request_json
+        worker.request = request
+        worker._video_tool = failed
+        result = await worker._invoke({"id": "task", "botId": "bot", "epoch": 7},
+            {"name": "watch_video", "arguments": {"path": "clip.mp4"}}, True)
+        assert result["reason"] == "video_unavailable"
+        assert calls[0][0] == "/internal/video/finalize"
+        assert calls[0][1]["result"] == result
+        assert calls[0][1]["videoSession"] == "session"
     asyncio.run(run())
 
 

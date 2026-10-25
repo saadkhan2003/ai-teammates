@@ -14,6 +14,18 @@ test('normalizeSelection trims, collapses newlines and cuts at a word boundary',
   assert.ok(!r.text.slice(0, -1).endsWith('wor'));
 });
 
+test('attachment markers become filename chips and disappear from display text', () => {
+  assert.deepEqual(m.parseAttachmentMarkers('[attached: /workspace/uploads/video-watch.mp4]\nWhat happens?'), {
+    text: 'What happens?', attachments: [{ key: '0:/workspace/uploads/video-watch.mp4', name: 'video-watch.mp4' }],
+  });
+  assert.deepEqual(m.parseAttachmentMarkers('[attached: C:\\bots\\clip.mp4]\n[attached: /tmp/notes.txt]'), {
+    text: '', attachments: [
+      { key: '0:C:\\bots\\clip.mp4', name: 'clip.mp4' },
+      { key: '1:/tmp/notes.txt', name: 'notes.txt' },
+    ],
+  });
+});
+
 test('addQuote builds quote, comment, quote, comment in order; dedupes; limits', () => {
   let parts = m.initialParts();
   let r = m.addQuote(parts, 'one', 'm1');
