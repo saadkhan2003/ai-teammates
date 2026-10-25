@@ -1,4 +1,7 @@
 ## G3 live acceptance results (archgaps stack only, Oct 24 2026, Asia/Karachi)
+
+Historical, chronological test record for the `archgaps` worktree. Failures, open items, and environment details are scoped to the dated runs below; later entries in this file record follow-up changes, and none of these results certify the current integrated tree.
+
 Commits: 7119d65 (DbClock, ticketed-control test), 7a07333 (pids 1024), 42bfffd (NO_PROXY loopback, /continue), 725fe38 (COMPUTE_STACK scoping).
 Real bugs found and fixed: vnc-ticket/human-input 500 (DateTime->DateTimeOffset), Chromium starved by pids=256, computer Playwright blocked by egress proxy for loopback CDP, and the archgaps API adopting/counting the live `teammates` computers because Reload() listed every `teammates.managed` container on the shared daemon (now scoped by teammates.stack label; live stack containers are unlabeled and unchanged). The live stack was never modified.
 

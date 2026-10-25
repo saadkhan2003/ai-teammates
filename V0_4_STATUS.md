@@ -1,5 +1,7 @@
 # AI Teammates v0.4 status (2026-10-24, PKT)
 
+Historical branch checkpoint for `v0.4-codex`. Branch, push, test, screenshot, and open-gap statements below describe that worktree on 2026-10-24; they are not the current integrated-tree status.
+
 Branch `v0.4-codex` (local), base v0.3 `0a8a3fa`. Stack under test: mock stack web :18080 / api :18081. NOT pushed (no credentials, no push to main).
 
 ## Done on v0.4-codex

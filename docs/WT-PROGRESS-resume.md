@@ -1,4 +1,7 @@
 # arch/resume progress (design section 6)
+
+Historical implementation and validation checkpoint for the `arch/resume` worktree. The branch, suite counts, exclusions, and configuration below describe that run, not current repository or stack state.
+
 Done: steps 0-10 (supervisor/report + attempt log, checkpoint ledger, cumulative budgets, append-only transcript, resume brief + unknown_outcome, resume policy, notices + Continue/Raise/Stop cards, compaction, watchdog, git snapshot refs, chaos hardening), server-side dedupe of non-idempotent tools on idempotencyKey, budget settings UI.
 Test isolation: tests/integration/stack.py and tests/e2e/containers.ts take every container name from COMPOSE_PROJECT / E2E_COMPOSE_PROJECT (+ per-container overrides). scripts/backup.sh and restore-verify.sh honour PG_CONTAINER.
 Not run on the isolated stack: tests/integration/test_computer_network.py (applies deploy/computer-isolation.sh host-wide iptables rules, which would also hit the live stack); docker variant of the compute contract (uses the shared teammates-computer:dev image).
