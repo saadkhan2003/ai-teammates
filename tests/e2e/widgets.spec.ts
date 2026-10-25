@@ -27,7 +27,7 @@ test("renders every structured widget and keeps heavy widgets lazy", async ({ pa
   await expect(page.getByTestId("widget-flow")).toBeVisible();
   const codeWidget = page.getByTestId("widget-code-editor");
   await expect(codeWidget).toHaveCount(1);
-  await expect(codeWidget.locator(".monaco-editor").first()).toBeVisible();
+  await expect(codeWidget.locator(".monaco-editor:visible").first()).toBeVisible();
   for (const theme of ["light", "dark"] as const) {
     await setTheme(page, theme);
     await expect(page.getByTestId("widgets-gallery")).toBeVisible();
