@@ -34,6 +34,8 @@ async function open(page: Page, id: string) {
   await expect(page.getByTestId("bot-name-button")).toBeVisible();
   if ((await page.getByTestId("bot-name-button").getAttribute("aria-expanded")) !== "true") await page.getByTestId("bot-name-button").click();
   await expect(page.getByTestId("info-pane")).toBeVisible();
+  // Cloud right panel (PR #7): the computer card lives under the "Computer" tab.
+  await page.getByTestId("info-pane").getByRole("tab", { name: "Computer" }).click();
 }
 
 test("computer card: waking, error with retry, sleeping, offline, click-through", async ({ page, context }) => {
@@ -53,8 +55,9 @@ test("computer card: waking, error with retry, sleeping, offline, click-through"
     await expect(page.getByTestId("computer-dots")).toBeVisible();
     await expect(page.getByTestId("computer-caption")).toHaveText(`${bot.name}'s screen`);
     const ratio = await frame.evaluate((el) => el.getBoundingClientRect().width / el.getBoundingClientRect().height);
-    expect(ratio).toBeGreaterThan(1.5);
-    expect(ratio).toBeLessThan(1.7);
+    // Cloud card is 16:9 (aspect-video).
+    expect(ratio).toBeGreaterThan(1.7);
+    expect(ratio).toBeLessThan(1.85);
     await page.screenshot({ path: `${SHOTS}/12-computer-waking.png` });
 
     // Error: "Couldn't connect" and a Retry button; Retry asks again.

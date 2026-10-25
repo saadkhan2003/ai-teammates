@@ -133,10 +133,12 @@ async function openVideoChat(page: Page, theme: "light" | "dark") {
   const messages: Array<Record<string, unknown>> = [];
   let messageNo = 0;
   await page.route(`**/api/conversations/${CONVERSATION}/messages`, async route => {
-    const body = route.request().postDataJSON() as { content?: string };
+    const body = route.request().postDataJSON() as { content?: string; client_id?: string };
     const content = body.content ?? "";
     const at = (minute: number) => `2026-10-25T08:${String(minute).padStart(2, "0")}:00Z`;
-    messages.push({ id: `user-${++messageNo}`, role: "user", createdAt: at(messageNo * 2), content });
+    // The real API stores the user message under the client's client_id; echo it so the optimistic copy reconciles.
+    ++messageNo;
+    messages.push({ id: body.client_id ?? `user-${messageNo}`, clientId: body.client_id, role: "user", createdAt: at(messageNo * 2), content });
     if (messageNo === 1) {
       messages.push({ id: "video-analysis", role: "assistant", createdAt: at(3), content: JSON.stringify({ summary: "A person demonstrates a test scene.", timeline: [{ timestamp: 1, summary: "A test scene is visible." }] }) });
       messages.push({ id: "video-answer", role: "assistant", createdAt: at(4), content: "The video shows a person demonstrating a test scene." });
@@ -178,7 +180,7 @@ async function captureAnswerState(page: Page, theme: "light" | "dark") {
   await expect(page.getByTestId("recording-attachment")).toContainText("video-watch.mp4");
   await expect(page.locator("body")).not.toContainText("/workspace/uploads");
   await expect(page.getByTestId("video-analysis-card")).toContainText("A person demonstrates a test scene.");
-  await expect(page.getByText("The video shows a person demonstrating a test scene.")).toBeVisible();
+  await expect(page.getByTestId("chat-message-list").getByText("The video shows a person demonstrating a test scene.")).toBeVisible();
   await expect(page.getByText("Couldn't connect")).toHaveCount(0);
   await expect(page.getByText("The computer isn't answering")).toHaveCount(0);
   const rows = page.getByTestId("message-item");
@@ -203,7 +205,7 @@ for (const theme of ["light", "dark"] as const) {
 
     await page.getByTestId("composer").fill("What happens at the end?");
     await page.getByTestId("send-chat").click();
-    await expect(page.getByText("It ends with the test scene.")).toBeVisible();
+    await expect(page.getByTestId("chat-message-list").getByText("It ends with the test scene.")).toBeVisible();
     await expect(page.getByTestId("video-progress")).toHaveCount(0);
     await expect(page.getByTestId("stop-run")).toHaveCount(0);
     await page.screenshot({ path: `/workspace/shots-video-v1/03-followup-${theme}.png` });
