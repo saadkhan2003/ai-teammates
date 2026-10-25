@@ -3,7 +3,7 @@
 Status: proposal, final choices are Saad's. No dates are promised. Effort: **S** = days, **M** = 1-2 weeks, **L** = more than 2 weeks.
 **Estimate** marks any number that is a planning assumption and not measured or published. Re-check every estimate against current provider pricing before using it for prices.
 
-Sources read for this revision: `README.md`, `docs/V0_4.md`, `docs/SECURITY.md`, `docs/COMPANION.md`, `db/001`-`014`, `apps/api`, `src/Compute.*`, `deploy/`, `scripts/backup.sh`, and `/workspace/research/RAKAZO_STUDY.md` (ideas only; Rakazo is Apache-2.0, credit it if code is ported). The README says "SaaS later" but gives no plan, so this theme is a proposal.
+Sources read for the original proposal: `README.md`, `docs/V0_4.md`, `docs/SECURITY.md`, `docs/COMPANION.md`, `db/001`-`014`, `apps/api`, `src/Compute.*`, `deploy/`, `scripts/backup.sh`, and `/workspace/research/RAKAZO_STUDY.md` (ideas only; Rakazo is Apache-2.0, credit it if code is ported). This source list is historical; use the 2026-10-25 checkpoint below for current implementation status.
 
 ## 1. Goal and principles
 
@@ -11,18 +11,29 @@ Take v0.4 from "self-hosted, one trusted operator" to "a hosted service where un
 
 Principles: ship a closed beta on today's Docker provider first (M1-M6); weaken none of PolicyGate, DLP, TEAMS-ISO or per-bot workspace privacy; never claim "everything is encrypted" until it is true. Non-goals: mobile apps, voice, messaging channels, final prices.
 
-## 2. Starting point (verified in the repo)
+## Current implementation checkpoint (checked 2026-10-25)
 
-- **Tenancy is user-level, enforced in API code.** `bots.owner_id` references `users` (001); `user_quotas`, `user_computers`, `devices` are keyed by user; `messages`, `memories`, `artifacts` reach the owner only through joins via `bots`/`conversations`; `model_calls` and `outbound_actions` carry a nullable owner id.
-- **No RLS, no organization.** `db/*.sql` has no `ROW LEVEL SECURITY` statements and no org table. Roles are `owner`/`admin`/`member` per user (003). The API connects as `POSTGRES_USER` (default `agent`), which owns the schema.
-- **No email on users, no signup route.** `users` has `username` and `password_hash`; `email` exists only on `invitations`; the README says email verification is not in this build.
+This file began as a proposal against the earlier v0.4 source tree. The integrated `ui-integrate` tree has since added account, organization, billing, AI-routing and device-command work. Treat the implementation notes below as the current snapshot; the original estimates, milestone order and acceptance criteria remain proposals and have not been re-baselined or certified complete.
+
+- **Present:** invitation-based account creation controlled by `signups_open`; account email/profile fields; organization and membership tables; per-user billing plans, credits, usage metering and on-demand limits; configurable AI-provider spend caps with block/downgrade behavior; admin and audit surfaces; companion device-command transport; local backup/restore-verification scripts.
+- **Still not equivalent to hosted multi-tenant isolation:** organization records do not establish organization ownership for every content table, and the schema has no Postgres RLS policies. API ownership checks remain the tenant boundary.
+- **Still incomplete:** email verification cannot send mail (`verificationSent` is false); external payment collection/webhooks are not demonstrated by the local/mock billing flows; message, transcript and memory text remain application-readable; only Docker and Fake compute providers are implemented; no remote compute provider or per-tenant RLS isolation is present.
+- **Spend controls have two distinct layers:** the billing credit/on-demand meter can pause eligible work, while the AI Models configuration also supports rolling USD caps per default plan, user and bot. Those AI caps are admission controls with a short cache window, not reserved balances; see `AI_MODELS.md` for limits and behavior.
+
+Before using this plan to authorize a hosted launch, re-evaluate every milestone against the current code and operational evidence. A database table, endpoint, admin screen or local script alone does not satisfy the multi-tenant, external billing, off-host recovery or production-readiness acceptance criteria below.
+
+## 2. Current implementation snapshot (integrated tree, checked 2026-10-25)
+
+- **Tenancy was user-level, enforced in API code.** The integrated tree adds `organizations` and `organization_members`, but core content ownership and authorization remain predominantly user/bot scoped; those tables do not provide complete organization isolation.
+- **No RLS.** The integrated schema still has no PostgreSQL row-level security policies. The API connects as the configured database user, which owns the schema by default. Organization tables now exist, unlike in the original snapshot.
+- **Accounts have moved on.** The integrated tree has user email/profile fields and invitation acceptance controlled by the `signups_open` feature flag. Email delivery is not configured: the email-verification endpoint reports `verificationSent: false`; do not describe this as verified signup.
 - **Encryption covers secrets only** (AES-256-GCM, one master key in a Docker secret file). `messages.content`, `task_transcript.content`, `memories.content` are plain `text`.
-- **Only memories are searched in SQL:** `memories_fts` (GIN on `to_tsvector`) and `ts_rank` then `embedding <=> @emb` (`vector(64)`) in `Runtime.cs`. Messages and transcripts are not.
-- **Quotas exist, caps do not.** `user_quotas` defaults: 8 bots, 1 computer, 1.5 GiB RAM, 1000 millicores, 10 GiB disk, 6 parallel tasks, 40 secrets. `model_calls.cost_usd` is recorded and `GET /api/usage` sums it. No plan table, no spend cap. `ProviderWire.cs` can read the OpenRouter key's `limit_remaining`.
-- **Compute.** `IComputeProvider` covers lifecycle, exec, desktop, snapshot/restore, capacity and health. Only `DockerComputeProvider` exists (`remote` is reserved; `compute.proto` is linted, not served). Containers get memory and CPU limits (swap equal to memory), a custom seccomp profile, `apparmor=unconfined`, 64 MiB shm and `/tmp`, and the default runc runtime. Isolation is `deploy/computer-isolation.sh` (TEAMS-ISO) plus per-bot UIDs.
+- **SQL text/vector search is limited to memory rows:** memory retrieval uses the `memories_fts` index and note-search queries in the API. Messages and task transcripts are not general full-text search targets.
+- **Plans, usage metering and spend caps exist, with important limits.** The integrated tree has `billing_plans`, `billing_accounts`, credit usage and an on-demand ceiling. AI routing adds configurable plan-default, per-user and per-bot USD caps (`AI_MODELS.md`). These are separate mechanisms; AI caps use rolling usage checks with a short cache and do not reserve in-flight cost. Provider `limit_remaining` parsing is not the enforcement mechanism for these local caps.
+- **Compute.** `IComputeProvider` covers lifecycle, exec, desktop, snapshot/restore, capacity and health. `DockerComputeProvider` is the only production provider; `FakeComputeProvider` is for tests. `remote` is reserved and `compute.proto` is linted, not served. Containers get memory and CPU limits (swap equal to memory), a custom seccomp profile, `apparmor=unconfined`, 64 MiB shm and `/tmp`, and the default runc runtime. Isolation is `deploy/computer-isolation.sh` (TEAMS-ISO) plus per-bot UIDs.
 - **Idle hibernation exists.** `IDLE_POWER=hibernate` stops an idle computer after 10 min (`IDLE_SUSPEND_MINUTES`); `reclaim` pauses, then hibernates after 30 min; `IDLE_RESUME_TARGET_SECONDS` is 15. `HostBudget` allows 2 computers on a 4 GB host, 3 on 6 GiB or more.
 - **Queue is Postgres:** workers lease with `FOR UPDATE ... SKIP LOCKED` (`Routes.cs`, `tasks_lease_idx`).
-- **Ops.** `backup.sh` and `restore-verify.sh` exist; `/metrics` is token-gated; login and device-pairing limiters, idempotency keys and delete tombstones live in API memory and reset on restart.
+- **Ops.** Backup and restore-verification scripts, token-gated metrics, login/device limiters, idempotency and deletion controls exist in the integrated tree. Their existence does not establish off-host retention or cross-instance durability; verify each deployment mode before treating the corresponding milestone as complete.
 
 ## 3. Architecture decisions (recommended)
 
@@ -112,15 +123,10 @@ Recommendation: **BYO key for the closed beta** (least machinery, no float). Add
 Implement 3.1 and encryption tier 1 (3.2). Tests in `tests/integration`: per table, a query with the tenant filter removed returns no foreign rows; a task runs under its own org; CI fails on a new table without a policy; key rotation works on data written before and after.
 
 ### B. Accounts, signup, organizations (M-L)
-- `email` (unique, normalized) on users; verification token single-use, hashed, 24 h expiry, rate limited (device-pairing pattern).
-- Signup with an operator switch (`closed`, `invite-only`, `allowlist`, `open`); password reset; session list and revoke; `REQUIRE_OWNER_PASSWORD=true` in hosted mode.
-- `organizations` and `memberships` mapped from `owner`/`admin`/`member`; invitations attach to an org. Decide how the one-computer-per-user rule (003) becomes per-org and what happens to existing bots.
-- Email through the 8.3 provider with bounce/complaint suppression.
+Current tree: user email fields, invitation acceptance, a `signups_open` flag, organization/member records, and account/session security surfaces exist. The account email-verification handler cannot send mail and does not change the email (`verificationSent: false`). Re-audit uniqueness/normalization, verification, password reset, invite-to-org behavior, and hosted-mode requirements against implementation before marking this workstream done. Email provider integration and bounce/complaint handling remain open.
 
 ### C. Billing and metering (M-L)
-- `plans` and `entitlements` (limits from 4.4), one `Entitlements.Check()` call site for every limited action.
-- Append-only, idempotent usage ledger from `model_calls`, task counts and computer-hours; the usage page must match `model_calls`.
-- Spend caps per 4.5. Payment provider behind a small interface: plan id on org, idempotent webhook table, dunning states, cancellation and a retention window after cancel.
+Current tree: `billing_plans`, user plan assignments, credit balances/ledger, usage metering, configurable on-demand limits, and AI-routing spend caps exist. This is user-level billing, not organization-level entitlements. Audit every limited action and reconcile usage against source rows before claiming completeness. External payment collection, webhook idempotency, dunning, cancellation retention, and an organization-level plan model remain open unless separately verified.
 
 ### D. Hosted compute (L)
 - `COMPUTE_PROVIDER=remote` from `compute.proto` on a separate compute host, so the API no longer needs the Docker socket proxy for computers.
@@ -146,7 +152,7 @@ Checked in the repo. Four of these have schema or code from v0.3, so the first t
 | Plugin health checks | `health_status`, `health_detail`, `health_checked_at` on `plugin_catalog`, a `health` job kind; unhealthy plugins are filtered from queries | Audit the scheduler, add backoff and per-server timeouts, show health in UI | S-M |
 | Change-only routine wakes | `watch_kind`, `watch_ref`, `watch_fingerprint` on `routines`; a scheduler check in `Program.cs` that skips the model when `http` or `memory` content is unchanged | Add file/command/tool watchers with a minimum interval, test that no model call happens when nothing changed | M |
 | Phone link via own tunnel | Not in the repo or docs; a goal from our conversation | Documented setup using the operator's own tunnel (needs their account, PC or VPS). Not a hosted feature | S-M |
-| Installable PC companion app | `companion/` is a stdlib-only Python CLI at 0.4.0; pairing, heartbeat and permissions work, but `docs/COMPANION.md` says execution transport is not yet connected to the worker | Wire execution to the worker behind `DeviceGate`, then package a Windows/Mac installer with an OS credential store | L |
+| PC companion app | `companion/` is the older Python pairing/heartbeat/egress CLI and its `--command` option runs locally. `apps/companion/` contains a Rust phase-one CLI/core with outbound WebSocket command transport and an uncompiled Tauri tray shell. | Continue the Rust companion beyond shell execution (file/browser/traffic operations and signed updates are still absent); compile and verify platform installers before release. This command transport is not the agent worker's tool-dispatch path. | L |
 
 ## 6. Performance and scale targets
 

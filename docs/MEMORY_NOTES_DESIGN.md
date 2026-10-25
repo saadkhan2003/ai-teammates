@@ -1,6 +1,6 @@
 # Notes and memory: how Grok Bot does it, and a design for AI Teammates (v2, reviewed)
 
-Status: design, not built. v1 written 2026-10-24; v2 review pass the same day (Asia/Karachi). Day counts are **estimates**, not measurements.
+Status: historical design, partially implemented. The owner-scoped notes, standing rules, scoped-rule delivery, guarded writes and implementation defaults are described in [`MEMORY_NOTES_IMPLEMENTATION.md`](MEMORY_NOTES_IMPLEMENTATION.md); use that file and current code for shipped behavior. The design below records the original proposal and still includes later/future ideas that are not necessarily implemented. v1 written 2026-10-24; v2 review pass the same day (Asia/Karachi). Day counts are **estimates**, not measurements.
 Tags: **[confirmed]** = read on a fetched page, in this repo (file:line) or in a tool result this session. **[reported]** = stated in Saad's brief about how this very Grok Bot's memory behaves; I cannot re-read that prompt text from here, so treat it as Saad's observation. **[inferred]** = reasoned from what was seen. **[guess]** = a number or choice I picked and have not tested.
 Grok Bot does not publish its save rules, thresholds or schema, so anything about *how it decides* is inferred.
 
@@ -61,7 +61,7 @@ Sources: https://docs.x.ai/grok-bot/bots , https://docs.x.ai/grok-bot/faq , http
 - **Mem0** (https://docs.mem0.ai/core-concepts/how-it-works , .../migration/oss-v2-to-v3): extraction is an LLM pass over messages that retrieves top-10 related memories first for dedupe context, hash-dedupes, then embeds. Its new algorithm is **ADD-only** (changed facts accumulate; retrieval ranks current ones) and uses explicit `update`/`delete` for corrections; retrieval fuses semantic, keyword, entity and temporal signals; searches must always be scoped by user/agent/run ids so users do not mix. We adopt: related-note lookup before write, explicit update by id, hybrid retrieval, mandatory scope filters. We differ on supersede: we mark old rows `superseded` (kept briefly) rather than accumulate, because a small prompt budget cannot hold both versions.
 - **OWASP Top 10 for Agentic Applications 2026, ASI06 Memory and Context Poisoning** (https://genai.owasp.org/download/52117/): controls are to scan every memory write, isolate by user/tenant, record provenance, never treat memory as instructions or permissions, **not re-ingest the agent's own output into trusted memory**, expire unverified entries, and keep snapshots, rollback and human review. Section 11 maps each control to a mechanism here.
 
-## 2. What AI Teammates has today [confirmed in the repo unless marked]
+## 2. What AI Teammates had at the design snapshot [historical; not a current code inventory]
 
 | Piece | State (file) |
 |---|---|

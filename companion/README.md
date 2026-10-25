@@ -18,6 +18,6 @@ authenticated WSS relay to the API; reconnects are attempted for 90 seconds.
 The account's Settings → Policy → Network policy controls whether traffic falls
 back to the server route or fails closed after that grace period.
 
-Credentials are stored in `~/.config/teammates-companion/config.json` with mode 600 (use the equivalent config directory on Windows). `run --once` is useful for service managers. To run a command, pass `--command`; `always` executes it, `ask` prompts in the terminal, and `off` refuses. The v0.4 API does not yet provide a remote execution transport, so this option only runs a command locally on the paired device. `unpair` removes local credentials.
+Credentials are stored in `~/.config/teammates-companion/config.json` with mode 600 (use the equivalent config directory on Windows). `run --once` is useful for service managers. To run a command, pass `--command`; `always` executes it, `ask` prompts in the terminal, and `off` refuses. This Python CLI is the older pairing/heartbeat/egress client: its `--command` runs locally and does not use the server's device-command WebSocket. The separate Rust phase-one client is in [`apps/companion`](../apps/companion/README.md); it supports server-mediated command transport, while its Tauri shell remains uncompiled and release-unverified. `unpair` removes local credentials.
 
 For login startup, add `teammates-companion run` to Windows Task Scheduler, a macOS Login Item/LaunchAgent, or a Linux systemd user service.
