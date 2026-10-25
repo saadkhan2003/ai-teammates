@@ -95,6 +95,7 @@ test("chat message helpers for quotes, reactions, questions, and links", () => {
   assert.equal(chat.optionLetter(2), "C");
   assert.equal(chat.optionLetter(-1), "");
   assert.equal(chat.newMessagesLabel(1), "↓ 1 new message");
+  assert.equal(chat.newMessagesLabel(2), "↓ 2 new messages");
   assert.equal(chat.newMessagesLabel(4), "↓ 4 new messages");
   assert.equal(chat.quotePlacement("user"), "above");
   assert.equal(chat.quotePlacement("assistant"), "inside");

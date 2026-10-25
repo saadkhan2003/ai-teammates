@@ -25,7 +25,7 @@ import { parseBotRow, type BotThreadView } from "@/lib/bot-thread";
 import { MessageBody, MessageItem, plainTextOf } from "@/components/message-item";
 import { ShimmerText, workingStatus } from "@/components/shimmer-text";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { type ComposerPart, flatten, addQuote, canSend, hasBlocks, initialParts, normalizeSelection, pillPosition, removePart, setReply, toPayload } from "@/lib/chat-parts";
+import { type ComposerPart, flatten, addQuote, canSend, hasBlocks, hasFiles, initialParts, normalizeSelection, pillPosition, removePart, setReply, toPayload } from "@/lib/chat-parts";
 import { setAvatarMode } from "@/lib/avatar-motion";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -360,7 +360,8 @@ export function ChatPane({
 
   function startReply(message: ChatMessage) {
     const text = plainTextOf(message).replace(/\s+/g, " ").trim();
-    setParts(current => setReply(current, { messageId: message.id, author: message.role === "user" ? "You" : botName, excerpt: text.slice(0, 200) }));
+    const image = messageBlocks(message.content).find((block): block is Extract<MessageBlock, { kind: "image" }> => block.kind === "image");
+    setParts(current => setReply(current, { messageId: message.id, author: message.role === "user" ? "You" : botName, excerpt: text.slice(0, 200), ...(image ? { image: { src: image.url, alt: image.name } } : {}) }));
     announce("Reply added");
     focusComposer();
   }
@@ -593,7 +594,7 @@ export function ChatPane({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div ref={scrollRef} data-testid="chat-scroll" className="min-h-0 flex-1 overflow-y-auto pt-12" style={{ overflowAnchor: "none" }} tabIndex={0} aria-label="Conversation history" onScroll={() => {
+      <div ref={scrollRef} data-testid="chat-scroll" className="chat-scroll min-h-0 flex-1 overflow-y-auto pt-12" style={{ overflowAnchor: "none" }} tabIndex={0} aria-label="Conversation history" onScroll={() => {
         const node = scrollRef.current;
         if (!node) return;
         // Only an upward scroll away from the bottom unsticks. Row measurement in the
@@ -743,16 +744,23 @@ export function ChatPane({
         onMouseDown={event => event.preventDefault()}
         onClick={() => addQuoteText(pill.text, pill.source)}
         className="z-50 inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-popover px-3 text-xs font-medium text-popover-foreground shadow-md hover:bg-bot-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11"><Quote className="h-3.5 w-3.5" aria-hidden />Add to chat</button> : null}
-      {scrolledUp && fresh > 0 && !dismissedFresh ? <button type="button" data-testid="new-messages" onClick={() => { stickRef.current = true; setFresh(0); setScrolledUp(false); scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }}>{newMessagesLabel(fresh)}</button> : null}
-      {scrolledUp ? <Button data-testid="jump-to-latest" variant="secondary" className="mx-auto my-2" onClick={() => { stickRef.current = true; setScrolledUp(false); scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "instant" }); }}>Jump to latest ↓</Button> : null}
+      {scrolledUp && fresh > 0 && !dismissedFresh ? <div data-testid="new-messages-pill" className="fixed bottom-[calc(11rem+env(safe-area-inset-bottom))] left-1/2 z-20 inline-flex -translate-x-1/2 items-center gap-1 rounded-full bg-bot px-1.5 py-1 text-bot-foreground shadow-sm">
+        <button type="button" data-testid="new-messages" className="rounded-full px-3 py-1 text-sm" onClick={() => { stickRef.current = true; setFresh(0); setScrolledUp(false); scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }}>{newMessagesLabel(fresh)}</button>
+        <button type="button" data-testid="dismiss-new-messages" aria-label="Dismiss new messages" className="grid size-7 place-items-center rounded-full hover:bg-bot-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setDismissedFresh(true)}><XIcon className="size-4" aria-hidden /></button>
+      </div> : null}
+      {scrolledUp ? <Button type="button" data-testid="jump-to-latest" aria-label="Jump to latest" title="Jump to latest" variant="secondary" size="icon" className="fixed bottom-[calc(8rem+env(safe-area-inset-bottom))] left-1/2 z-20 -translate-x-1/2 rounded-full" onClick={() => { stickRef.current = true; setFresh(0); setScrolledUp(false); scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "instant" }); }}><ArrowDown className="size-4" aria-hidden /></Button> : null}
       <form
         data-testid="composer-bar"
         className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
         onSubmit={onSubmit}
+        onDragOver={event => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }}
+        onDrop={event => { if (hasFiles(event.dataTransfer.files)) { event.preventDefault(); void attach(event.dataTransfer.files); } }}
+        onPaste={event => { if (hasFiles(event.clipboardData.files)) { event.preventDefault(); void attach(event.clipboardData.files); } }}
       >
         {parts.filter(part => part.type === "reply").map(part => part.type === "reply" ? (
           <div key={part.id} data-testid="composer-reply" data-message-id={part.messageId} className="flex min-h-9 items-center gap-2 rounded-full border border-border bg-muted/60 py-1 pl-3 pr-1 text-[13px] text-muted-foreground">
             <ReplyIcon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            {part.image ? <img data-testid="composer-reply-image" src={part.image.src} alt={part.image.alt} className="size-7 shrink-0 rounded-full object-cover" /> : null}
             <span className="sr-only">Replying to {part.author}: </span>
             <span data-testid="composer-reply-text" className="min-w-0 flex-1 truncate"><span data-testid="reply-chip">{part.excerpt}</span></span>
             <button type="button" aria-label="Remove reply" data-testid="remove-quote" className="grid h-7 w-7 shrink-0 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" onClick={() => { setParts(current => removePart(current, part.id)); focusComposer(); }}><XIcon className="h-3.5 w-3.5" aria-hidden /></button>
@@ -811,6 +819,7 @@ export function ChatPane({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" onCloseAutoFocus={event => { event.preventDefault(); focusComposer(); }}>
                 <DropdownMenuItem data-testid="plus-attach" onSelect={() => fileRef.current?.click()}>Attach files</DropdownMenuItem>
+                <DropdownMenuItem data-testid="plus-teach-task" onSelect={() => window.dispatchEvent(new Event("teammates-teach-task"))}>Teach a task</DropdownMenuItem>
                 <DropdownMenuItem data-testid="plus-quote" onSelect={() => window.dispatchEvent(new Event("teammates-add-selection"))}><Quote className="h-4 w-4" />Add selection to chat</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

@@ -1,11 +1,11 @@
 import { expect, type Page } from "@playwright/test";
 
 export async function login(page: Page) {
-  await page.goto("/");
+  await page.goto("/login");
   const shell = page.getByTestId("app-shell");
   const username = page.getByTestId("login-username");
   await expect(shell.or(username)).toBeVisible();
-  if (await shell.isVisible()) return;
+  if (!(await username.isVisible())) return;
   const user = process.env.OWNER_USERNAME ?? "saad";
   const pass = process.env.OWNER_PASSWORD ?? "teammates-dev";
   const password = page.getByTestId("login-password");

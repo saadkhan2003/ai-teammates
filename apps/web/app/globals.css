@@ -262,6 +262,30 @@ time,
   border-radius: var(--radius-pill);
 }
 
+.chat-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.chat-scroll:hover,
+.chat-scroll:focus-visible {
+  scrollbar-color: var(--border) transparent;
+}
+
+.chat-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: var(--radius-pill);
+}
+
+.chat-scroll:hover::-webkit-scrollbar-thumb,
+.chat-scroll:focus-visible::-webkit-scrollbar-thumb {
+  background: var(--border);
+}
+
 .sidebar-scroll:hover::-webkit-scrollbar-thumb,
 .sidebar-scroll:focus-within::-webkit-scrollbar-thumb,
 .sidebar-scroll[data-scrolling="true"]::-webkit-scrollbar-thumb {

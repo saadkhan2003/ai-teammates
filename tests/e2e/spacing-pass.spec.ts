@@ -84,7 +84,8 @@ for (const theme of ["light", "dark"] as const) {
     await expect(page.getByText("Accept an invitation")).toBeVisible();
     await shot(page, `${theme}-invite`);
     await page.goto(`/?theme=${theme}`);
-    await expect(page.getByRole("heading", { name: "Teammates" })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/bots/${bot}(?:\\?theme=${theme})?$`));
+    await expect(page.getByTestId("composer-pill")).toBeVisible();
     await shot(page, `${theme}-home`);
     await page.goto(`/bots/${bot}?theme=${theme}`);
     await expect(page.getByTestId("composer-pill")).toBeVisible();

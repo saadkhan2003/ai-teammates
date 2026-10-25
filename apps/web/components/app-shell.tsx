@@ -143,6 +143,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   useEffect(() => { initPerf(); }, []);
   const pathname = usePathname();
   const router = useRouter();
+  useEffect(() => {
+    const match = pathname.match(/^\/bots\/([^/]+)/);
+    if (!match) return;
+    try { window.localStorage.setItem("teammates-last-bot", match[1]); } catch { /* storage unavailable */ }
+  }, [pathname]);
   const authPage = pathname === "/login" || pathname === "/invite";
   const [bots, setBots] = useState<RosterBot[]>([]);
   const [botsLoaded, setBotsLoaded] = useState(false);

@@ -62,6 +62,17 @@ test("reply chip sits above the composer, truncates to one line, cancels with X,
   expect(parseFloat(border)).toBeGreaterThan(0);
 });
 
+test("replying to an image includes its thumbnail in the composer chip", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await setup(page, { messages: [msg(1, "assistant", "![Diagram](/diagram.png)")] });
+  await page.goto(`/bots/${A}`);
+  const message = page.locator("[data-message-id='m1']");
+  await message.hover();
+  await message.getByTestId("msg-reply").click();
+  await expect(page.getByTestId("composer-reply-image")).toHaveAttribute("src", "/diagram.png");
+  await expect(page.getByTestId("composer-reply-image")).toHaveAttribute("alt", "Diagram");
+});
+
 async function phases(page: Page, id: string, ms: number) {
   return page.evaluate(({ id, ms }) => new Promise<{ t: number; v: string | null }[]>(resolve => {
     const out: { t: number; v: string | null }[] = []; const start = performance.now();

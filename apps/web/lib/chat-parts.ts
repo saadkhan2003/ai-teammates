@@ -3,7 +3,7 @@
 
 export type QuotePart = { type: "quote"; id: string; text: string; sourceMessageId?: string };
 export type TextPart = { type: "text"; id: string; text: string };
-export type ReplyPart = { type: "reply"; id: string; messageId: string; author: string; excerpt: string };
+export type ReplyPart = { type: "reply"; id: string; messageId: string; author: string; excerpt: string; image?: { src: string; alt: string } };
 export type ComposerPart = QuotePart | TextPart | ReplyPart;
 
 export const MAX_BLOCKS = 10;
@@ -54,12 +54,15 @@ export function removePart(parts: ComposerPart[], id: string): ComposerPart[] {
 }
 
 /** One reply block per message in v1: a second Reply replaces the first. Placed at the top. */
-export function setReply(parts: ComposerPart[], reply: { messageId: string; author: string; excerpt: string }): ComposerPart[] {
+export function setReply(parts: ComposerPart[], reply: { messageId: string; author: string; excerpt: string; image?: { src: string; alt: string } }): ComposerPart[] {
   const rest = parts.filter(p => p.type !== "reply");
   return [{ type: "reply", id: partId(), ...reply }, ...(rest.length ? rest : [emptyText()])];
 }
 
 export const hasBlocks = (parts: ComposerPart[]) => parts.some(p => p.type !== "text");
+
+/** Clipboard and drop uploads are handled only when files are actually present. */
+export const hasFiles = (files: { length: number } | null | undefined): boolean => (files?.length ?? 0) > 0;
 
 export function canSend(parts: ComposerPart[]): boolean {
   if (parts.some(p => p.type === "quote")) return true;

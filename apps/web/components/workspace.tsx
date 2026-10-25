@@ -385,6 +385,15 @@ export function Workspace({ botId }: { botId: string }) {
     onSent: () => void loadWorkspace(),
   });
 
+  useEffect(() => {
+    const startTeaching = () => {
+      if (teach.busy || teach.recording) return;
+      void teach.start();
+    };
+    window.addEventListener("teammates-teach-task", startTeaching);
+    return () => window.removeEventListener("teammates-teach-task", startTeaching);
+  }, [teach.busy, teach.recording, teach.start]);
+
   if (!ready && !workspace) {
     return (
       <ChatSkeleton />
@@ -466,7 +475,7 @@ export function Workspace({ botId }: { botId: string }) {
             aria-expanded={pane}
             aria-controls="info-pane"
             aria-label={`${bot?.name || "Teammate"} details`}
-            className="pointer-events-auto inline-flex max-w-[70%] items-center gap-2 rounded-full border border-white/5 bg-black/75 px-3.5 py-1.5 text-sm font-medium shadow-md backdrop-blur focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="pointer-events-auto inline-flex max-w-[70%] items-center gap-2 rounded-full border border-white/5 bg-black/75 px-3.5 py-1.5 text-sm font-medium shadow-md backdrop-blur transition-colors hover:border-border hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onClick={() => togglePane()}
           >
             <BotAvatar animated botId={bot?.id} shape={bot?.avatarShape} color={bot?.avatarColor} size={20} primary={bot?.isPrimary} />

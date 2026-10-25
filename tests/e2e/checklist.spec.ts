@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 
 const bot = "11111111-1111-4111-8111-111111111111";
-const dir = "/opt/cursor/artifacts/checklist";
+const dir = process.env.SHOT_DIR || "/tmp/ui-integrate-checklist";
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 
 async function shot(page: Page, name: string) {
@@ -257,10 +257,13 @@ test("new-message pill and round jump button", async ({ page }) => {
     node.dispatchEvent(new Event("scroll"));
   });
   await expect(page.getByTestId("jump-to-latest")).toBeVisible();
+  await expect(page.getByTestId("jump-to-latest")).toHaveAccessibleName("Jump to latest");
   messages.push({ id: "fresh-1", role: "assistant", content: "A brand new message arrived." });
   messages.push({ id: "fresh-2", role: "assistant", content: "And one more." });
   release = true;
+  await page.evaluate(() => window.dispatchEvent(new Event("teammates-refresh")));
   await expect(page.getByTestId("new-messages")).toContainText("↓ 2 new messages");
+  await expect(page.getByTestId("new-messages-pill")).toBeVisible();
   await shot(page, "05-new-messages");
   await page.getByRole("button", { name: "Dismiss new messages" }).click();
   await expect(page.getByTestId("new-messages")).toHaveCount(0);
@@ -268,7 +271,7 @@ test("new-message pill and round jump button", async ({ page }) => {
   await shot(page, "05-jump-to-latest");
   await page.getByTestId("jump-to-latest").click();
   await expect(page.getByTestId("jump-to-latest")).toHaveCount(0);
-  await expect(page.getByText("And one more.")).toBeVisible();
+  await expect(page.getByTestId("chat-message-list").getByText("And one more.")).toBeVisible();
 });
 
 test("asleep computer card offers wake", async ({ page }) => {

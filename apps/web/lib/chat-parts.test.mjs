@@ -45,6 +45,14 @@ test('removePart keeps a trailing text segment; setReply replaces', () => {
   parts = m.setReply(parts, { messageId: '2', author: 'You', excerpt: 'f' });
   assert.equal(parts.filter(p => p.type === 'reply').length, 1);
   assert.equal(parts[0].messageId, '2');
+  parts = m.setReply(parts, { messageId: '3', author: 'Ada', excerpt: 'diagram', image: { src: '/diagram.png', alt: 'Diagram' } });
+  assert.deepEqual(parts[0].image, { src: '/diagram.png', alt: 'Diagram' });
+});
+
+test('file picker, paste, and drop paths only intercept file payloads', () => {
+  assert.equal(m.hasFiles(null), false);
+  assert.equal(m.hasFiles({ length: 0 }), false);
+  assert.equal(m.hasFiles({ length: 1 }), true);
 });
 
 test('clamp, pill position and long-press rules', () => {

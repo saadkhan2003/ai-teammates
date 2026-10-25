@@ -96,7 +96,8 @@ for (const theme of ["light", "dark"] as const) {
     await install(page, theme);
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`/?theme=${theme}`);
-    await expect(page.getByRole("heading", { name: "Teammates" })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/bots/${bot}(?:\\?theme=${theme})?$`));
+    await expect(page.getByTestId("composer-pill")).toBeVisible();
     await shot(page, `${theme}-home`);
     if (process.env.RADIUS_CHECK !== "0") expect(await squareSurfaces(page), "home").toEqual([]);
     await page.goto(`/bots/${bot}?theme=${theme}`);
