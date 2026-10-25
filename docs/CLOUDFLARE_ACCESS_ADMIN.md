@@ -15,7 +15,7 @@ Paths to protect (hostname = your public hostname, for example `teammates.exampl
 Do NOT put Access in front of `/api/events`, `/vnc/*` or the whole site unless you also accept that every browser and API client must carry an Access cookie; keep the rule limited to the paths above.
 
 ## 1. Create the named tunnel and run it
-1. Cloudflare dashboard -> **Zero Trust** (first visit asks for a team name and plan; the Free plan is enough for up to 50 users).
+1. Cloudflare dashboard -> **Zero Trust** (first visit asks for a team name and plan). Cloudflare lists the Free plan for teams under 50 users ([pricing](https://www.cloudflare.com/sase/products/access/), checked 2026-10-25); confirm the current limit before onboarding because plan terms can change.
 2. **Networks -> Tunnels -> Create a tunnel** -> connector **Cloudflared** -> name it `ai-teammates` -> **Save tunnel**.
 3. Copy the token from the install command (the long string after `--token`). Put it only in the host environment as `CLOUDFLARED_TUNNEL_TOKEN`; do not commit it.
 4. On the **Public hostname** tab add: subdomain `teammates`, domain `example.com`, service type `HTTP`, URL `caddy:80` (the Caddy container name on the compose network; use the plain-HTTP listener, TLS terminates at Cloudflare). Save.
