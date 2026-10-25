@@ -33,7 +33,7 @@ try {
   var systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
   var light = mode === "light" || (mode === "system" && !systemDark);
   document.documentElement.classList.toggle("light", light);
-  document.documentElement.dataset.theme = mode;
+  document.documentElement.dataset.theme = light ? "light" : "dark";
   var color = light ? "#fafafa" : "#141414";
   document.querySelectorAll('meta[name="theme-color"]').forEach(function (meta) {
     meta.setAttribute("content", color);

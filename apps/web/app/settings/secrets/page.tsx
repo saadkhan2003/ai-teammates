@@ -327,7 +327,7 @@ export default function SecretsPage() {
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <p data-testid="connected-banner" className="text-sage">Connected ✓</p>
-            <p data-testid="masked-suffix">Key ending in: ...{aiConnection.maskedSuffix}</p>
+            <p data-testid="masked-suffix">Key ending in: …{aiConnection.maskedSuffix}</p>
             <TestReadout result={testResult} />
             {formError ? (
               <p role="alert" className="text-body-sm text-clay">
@@ -453,6 +453,9 @@ export default function SecretsPage() {
                     {secret.revokedAt ? " · revoked" : ""}
                   </p>
                 </button>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {secret.type}, ending …{secret.maskedSuffix || "unavailable"}, last used {formatWhen(secret.lastUsedAt)}{secret.revokedAt ? ", revoked" : ""}
+                </p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {secret.revokedAt ? null : (
                     <Button data-testid="secret-revoke" type="button" size="sm" variant="outline" className={pillClass} disabled={busy !== null} onClick={() => void revoke(secret)}>

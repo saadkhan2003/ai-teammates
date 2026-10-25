@@ -1,6 +1,12 @@
 @import "../styles/fonts.css";
 @import "../styles/theme-tokens.css";
 
+/* Hallmark · checked: 2026-10-25 · genre: app (Grok Bot)
+ * floor: 0 FAIL · static sweep clean
+ * built: the project · redesign: polish */
+/* Hallmark · waive 28b · below fold user uploaded video has no supplied poster · Hallmark preserves uploads; generated frames could misrepresent the original media */
+/* Hallmark · dismissed 28a · attachment thumbnails are below the fold and are not the initial viewport */
+/* Hallmark · dismissed 70 · feedback is posted before the success toast appears */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -23,6 +29,26 @@
   --accent-foreground: #f5f5f5;
   --destructive: #e11d48;
   --destructive-foreground: #ffffff;
+  --danger-soft: rgba(225, 29, 72, 0.12);
+  --overlay: rgba(0, 0, 0, 0.75);
+  --shadow-overlay: 0 8px 40px rgba(0, 0, 0, 0.55);
+  --computer-background: #141414;
+  --computer-foreground: #e7e9ea;
+  --computer-muted: #a1a1a1;
+  --computer-surface: #1d1d1d;
+  --terminal-background: var(--terminal);
+  --wallpaper-highlight: #2b2d33;
+  --wallpaper-mid: #17181c;
+  --wallpaper-shadow: #0b0b0e;
+  --wallpaper-sheen: #ffffff;
+  --accent-blue-dark: #8eb6ff;
+  --accent-blue-light: #3b6fd8;
+  --accent-sage-dark: #8fd0a8;
+  --accent-sage-light: #1f7a45;
+  --accent-sand-dark: #e6c27a;
+  --accent-sand-light: #8a5a12;
+  --accent-clay-dark: #f0a8a0;
+  --accent-clay-light: #9f2d2d;
   --border: #2a2a2a;
   --input: #282828;
   --ring: #737373;
@@ -71,7 +97,7 @@
   color-scheme: dark;
 }
 
-html.light {
+:root[data-theme="light"] {
   --background: #fafafa;
   --foreground: #111111;
   --card: #ffffff;
@@ -88,6 +114,19 @@ html.light {
   --accent-foreground: #111111;
   --destructive: #be123c;
   --destructive-foreground: #ffffff;
+  --danger-soft: #f8e4df;
+  --overlay: rgba(0, 0, 0, 0.75);
+  --shadow-overlay: 0 8px 40px rgba(0, 0, 0, 0.32);
+  --computer-background: #141414;
+  --computer-foreground: #e7e9ea;
+  --computer-muted: #a1a1a1;
+  --computer-surface: #1d1d1d;
+  --terminal-background: var(--terminal);
+  --terminal-foreground: #e5e7eb;
+  --wallpaper-highlight: #2b2d33;
+  --wallpaper-mid: #17181c;
+  --wallpaper-shadow: #0b0b0e;
+  --wallpaper-sheen: #ffffff;
   --border: #e5e5e5;
   --input: #e5e5e5;
   --ring: #a3a3a3;
@@ -465,8 +504,8 @@ html:not(.light) .logo-dark-tile {
 }
 
 /* Bot-accent scrollbar and selection */
-* { scrollbar-color: var(--bot-accent-soft, rgba(255, 48, 69, 0.18)) transparent; }
-::selection { background: var(--bot-accent-soft, rgba(255, 48, 69, 0.3)); }
+* { scrollbar-color: var(--bot-accent-soft) transparent; }
+::selection { background: var(--bot-accent-soft); }
 
 
 /* Motion tokens: one set of durations and easings for the whole app (150-250 ms). */
@@ -476,7 +515,7 @@ html:not(.light) .logo-dark-tile {
   --motion-slow: 250ms;
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
-  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
 }
 @keyframes motion-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @keyframes motion-fade { from { opacity: 0; } to { opacity: 1; } }
@@ -508,8 +547,8 @@ html:not(.light) .logo-dark-tile {
 }
 
 /* Collapsible sections open and close by height. */
-@keyframes collapsible-down { from { height: 0; opacity: 0; } to { height: var(--radix-collapsible-content-height); opacity: 1; } }
-@keyframes collapsible-up { from { height: var(--radix-collapsible-content-height); opacity: 1; } to { height: 0; opacity: 0; } }
+@keyframes collapsible-down { from { opacity: 0; } to { opacity: 1; } }
+@keyframes collapsible-up { from { opacity: 1; } to { opacity: 0; } }
 [data-radix-collapsible-content] { overflow: hidden; }
 [data-radix-collapsible-content][data-state="open"] { animation: collapsible-down var(--motion-base) var(--ease-out); }
 [data-radix-collapsible-content][data-state="closed"] { animation: collapsible-up var(--motion-base) var(--ease-out); }

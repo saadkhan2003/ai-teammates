@@ -84,7 +84,7 @@ export function Approvals({ approvals, onChanged }: { approvals: Approval[]; onC
           </CardHeader>
           <CardContent className="flex flex-col gap-2 p-4 pt-0">
             {approval.relayed || approval.threadTitle ? <p data-testid="approval-relayed" className="text-xs text-muted-foreground">{approval.relayed ? `${approval.botName ?? "A teammate"} needs this for “${approval.threadTitle ?? "a conversation"}”. Approving here approves it everywhere.` : `Asked by ${approval.requestedBy ?? "a teammate"} in “${approval.threadTitle}”.`}</p> : null}
-            {approval.riskClass ? <p className="text-xs uppercase tracking-wide text-muted-foreground">{approval.riskClass}</p> : null}
+            {approval.riskClass ? <p className="text-xs text-muted-foreground">{approval.riskClass}</p> : null}
             {approval.summary ? <p data-testid="approval-summary" className="break-words text-sm">{approval.summary}</p> : null}
             {approval.target ? <p className="break-words text-sm">{approval.target}</p> : null}
             {approval.reason && approval.reason !== approval.summary ? <p className="break-words text-sm text-muted-foreground">{approval.reason}</p> : null}

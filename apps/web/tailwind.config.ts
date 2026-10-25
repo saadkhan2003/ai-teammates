@@ -14,6 +14,13 @@ const config: Config = {
         paper: "var(--card)",
         line: "var(--border)",
         clay: "var(--destructive)",
+        "danger-soft": "var(--danger-soft)",
+        computer: {
+          background: "var(--computer-background)",
+          foreground: "var(--computer-foreground)",
+          muted: "var(--computer-muted)",
+          surface: "var(--computer-surface)",
+        },
         bot: {
           DEFAULT: "var(--bot-accent)",
           foreground: "var(--bot-accent-fg)",
@@ -25,7 +32,7 @@ const config: Config = {
         info: { DEFAULT: "var(--info)", soft: "var(--info-soft)" },
         success: { DEFAULT: "var(--success)", soft: "var(--success-soft)" },
         warning: { DEFAULT: "var(--warning)", soft: "var(--warning-soft)" },
-        terminal: { DEFAULT: "var(--terminal)", foreground: "var(--terminal-foreground)", muted: "var(--terminal-muted)" },
+        terminal: { DEFAULT: "var(--terminal)", background: "var(--terminal-background)", foreground: "var(--terminal-foreground)", muted: "var(--terminal-muted)" },
         "sage-soft": "var(--sage-soft)",
         copper: "var(--brand)",
         "copper-deep": "var(--brand)",

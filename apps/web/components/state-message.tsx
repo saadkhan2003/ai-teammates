@@ -17,7 +17,7 @@ export function StateMessage({
       role={tone === "error" ? "alert" : "status"}
       className={cn(
         "rounded-lg border px-4 py-3",
-        tone === "error" ? "border-clay/30 bg-[#f8e4df] text-clay" : "border-line bg-paper text-ink",
+        tone === "error" ? "border-clay/30 bg-danger-soft text-clay" : "border-line bg-paper text-ink",
       )}
     >
       <p className="font-medium">{title}</p>
