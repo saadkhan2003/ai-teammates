@@ -14,6 +14,12 @@ async function makeBot(page: Page) {
   return (body.bot ?? body) as { id: string; name: string };
 }
 
+// The computer is shared by the owner's bots, so an earlier test or spec may have left its desktop
+// awake. Pin the probe to "asleep" so a test always starts from the resting card.
+async function pinAsleep(page: Page) {
+  await page.route(/\/api\/computer\/desktop(?:\?|$)/, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ desktop: "asleep" }) }));
+}
+
 // Computers start headless: the card rests on "Desktop asleep" until someone presses Watch.
 async function wake(page: Page) {
   const frame = page.getByTestId("desktop-frame");
@@ -37,6 +43,7 @@ test("computer card: waking, error with retry, sleeping, offline, click-through"
     let release: (() => void) | undefined;
     const held = new Promise<void>((resolve) => { release = resolve; });
     await page.route(watchTicket, async (route) => { await held; await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "down" }) }); });
+    await pinAsleep(page);
     await open(page, bot.id);
     await wake(page);
     const frame = page.getByTestId("desktop-frame");
@@ -100,9 +107,7 @@ test("computer card respects reduced motion", async ({ page }) => {
   const bot = await makeBot(page);
   try {
     await page.route(watchTicket, async () => { /* never answers */ });
-    // The computer is shared by the owner's bots, so an earlier test may have left its desktop awake.
-    // Pin the probe to "asleep" so this test always starts from the resting card.
-    await page.route(/\/api\/computer\/desktop(?:\?|$)/, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ desktop: "asleep" }) }));
+    await pinAsleep(page);
     await open(page, bot.id);
     await wake(page);
     await expect(page.getByTestId("desktop-frame")).toHaveAttribute("data-phase", "connecting");
