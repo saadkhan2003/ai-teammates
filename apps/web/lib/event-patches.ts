@@ -13,13 +13,15 @@ export function patchWorkspace(current: Workspace, event: AgentEvent): Workspace
   const task = event.task as Task | undefined;
   const messages = event.messages as ChatMessage[] | undefined;
   const bot = event.bot as Bot | undefined;
-  if (!task && !messages && !bot && !localEvents.has(event.type) && event.type !== 'computer.mode') return null;
-  if (!task && !messages && !bot && event.type !== "computer.mode") return current;
+  const pages = Array.isArray(event.pages) ? event.pages as Workspace['pages'] : undefined;
+  if (!task && !messages && !bot && !pages && !localEvents.has(event.type) && event.type !== 'computer.mode') return null;
+  if (!task && !messages && !bot && !pages && event.type !== "computer.mode") return current;
   const next = { ...current,
     bot: bot ? { ...current.bot, ...bot } : current.bot,
     tasks: task ? mergeRows(current.tasks, [task]) : current.tasks,
     messages: messages ? mergeRows(current.messages, messages) : current.messages,
     approvals: Array.isArray(event.approvals) ? event.approvals as Workspace['approvals'] : current.approvals,
+    pages: pages ?? current.pages,
   };
   if (event.type === 'computer.mode') next.holder = event.mode === 'control' ? 'human' : 'agent';
   return next;

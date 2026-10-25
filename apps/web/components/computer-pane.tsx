@@ -315,9 +315,10 @@ export function ComputerPane({
   async function desktopIsAsleep(): Promise<boolean> {
     try {
       const state = await api<{ desktop?: string }>("/api/computer/desktop");
-      return state?.desktop === "asleep";
+      // "unknown" means the computer did not answer the probe in time; rest on Watch rather than waking it.
+      return state?.desktop === "asleep" || state?.desktop === "unknown";
     } catch {
-      return false;
+      return true;
     }
   }
 

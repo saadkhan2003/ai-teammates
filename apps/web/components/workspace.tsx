@@ -240,12 +240,22 @@ export function Workspace({ botId }: { botId: string }) {
     const batch = frameBatch<AgentEvent>(events => {
       setAgentEvents(current => events.reduce((list, event) => mergeAgentEvent(list, event), current));
     }, requestAnimationFrame, cancelAnimationFrame);
+    let peerTimer: number | undefined;
+    const peerRefresh = () => {
+      if (peerTimer !== undefined) return;
+      peerTimer = window.setTimeout(() => { peerTimer = undefined; void loadWorkspace(); }, 250);
+    };
     const stopEvents = subscribeEvents((data) => {
       const event = parseAgentEvent(data);
       if (!event || event.type === "notification.created") return;
       if (["message.delta", "tool.delta", "model.started", "model.finished", "model.error"].includes(event.type)) return;
       const belongs = event.botId === botId || (typeof event.taskId === "string" && taskIds.current.has(event.taskId));
-      if (event.botId && !belongs) return;
+      if (event.botId && !belongs) {
+        // A peer's approval (or its resolution) can surface here as a relayed card; re-read only then.
+        const relays = (workspaceRef.current?.botThreads?.length ?? 0) > 0 || (workspaceRef.current?.approvals ?? []).some(a => a.relayed);
+        if (relays && ["approval", "task", "bot_thread"].includes(event.type)) peerRefresh();
+        return;
+      }
       if (belongs && ["grounding", "tool", "tool_call", "tool_result", "tool.delta", "delta", "message.delta", "text_delta", "memory", "model.started", "model.finished", "model.error", "task.started"].includes(event.type)) {
         const detail = event.detail && typeof event.detail === "object" ? event.detail as Record<string, unknown> : {};
         batch.push({ ...event, ...detail, type: event.type });
@@ -279,6 +289,7 @@ export function Workspace({ botId }: { botId: string }) {
     return () => {
       batch.stop();
       window.clearTimeout(preload);
+      if (peerTimer !== undefined) window.clearTimeout(peerTimer);
       window.clearInterval(slow);
       stopEvents();
       seq.current += 1;

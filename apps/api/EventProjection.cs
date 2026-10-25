@@ -62,7 +62,11 @@ public static class EventProjection
             evt["messages"]=JsonSerializer.SerializeToNode(rows,Json);
         }
         if ((type == "approval" || taskId != null) && botId != null)
-            evt["approvals"]=JsonSerializer.SerializeToNode((await conn.QueryAsync("SELECT id,action,target,reason,status,risk_class,summary FROM approvals WHERE bot_id=@botId AND status='pending'",new {botId})).Select(Platform.ToDict),Json);
+            // Same shape as the workspace read, including approvals relayed to this bot from peer threads,
+            // so a live patch never strips the thread context or drops a relayed card.
+            evt["approvals"]=JsonSerializer.SerializeToNode((await conn.QueryAsync("SELECT a.id,a.action,a.target,a.reason,a.status,a.risk_class,a.summary,th.id AS thread_id,th.title AS thread_title,th.initiator_name AS requested_by,ab.name AS bot_name,(a.bot_id<>@botId) AS relayed FROM approvals a LEFT JOIN tasks t ON t.id=a.task_id JOIN bots ab ON ab.id=a.bot_id LEFT JOIN bot_threads th ON th.id=t.origin_thread_id WHERE a.status='pending' AND (a.bot_id=@botId OR th.initiator_bot_id=@botId) ORDER BY a.created_at",new {botId})).Select(Platform.ToDict),Json);
+        if (type == "browser.page" && botId != null)
+            evt["pages"]=JsonSerializer.SerializeToNode((await conn.QueryAsync("SELECT target_id,url,title FROM browser_pages WHERE bot_id=@botId ORDER BY updated_at",new {botId})).Select(Platform.ToDict),Json);
         return JsonNode.Parse(Dlp.Redact(evt.ToJsonString()))!.AsObject();
     }
     public static bool Visible(string frame, Guid user)

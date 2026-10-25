@@ -715,6 +715,8 @@ public sealed class Runtime(Platform platform, LoginFlow logins, IActionReviewer
                     url = output.TryGetProperty("url", out var url) ? url.GetString() : "",
                     title = output.TryGetProperty("title", out var title) ? title.GetString() : ""
                 });
+            // The open workspace only refreshes from events while the stream is up, so announce new tabs.
+            await platform.Publish(new { type = "browser.page", taskId, botId });
         }
         var attention = output.TryGetProperty("attention", out var flag) && flag.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(flag.GetString());
         if (attention)
