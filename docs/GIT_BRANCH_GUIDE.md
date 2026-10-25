@@ -1,7 +1,8 @@
 # Git branches, history, and snapshots
 
-Initial repository ref inventory checked 2026-10-25. The checkout at that capture was on local `main` at
-`0a8a3faa3b8e32ccf078900f974b047e93279f85`; it tracks `origin/main`. The remote is
+Initial repository ref inventory checked 2026-10-25. The checkout at that capture
+was on local `main` at `0a8a3faa3b8e32ccf078900f974b047e93279f85`; it tracks
+`origin/main`. The remote is
 `https://github.com/saadkhan2003/ai-teammates.git`. The repository is not shallow.
 That original snapshot had 52 remote branch names, one local branch, 49 checkpoint
 tags (48 lightweight and one annotated), one worktree, no stashes, and no submodules.
@@ -242,6 +243,12 @@ worktree/ref count. Local `refs/codex/turn-diffs/*` are Codex-managed
 capture/checkpoint refs included by `git rev-list --all`; they are not product
 branches. The local reflog records the clone on 2026-10-25 and does not provide
 earlier checkout history.
+
+After the 12:28 UTC 58-name snapshot, this inventory follow-up was published as
+[`PR #7`](https://github.com/saadkhan2003/ai-teammates/pull/7) from
+`codex/docs-branch-inventory` to `codex/repo-onboarding`. A new GitHub check then
+returned 59 branch names, including that follow-up branch; it is intentionally not
+part of the dated 58-name comparison above.
 
 Testing evidence has a narrower scope than the branch inventory. In this session,
 the 46-test Python unit suite and configuration/source checks described in
